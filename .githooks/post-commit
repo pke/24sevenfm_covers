@@ -1,0 +1,51 @@
+#!/bin/sh
+# Semantic-version bump from Conventional Commits.
+# Reads the commit just made and, if it's a fix/feat/breaking change, bumps
+# shared/version.h and folds the change into that same commit (amend).
+#   fix:  -> patch      feat: -> minor      feat! / BREAKING CHANGE -> major
+# Other types (chore/docs/refactor/test/ci/style/perf/build) do not bump.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+
+GUARD=".git/.ssc-version-bumping"
+# The amend below re-triggers post-commit; this guard stops the recursion.
+if [ -f "$GUARD" ]; then rm -f "$GUARD"; exit 0; fi
+
+subject=$(git log -1 --pretty=%s)
+body=$(git log -1 --pretty=%B)
+
+bump=""
+if printf '%s\n' "$body" | grep -qiE '^BREAKING[ -]CHANGE' \
+   || printf '%s' "$subject" | grep -qE '^[a-zA-Z]+(\([^)]*\))?!:'; then
+  bump=major
+elif printf '%s' "$subject" | grep -qE '^feat(\([^)]*\))?:'; then
+  bump=minor
+elif printf '%s' "$subject" | grep -qE '^fix(\([^)]*\))?:'; then
+  bump=patch
+fi
+[ -z "$bump" ] && exit 0
+
+vh="shared/version.h"
+[ -f "$vh" ] || exit 0
+maj=$(sed -n 's/^#define SSC_VER_MAJOR \([0-9][0-9]*\).*/\1/p' "$vh")
+min=$(sed -n 's/^#define SSC_VER_MINOR \([0-9][0-9]*\).*/\1/p' "$vh")
+pat=$(sed -n 's/^#define SSC_VER_PATCH \([0-9][0-9]*\).*/\1/p' "$vh")
+
+case "$bump" in
+  major) maj=$((maj + 1)); min=0; pat=0 ;;
+  minor) min=$((min + 1)); pat=0 ;;
+  patch) pat=$((pat + 1)) ;;
+esac
+
+sed -i \
+  -e "s/^#define SSC_VER_MAJOR .*/#define SSC_VER_MAJOR $maj/" \
+  -e "s/^#define SSC_VER_MINOR .*/#define SSC_VER_MINOR $min/" \
+  -e "s/^#define SSC_VER_PATCH .*/#define SSC_VER_PATCH $pat/" \
+  -e "s/^#define SSC_VER_NUM .*/#define SSC_VER_NUM   $maj, $min, $pat, 0/" \
+  -e "s/^#define SSC_VER_STR .*/#define SSC_VER_STR   \"$maj.$min.$pat\"/" \
+  "$vh"
+
+git add "$vh"
+: > "$GUARD"
+git commit --amend --no-edit --no-verify >/dev/null 2>&1
+echo "[version] $bump bump -> $maj.$min.$pat  (shared/version.h)"

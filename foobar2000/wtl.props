@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Injected into every project via /p:ForceImportAfterCppProps so the foobar2000
+     SDK projects (libPPUI, helpers) and ours find the bundled WTL headers
+     (foobar2000/wtl) without editing the vendored SDK or installing WTL system-wide.
+     Imported right after Microsoft.Cpp.props, so appending to IncludePath sticks. -->
+<Project>
+  <PropertyGroup>
+    <IncludePath>$(MSBuildThisFileDirectory)wtl;$(IncludePath)</IncludePath>
+  </PropertyGroup>
+</Project>

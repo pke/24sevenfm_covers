@@ -1,0 +1,23 @@
+// options_page.rc - the shared options dialog, #included by each host's .rc so the
+// layout is defined once. A child dialog (DS_CONTROL | WS_CHILD): Winamp hosts it as
+// the "Options" tab page, foobar2000 as its preferences page. Control logic lives in
+// shared/options_panel.cpp.
+#include <windows.h>
+#include <commctrl.h>
+#include "options_ids.h"
+
+IDD_OPTIONS_PAGE DIALOGEX 0, 0, 205, 112
+STYLE DS_CONTROL | WS_CHILD
+FONT 8, "MS Shell Dlg"
+BEGIN
+    AUTOCHECKBOX   "Show &remaining time overlay on the cover", IDC_OPT_OVERLAY, 8, 8, 190, 12
+    LTEXT          "Size:",                                     -1,              18, 26, 24, 10
+    COMBOBOX       IDC_OPT_SIZE, 44, 24, 60, 60, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX   "&Animate the countdown digits (rolling)",   IDC_OPT_ROLL,    8, 44, 190, 12
+    LTEXT          "&Transition:",                              -1,              8, 65, 42, 10
+    COMBOBOX       IDC_OPT_TRANS, 52, 63, 90, 90, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT          "Duration:",                                 -1,              18, 86, 40, 10
+    CONTROL        "", IDC_OPT_FADE, "msctls_trackbar32",
+                   TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP,                        56, 83, 110, 18
+    LTEXT          "500 ms",                                    IDC_OPT_FADEVAL, 170, 86, 30, 10
+END
