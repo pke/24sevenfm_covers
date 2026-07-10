@@ -1,9 +1,9 @@
 24seven.fm Covers - Winamp plugin
 =============================
 
-Cover art for the Streaming Soundtracks (24seven.fm) stream, shown in a
-dockable, GPU-rendered Winamp window (with an optional remaining-time
-countdown and crossfade / flip transitions).
+Cover art for the 24seven.fm radio stations, shown in a dockable, GPU-rendered
+Winamp window (with an optional remaining-time countdown and crossfade / flip
+transitions). It auto-follows whichever 24seven.fm station you tune to.
 
 MANUAL INSTALL
 --------------
@@ -12,12 +12,13 @@ MANUAL INSTALL
 2. Copy  gen_24sevenfm_covers.dll  into your Winamp "Plugins" folder, e.g.
       C:\Program Files (x86)\Winamp\Plugins\
    (or the Plugins folder next to winamp.exe for a portable Winamp).
-3. Start Winamp and play the Streaming Soundtracks stream. A dockable
-   "24seven.fm Covers" window appears once you're tuned in.
+3. Start Winamp and play any 24seven.fm stream (StreamingSoundtracks, 1980s.FM,
+   Adagio.FM, Death.FM, Entranced.FM). A dockable "24seven.fm Covers" window
+   appears once you're tuned in.
 
 CONFIGURE
 ---------
-Ctrl+P > Plug-ins > General Purpose > "24seven.fm Covers" > Configure
+Ctrl+P > General Preferences > "24seven.fm Covers"
 (remaining-time overlay + size, transition + duration, rolling digits).
 
 UNINSTALL

@@ -6,6 +6,8 @@
 #   foobar_24sevenfm_covers-<ver>-<date>.exe             foobar NSIS installer (needs makensis)
 #   winamp_24sevenfm_covers-<ver>-<date>.zip             gen_24sevenfm_covers.dll + README (manual)
 #   foobar_24sevenfm_covers-<ver>-<date>.zip             foo_24sevenfm_covers.dll + README (manual)
+#   viewer_24sevenfm_covers-<ver>-<date>.exe             desktop viewer NSIS installer (needs makensis)
+#   viewer_24sevenfm_covers-<ver>-<date>.zip             24sevenfm_covers.exe + README (manual)
 #   <artifact>.sha256                                    SHA-256 sidecar for each of the above
 #
 # The unit tests (lib/) are run FIRST and packaging is aborted if any fail.
@@ -23,6 +25,7 @@ $root = Split-Path -Parent $here
 $dist = Join-Path $root 'dist'
 $winDll = Join-Path $root 'winamp\build\Release\gen_24sevenfm_covers.dll'
 $fbDll  = Join-Path $root 'foobar2000\foo_24sevenfm_covers\build\Release\foo_24sevenfm_covers.dll'
+$viExe  = Join-Path $root 'desktop\build\Release\24sevenfm_covers.exe'
 
 # Per-module versions - each binary versions INDEPENDENTLY in its own header.
 function Get-VerField([string]$file, [string]$name) {
@@ -34,8 +37,10 @@ function Get-ModuleVer([string]$file) {
 }
 $winVer  = Get-ModuleVer (Join-Path $root 'winamp\gen_version.h')
 $fbVer   = Get-ModuleVer (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_version.h')
+$viVer   = Get-ModuleVer (Join-Path $root 'desktop\viewer_version.h')
 $winVer4 = "$winVer.0"
 $fbVer4  = "$fbVer.0"
+$viVer4  = "$viVer.0"
 
 # Eclipse-style artifact naming: <name>-<version>-<builddate>.<ext>. Each artifact uses
 # ITS OWN module version; each NSIS installer carries its own module's version.
@@ -45,7 +50,9 @@ $nWinExe = "winamp_24sevenfm_covers-$winVer-$stamp.exe"
 $nFbExe  = "foobar_24sevenfm_covers-$fbVer-$stamp.exe"
 $nWinZip = "winamp_24sevenfm_covers-$winVer-$stamp.zip"
 $nFbZip  = "foobar_24sevenfm_covers-$fbVer-$stamp.zip"
-Write-Host "Winamp $winVer  |  foobar $fbVer   (build $stamp)" -ForegroundColor Cyan
+$nViExe  = "viewer_24sevenfm_covers-$viVer-$stamp.exe"
+$nViZip  = "viewer_24sevenfm_covers-$viVer-$stamp.zip"
+Write-Host "Winamp $winVer  |  foobar $fbVer  |  viewer $viVer   (build $stamp)" -ForegroundColor Cyan
 
 function Find-Tool([string]$name, [string[]]$candidates) {
     $c = (Get-Command $name -ErrorAction SilentlyContinue).Source
@@ -83,18 +90,20 @@ if ($Build) {
     $props = Join-Path $root 'foobar2000\wtl.props'
     & $msb (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_24sevenfm_covers.vcxproj') `
         /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /p:ForceImportAfterCppProps=$props /m /v:minimal
+    & $msb (Join-Path $root 'desktop\24sevenfm_covers.vcxproj') `
+        /p:Configuration=Release /p:Platform=x64 /m /v:minimal
 }
 
-foreach ($d in @($winDll, $fbDll)) {
-    if (-not (Test-Path $d)) { throw "Missing $d`nBuild the plugins first (or pass -Build)." }
+foreach ($d in @($winDll, $fbDll, $viExe)) {
+    if (-not (Test-Path $d)) { throw "Missing $d`nBuild first (or pass -Build)." }
 }
 
 # Fresh dist + scratch (clean contents, not the dir itself - avoids "dir in use" if a
 # shell is cwd'd there or an AV is scanning a just-written file).
 if (Test-Path $dist) { Get-ChildItem $dist -Force -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue }
 else { New-Item -ItemType Directory -Path $dist | Out-Null }
-$wWin = Join-Path $dist '_win'; $wFb = Join-Path $dist '_fb'
-New-Item -ItemType Directory -Path $wWin, $wFb | Out-Null
+$wWin = Join-Path $dist '_win'; $wFb = Join-Path $dist '_fb'; $wVi = Join-Path $dist '_vi'
+New-Item -ItemType Directory -Path $wWin, $wFb, $wVi | Out-Null
 
 Write-Host "`n== Packaging ==" -ForegroundColor Cyan
 
@@ -118,6 +127,11 @@ if ($makensis) {
     if ($LASTEXITCODE -ne 0) { throw "makensis (foobar) failed." }
     Move-Item (Join-Path $dist 'foobar_24sevenfm_covers.exe') (Join-Path $dist $nFbExe) -Force
     Write-Host "  $nFbExe"
+
+    & $makensis /V2 "/DAPPVER=$viVer" "/DAPPVER4=$viVer4" (Join-Path $here 'viewer_24sevenfm_covers.nsi')
+    if ($LASTEXITCODE -ne 0) { throw "makensis (viewer) failed." }
+    Move-Item (Join-Path $dist 'viewer_24sevenfm_covers.exe') (Join-Path $dist $nViExe) -Force
+    Write-Host "  $nViExe"
 } else {
     Write-Warning "makensis not found - skipping both NSIS installers. Install NSIS (https://nsis.sourceforge.io), then re-run."
 }
@@ -126,12 +140,16 @@ if ($makensis) {
 Copy-Item $winDll (Join-Path $wWin 'gen_24sevenfm_covers.dll')
 Copy-Item (Join-Path $here 'readme-winamp.txt') (Join-Path $wWin 'README.txt')
 Copy-Item (Join-Path $here 'readme-foobar.txt') (Join-Path $wFb 'README.txt')
+Copy-Item $viExe (Join-Path $wVi '24sevenfm_covers.exe')
+Copy-Item (Join-Path $here 'readme-viewer.txt') (Join-Path $wVi 'README.txt')
 Compress-Archive -Path (Join-Path $wWin '*') -DestinationPath (Join-Path $dist $nWinZip) -Force
 Compress-Archive -Path (Join-Path $wFb  '*') -DestinationPath (Join-Path $dist $nFbZip) -Force
+Compress-Archive -Path (Join-Path $wVi  '*') -DestinationPath (Join-Path $dist $nViZip) -Force
 Write-Host "  $nWinZip"
 Write-Host "  $nFbZip"
+Write-Host "  $nViZip"
 
-Remove-Item $wWin, $wFb -Recurse -Force
+Remove-Item $wWin, $wFb, $wVi -Recurse -Force
 
 # 4. A SHA-256 sidecar file next to each artifact (<name>.sha256, sha256sum format
 #    so `sha256sum -c <name>.sha256` works).
