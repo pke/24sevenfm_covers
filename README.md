@@ -39,8 +39,8 @@ countdown), the **options page** (`shared/options_*`), and the **networking/pars
   All commands below assume you run them from a *Developer / x64 Native Tools Command Prompt for
   VS 2026* so `cmake` and `msbuild` are on `PATH`.
 - **No external *runtime* dependencies.** Everything links only Windows system DLLs
-  (`d2d1`, `windowscodecs` (WIC, via COM), `dwrite`, `ole32`, `ws2_32`, `comctl32`, `shell32`,
-  plus `user32`/`gdi32`/`kernel32`). The desktop viewer statically links the C runtime (`/MT`),
+  (`d2d1`, `windowscodecs` (WIC, via COM), `dwrite`, `ole32`, `winhttp` (HTTPS/TLS), `comctl32`,
+  `shell32`, plus `user32`/`gdi32`/`kernel32`). The desktop viewer statically links the C runtime (`/MT`),
   so it needs **no VC++ redistributable**. **Requires Windows 7 or later** (Direct2D/DirectWrite).
 - **Only for building the foobar2000 component** — two vendored SDKs (see below).
 - **Only for packaging the Winamp installer** — [NSIS](https://nsis.sourceforge.io) (`makensis.exe`).
@@ -100,8 +100,9 @@ cmake -S lib -B lib\build
 cmake --build lib\build --config Release
 ```
 
-`lib/` builds on Windows (MSVC), and for Android/iOS via CMake toolchain files. It links `ws2_32`
-on Windows and `Threads` elsewhere. A console demo (`coverfetch_example`) builds by default;
+`lib/` builds on Windows (MSVC), and for Android/iOS via CMake toolchain files. On Windows it
+uses **WinHTTP** for HTTPS/TLS (linked automatically); other platforms use a plain-socket client
+and link `Threads`. A console demo (`coverfetch_example`) builds by default;
 disable with `-DCOVERFETCH_BUILD_EXAMPLE=OFF`.
 
 ## Tests
@@ -144,6 +145,15 @@ the About screens, and the NSIS installer (via `build_artifacts.ps1`). A git hoo
 (`.githooks/post-commit`, enable with `git config core.hooksPath .githooks`) auto-bumps the version
 from [Conventional Commits](https://www.conventionalcommits.org) — `fix:` → patch, `feat:` → minor,
 `feat!`/`BREAKING CHANGE` → major.
+
+## Security
+
+Network responses (the JSON feed, the `CoverLink` URL, and cover images) are
+treated as untrusted. On Windows all requests go over **HTTPS/TLS via WinHTTP**;
+`CoverLink` is host-pinned to the station and rejected on control bytes (SSRF /
+request-injection guards); responses are size-capped. See [SECURITY.md](SECURITY.md)
+for the threat model, mitigations, and the two tracked open items (untrusted WIC
+image decode; cleartext transport on non-Windows until native TLS lands).
 
 ## Runtime notes
 
