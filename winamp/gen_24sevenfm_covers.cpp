@@ -1,4 +1,4 @@
-// gen_24sevencover.cpp - Winamp 5.x general-purpose plugin that shows the cover
+// gen_24sevenfm_covers.cpp - Winamp 5.x general-purpose plugin that shows the cover
 // art of the track currently playing on Streaming Soundtracks (24seven.fm) in a
 // dockable Winamp window.
 //
@@ -74,7 +74,7 @@ static std::string iniPath() {
     if (!dir || !*dir) { GetTempPathA(MAX_PATH, tmp); dir = tmp; }
     std::string p = dir;
     if (!p.empty() && p.back() != '\\' && p.back() != '/') p += '\\';
-    return p + "gen_24sevencover.ini";
+    return p + "24seven.fm-covers.ini";
 }
 static void loadSettings() {
     const std::string p = iniPath();
@@ -110,7 +110,7 @@ static void quit();
 
 static winampGeneralPurposePlugin g_plugin = {
     GPPHDR_VER,
-    (char*)"24seven Cover (dockable cover art)",
+    (char*)"24seven.fm Covers (dockable cover art)",
     init,
     config,
     quit,
@@ -222,7 +222,7 @@ static int init() {
     }
 
     if (g_embedFrame) {
-        SetWindowTextA(g_embedFrame, "24seven Cover");
+        SetWindowTextA(g_embedFrame, "24seven.fm Covers");
         // Content is a ZERO-sized child; gen_ff positions and sizes it inside the
         // frame (below the skinned title bar) and resizes it on frame resize. We
         // never set its geometry - that's what was painting over the title bar and
@@ -234,7 +234,7 @@ static int init() {
         ShowWindow(g_embedFrame, SW_HIDE); // hidden until tuned in
     } else {
         // Fallback: a plain top-level window, moved by the OS via its title bar.
-        g_hwnd = CreateWindowExA(0, kWndClass, "24seven Cover", WS_OVERLAPPEDWINDOW,
+        g_hwnd = CreateWindowExA(0, kWndClass, "24seven.fm Covers", WS_OVERLAPPEDWINDOW,
                                  CW_USEDEFAULT, CW_USEDEFAULT, 500, 500,
                                  g_winamp, nullptr, g_hInst, nullptr);
     }

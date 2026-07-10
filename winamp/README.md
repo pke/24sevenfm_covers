@@ -1,4 +1,4 @@
-# gen_24sevencover — Winamp 5.x cover-art panel
+# gen_24sevenfm_covers — Winamp 5.x cover-art panel
 
 A Winamp 5.x **general-purpose plugin** that shows the cover art of the track
 currently playing on **Streaming Soundtracks (24seven.fm)** in a dockable window.
@@ -19,7 +19,7 @@ cmake -S winamp -B winamp/build -A Win32
 cmake --build winamp/build --config Release
 ```
 
-Output: `winamp/build/Release/gen_24sevencover.dll` (x86).
+Output: `winamp/build/Release/gen_24sevenfm_covers.dll` (x86).
 
 > Configuring without `-A Win32` yields a 64-bit DLL that Winamp ignores; CMake
 > prints a warning in that case.
@@ -35,7 +35,7 @@ fallback — on a system without Direct2D the window stays blank (the log notes
 
 ## Install
 
-1. Copy `gen_24sevencover.dll` into Winamp's `Plugins` folder.
+1. Copy `gen_24sevenfm_covers.dll` into Winamp's `Plugins` folder.
 2. Relaunch Winamp — general-purpose plugins load automatically at startup (no
    "Start" step).
 3. Play the station (Ctrl+L → `http://streamingsoundtracks.com/listen.pls`). The
@@ -44,7 +44,7 @@ fallback — on a system without Direct2D the window stays blank (the log notes
 
 ## Options
 
-**Ctrl+P → Plug-ins → General Purpose → 24seven Cover → Configure:**
+**Ctrl+P → Plug-ins → General Purpose → 24seven.fm Covers → Configure:**
 
 - **Show remaining time overlay** — a live `m:ss` countdown in the top-right corner.
 - **Animate the countdown digits** — roll changed digits over (odometer style); off = instant updates.
@@ -53,7 +53,7 @@ fallback — on a system without Direct2D the window stays blank (the log notes
   where the new cover is the "backside" of the old one).
 - **Duration** — transition length, 500 ms–2 s in 100 ms steps (ignored for *None*).
 
-Settings persist to `gen_24sevencover.ini` in Winamp's settings directory.
+Settings persist to `24seven.fm-covers.ini` in Winamp's settings directory.
 
 ## How it works
 
@@ -74,10 +74,12 @@ HTTP:80.
 
 | File | Role |
 |------|------|
-| `gen_24sevencover.cpp` | the plugin: window, embedding, gating, options dialog |
-| `d2d_renderer.{h,cpp}` | all rendering (Direct2D / WIC / DirectWrite) |
+| `gen_24sevenfm_covers.cpp` | the plugin: window, embedding, gating, options dialog |
 | `gen.h` | minimal Winamp general-purpose plugin SDK struct |
-| `gen_24sevencover.rc`, `gen_resource.h` | the options dialog |
+| `gen_24sevenfm_covers.rc`, `gen_resource.h` | the options dialog |
 | `CMakeLists.txt` | 32-bit, static-CRT, size-optimized build |
 
-Runtime log (for troubleshooting): `%TEMP%\gen_24sevencover.log`.
+The Direct2D renderer (`d2d_renderer.{h,cpp}`, `d2d_transitions.*`, `d2d_rolldigits.*`) and the
+cover engine now live in `../shared/` — they are compiled into all three front-ends.
+
+Runtime log (for troubleshooting): `%TEMP%\24seven.fm-covers.log`.

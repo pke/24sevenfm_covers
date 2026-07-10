@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 cmake_policy(SET CMP0091 NEW)   # MSVC_RUNTIME_LIBRARY controls /MT vs /MD
-project(gen_24sevencover CXX)
+project(gen_24sevenfm_covers CXX)
 
 # Winamp 5.x is 32-bit: configure with  -A Win32
 set(CMAKE_CXX_STANDARD 11)
@@ -30,26 +30,26 @@ set(LIBDIR "${CMAKE_CURRENT_SOURCE_DIR}/../lib")
 # General-purpose plugin (gen_*.dll): a dockable, GPU-rendered cover window.
 set(SHAREDDIR "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 
-add_library(gen_24sevencover SHARED
-    gen_24sevencover.cpp
-    d2d_renderer.cpp
-    d2d_transitions.cpp
-    d2d_rolldigits.cpp
-    gen_24sevencover.rc
+add_library(gen_24sevenfm_covers SHARED
+    gen_24sevenfm_covers.cpp
+    gen_24sevenfm_covers.rc
+    "${SHAREDDIR}/d2d_renderer.cpp"
+    "${SHAREDDIR}/d2d_transitions.cpp"
+    "${SHAREDDIR}/d2d_rolldigits.cpp"
     "${SHAREDDIR}/cover_engine.cpp"
     "${SHAREDDIR}/options_panel.cpp"
     "${LIBDIR}/coverfetch.cpp"
     "${LIBDIR}/http_client.cpp"
 )
-target_include_directories(gen_24sevencover PRIVATE
+target_include_directories(gen_24sevenfm_covers PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${SHAREDDIR}"
     "${LIBDIR}"
 )
-target_link_libraries(gen_24sevencover PRIVATE ole32 ws2_32 d2d1 windowscodecs dwrite)
-set_target_properties(gen_24sevencover PROPERTIES
+target_link_libraries(gen_24sevenfm_covers PRIVATE ole32 ws2_32 d2d1 windowscodecs dwrite)
+set_target_properties(gen_24sevenfm_covers PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "gen_24sevencover"
+    OUTPUT_NAME "gen_24sevenfm_covers"
 )
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
