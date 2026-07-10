@@ -36,12 +36,14 @@ public:
     // Options the host loads from / saves to its own storage (Winamp INI,
     // foobar cfg_var). The engine only reads them while drawing.
     struct Settings {
-        bool showOverlay = false; // remaining-time overlay
-        int  overlaySize = 2;     // 0 small, 1 medium, 2 large
+        bool showRemaining = false; // show the remaining-time countdown
+        int  remainingSize = 0;     // 0 small, 1 medium, 2 large
         int  transition  = 1;     // 0 none, 1 crossfade, 2 flip-h, 3 flip-v
         bool rollDigits  = false; // animate the countdown (rolling)
-        int  fadeMs      = 500;   // transition duration, 500..2000
+        int  fadeMs      = 1000;  // transition duration, 500..2000
         int  station     = 0;     // index into ssc::kStations (see stations.h); 0 = SST
+        int  layout      = 0;     // 0 = fill screen, 1 = poster (blurred bg + centered cover + info box)
+        int  posterBlur  = 24;    // poster background blur strength (INI "posterBlur"; not in the UI)
     };
     Settings settings;
 
@@ -101,7 +103,7 @@ private:
     void onCoverChanged(const std::string& url); // monitor bg-thread callback body
     d2d::Transition transitionEffect() const;
     bool transitionAnimates() const { return settings.transition != 0; }
-    float overlayFrac() const;
+    float remainingFrac() const;
 
     // Countdown: anchor the remaining seconds at a known instant, then compute it
     // locally from the clock. setRemaining(-1) hides the overlay.
@@ -114,6 +116,7 @@ private:
     std::string shownUrl_, nextUrl_, nextBytes_; // preload state (guarded)
     std::string shownBytes_;             // bytes of the cover currently shown (guarded)
     int         nextLen_ = -1;
+    std::wstring infoTitle_, infoArtist_; // current track title + composer for the poster info box (guarded)
 
     std::atomic<int>   remAnchor_{-1};   // remaining seconds at the anchor (-1 = unknown/hidden)
     std::atomic<DWORD> remAnchorAt_{0};  // GetTickCount() when the anchor was set

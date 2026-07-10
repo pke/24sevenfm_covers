@@ -16,16 +16,23 @@ void updateFadeLabel(HWND dlg) {
     SetDlgItemTextA(dlg, IDC_OPT_FADEVAL, buf);
 }
 
+// Radio-button group helpers (base id = first radio, +i for the rest).
+void setRadio(HWND dlg, int base, int count, int val) {
+    CheckRadioButton(dlg, base, base + count - 1, base + clampi(val, 0, count - 1));
+}
+int getRadio(HWND dlg, int base, int count) {
+    for (int i = 0; i < count; ++i)
+        if (IsDlgButtonChecked(dlg, base + i) == BST_CHECKED) return i;
+    return 0;
+}
+void enableRadios(HWND dlg, int base, int count, BOOL en) {
+    for (int i = 0; i < count; ++i) EnableWindow(GetDlgItem(dlg, base + i), en);
+}
+
 } // namespace
 
 void init(HWND dlg, const CoverEngine::Settings& s) {
-    SendDlgItemMessageA(dlg, IDC_OPT_SIZE, CB_ADDSTRING, 0, (LPARAM)"Small");
-    SendDlgItemMessageA(dlg, IDC_OPT_SIZE, CB_ADDSTRING, 0, (LPARAM)"Medium");
-    SendDlgItemMessageA(dlg, IDC_OPT_SIZE, CB_ADDSTRING, 0, (LPARAM)"Large");
-    SendDlgItemMessageA(dlg, IDC_OPT_TRANS, CB_ADDSTRING, 0, (LPARAM)"None");
-    SendDlgItemMessageA(dlg, IDC_OPT_TRANS, CB_ADDSTRING, 0, (LPARAM)"Crossfade");
-    SendDlgItemMessageA(dlg, IDC_OPT_TRANS, CB_ADDSTRING, 0, (LPARAM)"Flip horizontal");
-    SendDlgItemMessageA(dlg, IDC_OPT_TRANS, CB_ADDSTRING, 0, (LPARAM)"Flip vertical");
+    // The radio labels are static in the .rc; only the slider needs setup here.
     SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETRANGE, TRUE, MAKELONG(500, 2000));
     SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETLINESIZE, 0, 100);
     SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPAGESIZE, 0, 100);
@@ -34,29 +41,34 @@ void init(HWND dlg, const CoverEngine::Settings& s) {
 }
 
 void setValues(HWND dlg, const CoverEngine::Settings& s) {
-    CheckDlgButton(dlg, IDC_OPT_OVERLAY, s.showOverlay ? BST_CHECKED : BST_UNCHECKED);
-    SendDlgItemMessageA(dlg, IDC_OPT_SIZE, CB_SETCURSEL, clampi(s.overlaySize, 0, 2), 0);
+    setRadio(dlg, IDC_OPT_LAYOUT, 2, s.layout);
+    CheckDlgButton(dlg, IDC_OPT_OVERLAY, s.showRemaining ? BST_CHECKED : BST_UNCHECKED);
+    setRadio(dlg, IDC_OPT_SIZE, 3, s.remainingSize);
     CheckDlgButton(dlg, IDC_OPT_ROLL, s.rollDigits ? BST_CHECKED : BST_UNCHECKED);
-    SendDlgItemMessageA(dlg, IDC_OPT_TRANS, CB_SETCURSEL, clampi(s.transition, 0, 3), 0);
+    setRadio(dlg, IDC_OPT_TRANS, 4, s.transition);
     SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPOS, TRUE, clampi(s.fadeMs, 500, 2000));
     updateFadeLabel(dlg);
     updateEnabled(dlg);
 }
 
 void read(HWND dlg, CoverEngine::Settings& s) {
-    s.showOverlay = IsDlgButtonChecked(dlg, IDC_OPT_OVERLAY) == BST_CHECKED;
-    s.overlaySize = clampi((int)SendDlgItemMessageA(dlg, IDC_OPT_SIZE, CB_GETCURSEL, 0, 0), 0, 2);
+    s.layout      = getRadio(dlg, IDC_OPT_LAYOUT, 2);
+    s.showRemaining = IsDlgButtonChecked(dlg, IDC_OPT_OVERLAY) == BST_CHECKED;
+    s.remainingSize = getRadio(dlg, IDC_OPT_SIZE, 3);
     s.rollDigits  = IsDlgButtonChecked(dlg, IDC_OPT_ROLL) == BST_CHECKED;
-    s.transition  = clampi((int)SendDlgItemMessageA(dlg, IDC_OPT_TRANS, CB_GETCURSEL, 0, 0), 0, 3);
+    s.transition  = getRadio(dlg, IDC_OPT_TRANS, 4);
     const int fade = (int)SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_GETPOS, 0, 0);
     s.fadeMs = clampi(((fade + 50) / 100) * 100, 500, 2000); // snap to 100 ms
 }
 
 void updateEnabled(HWND dlg) {
+    // All options apply to both layouts (poster draws the countdown on the cover), so
+    // enabling only follows the usual dependencies: size/roll need the overlay on, and
+    // the transition duration needs a transition other than None.
     const BOOL overlay = IsDlgButtonChecked(dlg, IDC_OPT_OVERLAY) == BST_CHECKED;
-    EnableWindow(GetDlgItem(dlg, IDC_OPT_SIZE), overlay);
+    enableRadios(dlg, IDC_OPT_SIZE, 3, overlay);
     EnableWindow(GetDlgItem(dlg, IDC_OPT_ROLL), overlay);
-    const BOOL animated = SendDlgItemMessageA(dlg, IDC_OPT_TRANS, CB_GETCURSEL, 0, 0) != 0;
+    const BOOL animated = getRadio(dlg, IDC_OPT_TRANS, 4) != 0;
     EnableWindow(GetDlgItem(dlg, IDC_OPT_FADE), animated);
     EnableWindow(GetDlgItem(dlg, IDC_OPT_FADEVAL), animated);
 }

@@ -2,8 +2,10 @@
 #ifndef SSC_GEN_RESOURCE_H
 #define SSC_GEN_RESOURCE_H
 
-#define IDD_CONFIG       101  // the About box (double-click / Configure)
+#define IDD_CONFIG       101  // tabbed info dialog (double-click / Configure)
+#define IDD_TAB_ABOUT    103  // the "About" tab page
 
+#define IDC_TAB          1010
 #define IDC_ABOUT_VER    1011
 #define IDC_ABOUT_LINK   1012
 // Options are hosted in Winamp's Preferences treeview via the shared dialog

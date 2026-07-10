@@ -37,6 +37,8 @@ static const char* kWndClass = "SST24CoverViewerWnd";
 static const UINT   SC_OPTIONS     = 0x1000; // system-menu command id (must be < 0xF000, low nibble 0)
 static const UINT   IDM_FULLSCREEN = 0x2001; // right-click context menu
 static const UINT   IDM_OPTIONS    = 0x2002;
+static const UINT   IDM_POSTER     = 0x2003; // toggle Fill <-> Poster layout
+static const UINT   IDM_STATION    = 0x2100; // station submenu: IDM_STATION + i selects station i
 
 static HINSTANCE g_hInst    = nullptr;
 static HWND      g_hwnd     = nullptr;
@@ -59,33 +61,41 @@ static std::string iniPath() {
     p = (slash == std::string::npos) ? std::string() : p.substr(0, slash + 1);
     return p + "24seven.fm-covers.ini";
 }
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
 static void loadSettings() {
-    const std::string p = iniPath();
+    const std::string iniFile = iniPath();
+    const auto readInt = [&iniFile](const char* key, int def, int lo, int hi) {
+        return clampi(GetPrivateProfileIntA("options", key, def, iniFile.c_str()), lo, hi);
+    };
     CoverEngine::Settings& s = eng().settings;
-    s.showOverlay = GetPrivateProfileIntA("options", "overlay", 0, p.c_str()) != 0;
-    s.overlaySize = GetPrivateProfileIntA("options", "overlaysize", 2, p.c_str());
-    if (s.overlaySize < 0 || s.overlaySize > 2) s.overlaySize = 2;
-    s.rollDigits  = GetPrivateProfileIntA("options", "roll", 0, p.c_str()) != 0;
-    s.transition  = GetPrivateProfileIntA("options", "transition", 1, p.c_str());
-    if (s.transition < 0 || s.transition > 3) s.transition = 1;
-    s.fadeMs      = GetPrivateProfileIntA("options", "fadeMs", 500, p.c_str());
-    if (s.fadeMs < 500)  s.fadeMs = 500;
-    if (s.fadeMs > 2000) s.fadeMs = 2000;
-    char stid[64] = {0}; // station stored by stable id so reordering the list is safe
-    GetPrivateProfileStringA("options", "station", "", stid, sizeof(stid), p.c_str());
-    g_firstRun = (stid[0] == '\0'); // no station entry yet -> always prompt for one
-    s.station = ssc::validStationIndex(ssc::stationIndexForId(stid)); // empty/unknown -> SST
+    s.showRemaining = readInt("showRemaining", 0, 0, 1) != 0;
+    s.remainingSize = readInt("remainingSize", 0, 0, 2);
+    s.rollDigits    = readInt("roll", 0, 0, 1) != 0;
+    s.transition    = readInt("transition", 1, 0, 3);
+    s.fadeMs        = readInt("fadeMs", 1000, 500, 2000);
+    s.layout        = readInt("layout", 0, 0, 1);
+    s.posterBlur    = readInt("posterBlur", 24, 0, 200); // no UI; INI only
+    char stationId[64] = {0}; // station stored by stable id so reordering the list is safe
+    GetPrivateProfileStringA("options", "station", "", stationId, sizeof(stationId), iniFile.c_str());
+    g_firstRun = (stationId[0] == '\0'); // no station entry yet -> always prompt for one
+    s.station = ssc::validStationIndex(ssc::stationIndexForId(stationId)); // empty/unknown -> SST
 }
 static void saveSettings() {
-    const std::string p = iniPath();
+    const std::string iniFile = iniPath();
     const CoverEngine::Settings& s = eng().settings;
-    char buf[16];
-    WritePrivateProfileStringA("options", "overlay", s.showOverlay ? "1" : "0", p.c_str());
-    wsprintfA(buf, "%d", s.overlaySize); WritePrivateProfileStringA("options", "overlaysize", buf, p.c_str());
-    WritePrivateProfileStringA("options", "roll", s.rollDigits ? "1" : "0", p.c_str());
-    wsprintfA(buf, "%d", s.transition);  WritePrivateProfileStringA("options", "transition", buf, p.c_str());
-    wsprintfA(buf, "%d", s.fadeMs);      WritePrivateProfileStringA("options", "fadeMs", buf, p.c_str());
-    WritePrivateProfileStringA("options", "station", ssc::station(s.station).id, p.c_str());
+    const auto writeInt = [&iniFile](const char* key, int value) {
+        char buf[16]; wsprintfA(buf, "%d", value);
+        WritePrivateProfileStringA("options", key, buf, iniFile.c_str());
+    };
+    writeInt("showRemaining", s.showRemaining ? 1 : 0);
+    writeInt("remainingSize", s.remainingSize);
+    writeInt("roll", s.rollDigits ? 1 : 0);
+    writeInt("transition", s.transition);
+    writeInt("fadeMs", s.fadeMs);
+    writeInt("layout", s.layout);
+    writeInt("posterBlur", s.posterBlur);
+    WritePrivateProfileStringA("options", "station", ssc::station(s.station).id, iniFile.c_str());
 }
 
 // --- Options: a property sheet hosting the shared options page --------------
@@ -103,15 +113,11 @@ static INT_PTR CALLBACK OptionsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp
             optpanel::onHScroll(dlg);
             PropSheet_Changed(GetParent(dlg), dlg); // dragging the slider -> enable Apply
             return TRUE;
-        case WM_COMMAND: {
-            const WORD id = LOWORD(wp), code = HIWORD(wp);
-            if (id == IDC_OPT_OVERLAY || (id == IDC_OPT_TRANS && code == CBN_SELCHANGE))
-                optpanel::updateEnabled(dlg);
-            if (id == IDC_OPT_OVERLAY || id == IDC_OPT_ROLL ||
-                ((id == IDC_OPT_SIZE || id == IDC_OPT_TRANS) && code == CBN_SELCHANGE))
-                PropSheet_Changed(GetParent(dlg), dlg); // a setting changed -> enable Apply
+        case WM_COMMAND:
+            // Any control click (checkbox / radio group) may change dependent enabling.
+            optpanel::updateEnabled(dlg);
+            PropSheet_Changed(GetParent(dlg), dlg); // a setting changed -> enable Apply
             return TRUE;
-        }
         case WM_NOTIFY:
             if (reinterpret_cast<LPNMHDR>(lp)->code == PSN_APPLY) { // Apply or OK
                 optpanel::read(dlg, eng().settings);
@@ -309,19 +315,37 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ClientToScreen(hwnd, &pt);
             }
             HMENU m = CreatePopupMenu();
+            const int curStation = ssc::validStationIndex(eng().settings.station);
+            for (int i = 0; i < ssc::kStationCount; ++i) // stations as top-level entries
+                AppendMenuA(m, MF_STRING | (i == curStation ? MF_CHECKED : MF_UNCHECKED),
+                            IDM_STATION + i, ssc::kStations[i].displayName);
+            AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
             AppendMenuA(m, MF_STRING | (g_fullscreen ? MF_CHECKED : MF_UNCHECKED), IDM_FULLSCREEN, "&Fullscreen");
+            AppendMenuA(m, MF_STRING | (eng().settings.layout == 1 ? MF_CHECKED : MF_UNCHECKED), IDM_POSTER, "&Poster mode");
             AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
             AppendMenuA(m, MF_STRING, IDM_OPTIONS, "&Options...");
             TrackPopupMenu(m, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
             DestroyMenu(m);
             return 0;
         }
-        case WM_COMMAND:
-            switch (LOWORD(wp)) {
+        case WM_COMMAND: {
+            const UINT cmd = LOWORD(wp);
+            if (cmd >= IDM_STATION && cmd < IDM_STATION + (UINT)ssc::kStationCount) {
+                eng().setStation((int)(cmd - IDM_STATION)); // switches + repaints live
+                saveSettings();
+                return 0;
+            }
+            switch (cmd) {
                 case IDM_FULLSCREEN: toggleFullscreen(hwnd); return 0;
                 case IDM_OPTIONS:    openOptions();          return 0;
+                case IDM_POSTER:     // toggle Fill <-> Poster and persist
+                    eng().settings.layout = eng().settings.layout == 1 ? 0 : 1;
+                    saveSettings();
+                    eng().repaint();
+                    return 0;
             }
             break;
+        }
         case WM_SYSCOMMAND:
             if ((wp & 0xFFF0) == SC_OPTIONS) { openOptions(); return 0; }
             break;

@@ -111,10 +111,9 @@ void shutdownRollingTime() {
 
 bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dw,
                      ID2D1SolidColorBrush* bg, ID2D1SolidColorBrush* fg,
-                     int remainingSeconds, float cw, float ch, float fontFrac,
-                     bool animate) {
+                     int remainingSeconds, float cw, float ch, float fontSize,
+                     bool animate, bool atBottom, bool drawBackground) {
     if (!rt || !dw || !bg || !fg) return false;
-    float fontSize = ch * fontFrac;
     if (fontSize < 10.0f) fontSize = 10.0f;
     if (!ensureFormat(dw, fontSize)) return false;
 
@@ -167,8 +166,9 @@ bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dw,
     const float boxW = totalW + padX * 2.0f, boxH = g_cellH + padY * 2.0f;
     const float margin = fontSize * 0.4f;
     const float boxX = cw - boxW - margin;
-    const float boxY = margin;
-    rt->FillRectangle(D2D1::RectF(boxX, boxY, boxX + boxW, boxY + boxH), bg);
+    const float boxY = atBottom ? (ch - boxH - margin) : margin;
+    if (drawBackground)
+        rt->FillRectangle(D2D1::RectF(boxX, boxY, boxX + boxW, boxY + boxH), bg);
 
     // Draw each cell; changed cells roll (old up / new in from below), clipped to
     // the cell so the moving glyphs vanish at the top and bottom edges.

@@ -33,6 +33,16 @@ void logLine(const std::string& msg) {
     }
 }
 
+// UTF-8 (the station feed's encoding) -> UTF-16 for DirectWrite (poster info box).
+std::wstring toWide(const std::string& s) {
+    if (s.empty()) return std::wstring();
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+    if (n <= 0) return std::wstring();
+    std::wstring w((size_t)n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
+    return w;
+}
+
 // Downloads a cover image. Windows goes over HTTPS:443 (WinHTTP/TLS); the station
 // also serves the images on plain HTTP:80, which the socket path uses elsewhere.
 std::string downloadCover(const std::string& url) {
@@ -60,8 +70,8 @@ CoverEngine& CoverEngine::instance() {
     return e;
 }
 
-float CoverEngine::overlayFrac() const {
-    switch (settings.overlaySize) {
+float CoverEngine::remainingFrac() const {
+    switch (settings.remainingSize) {
         case 0:  return 1.0f / 22.0f; // small
         case 1:  return 1.0f / 16.0f; // medium
         default: return 1.0f / 12.0f; // large
@@ -108,6 +118,20 @@ void CoverEngine::startMonitor() {
         // overlay counts down locally. A title-change swap sets an instant estimate (the
         // preloaded next length) which this poll then confirms/corrects.
         setRemaining(info.remainingSeconds);
+        // Capture track metadata for the poster info box (title + composer + runtime),
+        // formatted like the station's own title: "Album - Track (M:SS)".
+        std::string t = info.album;
+        if (!info.album.empty() && !info.track.empty()) t = info.album + " - " + info.track;
+        else if (!info.track.empty())                   t = info.track;
+        if (info.lengthSeconds > 0) {
+            const int mm = info.lengthSeconds / 60, ss = info.lengthSeconds % 60;
+            t += " (" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "") + std::to_string(ss) + ")";
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            infoTitle_  = toWide(t); // album/track/artist arrive HTML-decoded from the lib
+            infoArtist_ = toWide(info.artist);
+        }
         onCoverChanged(url);
     }, cfg);
     monitor_->setErrorCallback([this](const std::string& m) {
@@ -134,6 +158,7 @@ void CoverEngine::setStation(int index) {
         coverBytes_.clear(); dirty_ = false;
         shownUrl_.clear(); shownBytes_.clear();
         nextUrl_.clear(); nextBytes_.clear(); nextLen_ = -1;
+        infoTitle_.clear(); infoArtist_.clear();
     }
     resetTitle();          // next accepted title reloads; hide the countdown
     loading_.store(true);  // show "Loading..." until the new station replies
@@ -323,17 +348,25 @@ void CoverEngine::onPaint(HWND h) {
             alpha = (float)el / settings.fadeMs;
         }
     }
-    // Only show the countdown once a cover is up, so it never floats on a black
-    // screen before the first cover has loaded.
-    const int rem = (settings.showOverlay && haveCover_) ? currentRemaining() : -1;
-    const wchar_t* status = loading_.load() ? L"Loading cover..." : nullptr;
-    d2d::render(h, alpha, transitionEffect(), rem, overlayFrac(), settings.rollDigits, status);
+    const bool poster = settings.layout == 1;
+    // The remaining-time overlay is one feature (size + rolling settings) shown in both
+    // layouts - as a top-right badge in fill, in the info box in poster - gated by the
+    // same "Show remaining time overlay" option. The renderer formats + rolls it.
+    const int rem = (settings.showRemaining && haveCover_) ? currentRemaining() : -1;
+    const wchar_t* status = loading_.load() ? L"Loading cover..." : nullptr; // no "Playing" label
+    std::wstring title, artist;
+    if (poster) { std::lock_guard<std::mutex> lock(mutex_); title = infoTitle_; artist = infoArtist_; }
+    d2d::setPosterBlur(settings.posterBlur);
+    d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(), settings.rollDigits, status,
+                settings.layout, title.c_str(), artist.c_str());
 }
 
 // The engine's repaint heartbeat: redraw only while something is actually changing -
 // a crossfade, the "Loading..." badge, or the countdown over a shown cover.
 void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     if (id != kHeartbeat) return;
-    if (fading_ || loading_.load() || (settings.showOverlay && haveCover_))
+    // Poster mode also repaints continuously (its info box shows a live countdown).
+    if (fading_ || loading_.load() || (settings.showRemaining && haveCover_) ||
+        (settings.layout == 1 && haveCover_))
         InvalidateRect(h, nullptr, FALSE);
 }

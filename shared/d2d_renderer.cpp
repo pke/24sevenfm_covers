@@ -3,12 +3,19 @@
 #include "d2d_rolldigits.h" // rolling countdown overlay
 
 #include <d2d1.h>
+#include <d2d1_1.h>       // ID2D1Device/DeviceContext + effects (real Gaussian blur)
+#include <d2d1_1helper.h> // D2D1::BitmapProperties1
+#include <d2d1effects.h>  // CLSID_D2D1GaussianBlur
 #include <d2d1helper.h>
+#include <d3d11.h>        // D3D11CreateDevice for the offscreen blur device
+#include <dxgi1_2.h>
 #include <wincodec.h>
 #include <dwrite.h>
 #include <string>
 
 #pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "ole32.lib")
@@ -18,22 +25,42 @@ namespace {
 
 template <class T> void SafeRelease(T*& p) { if (p) { p->Release(); p = nullptr; } }
 
-// Factories (device-independent, created once).
-ID2D1Factory*        g_factory = nullptr;
+// CLSID_D2D1GaussianBlur - defined inline; the header's symbol isn't exported by any
+// linked lib (would LNK2001), and d2d1effects.h is still needed for the prop enums.
+static const GUID kGaussianBlurCLSID =
+    { 0x1feb6d69, 0x2fe6, 0x4ac9, { 0x8c, 0x58, 0x1d, 0x7f, 0x93, 0xe7, 0xa6, 0xa5 } };
+
+// Factories (device-independent, created once). Factory1 so we can spin up an
+// ID2D1Device for the offscreen Gaussian-blur generator below.
+ID2D1Factory1*       g_factory = nullptr;
 IWICImagingFactory*  g_wic = nullptr;
 IDWriteFactory*      g_dwrite = nullptr;
 bool                 g_comInited = false;
+
+// Offscreen blur generator: a self-contained D2D 1.1 device that renders the cover
+// through the real Gaussian-blur effect, reads the result back, and hands it to the
+// main HwndRenderTarget as a plain bitmap (g_blurBmp). Kept separate so the proven
+// 1.0 render path (fill mode + the plugins' embedded windows) is untouched.
+ID3D11Device*        g_blurD3D = nullptr;
+ID2D1Device*         g_blurDevice = nullptr;
+ID2D1DeviceContext*  g_blurCtx = nullptr;
+ID2D1Effect*         g_blurEffect = nullptr;
+int                  g_posterBlur = 24; // Gaussian stddev at the blur working res (INI "posterBlur")
 
 // Per-window device-dependent resources (recreated on device loss).
 ID2D1HwndRenderTarget* g_rt = nullptr;
 ID2D1SolidColorBrush*  g_bgBrush = nullptr;
 ID2D1SolidColorBrush*  g_fgBrush = nullptr;
+ID2D1SolidColorBrush*  g_boxBrush = nullptr;   // translucent poster info-box backdrop
+ID2D1SolidColorBrush*  g_scrimBrush = nullptr; // subtle darken over the blurred poster background
+ID2D1Layer*            g_layer = nullptr;      // reused for the poster cover's rounded-corner clip
 
 // Cover state: raw JPEG bytes (device-independent) + their decoded D2D bitmaps
 // (device-dependent; recreated lazily from the bytes after device loss).
 std::string     g_curBytes, g_prevBytes;
 ID2D1Bitmap*    g_curBmp = nullptr;
 ID2D1Bitmap*    g_prevBmp = nullptr;
+ID2D1Bitmap*    g_blurBmp = nullptr; // tiny downscaled current cover, upscaled as the poster background
 
 // A legible tint derived from the current cover's average colour, used for the
 // countdown text so it reads as part of the artwork.
@@ -42,8 +69,12 @@ D2D1_COLOR_F    g_curTint = D2D1::ColorF(1, 1, 1, 1);
 void discardDeviceResources() {
     SafeRelease(g_curBmp);
     SafeRelease(g_prevBmp);
+    SafeRelease(g_blurBmp);
     SafeRelease(g_bgBrush);
     SafeRelease(g_fgBrush);
+    SafeRelease(g_boxBrush);
+    SafeRelease(g_scrimBrush);
+    SafeRelease(g_layer);
     SafeRelease(g_rt);
 }
 
@@ -78,10 +109,10 @@ D2D1_COLOR_F overlayTintFrom(IWICBitmapSource* src) {
     return out;
 }
 
-// Decodes JPEG bytes into a D2D bitmap tied to the current render target. When
-// isCurrent, also refreshes g_curTint from the decoded pixels.
-ID2D1Bitmap* createBitmap(const std::string& bytes, bool isCurrent) {
-    if (!g_rt || !g_wic || bytes.empty())
+// Decodes JPEG bytes into a D2D bitmap tied to `rt`. If tintOut is non-null, also
+// writes the cover's average-colour tint there.
+ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_COLOR_F* tintOut) {
+    if (!rt || !g_wic || bytes.empty())
         return nullptr;
     IWICStream* stream = nullptr;
     IWICBitmapDecoder* decoder = nullptr;
@@ -96,15 +127,20 @@ ID2D1Bitmap* createBitmap(const std::string& bytes, bool isCurrent) {
         SUCCEEDED(g_wic->CreateFormatConverter(&conv)) &&
         SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppPBGRA,
                                    WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut))) {
-        g_rt->CreateBitmapFromWicBitmap(conv, nullptr, &bmp);
-        if (isCurrent)
-            g_curTint = overlayTintFrom(conv);
+        rt->CreateBitmapFromWicBitmap(conv, nullptr, &bmp);
+        if (tintOut)
+            *tintOut = overlayTintFrom(conv);
     }
     SafeRelease(conv);
     SafeRelease(frame);
     SafeRelease(decoder);
     SafeRelease(stream);
     return bmp;
+}
+
+// Decodes into the main render target; refreshes g_curTint when isCurrent.
+ID2D1Bitmap* createBitmap(const std::string& bytes, bool isCurrent) {
+    return decodeBitmap(g_rt, bytes, isCurrent ? &g_curTint : nullptr);
 }
 
 // Small status badge, bottom-right (e.g. "Loading cover...").
@@ -130,6 +166,251 @@ void drawStatus(const wchar_t* text, float cw, float ch) {
         SafeRelease(layout);
     }
     SafeRelease(fmt);
+}
+
+// --- poster layout ----------------------------------------------------------
+
+// A centered Segoe UI text format. Caller releases.
+IDWriteTextFormat* makeFormat(float size, DWRITE_FONT_WEIGHT weight, bool center) {
+    IDWriteTextFormat* fmt = nullptr;
+    if (SUCCEEDED(g_dwrite->CreateTextFormat(L"Segoe UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+                                             DWRITE_FONT_STRETCH_NORMAL, size, L"", &fmt)) &&
+        center) {
+        fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
+    return fmt;
+}
+
+// Lazily create the offscreen D2D 1.1 device + Gaussian-blur effect (hardware, WARP
+// fallback). Independent of the main HwndRenderTarget's device.
+bool createBlurGen() {
+    if (g_blurCtx) return true;
+    UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+                                   nullptr, 0, D3D11_SDK_VERSION, &g_blurD3D, nullptr, nullptr);
+    if (FAILED(hr))
+        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
+                               nullptr, 0, D3D11_SDK_VERSION, &g_blurD3D, nullptr, nullptr);
+    if (FAILED(hr)) return false;
+    IDXGIDevice* dxgi = nullptr;
+    if (FAILED(g_blurD3D->QueryInterface(IID_PPV_ARGS(&dxgi)))) return false;
+    hr = g_factory->CreateDevice(dxgi, &g_blurDevice);
+    SafeRelease(dxgi);
+    if (FAILED(hr)) return false;
+    if (FAILED(g_blurDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &g_blurCtx)))
+        return false;
+    if (FAILED(g_blurCtx->CreateEffect(kGaussianBlurCLSID, &g_blurEffect)))
+        return false;
+    return true;
+}
+
+// Renders the current cover through the real Gaussian-blur effect at a small working
+// resolution, reads it back, and uploads it to the main render target as g_blurBmp
+// (cached until the cover changes).
+void generateBlur() {
+    if (g_blurBmp || g_curBytes.empty() || !g_rt || !createBlurGen()) return;
+    ID2D1Bitmap* src = decodeBitmap(g_blurCtx, g_curBytes, nullptr);
+    if (!src) return;
+    const D2D1_SIZE_F ss = src->GetSize();
+    const UINT S = 240; // blur working resolution (square)
+
+    ID2D1Bitmap1* target = nullptr;
+    D2D1_BITMAP_PROPERTIES1 tp = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (SUCCEEDED(g_blurCtx->CreateBitmap(D2D1::SizeU(S, S), nullptr, 0, tp, &target))) {
+        float dev = (float)g_posterBlur; // configurable via the INI "posterBlur"
+        if (dev < 0.0f) dev = 0.0f; else if (dev > 200.0f) dev = 200.0f;
+        g_blurEffect->SetInput(0, src);
+        g_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, (FLOAT)dev);
+        g_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+        g_blurCtx->SetTarget(target);
+        g_blurCtx->BeginDraw();
+        g_blurCtx->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+        if (ss.width > 0 && ss.height > 0)
+            g_blurCtx->SetTransform(D2D1::Matrix3x2F::Scale(S / ss.width, S / ss.height));
+        g_blurCtx->DrawImage(g_blurEffect, D2D1_INTERPOLATION_MODE_LINEAR);
+        g_blurCtx->SetTransform(D2D1::Matrix3x2F::Identity());
+        g_blurCtx->EndDraw();
+        g_blurCtx->SetTarget(nullptr);
+
+        // Read the blurred result back to CPU, then upload it to the HwndRenderTarget.
+        ID2D1Bitmap1* cpu = nullptr;
+        D2D1_BITMAP_PROPERTIES1 cprops = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        if (SUCCEEDED(g_blurCtx->CreateBitmap(D2D1::SizeU(S, S), nullptr, 0, cprops, &cpu))) {
+            D2D1_POINT_2U dst = {0, 0};
+            D2D1_RECT_U srcRect = {0, 0, S, S};
+            if (SUCCEEDED(cpu->CopyFromBitmap(&dst, target, &srcRect))) {
+                D2D1_MAPPED_RECT mapped = {};
+                if (SUCCEEDED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped))) {
+                    D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(
+                        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+                    g_rt->CreateBitmap(D2D1::SizeU(S, S), mapped.bits, mapped.pitch, bp, &g_blurBmp);
+                    cpu->Unmap();
+                }
+            }
+            SafeRelease(cpu);
+        }
+        SafeRelease(target);
+    }
+    SafeRelease(src);
+}
+
+void drawBlurredBackground(float cw, float ch) {
+    generateBlur();
+    if (g_blurBmp) {
+        const float side = cw > ch ? cw : ch; // cover-fit the square blur over the window
+        const float dx = (cw - side) * 0.5f, dy = (ch - side) * 0.5f;
+        g_rt->DrawBitmap(g_blurBmp, D2D1::RectF(dx, dy, dx + side, dy + side), 1.0f,
+                         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+    if (g_scrimBrush) g_rt->FillRectangle(D2D1::RectF(0, 0, cw, ch), g_scrimBrush);
+}
+
+// Draws the cover (with the active transition between prev/cur) aspect-fit into
+// `dest`, clipped to rounded corners when cornerRadius > 0. Shared by both layouts:
+// fill mode passes the whole client area (square corners); poster mode passes the
+// centered cover rect (rounded).
+void drawCover(const D2D1_RECT_F& dest, Transition transition, float progress, float cornerRadius) {
+    bool pushed = false;
+    ID2D1RoundedRectangleGeometry* geo = nullptr;
+    if (cornerRadius > 0.0f && g_layer && g_factory &&
+        SUCCEEDED(g_factory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(dest, cornerRadius, cornerRadius), &geo))) {
+        g_rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geo), g_layer);
+        pushed = true;
+    }
+    drawTransition(g_rt, transition, g_prevBmp, g_curBmp,
+                   dest.left, dest.top, dest.right - dest.left, dest.bottom - dest.top, progress);
+    if (pushed) g_rt->PopLayer();
+    SafeRelease(geo);
+}
+
+// Poster layout: a heavily blurred background, the sharp cover, and a rounded info
+// box (title + composer + status, tinted to the cover). Portrait stacks the cover
+// above the box; when the window is wider than tall, the cover goes to the left and
+// the box to the right, both vertically centered.
+bool renderPoster(float cw, float ch, Transition transition, float progress,
+                  int remainingSeconds, float overlayFontFrac, bool rollDigits,
+                  const wchar_t* title, const wchar_t* artist, const wchar_t* status) {
+    drawBlurredBackground(cw, ch);
+    if (!g_curBmp) { drawStatus(status, cw, ch); return false; } // nothing decoded yet
+
+    const bool wide = cw > ch;
+    const float m = (cw < ch ? cw : ch) * 0.08f;
+
+    // Cover square + box column/row. In portrait the box Y is finalized after the
+    // text is measured (so the cover+box group can be vertically centered).
+    float coverS, coverX, coverY, boxX, boxW;
+    if (wide) {
+        coverS = ch - 2 * m;
+        const float maxCover = (cw - 2 * m) * 0.55f;
+        if (coverS > maxCover) coverS = maxCover;
+        if (coverS < 1) coverS = 1;
+        coverX = m;
+        coverY = (ch - coverS) * 0.5f;
+        boxX = coverX + coverS + m * 0.8f;
+        boxW = cw - m - boxX;
+    } else {
+        coverS = cw - 2 * m;
+        if (coverS > ch * 0.52f) coverS = ch * 0.52f;
+        if (coverS < 1) coverS = 1;
+        coverX = (cw - coverS) * 0.5f;
+        coverY = 0; // finalized below
+        boxX = coverX;
+        boxW = coverS;
+    }
+    if (boxW < coverS * 0.5f) boxW = coverS * 0.5f;
+
+    // Measure the info text to size the box.
+    const float pad = coverS * 0.06f;
+    const float textW = boxW - 2 * pad;
+    const float titleSize = coverS * 0.072f, artistSize = coverS * 0.058f;
+    IDWriteTextFormat* tf = g_dwrite ? makeFormat(titleSize, DWRITE_FONT_WEIGHT_SEMI_BOLD, true) : nullptr;
+    IDWriteTextFormat* af = g_dwrite ? makeFormat(artistSize, DWRITE_FONT_WEIGHT_NORMAL, true) : nullptr;
+    IDWriteTextLayout* tl = nullptr; float titleH = 0;
+    IDWriteTextLayout* al = nullptr; float artistH = 0;
+    if (tf && title && *title &&
+        SUCCEEDED(g_dwrite->CreateTextLayout(title, (UINT32)lstrlenW(title), tf, textW, 10000, &tl))) {
+        DWRITE_TEXT_METRICS mt = {}; tl->GetMetrics(&mt); titleH = mt.height;
+    }
+    if (af && artist && *artist &&
+        SUCCEEDED(g_dwrite->CreateTextLayout(artist, (UINT32)lstrlenW(artist), af, textW, 10000, &al))) {
+        DWRITE_TEXT_METRICS ma = {}; al->GetMetrics(&ma); artistH = ma.height;
+    }
+    const float lineGap = artistSize * 0.35f;
+    const float cdFont  = ch * overlayFontFrac;                          // countdown size (the size setting)
+    const float statusH = (remainingSeconds >= 0) ? cdFont * 1.35f : 0.0f; // countdown row (0 = no countdown)
+    const float boxH = pad + titleH + (artistH > 0 ? lineGap + artistH : 0)
+                     + (statusH > 0 ? lineGap + statusH : 0) + pad;
+
+    float boxY;
+    if (wide) {
+        boxY = (ch - boxH) * 0.5f;
+    } else {
+        const float gap = m * 0.6f;
+        coverY = (ch - (coverS + gap + boxH)) * 0.5f;
+        if (coverY < m) coverY = m;
+        boxY = coverY + coverS + gap;
+    }
+
+    // Cover (rounded), with the active transition.
+    drawCover(D2D1::RectF(coverX, coverY, coverX + coverS, coverY + coverS),
+              transition, progress, coverS * 0.045f);
+
+    // Info box.
+    if (g_boxBrush) {
+        const float br = coverS * 0.05f;
+        g_rt->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(boxX, boxY, boxX + boxW, boxY + boxH), br, br), g_boxBrush);
+    }
+    if (g_fgBrush) g_fgBrush->SetColor(g_curTint); // cover-matched text
+    float ty = boxY + pad;
+    if (tl) { g_rt->DrawTextLayout(D2D1::Point2F(boxX + pad, ty), tl, g_fgBrush); ty += titleH + (artistH > 0 ? lineGap : 0); }
+    if (al) { g_rt->DrawTextLayout(D2D1::Point2F(boxX + pad, ty), al, g_fgBrush); }
+    if (g_fgBrush) g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+    SafeRelease(tl); SafeRelease(al); SafeRelease(tf); SafeRelease(af);
+
+    // Bottom-right of the box: "Loading..." while fetching, else the live countdown -
+    // the SAME rolling widget the fill overlay uses, translated into the box (no
+    // re-implemented formatting).
+    bool overlayAnimating = false;
+    if (status && *status) {
+        drawStatus(status, cw, ch); // window bottom-right, only while loading
+    } else if (remainingSeconds >= 0 && g_dwrite && g_bgBrush && g_fgBrush) {
+        // Same rolling widget as fill mode, in the box's bottom-right, honouring the
+        // size + rolling settings - but no background box (the info box is the backdrop).
+        g_fgBrush->SetColor(g_curTint);
+        g_rt->SetTransform(D2D1::Matrix3x2F::Translation(boxX, boxY));
+        overlayAnimating = drawRollingTime(g_rt, g_dwrite, g_bgBrush, g_fgBrush, remainingSeconds,
+                                           boxW, boxH, cdFont, rollDigits, true, false);
+        g_rt->SetTransform(D2D1::Matrix3x2F::Identity());
+        g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+    } else {
+        resetRollingTime();
+    }
+    return overlayAnimating;
+}
+
+// Fill layout: the cover fills the window with the active transition, plus the
+// optional countdown overlay and status badge. Returns true while the countdown's
+// rolling animation is running.
+bool renderCover(float cw, float ch, Transition transition, float progress,
+                 int remainingSeconds, float overlayFontFrac, bool rollDigits, const wchar_t* status) {
+    drawCover(D2D1::RectF(0, 0, cw, ch), transition, progress, 0.0f);
+    bool overlayAnimating = false;
+    if (remainingSeconds >= 0) {
+        if (g_fgBrush) g_fgBrush->SetColor(g_curTint); // tint the countdown to the cover
+        overlayAnimating = drawRollingTime(g_rt, g_dwrite, g_bgBrush, g_fgBrush, remainingSeconds,
+                                           cw, ch, ch * overlayFontFrac, rollDigits, false, true);
+        if (g_fgBrush) g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1)); // status stays white
+    } else {
+        resetRollingTime(); // hidden -> don't roll from a stale value when it returns
+    }
+    drawStatus(status, cw, ch);
+    return overlayAnimating;
 }
 
 } // namespace
@@ -164,6 +445,10 @@ void resetTarget() {
 void shutdown() {
     shutdownRollingTime();
     discardDeviceResources();
+    SafeRelease(g_blurEffect); // offscreen blur generator (its own device)
+    SafeRelease(g_blurCtx);
+    SafeRelease(g_blurDevice);
+    SafeRelease(g_blurD3D);
     g_curBytes.clear();
     g_prevBytes.clear();
     SafeRelease(g_dwrite);
@@ -181,7 +466,8 @@ void setCover(const void* data, size_t len, bool fadeFromCurrent) {
         SafeRelease(g_prevBmp);
     }
     g_curBytes.assign(static_cast<const char*>(data), len);
-    SafeRelease(g_curBmp); // recreated from bytes on next render
+    SafeRelease(g_curBmp);  // recreated from bytes on next render
+    SafeRelease(g_blurBmp); // poster background is derived from the current cover
 }
 
 void endFade() {
@@ -189,8 +475,16 @@ void endFade() {
     SafeRelease(g_prevBmp);
 }
 
+void setPosterBlur(int standardDeviation) {
+    if (standardDeviation != g_posterBlur) {
+        g_posterBlur = standardDeviation;
+        SafeRelease(g_blurBmp); // regenerate the cached blur at the new strength
+    }
+}
+
 bool render(HWND hwnd, float progress, Transition transition, int remainingSeconds,
-            float overlayFontFrac, bool rollDigits, const wchar_t* statusText) {
+            float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
+            int layout, const wchar_t* title, const wchar_t* artist) {
     if (!g_factory)
         return false;
 
@@ -204,8 +498,11 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
                 D2D1::RenderTargetProperties(),
                 D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(cw, ch)), &g_rt)))
             return false;
-        g_rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.59f), &g_bgBrush); // overlay backdrop
-        g_rt->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &g_fgBrush);     // overlay text
+        g_rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.59f), &g_bgBrush);    // overlay backdrop
+        g_rt->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &g_fgBrush);        // overlay text
+        g_rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.34f), &g_boxBrush);   // poster info box
+        g_rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 0.18f), &g_scrimBrush); // poster bg scrim
+        g_rt->CreateLayer(nullptr, &g_layer);                                    // poster cover rounded clip
     } else {
         const D2D1_SIZE_U ps = g_rt->GetPixelSize();
         if (ps.width != cw || ps.height != ch)
@@ -217,17 +514,14 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
 
     g_rt->BeginDraw();
     g_rt->Clear(D2D1::ColorF(D2D1::ColorF::Black));
-    drawTransition(g_rt, transition, g_prevBmp, g_curBmp, (float)cw, (float)ch, progress);
     bool overlayAnimating = false;
-    if (remainingSeconds >= 0) {
-        if (g_fgBrush) g_fgBrush->SetColor(g_curTint); // tint the countdown to the cover
-        overlayAnimating = drawRollingTime(g_rt, g_dwrite, g_bgBrush, g_fgBrush,
-                                           remainingSeconds, (float)cw, (float)ch, overlayFontFrac, rollDigits);
-        if (g_fgBrush) g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1)); // status stays white
+    if (layout == 1) {
+        overlayAnimating = renderPoster((float)cw, (float)ch, transition, progress,
+                                        remainingSeconds, overlayFontFrac, rollDigits, title, artist, statusText);
     } else {
-        resetRollingTime(); // hidden -> don't roll from a stale value when it returns
+        overlayAnimating = renderCover((float)cw, (float)ch, transition, progress,
+                                       remainingSeconds, overlayFontFrac, rollDigits, statusText);
     }
-    drawStatus(statusText, (float)cw, (float)ch);
     const HRESULT hr = g_rt->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET)
         discardDeviceResources(); // device lost; rebuild on next render

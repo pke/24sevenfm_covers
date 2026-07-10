@@ -38,10 +38,7 @@ public:
     BEGIN_MSG_MAP_EX(CSscPrefs)
         MSG_WM_INITDIALOG(OnInitDialog)
         MSG_WM_HSCROLL(OnHScroll)
-        COMMAND_HANDLER_EX(IDC_OPT_OVERLAY, BN_CLICKED, OnEnableChange)
-        COMMAND_HANDLER_EX(IDC_OPT_ROLL, BN_CLICKED, OnAnyChange)
-        COMMAND_HANDLER_EX(IDC_OPT_SIZE, CBN_SELCHANGE, OnAnyChange)
-        COMMAND_HANDLER_EX(IDC_OPT_TRANS, CBN_SELCHANGE, OnEnableChange)
+        COMMAND_CODE_HANDLER_EX(BN_CLICKED, OnControlClick) // all checkboxes + radio groups
     END_MSG_MAP()
 
 private:
@@ -51,14 +48,14 @@ private:
         return FALSE;
     }
     void OnHScroll(UINT, UINT, CScrollBar) { optpanel::onHScroll(*this); onChanged(); }
-    void OnEnableChange(UINT, int, CWindow) { optpanel::updateEnabled(*this); onChanged(); }
-    void OnAnyChange(UINT, int, CWindow) { onChanged(); }
+    void OnControlClick(UINT, int, CWindow) { optpanel::updateEnabled(*this); onChanged(); }
 
     bool hasChanged() {
         CoverEngine::Settings d; optpanel::read(*this, d);
         const CoverEngine::Settings& s = CoverEngine::instance().settings;
-        return d.showOverlay != s.showOverlay || d.overlaySize != s.overlaySize ||
-               d.rollDigits != s.rollDigits || d.transition != s.transition || d.fadeMs != s.fadeMs;
+        return d.showRemaining != s.showRemaining || d.remainingSize != s.remainingSize ||
+               d.rollDigits != s.rollDigits || d.transition != s.transition ||
+               d.fadeMs != s.fadeMs || d.layout != s.layout;
     }
     void onChanged() { m_callback->on_state_changed(); }
 

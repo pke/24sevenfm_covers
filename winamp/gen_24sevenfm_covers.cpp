@@ -77,31 +77,39 @@ static std::string iniPath() {
     if (!p.empty() && p.back() != '\\' && p.back() != '/') p += '\\';
     return p + "24seven.fm-covers.ini";
 }
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
 static void loadSettings() {
-    const std::string p = iniPath();
+    const std::string iniFile = iniPath();
+    const auto readInt = [&iniFile](const char* key, int def, int lo, int hi) {
+        return clampi(GetPrivateProfileIntA("options", key, def, iniFile.c_str()), lo, hi);
+    };
     CoverEngine::Settings& s = eng().settings;
-    s.showOverlay = GetPrivateProfileIntA("options", "overlay", 0, p.c_str()) != 0;
-    s.overlaySize = GetPrivateProfileIntA("options", "overlaysize", 2, p.c_str());
-    if (s.overlaySize < 0 || s.overlaySize > 2) s.overlaySize = 2;
-    s.rollDigits  = GetPrivateProfileIntA("options", "roll", 0, p.c_str()) != 0;
-    // "transition" superseded the old "crossfade" bool; fall back to it so an
-    // existing INI keeps its on/off choice (on -> Crossfade, off -> None).
-    const int legacyCf = GetPrivateProfileIntA("options", "crossfade", 1, p.c_str()) != 0 ? 1 : 0;
-    s.transition  = GetPrivateProfileIntA("options", "transition", legacyCf, p.c_str());
-    if (s.transition < 0 || s.transition > 3) s.transition = 1;
-    s.fadeMs      = GetPrivateProfileIntA("options", "fadeMs", 500, p.c_str());
-    if (s.fadeMs < 500)  s.fadeMs = 500;
-    if (s.fadeMs > 2000) s.fadeMs = 2000;
+    s.showRemaining = readInt("showRemaining", 0, 0, 1) != 0;
+    s.remainingSize = readInt("remainingSize", 0, 0, 2);
+    s.rollDigits    = readInt("roll", 0, 0, 1) != 0;
+    // "transition" superseded the old "crossfade" bool; fall back to it so an existing
+    // INI keeps its on/off choice (on -> Crossfade, off -> None).
+    const int legacyCrossfade = readInt("crossfade", 1, 0, 1);
+    s.transition    = readInt("transition", legacyCrossfade, 0, 3);
+    s.fadeMs        = readInt("fadeMs", 1000, 500, 2000);
+    s.layout        = readInt("layout", 0, 0, 1);
+    s.posterBlur    = readInt("posterBlur", 24, 0, 200); // no UI; INI only
 }
 static void saveSettings() {
-    const std::string p = iniPath();
+    const std::string iniFile = iniPath();
     const CoverEngine::Settings& s = eng().settings;
-    WritePrivateProfileStringA("options", "overlay", s.showOverlay ? "1" : "0", p.c_str());
-    char buf[16];
-    wsprintfA(buf, "%d", s.overlaySize); WritePrivateProfileStringA("options", "overlaysize", buf, p.c_str());
-    WritePrivateProfileStringA("options", "roll", s.rollDigits ? "1" : "0", p.c_str());
-    wsprintfA(buf, "%d", s.transition);  WritePrivateProfileStringA("options", "transition", buf, p.c_str());
-    wsprintfA(buf, "%d", s.fadeMs);      WritePrivateProfileStringA("options", "fadeMs", buf, p.c_str());
+    const auto writeInt = [&iniFile](const char* key, int value) {
+        char buf[16]; wsprintfA(buf, "%d", value);
+        WritePrivateProfileStringA("options", key, buf, iniFile.c_str());
+    };
+    writeInt("showRemaining", s.showRemaining ? 1 : 0);
+    writeInt("remainingSize", s.remainingSize);
+    writeInt("roll", s.rollDigits ? 1 : 0);
+    writeInt("transition", s.transition);
+    writeInt("fadeMs", s.fadeMs);
+    writeInt("layout", s.layout);
+    writeInt("posterBlur", s.posterBlur);
 }
 
 // Plugin entry points (defined below) and the descriptor Winamp fills in.
@@ -265,12 +273,22 @@ static int init() {
     return 0;
 }
 
-// config() dialog: an About box. The options now live in Winamp's Preferences
-// treeview (registered in init()), so double-clicking the plugin - or the
-// Configure button - just shows version + a link, nothing to apply here.
+// config() dialog: a tabbed, informational dialog. The options live in Winamp's
+// Preferences tree, so this just has one "About" tab today (room for a Credits tab
+// later) and a Close button - nothing to apply.
+static HWND  g_dlgAbout = nullptr;
 static HFONT g_linkFont = nullptr;
 
-static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+// Positions a tab page child dialog inside the tab control's display area.
+static void placePage(HWND dlg, HWND tab, HWND page) {
+    RECT rc; GetWindowRect(tab, &rc);
+    MapWindowPoints(HWND_DESKTOP, dlg, (POINT*)&rc, 2);
+    TabCtrl_AdjustRect(tab, FALSE, &rc); // window rect -> display (content) rect
+    SetWindowPos(page, HWND_TOP, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOZORDER);
+}
+
+// "About" tab page: version (kept in sync with version.h) + a clickable link.
+static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_INITDIALOG: {
             SetDlgItemTextA(dlg, IDC_ABOUT_VER, "Version " SSC_VER_STR);
@@ -304,13 +322,31 @@ static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
                 ShellExecuteA(dlg, "open", "https://24seven.fm/", nullptr, nullptr, SW_SHOWNORMAL);
                 return TRUE;
             }
-            if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) {
-                EndDialog(dlg, LOWORD(wp));
-                return TRUE;
-            }
             break;
         case WM_DESTROY:
             if (g_linkFont) { DeleteObject(g_linkFont); g_linkFont = nullptr; }
+            break;
+    }
+    return FALSE;
+}
+
+static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
+    switch (msg) {
+        case WM_INITDIALOG: {
+            HWND tab = GetDlgItem(dlg, IDC_TAB);
+            TCITEMA ti = {}; ti.mask = TCIF_TEXT;
+            ti.pszText = (char*)"About"; TabCtrl_InsertItem(tab, 0, &ti);
+            g_dlgAbout = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_TAB_ABOUT), dlg, AboutTabProc);
+            placePage(dlg, tab, g_dlgAbout);
+            ShowWindow(g_dlgAbout, SW_SHOW);
+            return TRUE;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) { // Close (or Esc)
+                if (g_dlgAbout) { DestroyWindow(g_dlgAbout); g_dlgAbout = nullptr; }
+                EndDialog(dlg, LOWORD(wp));
+                return TRUE;
+            }
             break;
     }
     return FALSE;
@@ -334,21 +370,18 @@ static INT_PTR CALLBACK PrefsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
             optpanel::onHScroll(dlg);
             commit();
             return TRUE;
-        case WM_COMMAND: {
-            const WORD id = LOWORD(wp), code = HIWORD(wp);
-            if (id == IDC_OPT_OVERLAY || (id == IDC_OPT_TRANS && code == CBN_SELCHANGE))
-                optpanel::updateEnabled(dlg);
-            if (id == IDC_OPT_OVERLAY || id == IDC_OPT_ROLL ||
-                ((id == IDC_OPT_SIZE || id == IDC_OPT_TRANS) && code == CBN_SELCHANGE))
-                commit();
+        case WM_COMMAND:
+            // Any control click (checkbox / radio group) may change dependent enabling.
+            optpanel::updateEnabled(dlg);
+            commit(); // live-apply
             return TRUE;
-        }
     }
     return FALSE;
 }
 
 static void config() {
-    // About box only - the options are in Winamp's Preferences tree (see init()).
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_TAB_CLASSES };
+    InitCommonControlsEx(&icc); // register the tab control class
     DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(IDD_CONFIG), g_winamp, ConfigDlgProc, 0);
 }
 

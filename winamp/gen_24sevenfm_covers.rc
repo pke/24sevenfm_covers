@@ -5,18 +5,29 @@
 // The "Options" tab page is the shared dialog (also used by the foobar2000 plugin).
 #include "../shared/options_page.rc"
 
-// --- About dialog (double-click / Configure). Options live in Winamp's Prefs tree.
-IDD_CONFIG DIALOGEX 0, 0, 220, 104
+// --- Info dialog (double-click / Configure): a tab control + Close. Options live in
+// Winamp's Preferences tree, so this is informational only (one About tab for now).
+IDD_CONFIG DIALOGEX 0, 0, 231, 150
 STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT
-CAPTION "24seven.fm Covers - About"
+CAPTION "24seven.fm Covers"
 FONT 8, "MS Shell Dlg"
 BEGIN
-    LTEXT          "24seven.fm Covers", -1, 8, 10, 204, 10
-    LTEXT          "", IDC_ABOUT_VER, 8, 24, 204, 10
-    LTEXT          "Cover art for the 24seven.fm radio stations, shown in a dockable, GPU-rendered Winamp window.", -1, 8, 42, 204, 28
-    LTEXT          "24seven.fm", IDC_ABOUT_LINK, 8, 74, 120, 10, SS_NOTIFY
-    DEFPUSHBUTTON  "OK", IDOK, 163, 84, 50, 14
+    CONTROL        "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 217, 115
+    DEFPUSHBUTTON  "Close", IDOK, 174, 129, 50, 14
+END
+
+// Child page shown inside the "About" tab.
+IDD_TAB_ABOUT DIALOGEX 0, 0, 205, 100
+STYLE DS_CONTROL | WS_CHILD
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT          "24seven.fm Covers", -1, 8, 10, 190, 10
+    LTEXT          "", IDC_ABOUT_VER, 8, 24, 190, 10
+    LTEXT          "Cover art for the 24seven.fm radio stations, shown in a dockable, GPU-rendered Winamp window.", -1, 8, 42, 190, 28
+    LTEXT          SSC_COPYRIGHT, -1, 8, 76, 190, 10
+    LTEXT          "24seven.fm", IDC_ABOUT_LINK, 8, 88, 120, 10, SS_NOTIFY
 END
 
 // --- Version information ----------------------------------------------------

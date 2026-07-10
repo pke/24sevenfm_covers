@@ -18,13 +18,14 @@ enum class Transition {
 };
 
 // Draws one frame of a transition between `prev` (outgoing) and `cur` (incoming),
-// aspect-fit + centred in the cw x ch client area. progress in [0,1] (0 = fully
-// showing prev, 1 = fully showing cur). Either bitmap may be null (e.g. the very
-// first cover, or during device recreation). The caller has already cleared the
-// target to black and will draw overlays afterwards.
+// aspect-fit + centred in the destination rect (x, y, w, h) - the whole client area
+// in fill mode, or the centred cover rect in poster mode. progress in [0,1] (0 =
+// fully showing prev, 1 = fully showing cur). Either bitmap may be null (e.g. the
+// very first cover, or during device recreation). The caller has already cleared /
+// painted the background and will draw overlays afterwards.
 void drawTransition(ID2D1RenderTarget* rt, Transition type,
                     ID2D1Bitmap* prev, ID2D1Bitmap* cur,
-                    float cw, float ch, float progress);
+                    float x, float y, float w, float h, float progress);
 
 } // namespace d2d
 

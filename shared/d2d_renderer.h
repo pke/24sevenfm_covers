@@ -29,6 +29,11 @@ void setCover(const void* data, size_t len, bool fadeFromCurrent);
 // Drops the outgoing cover once a crossfade has finished.
 void endFade();
 
+// Poster-background Gaussian blur strength (standard deviation, in the blur's ~240px
+// working resolution). Persisted in the INI as "posterBlur" but not exposed in the UI.
+// Changing it invalidates the cached blur so it regenerates on the next poster render.
+void setPosterBlur(int standardDeviation);
+
 // Renders hwnd's client area. `progress` in [0,1] drives the active transition
 // between the outgoing and incoming covers (1 = settled on the incoming one);
 // `transition` selects which effect. remainingSeconds < 0 hides the countdown
@@ -37,8 +42,15 @@ void endFade();
 // countdown (rolling digits) vs. an instant update. statusText (if
 // non-null/non-empty) is drawn as a small badge bottom-right. Returns true while
 // the countdown's rolling animation is in progress (keep repainting at ~60fps).
+//
+// layout: 0 = fill (cover fills the window + countdown overlay, transitions animate);
+// 1 = poster (a heavily blurred cover fills the background, the sharp cover is drawn
+// centered with margins, and a rounded info box below shows title + artist + the
+// status). In poster mode `title`/`artist` are the info-box text (may be empty) and
+// the countdown/transition are not used.
 bool render(HWND hwnd, float progress, Transition transition, int remainingSeconds,
-            float overlayFontFrac, bool rollDigits, const wchar_t* statusText);
+            float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
+            int layout, const wchar_t* title, const wchar_t* artist);
 
 } // namespace d2d
 

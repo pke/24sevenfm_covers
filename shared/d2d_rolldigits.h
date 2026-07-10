@@ -13,15 +13,18 @@ struct IDWriteFactory;
 
 namespace d2d {
 
-// Draws remainingSeconds as an "m:ss" badge in the top-right of the cw x ch client
-// area. fontFrac is the font height as a fraction of ch. When `animate` is true a
-// changed value rolls (odometer); when false the value updates instantly. Returns
-// true while a roll animation is in progress, so the caller can keep repainting at
-// ~60fps. The brushes/factory are the renderer's device-dependent resources.
+// Draws remainingSeconds as an "m:ss" countdown, right-aligned in a top corner of the
+// cw x ch area (bottom corner when atBottom). fontSize is the glyph height in DIPs.
+// drawBackground fills the badge backdrop (fill mode) - pass false to draw just the
+// digits (the poster info box, which is its own backdrop). When `animate` is true a
+// changed value rolls (odometer); when false it updates instantly. Returns true while
+// a roll is in progress, so the caller keeps repainting at ~60fps. Callers can
+// translate the render target first to place it inside any rectangle (the poster info
+// box passes the box rect; fill mode passes the whole client area).
 bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dwrite,
                      ID2D1SolidColorBrush* bgBrush, ID2D1SolidColorBrush* fgBrush,
-                     int remainingSeconds, float cw, float ch, float fontFrac,
-                     bool animate);
+                     int remainingSeconds, float cw, float ch, float fontSize,
+                     bool animate, bool atBottom, bool drawBackground);
 
 // Forgets the last value so the next draw shows instantly (no roll from a stale
 // value). Call while the overlay is hidden (remaining unknown / overlay off).
