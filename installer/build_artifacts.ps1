@@ -2,7 +2,8 @@
 #
 # Produces (from the already-built plugin DLLs), named <name>-<version>-<builddate>.<ext>:
 #   foobar_24sevenfm_covers-<ver>-<date>.fb2k-component  foobar native package (double-click)
-#   winamp_24sevenfm_covers-<ver>-<date>.exe             NSIS installer (needs makensis)
+#   winamp_24sevenfm_covers-<ver>-<date>.exe             Winamp NSIS installer (needs makensis)
+#   foobar_24sevenfm_covers-<ver>-<date>.exe             foobar NSIS installer (needs makensis)
 #   winamp_24sevenfm_covers-<ver>-<date>.zip             gen_24sevenfm_covers.dll + README (manual)
 #   foobar_24sevenfm_covers-<ver>-<date>.zip             foo_24sevenfm_covers.dll + README (manual)
 #   <artifact>.sha256                                    SHA-256 sidecar for each of the above
@@ -34,12 +35,14 @@ function Get-ModuleVer([string]$file) {
 $winVer  = Get-ModuleVer (Join-Path $root 'winamp\gen_version.h')
 $fbVer   = Get-ModuleVer (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_version.h')
 $winVer4 = "$winVer.0"
+$fbVer4  = "$fbVer.0"
 
 # Eclipse-style artifact naming: <name>-<version>-<builddate>.<ext>. Each artifact uses
-# ITS OWN module version; the NSIS installer carries the Winamp plugin's version.
+# ITS OWN module version; each NSIS installer carries its own module's version.
 $stamp   = Get-Date -Format 'yyyyMMdd'
 $nFbComp = "foobar_24sevenfm_covers-$fbVer-$stamp.fb2k-component"
 $nWinExe = "winamp_24sevenfm_covers-$winVer-$stamp.exe"
+$nFbExe  = "foobar_24sevenfm_covers-$fbVer-$stamp.exe"
 $nWinZip = "winamp_24sevenfm_covers-$winVer-$stamp.zip"
 $nFbZip  = "foobar_24sevenfm_covers-$fbVer-$stamp.zip"
 Write-Host "Winamp $winVer  |  foobar $fbVer   (build $stamp)" -ForegroundColor Cyan
@@ -102,16 +105,21 @@ Compress-Archive -Path (Join-Path $wFb 'foo_24sevenfm_covers.dll') -DestinationP
 Move-Item $tmpZip (Join-Path $dist $nFbComp) -Force
 Write-Host "  $nFbComp"
 
-# 2. NSIS Winamp installer
+# 2. NSIS installers (Winamp + foobar2000). Each .nsi writes its base name; the
+#    version/date suffix is added here. Each carries its own module version.
 $makensis = Find-Tool 'makensis.exe' @("${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe")
 if ($makensis) {
     & $makensis /V2 "/DAPPVER=$winVer" "/DAPPVER4=$winVer4" (Join-Path $here 'winamp_24sevenfm_covers.nsi')
-    if ($LASTEXITCODE -ne 0) { throw "makensis failed." }
-    # The .nsi writes the base name; add the version/date suffix here.
+    if ($LASTEXITCODE -ne 0) { throw "makensis (Winamp) failed." }
     Move-Item (Join-Path $dist 'winamp_24sevenfm_covers.exe') (Join-Path $dist $nWinExe) -Force
     Write-Host "  $nWinExe"
+
+    & $makensis /V2 "/DAPPVER=$fbVer" "/DAPPVER4=$fbVer4" (Join-Path $here 'foobar_24sevenfm_covers.nsi')
+    if ($LASTEXITCODE -ne 0) { throw "makensis (foobar) failed." }
+    Move-Item (Join-Path $dist 'foobar_24sevenfm_covers.exe') (Join-Path $dist $nFbExe) -Force
+    Write-Host "  $nFbExe"
 } else {
-    Write-Warning "makensis not found - skipping the Winamp installer. Install NSIS (https://nsis.sourceforge.io), then re-run."
+    Write-Warning "makensis not found - skipping both NSIS installers. Install NSIS (https://nsis.sourceforge.io), then re-run."
 }
 
 # 3. Manual-install zips (DLL + README.txt at the zip root)

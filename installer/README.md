@@ -8,6 +8,7 @@ distribution file into `..\dist\`. Artifacts are named **`<name>-<version>-<buil
 |----------|-----|-----------------------|
 | `foobar_24sevenfm_covers-<ver>-<date>.fb2k-component` | foobar2000 | Double-click, or Preferences → Components → Install… (native format, ~160 KB) |
 | `winamp_24sevenfm_covers-<ver>-<date>.exe` | Winamp | Wizard: auto-detects / browse to folder, validates `winamp.exe`, installs to `Plugins\` (NSIS, ~100 KB) |
+| `foobar_24sevenfm_covers-<ver>-<date>.exe` | foobar2000 | Wizard: auto-detects / browse to folder, validates `foobar2000.exe`, installs to `components\` (NSIS, ~100 KB) |
 | `foobar_24sevenfm_covers-<ver>-<date>.zip` | foobar2000 | Manual: DLL + `README.txt` (copy into `components\`) |
 | `winamp_24sevenfm_covers-<ver>-<date>.zip` | Winamp | Manual: DLL + `README.txt` (copy into `Plugins\`) |
 | `<artifact>.sha256` | — | one SHA-256 sidecar per artifact above |
