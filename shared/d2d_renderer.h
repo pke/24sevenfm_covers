@@ -43,11 +43,11 @@ void setPosterBlur(int standardDeviation);
 // non-null/non-empty) is drawn as a small badge bottom-right. Returns true while
 // the countdown's rolling animation is in progress (keep repainting at ~60fps).
 //
-// layout: 0 = fill (cover fills the window + countdown overlay, transitions animate);
+// layout: 0 = fill (cover fills the window, countdown as a top-right badge);
 // 1 = poster (a heavily blurred cover fills the background, the sharp cover is drawn
-// centered with margins, and a rounded info box below shows title + artist + the
-// status). In poster mode `title`/`artist` are the info-box text (may be empty) and
-// the countdown/transition are not used.
+// centered with margins, and a rounded info box shows title + artist + the countdown).
+// Both layouts animate the same transition and countdown; in poster mode `title`/
+// `artist` supply the info-box text (may be empty) and the countdown has no backdrop.
 bool render(HWND hwnd, float progress, Transition transition, int remainingSeconds,
             float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
             int layout, const wchar_t* title, const wchar_t* artist);

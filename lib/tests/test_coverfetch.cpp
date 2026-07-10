@@ -258,6 +258,8 @@ TEST_CASE("htmlDecode decodes the entities the station feed uses") {
     CHECK(htmlDecode("plain text")              == "plain text");
     CHECK(htmlDecode("A & B")                   == "A & B");      // bare '&' (no ';') untouched
     CHECK(htmlDecode("&bogus;")                 == "&bogus;");    // unknown entity kept
+    CHECK(htmlDecode("&#xD800;")                == "&#xD800;");   // UTF-16 surrogate rejected -> literal
+    CHECK(htmlDecode("&#4294967297;")           == "&#4294967297;"); // overflow rejected -> literal
 }
 
 // --- 24seven.fm station detection (plugin auto-follow) ----------------------

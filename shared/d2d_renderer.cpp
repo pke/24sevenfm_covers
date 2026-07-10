@@ -184,7 +184,12 @@ IDWriteTextFormat* makeFormat(float size, DWRITE_FONT_WEIGHT weight, bool center
 // Lazily create the offscreen D2D 1.1 device + Gaussian-blur effect (hardware, WARP
 // fallback). Independent of the main HwndRenderTarget's device.
 bool createBlurGen() {
-    if (g_blurCtx) return true;
+    if (g_blurEffect) return true; // fully built (the effect is the last resource created)
+    // Release any partial state from a prior failed attempt so this retry starts clean
+    // (otherwise the D3D/D2D device pointers below would be overwritten and leaked).
+    SafeRelease(g_blurCtx);
+    SafeRelease(g_blurDevice);
+    SafeRelease(g_blurD3D);
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
                                    nullptr, 0, D3D11_SDK_VERSION, &g_blurD3D, nullptr, nullptr);

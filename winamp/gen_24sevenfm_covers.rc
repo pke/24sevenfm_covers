@@ -7,18 +7,18 @@
 
 // --- Info dialog (double-click / Configure): a tab control + Close. Options live in
 // Winamp's Preferences tree, so this is informational only (one About tab for now).
-IDD_CONFIG DIALOGEX 0, 0, 231, 150
+IDD_CONFIG DIALOGEX 0, 0, 231, 164
 STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "24seven.fm Covers"
 FONT 8, "MS Shell Dlg"
 BEGIN
-    CONTROL        "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 217, 115
-    DEFPUSHBUTTON  "Close", IDOK, 174, 129, 50, 14
+    CONTROL        "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 217, 130
+    DEFPUSHBUTTON  "Close", IDOK, 174, 143, 50, 14
 END
 
-// Child page shown inside the "About" tab.
-IDD_TAB_ABOUT DIALOGEX 0, 0, 205, 100
+// Child page shown inside the "About" tab (sized by placePage to the tab's content area).
+IDD_TAB_ABOUT DIALOGEX 0, 0, 205, 112
 STYLE DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
 FONT 8, "MS Shell Dlg"

@@ -184,9 +184,12 @@ std::string htmlDecode(const std::string& in) {
                 else if (hex && c >= 'a' && c <= 'f')    d = c - 'a' + 10;
                 else if (hex && c >= 'A' && c <= 'F')    d = c - 'A' + 10;
                 else { ok = false; break; }
-                cp = cp * (hex ? 16u : 10u) + static_cast<unsigned>(d); ok = true;
+                cp = cp * (hex ? 16u : 10u) + static_cast<unsigned>(d);
+                if (cp > 0x10FFFF) { ok = false; break; } // stop before the accumulator overflows
+                ok = true;
             }
-            if (ok && cp > 0 && cp <= 0x10FFFF) { appendUtf8(out, cp); i = semi + 1; continue; }
+            // Reject 0 and the UTF-16 surrogate range (would encode as invalid UTF-8).
+            if (ok && cp > 0 && !(cp >= 0xD800 && cp <= 0xDFFF)) { appendUtf8(out, cp); i = semi + 1; continue; }
         } else {
             const char* rep = nullptr;
             if      (ent == "amp")  rep = "&";

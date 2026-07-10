@@ -123,7 +123,7 @@ void CoverEngine::startMonitor() {
         std::string t = info.album;
         if (!info.album.empty() && !info.track.empty()) t = info.album + " - " + info.track;
         else if (!info.track.empty())                   t = info.track;
-        if (info.lengthSeconds > 0) {
+        if (!t.empty() && info.lengthSeconds > 0) {
             const int mm = info.lengthSeconds / 60, ss = info.lengthSeconds % 60;
             t += " (" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "") + std::to_string(ss) + ")";
         }
@@ -362,11 +362,11 @@ void CoverEngine::onPaint(HWND h) {
 }
 
 // The engine's repaint heartbeat: redraw only while something is actually changing -
-// a crossfade, the "Loading..." badge, or the countdown over a shown cover.
+// a crossfade, the "Loading..." badge, or the countdown over a shown cover. This is
+// layout-independent: the poster's countdown is the same showRemaining case, and its
+// transition is the same fading_ case, so a settled poster frame stays idle too.
 void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     if (id != kHeartbeat) return;
-    // Poster mode also repaints continuously (its info box shows a live countdown).
-    if (fading_ || loading_.load() || (settings.showRemaining && haveCover_) ||
-        (settings.layout == 1 && haveCover_))
+    if (fading_ || loading_.load() || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);
 }
