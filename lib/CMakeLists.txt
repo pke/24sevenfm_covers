@@ -28,3 +28,20 @@ if(COVERFETCH_BUILD_EXAMPLE AND NOT ANDROID AND NOT IOS)
     add_executable(coverfetch_example example/main.cpp)
     target_link_libraries(coverfetch_example PRIVATE coverfetch)
 endif()
+
+# Unit tests (desktop only; OFF by default). Enable with -DCOVERFETCH_BUILD_TESTS=ON,
+# then run via CTest. The test compiles the sources directly (to reach the anonymous-
+# namespace helpers), so it does NOT link the coverfetch library.
+option(COVERFETCH_BUILD_TESTS "Build the unit tests" OFF)
+if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
+    enable_testing()
+    add_executable(coverfetch_tests tests/test_coverfetch.cpp)
+    target_include_directories(coverfetch_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(WIN32)
+        target_link_libraries(coverfetch_tests PRIVATE ws2_32)
+    else()
+        find_package(Threads REQUIRED)
+        target_link_libraries(coverfetch_tests PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME coverfetch_tests COMMAND coverfetch_tests)
+endif()
