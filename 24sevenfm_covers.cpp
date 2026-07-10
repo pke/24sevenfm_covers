@@ -1,0 +1,330 @@
+// 24sevencovers - desktop viewer for the Streaming Soundtracks (24seven.fm) "now
+// playing" cover art. It is now a thin native-Win32 host around the SAME shared
+// engine the Winamp and foobar2000 plugins use: the cross-platform CoverMonitor
+// (lib/), the Direct2D renderer (shared/d2d_*) and CoverEngine (shared/) - so the
+// viewer gets the identical cover preload, crossfade/flip transitions and
+// remaining-time countdown for free.
+//
+// Unlike the plugins there is no media player to source track changes from, so the
+// engine runs in autoAdvance mode: the monitor follows the station's live clock on
+// its own. Options (overlay, transition, rolling countdown, ...) are the shared
+// options page, reached from the window's system menu -> "Options...".
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM
+#include <commctrl.h>   // trackbar (duration slider), property sheet
+#include <shellapi.h>   // ShellExecute (About link)
+#pragma comment(lib, "shell32.lib")
+
+#include <string>
+
+#include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
+#include "cover_engine.h"   // shared cover/preload/animation engine
+#include "options_panel.h"  // shared options page (dialog + control logic)
+#include "viewer_resource.h"
+
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "dwrite.lib")
+#pragma comment(lib, "ole32.lib")
+
+static const char* kWndClass = "SST24CoverViewerWnd";
+static const UINT   SC_OPTIONS     = 0x1000; // system-menu command id (must be < 0xF000, low nibble 0)
+static const UINT   IDM_FULLSCREEN = 0x2001; // right-click context menu
+static const UINT   IDM_OPTIONS    = 0x2002;
+
+static HINSTANCE g_hInst    = nullptr;
+static HWND      g_hwnd     = nullptr;
+static bool      g_d2dReady = false;
+
+// Borderless-fullscreen state (double-click / context menu / Esc toggle it).
+static bool             g_fullscreen = false;
+static WINDOWPLACEMENT  g_prevPlace  = { sizeof(WINDOWPLACEMENT) };
+static LONG_PTR         g_prevStyle  = 0;
+
+static CoverEngine& eng() { return CoverEngine::instance(); }
+
+// --- settings (INI next to the .exe <-> engine.settings) --------------------
+static std::string iniPath() {
+    char exe[MAX_PATH] = {0};
+    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    std::string p = exe;
+    const auto slash = p.find_last_of("\\/");
+    p = (slash == std::string::npos) ? std::string() : p.substr(0, slash + 1);
+    return p + "24seven.fm-covers.ini";
+}
+static void loadSettings() {
+    const std::string p = iniPath();
+    CoverEngine::Settings& s = eng().settings;
+    s.showOverlay = GetPrivateProfileIntA("options", "overlay", 0, p.c_str()) != 0;
+    s.overlaySize = GetPrivateProfileIntA("options", "overlaysize", 2, p.c_str());
+    if (s.overlaySize < 0 || s.overlaySize > 2) s.overlaySize = 2;
+    s.rollDigits  = GetPrivateProfileIntA("options", "roll", 0, p.c_str()) != 0;
+    s.transition  = GetPrivateProfileIntA("options", "transition", 1, p.c_str());
+    if (s.transition < 0 || s.transition > 3) s.transition = 1;
+    s.fadeMs      = GetPrivateProfileIntA("options", "fadeMs", 500, p.c_str());
+    if (s.fadeMs < 500)  s.fadeMs = 500;
+    if (s.fadeMs > 2000) s.fadeMs = 2000;
+}
+static void saveSettings() {
+    const std::string p = iniPath();
+    const CoverEngine::Settings& s = eng().settings;
+    char buf[16];
+    WritePrivateProfileStringA("options", "overlay", s.showOverlay ? "1" : "0", p.c_str());
+    wsprintfA(buf, "%d", s.overlaySize); WritePrivateProfileStringA("options", "overlaysize", buf, p.c_str());
+    WritePrivateProfileStringA("options", "roll", s.rollDigits ? "1" : "0", p.c_str());
+    wsprintfA(buf, "%d", s.transition);  WritePrivateProfileStringA("options", "transition", buf, p.c_str());
+    wsprintfA(buf, "%d", s.fadeMs);      WritePrivateProfileStringA("options", "fadeMs", buf, p.c_str());
+}
+
+// --- Options: a property sheet hosting the shared options page --------------
+// A property sheet gives standard OK / Cancel / Apply buttons with Windows' own
+// padding. Apply (and OK) commit the controls into the engine settings, persist
+// them, and repaint - so a change is visible live without closing the sheet. The
+// page itself is the SHARED options page; its control logic is optpanel (the exact
+// code the Winamp/foobar plugins use).
+static INT_PTR CALLBACK OptionsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_INITDIALOG:
+            optpanel::init(dlg, eng().settings);
+            return TRUE;
+        case WM_HSCROLL:
+            optpanel::onHScroll(dlg);
+            PropSheet_Changed(GetParent(dlg), dlg); // dragging the slider -> enable Apply
+            return TRUE;
+        case WM_COMMAND: {
+            const WORD id = LOWORD(wp), code = HIWORD(wp);
+            if (id == IDC_OPT_OVERLAY || (id == IDC_OPT_TRANS && code == CBN_SELCHANGE))
+                optpanel::updateEnabled(dlg);
+            if (id == IDC_OPT_OVERLAY || id == IDC_OPT_ROLL ||
+                ((id == IDC_OPT_SIZE || id == IDC_OPT_TRANS) && code == CBN_SELCHANGE))
+                PropSheet_Changed(GetParent(dlg), dlg); // a setting changed -> enable Apply
+            return TRUE;
+        }
+        case WM_NOTIFY:
+            if (reinterpret_cast<LPNMHDR>(lp)->code == PSN_APPLY) { // Apply or OK
+                optpanel::read(dlg, eng().settings);
+                saveSettings();
+                eng().repaint(); // live preview
+                SetWindowLongPtrA(dlg, DWLP_MSGRESULT, PSNRET_NOERROR);
+                return TRUE;
+            }
+            break;
+    }
+    return FALSE;
+}
+
+// "About" page: version (filled here so it stays in sync with version.h) + a
+// clickable link to the station.
+static HFONT g_linkFont = nullptr;
+static INT_PTR CALLBACK AboutPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_INITDIALOG: {
+            SetDlgItemTextA(dlg, IDC_ABOUT_VER, "Version " SSC_VER_STR);
+            HFONT f = (HFONT)SendMessageA(dlg, WM_GETFONT, 0, 0); // underline the link
+            LOGFONTA lf = {};
+            if (f && GetObjectA(f, sizeof(lf), &lf)) {
+                lf.lfUnderline = TRUE;
+                if (g_linkFont) DeleteObject(g_linkFont);
+                g_linkFont = CreateFontIndirectA(&lf);
+                if (g_linkFont)
+                    SendDlgItemMessageA(dlg, IDC_ABOUT_LINK, WM_SETFONT, (WPARAM)g_linkFont, TRUE);
+            }
+            return TRUE;
+        }
+        case WM_CTLCOLORSTATIC:
+            if ((HWND)lp == GetDlgItem(dlg, IDC_ABOUT_LINK)) {
+                SetTextColor((HDC)wp, RGB(0, 0, 238)); // link blue
+                SetBkMode((HDC)wp, TRANSPARENT);
+                return (INT_PTR)GetStockObject(NULL_BRUSH);
+            }
+            break;
+        case WM_SETCURSOR:
+            if ((HWND)wp == GetDlgItem(dlg, IDC_ABOUT_LINK)) {
+                SetCursor(LoadCursor(nullptr, IDC_HAND));
+                SetWindowLongPtrA(dlg, DWLP_MSGRESULT, TRUE);
+                return TRUE;
+            }
+            break;
+        case WM_COMMAND:
+            if (LOWORD(wp) == IDC_ABOUT_LINK && HIWORD(wp) == STN_CLICKED) {
+                ShellExecuteA(dlg, "open", "https://streamingsoundtracks.com/",
+                              nullptr, nullptr, SW_SHOWNORMAL);
+                return TRUE;
+            }
+            break;
+        case WM_DESTROY:
+            if (g_linkFont) { DeleteObject(g_linkFont); g_linkFont = nullptr; }
+            break;
+    }
+    return FALSE;
+}
+
+static PROPSHEETPAGEA makePage(WORD templateId, DLGPROC proc, const char* title) {
+    PROPSHEETPAGEA p = { sizeof(p) };
+    p.dwFlags     = PSP_USETITLE;
+    p.hInstance   = g_hInst;
+    p.pszTemplate = MAKEINTRESOURCEA(templateId);
+    p.pfnDlgProc  = proc;
+    p.pszTitle    = title;
+    return p;
+}
+
+static void openOptions() {
+    PROPSHEETPAGEA pages[] = {
+        makePage(IDD_OPTIONS_PAGE, OptionsPageProc, "Options"), // shared options page
+        makePage(IDD_TAB_ABOUT,    AboutPageProc,   "About"),
+    };
+    PROPSHEETHEADERA psh = { sizeof(psh) };
+    psh.dwFlags    = PSH_PROPSHEETPAGE | PSH_NOCONTEXTHELP;
+    psh.hwndParent = g_hwnd;
+    psh.hInstance  = g_hInst;
+    psh.pszCaption = "24seven.fm Covers";
+    psh.nPages     = ARRAYSIZE(pages);
+    psh.ppsp       = pages;
+    PropertySheetA(&psh);
+}
+
+// Toggle borderless fullscreen: drop the window frame and cover the current monitor,
+// or restore the previous windowed placement. The D2D renderer resizes its target to
+// the client area on the next paint, so the cover fills the screen automatically.
+static void toggleFullscreen(HWND hwnd) {
+    if (!g_fullscreen) {
+        g_prevPlace.length = sizeof(g_prevPlace);
+        GetWindowPlacement(hwnd, &g_prevPlace);
+        g_prevStyle = GetWindowLongPtrA(hwnd, GWL_STYLE);
+        MONITORINFO mi = { sizeof(mi) };
+        GetMonitorInfoA(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+        SetWindowLongPtrA(hwnd, GWL_STYLE, g_prevStyle & ~(LONG_PTR)WS_OVERLAPPEDWINDOW);
+        SetWindowPos(hwnd, HWND_TOPMOST, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_fullscreen = true;
+    } else {
+        SetWindowLongPtrA(hwnd, GWL_STYLE, g_prevStyle);
+        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        SetWindowPlacement(hwnd, &g_prevPlace);
+        g_fullscreen = false;
+    }
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+// --- window -----------------------------------------------------------------
+static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case SSC_WM_NEWCOVER:
+            eng().onNewCover(hwnd);
+            return 0;
+        case WM_TIMER:
+            eng().onTimer(hwnd, wp); // engine repaint heartbeat (fade + countdown)
+            return 0;
+        case WM_SIZE:
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        case WM_ERASEBKGND:
+            return 1; // D2D paints the whole client area
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+            if (g_d2dReady) eng().onPaint(hwnd);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+        case WM_LBUTTONDBLCLK: // double-click the canvas -> toggle fullscreen
+            toggleFullscreen(hwnd);
+            return 0;
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE && g_fullscreen) { toggleFullscreen(hwnd); return 0; }
+            break;
+        case WM_CONTEXTMENU: { // right-click the canvas -> popup menu
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            if (pt.x == -1 && pt.y == -1) { // keyboard-invoked (Menu key): use client centre
+                RECT rc; GetClientRect(hwnd, &rc);
+                pt.x = rc.right / 2; pt.y = rc.bottom / 2;
+                ClientToScreen(hwnd, &pt);
+            }
+            HMENU m = CreatePopupMenu();
+            AppendMenuA(m, MF_STRING | (g_fullscreen ? MF_CHECKED : MF_UNCHECKED), IDM_FULLSCREEN, "&Fullscreen");
+            AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
+            AppendMenuA(m, MF_STRING, IDM_OPTIONS, "&Options...");
+            TrackPopupMenu(m, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
+            DestroyMenu(m);
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(wp)) {
+                case IDM_FULLSCREEN: toggleFullscreen(hwnd); return 0;
+                case IDM_OPTIONS:    openOptions();          return 0;
+            }
+            break;
+        case WM_SYSCOMMAND:
+            if ((wp & 0xFFF0) == SC_OPTIONS) { openOptions(); return 0; }
+            break;
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+    }
+    return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    g_hInst = hInstance;
+
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_STANDARD_CLASSES };
+    InitCommonControlsEx(&icc); // trackbar (duration slider) + standard controls
+
+    loadSettings();
+    g_d2dReady = d2d::init(); // Direct2D/WIC/DirectWrite (also CoInitializes)
+
+    HICON icon = LoadIconA(g_hInst, MAKEINTRESOURCEA(IDI_APPICON));
+    WNDCLASSEXA wc = { sizeof(wc) };
+    wc.style         = CS_DBLCLKS | CS_HREDRAW | CS_VREDRAW; // deliver double-clicks; redraw on resize
+    wc.lpfnWndProc   = WndProc;
+    wc.hInstance     = g_hInst;
+    wc.lpszClassName = kWndClass;
+    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.hIcon         = icon;
+    wc.hIconSm       = icon;
+    RegisterClassExA(&wc);
+
+    // Top-level resizable window with a 500x500 client area.
+    RECT rc = { 0, 0, 500, 500 };
+    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    g_hwnd = CreateWindowExA(0, kWndClass, "24seven.fm Covers", WS_OVERLAPPEDWINDOW,
+                             CW_USEDEFAULT, CW_USEDEFAULT,
+                             rc.right - rc.left, rc.bottom - rc.top,
+                             nullptr, nullptr, g_hInst, nullptr);
+    if (!g_hwnd) return 1;
+
+    // Add "Options..." to the window's system menu (right-click title bar / Alt+Space).
+    if (HMENU sys = GetSystemMenu(g_hwnd, FALSE)) {
+        AppendMenuA(sys, MF_SEPARATOR, 0, nullptr);
+        AppendMenuA(sys, MF_STRING, SC_OPTIONS, "Options...");
+    }
+
+    ShowWindow(g_hwnd, nCmdShow ? nCmdShow : SW_SHOWNORMAL);
+    UpdateWindow(g_hwnd);
+
+    // Hand the window to the engine and start the monitor in live/auto-advance mode.
+    eng().setWindow(g_hwnd);
+    eng().start(/*autoAdvance=*/true);
+
+    MSG m;
+    while (GetMessage(&m, nullptr, 0, 0) > 0) {
+        TranslateMessage(&m);
+        DispatchMessage(&m);
+    }
+
+    eng().stop();
+    eng().setWindow(nullptr); // also kills the engine's repaint heartbeat
+    d2d::shutdown();
+    UnregisterClassA(kWndClass, g_hInst);
+    return (int)m.wParam;
+}

@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{64e7bc47-3ada-4e8f-8d85-bbb14e851269}</ProjectGuid>
+    <RootNamespace>My24sevencovers</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <TargetName>24sevenfm_covers</TargetName>
+    <!-- Keep all build output under build\ (like the plugins), so it's a single
+         predictable, git-ignored tree instead of scattered x64\ + IntDir folders. -->
+    <OutDir>build\$(Configuration)\</OutDir>
+    <IntDir>build\$(Configuration)\obj\</IntDir>
+    <LinkIncremental Condition="'$(Configuration)'=='Release'">false</LinkIncremental>
+  </PropertyGroup>
+  <!-- Common to all configs -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <AdditionalIncludeDirectories>$(ProjectDir)shared;$(ProjectDir)winamp;$(ProjectDir)lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_WINDOWS;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+    </Link>
+    <ResourceCompile>
+      <AdditionalIncludeDirectories>$(ProjectDir)shared;$(ProjectDir)winamp;$(ProjectDir)lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+  </ItemDefinitionGroup>
+  <!-- Release: self-contained (static CRT) + heavy size optimization + strip -->
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>          <!-- /MT: static CRT, no VC++ redist needed -->
+      <Optimization>MinSpace</Optimization>                  <!-- /O1: optimize for size -->
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>              <!-- /Os -->
+      <FunctionLevelLinking>true</FunctionLevelLinking>      <!-- /Gy: let the linker drop unused funcs -->
+      <StringPooling>true</StringPooling>                    <!-- /GF -->
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>               <!-- /GR-: no RTTI (unused) -->
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalOptions>/Gw %(AdditionalOptions)</AdditionalOptions> <!-- optimize/strip unused global data -->
+    </ClCompile>
+    <Link>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>        <!-- /OPT:ICF: fold identical code/data -->
+      <OptimizeReferences>true</OptimizeReferences>          <!-- /OPT:REF: strip unreferenced sections -->
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration> <!-- /LTCG (pairs with /GL) -->
+      <GenerateDebugInformation>false</GenerateDebugInformation>                <!-- no debug directory in the exe -->
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="24sevenfm_covers.cpp" />
+    <ClCompile Include="shared\cover_engine.cpp" />
+    <ClCompile Include="shared\options_panel.cpp" />
+    <ClCompile Include="shared\d2d_renderer.cpp" />
+    <ClCompile Include="shared\d2d_transitions.cpp" />
+    <ClCompile Include="shared\d2d_rolldigits.cpp" />
+    <ClCompile Include="lib\coverfetch.cpp" />
+    <ClCompile Include="lib\http_client.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="viewer_resource.h" />
+    <ClInclude Include="shared\cover_engine.h" />
+    <ClInclude Include="shared\options_panel.h" />
+    <ClInclude Include="shared\options_ids.h" />
+    <ClInclude Include="shared\version.h" />
+    <ClInclude Include="shared\d2d_renderer.h" />
+    <ClInclude Include="shared\d2d_transitions.h" />
+    <ClInclude Include="lib\coverfetch.h" />
+    <ClInclude Include="lib\http_client.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="24sevenfm_covers.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="24sevenfm_covers.ico" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
