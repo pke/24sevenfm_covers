@@ -1,13 +1,15 @@
 # Packaging / distribution
 
-`build_artifacts.ps1` regenerates every distribution file into `..\dist\`:
+`build_artifacts.ps1` runs the unit tests, then (only if they pass) regenerates every
+distribution file into `..\dist\`. Artifacts are named **`<name>-<version>-<builddate>.<ext>`**
+(Eclipse-style, e.g. `-1.0.0-20260710`); the `<ver>`/`<date>` below stand in for that suffix:
 
 | Artifact | For | How the user installs |
 |----------|-----|-----------------------|
-| `foo_24sevencover.fb2k-component` | foobar2000 | Double-click, or Preferences → Components → Install… (native format, ~160 KB) |
-| `24sevenCover-Winamp-Setup.exe` | Winamp | Wizard: auto-detects / browse to folder, validates `winamp.exe`, installs to `Plugins\` (NSIS, ~100 KB) |
-| `24sevenCover-foobar2000.zip` | foobar2000 | Manual: DLL + `README.txt` (copy into `components\`) |
-| `24sevenCover-Winamp.zip` | Winamp | Manual: DLL + `README.txt` (copy into `Plugins\`) |
+| `foobar_24sevenfm_covers-<ver>-<date>.fb2k-component` | foobar2000 | Double-click, or Preferences → Components → Install… (native format, ~160 KB) |
+| `winamp_24sevenfm_covers-<ver>-<date>.exe` | Winamp | Wizard: auto-detects / browse to folder, validates `winamp.exe`, installs to `Plugins\` (NSIS, ~100 KB) |
+| `foobar_24sevenfm_covers-<ver>-<date>.zip` | foobar2000 | Manual: DLL + `README.txt` (copy into `components\`) |
+| `winamp_24sevenfm_covers-<ver>-<date>.zip` | Winamp | Manual: DLL + `README.txt` (copy into `Plugins\`) |
 | `<artifact>.sha256` | — | one SHA-256 sidecar per artifact above |
 
 ## Regenerate
@@ -16,7 +18,7 @@
 powershell -ExecutionPolicy Bypass -File build_artifacts.ps1
 ```
 
-- Packages the already-built plugin DLLs (from `..\winamp\build\Release\` and `..\foobar2000\foo_24sevencover\build\Release\`).
+- Packages the already-built plugin DLLs (from `..\winamp\build\Release\` and `..\foobar2000\foo_24sevenfm_covers\build\Release\`).
 - Add **`-Build`** to rebuild the plugins from source first (needs the VS 2026 CMake + MSBuild).
 
 ## Tools
@@ -35,5 +37,5 @@ or, in Git Bash: `cd dist && sha256sum -c <file>.sha256`
 
 ## Source scripts
 
-- `winamp_24sevencover.nsi` — NSIS installer script (detect / browse / validate).
+- `winamp_24sevenfm_covers.nsi` — NSIS installer script (detect / browse / validate).
 - `readme-winamp.txt`, `readme-foobar.txt` — the READMEs bundled into the manual-install zips.

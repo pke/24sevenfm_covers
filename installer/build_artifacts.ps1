@@ -1,37 +1,73 @@
 # build_artifacts.ps1 - regenerate all distribution artifacts into ..\dist
 #
-# Produces (from the already-built plugin DLLs):
-#   foo_24sevencover.fb2k-component   foobar native package (double-click to install)
-#   24sevenCover-Winamp-Setup.exe     NSIS installer (needs makensis on PATH / in NSIS folder)
-#   24sevenCover-Winamp.zip           gen_24sevencover.dll + README.txt (manual install)
-#   24sevenCover-foobar2000.zip       foo_24sevencover.dll + README.txt (manual install)
-#   SHA256SUMS.txt                    SHA-256 of every artifact above
+# Produces (from the already-built plugin DLLs), named <name>-<version>-<builddate>.<ext>:
+#   foobar_24sevenfm_covers-<ver>-<date>.fb2k-component  foobar native package (double-click)
+#   winamp_24sevenfm_covers-<ver>-<date>.exe             NSIS installer (needs makensis)
+#   winamp_24sevenfm_covers-<ver>-<date>.zip             gen_24sevenfm_covers.dll + README (manual)
+#   foobar_24sevenfm_covers-<ver>-<date>.zip             foo_24sevenfm_covers.dll + README (manual)
+#   <artifact>.sha256                                    SHA-256 sidecar for each of the above
+#
+# The unit tests (lib/) are run FIRST and packaging is aborted if any fail.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1          (package existing DLLs)
-#   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1 -Build   (rebuild the plugins first)
+#   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1              (test, then package existing DLLs)
+#   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1 -Build       (test, rebuild the plugins, package)
+#   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1 -SkipTests   (bypass the test gate - not recommended)
 
-param([switch]$Build)
+param([switch]$Build, [switch]$SkipTests)
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $here
 $dist = Join-Path $root 'dist'
-$winDll = Join-Path $root 'winamp\build\Release\gen_24sevencover.dll'
-$fbDll  = Join-Path $root 'foobar2000\foo_24sevencover\build\Release\foo_24sevencover.dll'
+$winDll = Join-Path $root 'winamp\build\Release\gen_24sevenfm_covers.dll'
+$fbDll  = Join-Path $root 'foobar2000\foo_24sevenfm_covers\build\Release\foo_24sevenfm_covers.dll'
 
-# Version from the single source shared\version.h (SSC_VER_MAJOR/MINOR/PATCH).
-$vh = Get-Content (Join-Path $root 'shared\version.h') -Raw
-function Get-Ver([string]$name) { if ($vh -match "#define\s+$name\s+(\d+)") { [int]$Matches[1] } else { 0 } }
-$verStr = '{0}.{1}.{2}' -f (Get-Ver 'SSC_VER_MAJOR'), (Get-Ver 'SSC_VER_MINOR'), (Get-Ver 'SSC_VER_PATCH')
-$ver4   = "$verStr.0"
-Write-Host "Version $verStr" -ForegroundColor Cyan
+# Per-module versions - each binary versions INDEPENDENTLY in its own header.
+function Get-VerField([string]$file, [string]$name) {
+    $c = Get-Content $file -Raw
+    if ($c -match "#define\s+$name\s+(\d+)") { [int]$Matches[1] } else { 0 }
+}
+function Get-ModuleVer([string]$file) {
+    '{0}.{1}.{2}' -f (Get-VerField $file 'SSC_VER_MAJOR'), (Get-VerField $file 'SSC_VER_MINOR'), (Get-VerField $file 'SSC_VER_PATCH')
+}
+$winVer  = Get-ModuleVer (Join-Path $root 'winamp\gen_version.h')
+$fbVer   = Get-ModuleVer (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_version.h')
+$winVer4 = "$winVer.0"
+
+# Eclipse-style artifact naming: <name>-<version>-<builddate>.<ext>. Each artifact uses
+# ITS OWN module version; the NSIS installer carries the Winamp plugin's version.
+$stamp   = Get-Date -Format 'yyyyMMdd'
+$nFbComp = "foobar_24sevenfm_covers-$fbVer-$stamp.fb2k-component"
+$nWinExe = "winamp_24sevenfm_covers-$winVer-$stamp.exe"
+$nWinZip = "winamp_24sevenfm_covers-$winVer-$stamp.zip"
+$nFbZip  = "foobar_24sevenfm_covers-$fbVer-$stamp.zip"
+Write-Host "Winamp $winVer  |  foobar $fbVer   (build $stamp)" -ForegroundColor Cyan
 
 function Find-Tool([string]$name, [string[]]$candidates) {
     $c = (Get-Command $name -ErrorAction SilentlyContinue).Source
     if ($c) { return $c }
     foreach ($p in $candidates) { if ($p -and (Test-Path $p)) { return $p } }
     return $null
+}
+
+# --- Test gate: the unit tests MUST pass before we build or package anything. -----
+# Bypass only with -SkipTests (packages an unverified build).
+if (-not $SkipTests) {
+    Write-Host "== Running unit tests ==" -ForegroundColor Cyan
+    $cmake = Find-Tool 'cmake.exe' @('C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')
+    if (-not $cmake) { throw "cmake not found - cannot run the unit tests. Install VS 2026's CMake, or re-run with -SkipTests to bypass (not recommended)." }
+    $ctest   = Join-Path (Split-Path $cmake) 'ctest.exe'
+    $testBld = Join-Path $root 'lib\build-tests'
+    & $cmake -S (Join-Path $root 'lib') -B $testBld -A x64 -DCOVERFETCH_BUILD_TESTS=ON -DCOVERFETCH_BUILD_EXAMPLE=OFF | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Test configure failed - aborting, nothing packaged." }
+    & $cmake --build $testBld --config Release | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Test build failed - aborting, nothing packaged." }
+    & $ctest --test-dir $testBld -C Release --output-on-failure
+    if ($LASTEXITCODE -ne 0) { throw "Unit tests FAILED - aborting, nothing packaged." }
+    Write-Host "  unit tests passed" -ForegroundColor Green
+} else {
+    Write-Warning "Skipping unit tests (-SkipTests) - packaging an unverified build."
 }
 
 if ($Build) {
@@ -42,7 +78,7 @@ if ($Build) {
     & $cmake -S (Join-Path $root 'winamp') -B (Join-Path $root 'winamp\build') -A Win32 | Out-Null
     & $cmake --build (Join-Path $root 'winamp\build') --config Release
     $props = Join-Path $root 'foobar2000\wtl.props'
-    & $msb (Join-Path $root 'foobar2000\foo_24sevencover\foo_24sevencover.vcxproj') `
+    & $msb (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_24sevenfm_covers.vcxproj') `
         /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /p:ForceImportAfterCppProps=$props /m /v:minimal
 }
 
@@ -60,30 +96,32 @@ New-Item -ItemType Directory -Path $wWin, $wFb | Out-Null
 Write-Host "`n== Packaging ==" -ForegroundColor Cyan
 
 # 1. foobar native .fb2k-component (a zip containing the DLL at the root)
-Copy-Item $fbDll (Join-Path $wFb 'foo_24sevencover.dll')
-$tmpZip = Join-Path $dist 'foo_24sevencover.zip'
-Compress-Archive -Path (Join-Path $wFb 'foo_24sevencover.dll') -DestinationPath $tmpZip -Force
-Move-Item $tmpZip (Join-Path $dist 'foo_24sevencover.fb2k-component') -Force
-Write-Host "  foo_24sevencover.fb2k-component"
+Copy-Item $fbDll (Join-Path $wFb 'foo_24sevenfm_covers.dll')
+$tmpZip = Join-Path $dist 'foo_24sevenfm_covers.zip'
+Compress-Archive -Path (Join-Path $wFb 'foo_24sevenfm_covers.dll') -DestinationPath $tmpZip -Force
+Move-Item $tmpZip (Join-Path $dist $nFbComp) -Force
+Write-Host "  $nFbComp"
 
 # 2. NSIS Winamp installer
 $makensis = Find-Tool 'makensis.exe' @("${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe")
 if ($makensis) {
-    & $makensis /V2 "/DAPPVER=$verStr" "/DAPPVER4=$ver4" (Join-Path $here 'winamp_24sevencover.nsi')
+    & $makensis /V2 "/DAPPVER=$winVer" "/DAPPVER4=$winVer4" (Join-Path $here 'winamp_24sevenfm_covers.nsi')
     if ($LASTEXITCODE -ne 0) { throw "makensis failed." }
-    Write-Host "  24sevenCover-Winamp-Setup.exe"
+    # The .nsi writes the base name; add the version/date suffix here.
+    Move-Item (Join-Path $dist 'winamp_24sevenfm_covers.exe') (Join-Path $dist $nWinExe) -Force
+    Write-Host "  $nWinExe"
 } else {
     Write-Warning "makensis not found - skipping the Winamp installer. Install NSIS (https://nsis.sourceforge.io), then re-run."
 }
 
 # 3. Manual-install zips (DLL + README.txt at the zip root)
-Copy-Item $winDll (Join-Path $wWin 'gen_24sevencover.dll')
+Copy-Item $winDll (Join-Path $wWin 'gen_24sevenfm_covers.dll')
 Copy-Item (Join-Path $here 'readme-winamp.txt') (Join-Path $wWin 'README.txt')
 Copy-Item (Join-Path $here 'readme-foobar.txt') (Join-Path $wFb 'README.txt')
-Compress-Archive -Path (Join-Path $wWin '*') -DestinationPath (Join-Path $dist '24sevenCover-Winamp.zip') -Force
-Compress-Archive -Path (Join-Path $wFb  '*') -DestinationPath (Join-Path $dist '24sevenCover-foobar2000.zip') -Force
-Write-Host "  24sevenCover-Winamp.zip"
-Write-Host "  24sevenCover-foobar2000.zip"
+Compress-Archive -Path (Join-Path $wWin '*') -DestinationPath (Join-Path $dist $nWinZip) -Force
+Compress-Archive -Path (Join-Path $wFb  '*') -DestinationPath (Join-Path $dist $nFbZip) -Force
+Write-Host "  $nWinZip"
+Write-Host "  $nFbZip"
 
 Remove-Item $wWin, $wFb -Recurse -Force
 

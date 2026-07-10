@@ -1,17 +1,17 @@
-; 24seven Cover - Winamp plugin installer (NSIS, modern UI)
-; Installs gen_24sevencover.dll into <Winamp>\Plugins.
+; 24seven.fm Covers - Winamp plugin installer (NSIS, modern UI)
+; Installs gen_24sevenfm_covers.dll into <Winamp>\Plugins.
 ; Auto-detects a normal Winamp install from the registry; for portable installs the
 ; user browses to the folder, and Setup validates that winamp.exe is there.
 ;
-; Build:  "C:\Program Files (x86)\NSIS\makensis.exe" winamp_24sevencover.nsi
-; Output: dist\24sevenCover-Winamp-Setup.exe   (a ~100 KB installer)
+; Build:  "C:\Program Files (x86)\NSIS\makensis.exe" winamp_24sevenfm_covers.nsi
+; Output: dist\winamp_24sevenfm_covers.exe   (a ~100 KB installer)
 
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
 
-!define APPNAME "24seven Cover (Winamp plugin)"
+!define APPNAME "24seven.fm Covers Winamp plugin"
 ; Version is passed in by build_artifacts.ps1 (/DAPPVER=.. /DAPPVER4=..), which reads
 ; it from the single source shared\version.h. Fallbacks below for a direct compile.
 !ifndef APPVER
@@ -21,12 +21,12 @@ Unicode true
   !define APPVER4 "0.0.0.0"
 !endif
 !define COMPANY   "DudeSoft"
-!define COPYRIGHT "Copyright (C) 2026 DudeSoft"
-!define DLL     "..\winamp\build\Release\gen_24sevencover.dll"
-!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\24sevenCover-Winamp"
+!define COPYRIGHT "Copyright (C) 2026 DudeSoft - https://dudesoft.app"
+!define DLL     "..\winamp\build\Release\gen_24sevenfm_covers.dll"
+!define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\winamp_24sevenfm_covers"
 
 Name "${APPNAME}"
-OutFile "..\dist\24sevenCover-Winamp-Setup.exe"
+OutFile "..\dist\winamp_24sevenfm_covers.exe"
 RequestExecutionLevel highest   ; elevates if admin (Program Files), else runs as user (portable)
 ShowInstDetails show
 
@@ -36,10 +36,12 @@ VIFileVersion    "${APPVER4}"
 VIAddVersionKey  "ProductName"      "${APPNAME}"
 VIAddVersionKey  "ProductVersion"   "${APPVER}"
 VIAddVersionKey  "FileVersion"      "${APPVER4}"
-VIAddVersionKey  "FileDescription"  "24seven Cover - Winamp plugin installer"
+VIAddVersionKey  "FileDescription"  "24seven.fm Covers - Winamp plugin installer"
 VIAddVersionKey  "CompanyName"      "${COMPANY}"
 VIAddVersionKey  "LegalCopyright"   "${COPYRIGHT}"
-VIAddVersionKey  "OriginalFilename" "24sevenCover-Winamp-Setup.exe"
+VIAddVersionKey  "Comments"         "Homepage: https://dudesoft.app"
+VIAddVersionKey  "Web"              "https://dudesoft.app"
+VIAddVersionKey  "OriginalFilename" "winamp_24sevenfm_covers.exe"
 
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
@@ -87,20 +89,20 @@ Section "Install"
 
   SetOutPath "$INSTDIR\Plugins"
   File "${DLL}"
-  WriteUninstaller "$INSTDIR\Plugins\Uninstall-24sevenCover.exe"
+  WriteUninstaller "$INSTDIR\Plugins\uninstall-24sevenfm_covers.exe"
 
   WriteRegStr   SHCTX "${UNINSTKEY}" "DisplayName"     "${APPNAME}"
   WriteRegStr   SHCTX "${UNINSTKEY}" "DisplayVersion"  "${APPVER}"
   WriteRegStr   SHCTX "${UNINSTKEY}" "Publisher"       "${COMPANY}"
   WriteRegStr   SHCTX "${UNINSTKEY}" "DisplayIcon"     "$INSTDIR\winamp.exe"
-  WriteRegStr   SHCTX "${UNINSTKEY}" "UninstallString" "$\"$INSTDIR\Plugins\Uninstall-24sevenCover.exe$\""
+  WriteRegStr   SHCTX "${UNINSTKEY}" "UninstallString" "$\"$INSTDIR\Plugins\uninstall-24sevenfm_covers.exe$\""
   WriteRegDWORD SHCTX "${UNINSTKEY}" "NoModify" 1
   WriteRegDWORD SHCTX "${UNINSTKEY}" "NoRepair" 1
 SectionEnd
 
 Section "Uninstall"
   ; The uninstaller lives in <Winamp>\Plugins, so $INSTDIR is that folder here.
-  Delete "$INSTDIR\gen_24sevencover.dll"
-  Delete "$INSTDIR\Uninstall-24sevenCover.exe"
+  Delete "$INSTDIR\gen_24sevenfm_covers.dll"
+  Delete "$INSTDIR\uninstall-24sevenfm_covers.exe"
   DeleteRegKey SHCTX "${UNINSTKEY}"
 SectionEnd
