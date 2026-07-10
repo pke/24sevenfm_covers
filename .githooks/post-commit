@@ -9,7 +9,7 @@
 #   Shared    lib/**, shared/**                    -> bumps ALL three modules
 #   Winamp    winamp/**                            -> winamp/gen_version.h
 #   foobar    foobar2000/foo_24sevenfm_covers/**   -> .../foo_version.h
-#   Desktop   root viewer sources                  -> viewer_version.h
+#   Desktop   desktop/**                           -> desktop/viewer_version.h
 #   (installer/, lib/tests/, docs, *.md, the version files themselves -> no bump)
 #
 # The bump is folded into the same commit (amend). Enable once per clone:
@@ -43,8 +43,8 @@ for f in $(git diff-tree --no-commit-id --name-only -r HEAD); do
     winamp/*)                                   winamp=1 ;;
     foobar2000/foo_24sevenfm_covers/foo_version.h)      ;;
     foobar2000/foo_24sevenfm_covers/*)          foobar=1 ;;
-    viewer_version.h)                                   ;;
-    24sevenfm_covers.*|viewer_resource.h|Resource.h|framework.h|targetver.h) desktop=1 ;;
+    desktop/viewer_version.h)                           ;;
+    desktop/*)                                  desktop=1 ;;
     *)                                                  ;;  # installer/, docs, etc. -> no bump
   esac
 done
@@ -79,7 +79,7 @@ bump_file() {
 echo "[version] $bump bump:"
 [ "$winamp" = 1 ]  && bump_file "winamp/gen_version.h"                          "winamp "
 [ "$foobar" = 1 ]  && bump_file "foobar2000/foo_24sevenfm_covers/foo_version.h" "foobar "
-[ "$desktop" = 1 ] && bump_file "viewer_version.h"                             "desktop"
+[ "$desktop" = 1 ] && bump_file "desktop/viewer_version.h"                     "desktop"
 
 : > "$GUARD"
 git commit --amend --no-edit --no-verify >/dev/null 2>&1

@@ -75,7 +75,7 @@ ssc_monitor_destroy(m);   // stops + frees
 
 ## Refresh timing
 
-Ported from [`24sevenfm_covers.cpp`](../24sevenfm_covers.cpp) and
+Ported from [`24sevenfm_covers.cpp`](../desktop/24sevenfm_covers.cpp) and
 verified against the live feed:
 
 ```

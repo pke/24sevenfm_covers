@@ -5,7 +5,7 @@
 /lib/build-tests/
 /lib/build-android-*/
 /x64/
-/build/
+/desktop/build/
 /dist/
 *.aps
 

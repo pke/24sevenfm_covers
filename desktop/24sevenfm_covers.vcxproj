@@ -63,14 +63,14 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <ExceptionHandling>Sync</ExceptionHandling>
-      <AdditionalIncludeDirectories>$(ProjectDir)shared;$(ProjectDir)winamp;$(ProjectDir)lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\shared;$(ProjectDir)..\winamp;$(ProjectDir)..\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_WINDOWS;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
     </Link>
     <ResourceCompile>
-      <AdditionalIncludeDirectories>$(ProjectDir)shared;$(ProjectDir)winamp;$(ProjectDir)lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\shared;$(ProjectDir)..\winamp;$(ProjectDir)..\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
@@ -103,24 +103,24 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="24sevenfm_covers.cpp" />
-    <ClCompile Include="shared\cover_engine.cpp" />
-    <ClCompile Include="shared\options_panel.cpp" />
-    <ClCompile Include="shared\d2d_renderer.cpp" />
-    <ClCompile Include="shared\d2d_transitions.cpp" />
-    <ClCompile Include="shared\d2d_rolldigits.cpp" />
-    <ClCompile Include="lib\coverfetch.cpp" />
-    <ClCompile Include="lib\http_client.cpp" />
+    <ClCompile Include="..\shared\cover_engine.cpp" />
+    <ClCompile Include="..\shared\options_panel.cpp" />
+    <ClCompile Include="..\shared\d2d_renderer.cpp" />
+    <ClCompile Include="..\shared\d2d_transitions.cpp" />
+    <ClCompile Include="..\shared\d2d_rolldigits.cpp" />
+    <ClCompile Include="..\lib\coverfetch.cpp" />
+    <ClCompile Include="..\lib\http_client.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="viewer_resource.h" />
-    <ClInclude Include="shared\cover_engine.h" />
-    <ClInclude Include="shared\options_panel.h" />
-    <ClInclude Include="shared\options_ids.h" />
-    <ClInclude Include="shared\version.h" />
-    <ClInclude Include="shared\d2d_renderer.h" />
-    <ClInclude Include="shared\d2d_transitions.h" />
-    <ClInclude Include="lib\coverfetch.h" />
-    <ClInclude Include="lib\http_client.h" />
+    <ClInclude Include="..\shared\cover_engine.h" />
+    <ClInclude Include="..\shared\options_panel.h" />
+    <ClInclude Include="..\shared\options_ids.h" />
+    <ClInclude Include="..\shared\version.h" />
+    <ClInclude Include="..\shared\d2d_renderer.h" />
+    <ClInclude Include="..\shared\d2d_transitions.h" />
+    <ClInclude Include="..\lib\coverfetch.h" />
+    <ClInclude Include="..\lib\http_client.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="24sevenfm_covers.rc" />

@@ -5,7 +5,7 @@ host-agnostic C++ engine drives three Windows front-ends plus a cross-platform c
 
 | Component | Directory | Output | Build system |
 |-----------|-----------|--------|--------------|
-| **Desktop viewer** | `.` (root project) | `24sevenfm_covers.exe` (x64, self-contained) | MSBuild (`.vcxproj` / `.sln`) |
+| **Desktop viewer** | `desktop/` | `24sevenfm_covers.exe` (x64, self-contained) | MSBuild (`.vcxproj` / `.sln`) |
 | **Winamp plugin** | `winamp/` | `gen_24sevenfm_covers.dll` (x86 / 32-bit) | CMake |
 | **foobar2000 component** | `foobar2000/foo_24sevenfm_covers/` | `foo_24sevenfm_covers.dll` (x64) | MSBuild (`.vcxproj`) |
 | **Core library** | `lib/` | `coverfetch` static lib (cross-platform) | CMake |
@@ -18,8 +18,7 @@ countdown), the **options page** (`shared/options_*`), and the **networking/pars
 ## Repository layout
 
 ```
-├─ 24sevenfm_covers.{cpp,rc,vcxproj,sln}   Desktop viewer (root project)
-├─ viewer_resource.h
+├─ desktop/          Standalone desktop viewer (24sevenfm_covers.{cpp,rc,vcxproj,sln}, viewer_*)
 ├─ shared/           Host-agnostic engine, Direct2D renderer (d2d_*), options page, version.h
 ├─ winamp/           Winamp gen_ plugin (host glue only)
 ├─ foobar2000/
@@ -62,13 +61,13 @@ The **Winamp** plugin needs no external SDK — a minimal `winamp/gen.h` is incl
 
 ## Building
 
-Open **`24sevenfm_covers.sln`** in Visual Studio for the desktop viewer, or use the command line:
+Open **`desktop\24sevenfm_covers.sln`** in Visual Studio for the desktop viewer, or use the command line:
 
 ### Desktop viewer — `24sevenfm_covers.exe` (x64, self-contained)
 
 ```bat
-msbuild 24sevenfm_covers.vcxproj /p:Configuration=Release /p:Platform=x64
-:: -> x64\Release\24sevenfm_covers.exe
+msbuild desktop\24sevenfm_covers.vcxproj /p:Configuration=Release /p:Platform=x64
+:: -> desktop\build\Release\24sevenfm_covers.exe
 ```
 
 ### Winamp plugin — `gen_24sevenfm_covers.dll` (must be 32-bit; Winamp 5.x is a 32-bit app)

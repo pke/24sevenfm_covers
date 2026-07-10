@@ -11,5 +11,5 @@
 #define SSC_VER_NUM   1, 0, 0, 0
 #define SSC_VER_STR   "1.0.0"
 
-#include "shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
+#include "../shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
 #endif /* VIEWER_VERSION_H */
