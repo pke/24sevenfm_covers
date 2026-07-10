@@ -43,7 +43,7 @@ public:
 
     static GUID g_get_guid() { return guid_ssc_cover_elem; }
     static GUID g_get_subclass() { return ui_element_subclass_playback_visualisation; }
-    static void g_get_name(pfc::string_base& out) { out = "24seven Cover"; }
+    static void g_get_name(pfc::string_base& out) { out = "24seven.fm Covers"; }
     static ui_element_config::ptr g_get_default_configuration() {
         return ui_element_config::g_create_empty(g_get_guid());
     }

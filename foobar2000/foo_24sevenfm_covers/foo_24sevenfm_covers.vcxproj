@@ -12,7 +12,7 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A1B2C3D4-E5F6-4789-9ABC-DEF012345678}</ProjectGuid>
-    <RootNamespace>foo_24sevencover</RootNamespace>
+    <RootNamespace>foo_24sevenfm_covers</RootNamespace>
     <Keyword>Win32Proj</Keyword>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -39,7 +39,7 @@
     <OutDir>build\$(Configuration)\</OutDir>
     <IntDir>build\$(Configuration)\obj\</IntDir>
     <LinkIncremental Condition="'$(Configuration)'=='Release'">false</LinkIncremental>
-    <TargetName>foo_24sevencover</TargetName>
+    <TargetName>foo_24sevenfm_covers</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -85,16 +85,16 @@
     <ClCompile Include="foobar_settings.cpp" />
     <ClCompile Include="..\..\shared\cover_engine.cpp" />
     <ClCompile Include="..\..\shared\options_panel.cpp" />
-    <ClCompile Include="..\..\winamp\d2d_renderer.cpp" />
-    <ClCompile Include="..\..\winamp\d2d_transitions.cpp" />
-    <ClCompile Include="..\..\winamp\d2d_rolldigits.cpp" />
+    <ClCompile Include="..\..\shared\d2d_renderer.cpp" />
+    <ClCompile Include="..\..\shared\d2d_transitions.cpp" />
+    <ClCompile Include="..\..\shared\d2d_rolldigits.cpp" />
     <ClCompile Include="..\..\lib\coverfetch.cpp" />
     <ClCompile Include="..\..\lib\http_client.cpp" />
   </ItemGroup>
   <ItemGroup>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="foo_24sevencover.rc" />
+    <ResourceCompile Include="foo_24sevenfm_covers.rc" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\sdk\libPPUI\libPPUI.vcxproj">

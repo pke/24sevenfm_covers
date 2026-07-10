@@ -2,18 +2,18 @@
 //
 // Companion to the Winamp gen_ plugin. Same job (show the cover art of the track
 // playing on Streaming Soundtracks / 24seven.fm), same shared rendering + library
-// code (../../winamp/d2d_*.cpp, ../../lib), just wrapped in foobar2000's SDK: a
+// code (../../shared/d2d_*.cpp, ../../lib), just wrapped in foobar2000's SDK: a
 // dockable Default-UI element instead of a gen_ff frame, and playback callbacks
 // instead of Winamp IPC.
 #include <SDK/foobar2000.h>
 
-#include "d2d_renderer.h"   // shared GPU renderer (from ../../winamp)
+#include "d2d_renderer.h"   // shared GPU renderer (from ../../shared)
 #include "cover_engine.h"   // shared cover/preload/animation engine (from ../../shared)
 #include "foobar_settings.h"
-#include "version.h"        // SSC_VER_STR + SSC_COPYRIGHT (single source)
+#include "foo_version.h"    // this module's version; SSC_COPYRIGHT via shared/version.h
 
 DECLARE_COMPONENT_VERSION(
-    "24seven Cover",
+    "24seven.fm Covers",
     SSC_VER_STR,
     "Cover art for the Streaming Soundtracks (24seven.fm) stream, shown in a "
     "dockable, GPU-rendered foobar2000 UI element.\n\n"
@@ -21,7 +21,7 @@ DECLARE_COMPONENT_VERSION(
     SSC_COPYRIGHT);
 
 // Prevents renaming the component around (troubleshooter) and double-loading.
-VALIDATE_COMPONENT_FILENAME("foo_24sevencover.dll");
+VALIDATE_COMPONENT_FILENAME("foo_24sevenfm_covers.dll");
 
 namespace {
 

@@ -1,5 +1,5 @@
 // preferences.cpp - the foobar2000 preferences page (Preferences > Display >
-// 24seven Cover). A thin host: it wraps the SHARED options page (IDD_OPTIONS_PAGE +
+// 24seven.fm Covers). A thin host: it wraps the SHARED options page (IDD_OPTIONS_PAGE +
 // shared/options_panel.cpp - the exact dialog + control logic the Winamp options tab
 // uses) in foobar's preferences framework, persisting via cfg_var and applying live.
 // Dark mode is handled for us by fb2k::CDarkModeHooks.
@@ -68,7 +68,7 @@ private:
 
 class preferences_page_ssc : public preferences_page_impl<CSscPrefs> {
 public:
-    const char* get_name() { return "24seven Cover"; }
+    const char* get_name() { return "24seven.fm Covers"; }
     GUID get_guid() {
         return GUID { 0x6d2a41e7, 0x3c9b, 0x4a5f, { 0x9e, 0x21, 0x7b, 0x44, 0x0c, 0x8e, 0x13, 0xd2 } };
     }

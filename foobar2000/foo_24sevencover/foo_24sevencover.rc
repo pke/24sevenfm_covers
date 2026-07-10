@@ -1,3 +1,0 @@
-// Component resources. The preferences page dialog is the SHARED options page
-// (defined once in shared/options_page.rc, also used by the Winamp plugin).
-#include "../../shared/options_page.rc"
