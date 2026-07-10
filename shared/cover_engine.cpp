@@ -13,12 +13,16 @@
 // --- logging ----------------------------------------------------------------
 namespace {
 std::mutex g_logMutex;
+// Log basename, shared by the OutputDebugString tag and the %TEMP% file. Each host
+// overrides it (CoverEngine::setLogName) so Winamp / foobar / the viewer write to
+// distinct files instead of interleaving into one. Set once at startup.
+std::string g_logBase = "24seven.fm-covers";
 void logLine(const std::string& msg) {
     std::lock_guard<std::mutex> lock(g_logMutex);
-    OutputDebugStringA(("[24seven.fm-covers] " + msg + "\n").c_str());
+    OutputDebugStringA(("[" + g_logBase + "] " + msg + "\n").c_str());
     char tmp[MAX_PATH] = {0};
     GetTempPathA(MAX_PATH, tmp);
-    const std::string path = std::string(tmp) + "24seven.fm-covers.log";
+    const std::string path = std::string(tmp) + g_logBase + ".log";
     HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
@@ -73,6 +77,11 @@ d2d::Transition CoverEngine::transitionEffect() const {
 }
 
 // --- lifecycle --------------------------------------------------------------
+void CoverEngine::setLogName(const std::string& base) {
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (!base.empty()) g_logBase = base; // call before start(); host-distinct log file/tag
+}
+
 void CoverEngine::start(bool autoAdvance) {
     if (monitor_) return;
     // Plugins (autoAdvance=false): covers advance off the host's track-title changes

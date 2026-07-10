@@ -244,6 +244,7 @@ static int init() {
     SetTimer(g_hwnd, kGateTimer, 500, nullptr);
 
     // Hand the window to the engine and start the cover monitor.
+    eng().setLogName("24seven.fm-covers-winamp");
     eng().setWindow(g_hwnd);
     eng().start();
     return 0;

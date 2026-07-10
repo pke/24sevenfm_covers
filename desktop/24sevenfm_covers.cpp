@@ -41,6 +41,7 @@ static const UINT   IDM_OPTIONS    = 0x2002;
 static HINSTANCE g_hInst    = nullptr;
 static HWND      g_hwnd     = nullptr;
 static bool      g_d2dReady = false;
+static bool      g_firstRun = false; // no INI yet -> prompt for a station on first launch
 
 // Borderless-fullscreen state (double-click / context menu / Esc toggle it).
 static bool             g_fullscreen = false;
@@ -70,9 +71,10 @@ static void loadSettings() {
     s.fadeMs      = GetPrivateProfileIntA("options", "fadeMs", 500, p.c_str());
     if (s.fadeMs < 500)  s.fadeMs = 500;
     if (s.fadeMs > 2000) s.fadeMs = 2000;
-    char stid[32] = {0}; // station stored by stable id so reordering the list is safe
-    GetPrivateProfileStringA("options", "station", "sst", stid, sizeof(stid), p.c_str());
-    s.station = ssc::validStationIndex(ssc::stationIndexForId(stid));
+    char stid[64] = {0}; // station stored by stable id so reordering the list is safe
+    GetPrivateProfileStringA("options", "station", "", stid, sizeof(stid), p.c_str());
+    g_firstRun = (stid[0] == '\0'); // no station entry yet -> always prompt for one
+    s.station = ssc::validStationIndex(ssc::stationIndexForId(stid)); // empty/unknown -> SST
 }
 static void saveSettings() {
     const std::string p = iniPath();
@@ -358,8 +360,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     UpdateWindow(g_hwnd);
 
     // Hand the window to the engine and start the monitor in live/auto-advance mode.
+    eng().setLogName("24seven.fm-covers-viewer");
     eng().setWindow(g_hwnd);
     eng().start(/*autoAdvance=*/true);
+
+    // No station chosen yet (missing INI entry): the viewer has no player to auto-follow,
+    // so ask which station to show. openOptions() opens on the Station tab (page 0); saving
+    // afterwards writes the station key so we don't prompt again even if they just close it.
+    if (g_firstRun) {
+        openOptions();
+        saveSettings();
+    }
 
     MSG m;
     while (GetMessage(&m, nullptr, 0, 0) > 0) {

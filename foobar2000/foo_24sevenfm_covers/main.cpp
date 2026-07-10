@@ -33,6 +33,7 @@ class ssc_initquit : public initquit {
 public:
     void on_init() override {
         d2d::init();
+        CoverEngine::instance().setLogName("24seven.fm-covers-foobar");
         ssccfg::loadIntoEngine();
         CoverEngine::instance().start();
     }

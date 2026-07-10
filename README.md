@@ -119,7 +119,8 @@ ctest --test-dir lib\build-tests -C Release --output-on-failure
 ```
 
 The other layers (engine, Direct2D, plugins, viewer) are Windows GUI/host code and are verified
-by launching the binary and checking its debug log (`%TEMP%\24seven.fm-covers.log`).
+by launching the binary and checking its debug log. Each host writes a distinct file so their
+logs don't interleave: `%TEMP%\24seven.fm-covers-winamp.log`, `-foobar.log`, and `-viewer.log`.
 
 ## Packaging / installers
 

@@ -57,6 +57,10 @@ public:
     void stop();             // stop the monitor (host shutdown)
     void setWindow(HWND h);  // the D2D drawing window (nullptr when destroyed)
 
+    // Set the log basename (OutputDebugString tag + %TEMP%\<base>.log). Each host
+    // uses a distinct name so their logs don't interleave. Call once before start().
+    void setLogName(const std::string& base);
+
     // Switch to a different 24seven.fm station (index into ssc::kStations). If the
     // monitor is already running it is rebuilt against the new host and the current
     // cover state is dropped so the new station loads fresh. No-op if unchanged.
