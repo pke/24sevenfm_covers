@@ -207,8 +207,10 @@ static void toggleFullscreen(HWND hwnd) {
         g_fullscreen = true;
     } else {
         SetWindowLongPtrA(hwnd, GWL_STYLE, g_prevStyle);
+        // NOTE: no SWP_NOZORDER here - it would make Windows ignore HWND_NOTOPMOST and
+        // leave the window stuck topmost. We must let the z-order change to drop topmost.
         SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
         SetWindowPlacement(hwnd, &g_prevPlace);
         g_fullscreen = false;
     }
