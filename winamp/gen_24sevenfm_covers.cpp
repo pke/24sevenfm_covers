@@ -108,6 +108,8 @@ static void saveSettings() {
 static int  init();
 static void config();
 static void quit();
+static INT_PTR CALLBACK PrefsPageProc(HWND, UINT, WPARAM, LPARAM);
+static prefsDlgRec g_prefsRec = {}; // our node in Winamp's Preferences treeview (persistent)
 
 static winampGeneralPurposePlugin g_plugin = {
     GPPHDR_VER,
@@ -247,43 +249,32 @@ static int init() {
     eng().setLogName("24seven.fm-covers-winamp");
     eng().setWindow(g_hwnd);
     eng().start();
+
+    // Add our options to Winamp's Preferences treeview (Plug-ins section). The page is
+    // the shared options dialog and applies live - the prefs tree has no per-page OK
+    // (Winamp owns the Close button). Removed in quit(). InitCommonControlsEx registers
+    // the trackbar class so the duration slider exists when Winamp builds the page.
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES };
+    InitCommonControlsEx(&icc);
+    g_prefsRec.hInst = g_hInst;
+    g_prefsRec.dlgID = IDD_OPTIONS_PAGE;
+    g_prefsRec.proc  = (void*)PrefsPageProc;
+    g_prefsRec.name  = (char*)"24seven.fm Covers";
+    g_prefsRec.where = 0; // General Preferences section
+    if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_ADD_PREFS_DLG);
     return 0;
 }
 
-// The two tab pages (child dialogs), created while the options dialog is open.
-static HWND g_dlgOptions = nullptr;
-static HWND g_dlgAbout   = nullptr;
-
-// "Options" tab page - the shared options page. All control logic is in
-// shared/options_panel.cpp (also used by the foobar2000 preferences page).
-static INT_PTR CALLBACK OptionsTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
-    switch (msg) {
-        case WM_INITDIALOG:
-            optpanel::init(dlg, eng().settings);
-            return TRUE;
-        case WM_HSCROLL:
-            optpanel::onHScroll(dlg);
-            return TRUE;
-        case WM_COMMAND:
-            if ((LOWORD(wp) == IDC_OPT_TRANS && HIWORD(wp) == CBN_SELCHANGE) ||
-                LOWORD(wp) == IDC_OPT_OVERLAY) {
-                optpanel::updateEnabled(dlg);
-                return TRUE;
-            }
-            break;
-    }
-    return FALSE;
-}
-
-// "About" tab page: version (filled here so it stays in sync) + a clickable link.
+// config() dialog: an About box. The options now live in Winamp's Preferences
+// treeview (registered in init()), so double-clicking the plugin - or the
+// Configure button - just shows version + a link, nothing to apply here.
 static HFONT g_linkFont = nullptr;
 
-static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_INITDIALOG: {
             SetDlgItemTextA(dlg, IDC_ABOUT_VER, "Version " SSC_VER_STR);
-            // Give the link an underlined font (derived from the dialog font).
-            HFONT f = (HFONT)SendMessageA(dlg, WM_GETFONT, 0, 0);
+            HFONT f = (HFONT)SendMessageA(dlg, WM_GETFONT, 0, 0); // underline the link
             LOGFONTA lf = {};
             if (f && GetObjectA(f, sizeof(lf), &lf)) {
                 lf.lfUnderline = TRUE;
@@ -310,8 +301,11 @@ static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case WM_COMMAND:
             if (LOWORD(wp) == IDC_ABOUT_LINK && HIWORD(wp) == STN_CLICKED) {
-                ShellExecuteA(dlg, "open", "https://streamingsoundtracks.com/",
-                              nullptr, nullptr, SW_SHOWNORMAL);
+                ShellExecuteA(dlg, "open", "https://24seven.fm/", nullptr, nullptr, SW_SHOWNORMAL);
+                return TRUE;
+            }
+            if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) {
+                EndDialog(dlg, LOWORD(wp));
                 return TRUE;
             }
             break;
@@ -322,69 +316,44 @@ static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
-// Reads the Options tab into engine.settings and persists them.
-static void applyOptions() {
-    if (!g_dlgOptions) return;
-    optpanel::read(g_dlgOptions, eng().settings);
-    saveSettings();
-}
-
-// Positions a tab page child dialog inside the tab control's display area.
-static void placePage(HWND dlg, HWND tab, HWND page) {
-    RECT rc; GetWindowRect(tab, &rc);
-    MapWindowPoints(HWND_DESKTOP, dlg, (POINT*)&rc, 2);
-    TabCtrl_AdjustRect(tab, FALSE, &rc); // window rect -> display (content) rect
-    SetWindowPos(page, HWND_TOP, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOZORDER);
-}
-
-static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+// Winamp Preferences-tree page: the shared options page, hosted by Winamp in the
+// prefs content pane. The tree has no per-page OK button, so it applies live -
+// every control change is read into engine.settings, persisted, and repainted
+// (the same live-preview model the desktop viewer's Apply uses).
+static INT_PTR CALLBACK PrefsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
+    auto commit = [&]() {
+        optpanel::read(dlg, eng().settings);
+        saveSettings();
+        if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+    };
     switch (msg) {
-        case WM_INITDIALOG: {
-            HWND tab = GetDlgItem(dlg, IDC_TAB);
-            TCITEMA ti = {}; ti.mask = TCIF_TEXT;
-            ti.pszText = (char*)"Options"; TabCtrl_InsertItem(tab, 0, &ti);
-            ti.pszText = (char*)"About";   TabCtrl_InsertItem(tab, 1, &ti);
-            g_dlgOptions = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_OPTIONS_PAGE), dlg, OptionsTabProc);
-            g_dlgAbout   = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_TAB_ABOUT), dlg, AboutTabProc);
-            placePage(dlg, tab, g_dlgOptions);
-            placePage(dlg, tab, g_dlgAbout);
-            ShowWindow(g_dlgOptions, SW_SHOW);
-            ShowWindow(g_dlgAbout, SW_HIDE);
+        case WM_INITDIALOG:
+            optpanel::init(dlg, eng().settings);
+            return TRUE;
+        case WM_HSCROLL: // duration slider dragged
+            optpanel::onHScroll(dlg);
+            commit();
+            return TRUE;
+        case WM_COMMAND: {
+            const WORD id = LOWORD(wp), code = HIWORD(wp);
+            if (id == IDC_OPT_OVERLAY || (id == IDC_OPT_TRANS && code == CBN_SELCHANGE))
+                optpanel::updateEnabled(dlg);
+            if (id == IDC_OPT_OVERLAY || id == IDC_OPT_ROLL ||
+                ((id == IDC_OPT_SIZE || id == IDC_OPT_TRANS) && code == CBN_SELCHANGE))
+                commit();
             return TRUE;
         }
-        case WM_NOTIFY: {
-            LPNMHDR nm = (LPNMHDR)lp;
-            if (nm->idFrom == IDC_TAB && nm->code == TCN_SELCHANGE) {
-                const int sel = TabCtrl_GetCurSel(GetDlgItem(dlg, IDC_TAB));
-                ShowWindow(g_dlgOptions, sel == 0 ? SW_SHOW : SW_HIDE);
-                ShowWindow(g_dlgAbout,   sel == 1 ? SW_SHOW : SW_HIDE);
-                return TRUE;
-            }
-            break;
-        }
-        case WM_COMMAND:
-            if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) {
-                if (LOWORD(wp) == IDOK) {
-                    applyOptions();
-                    if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
-                }
-                if (g_dlgOptions) { DestroyWindow(g_dlgOptions); g_dlgOptions = nullptr; }
-                if (g_dlgAbout)   { DestroyWindow(g_dlgAbout);   g_dlgAbout = nullptr; }
-                EndDialog(dlg, LOWORD(wp));
-                return TRUE;
-            }
-            break;
     }
     return FALSE;
 }
 
 static void config() {
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_TAB_CLASSES };
-    InitCommonControlsEx(&icc); // register trackbar + tab control classes
+    // About box only - the options are in Winamp's Preferences tree (see init()).
     DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(IDD_CONFIG), g_winamp, ConfigDlgProc, 0);
 }
 
 static void quit() {
+    if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_REMOVE_PREFS_DLG);
     eng().stop();
     eng().setWindow(nullptr); // also kills the engine's repaint heartbeat
     if (g_hwnd) KillTimer(g_hwnd, kGateTimer);
