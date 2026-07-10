@@ -7,12 +7,16 @@
 #include <string>
 
 #if defined(_WIN32)
-    #include <winsock2.h>
-    #include <ws2tcpip.h>
-    #pragma comment(lib, "ws2_32")
-    typedef SOCKET socket_t;
-    static const socket_t kInvalidSocket = INVALID_SOCKET;
+    // Windows uses WinHTTP: native TLS with the OS certificate store (so we get
+    // real HTTPS + certificate validation for free), transparent chunked decode,
+    // and system proxy support - no OpenSSL, no hand-rolled socket parsing.
+    #include <windows.h>
+    #include <winhttp.h>
+    #pragma comment(lib, "winhttp")
 #else
+    // Other platforms keep the dependency-free plain-socket client for now (no
+    // TLS library bundled yet). iOS/Android will later route through their native
+    // stacks (NSURLSession / OkHttp) the same way Windows routes through WinHTTP.
     #include <sys/types.h>
     #include <sys/socket.h>
     #include <netinet/in.h>
@@ -27,26 +31,10 @@
 namespace ssc {
 namespace {
 
-// One-time Winsock initialisation. No-op on POSIX platforms.
-struct SocketPlatform {
-    SocketPlatform() {
-#if defined(_WIN32)
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
-#endif
-    }
-    ~SocketPlatform() {
-#if defined(_WIN32)
-        WSACleanup();
-#endif
-    }
-};
-
-void ensurePlatform() {
-    // Constructed on first use, destroyed at process exit.
-    static SocketPlatform platform;
-    (void)platform;
-}
+// Hard ceiling on any single response body. The station's JSON is a few KB and
+// covers a few hundred KB, so a hostile server / MITM that streams without end
+// can't grow the buffer into std::bad_alloc. Enforced by both transports.
+const size_t kMaxResponseBytes = 16u * 1024u * 1024u; // 16 MB
 
 // A short OS/architecture descriptor for the User-Agent, e.g.
 // "Windows NT 10.0.26100; Win64; x64" or "Linux 5.15.0; aarch64".
@@ -97,61 +85,14 @@ const std::string& userAgent() {
     return ua;
 }
 
-void closeSocket(socket_t s) {
-#if defined(_WIN32)
-    closesocket(s);
-#else
-    close(s);
-#endif
-}
-
-void setRecvTimeout(socket_t s, int seconds) {
-    if (seconds <= 0) return;
-#if defined(_WIN32)
-    DWORD ms = static_cast<DWORD>(seconds) * 1000;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&ms), sizeof(ms));
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&ms), sizeof(ms));
-#else
-    struct timeval tv;
-    tv.tv_sec = seconds;
-    tv.tv_usec = 0;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-#endif
-}
-
-bool sendAll(socket_t s, const char* data, size_t len) {
-    size_t sent = 0;
-    while (sent < len) {
-        int n = static_cast<int>(::send(s, data + sent, static_cast<int>(len - sent), 0));
-        if (n <= 0) return false;
-        sent += static_cast<size_t>(n);
-    }
-    return true;
-}
-
-// Reads until the peer closes the connection (we always ask for Connection: close).
-// Capped: the station's JSON is a few KB and covers are a few hundred KB, so a hostile
-// server / MITM that streams without end can't grow this unbounded into std::bad_alloc.
-std::string readAll(socket_t s) {
-    static const size_t kMaxResponseBytes = 16u * 1024u * 1024u; // 16 MB ceiling
-    std::string out;
-    char buf[8192];
-    for (;;) {
-        int n = static_cast<int>(::recv(s, buf, sizeof(buf), 0));
-        if (n <= 0) break;
-        out.append(buf, static_cast<size_t>(n));
-        if (out.size() > kMaxResponseBytes) break; // DoS guard: stop an unbounded stream
-    }
-    return out;
-}
-
 std::string toLower(std::string v) {
     for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return v;
 }
 
-// Decodes an HTTP/1.1 chunked body.
+// Decodes an HTTP/1.1 chunked body. Only the plain-socket path needs this
+// (WinHTTP de-chunks transparently), but it is portable and unit-tested, so it
+// is compiled everywhere.
 std::string dechunk(const std::string& body) {
     std::string out;
     size_t pos = 0;
@@ -175,7 +116,72 @@ std::string dechunk(const std::string& body) {
     return out;
 }
 
+#if defined(_WIN32)
+
+// UTF-8 (our std::string convention) -> UTF-16 for the wide WinHTTP API.
+std::wstring toWide(const std::string& s) {
+    if (s.empty()) return std::wstring();
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    if (n <= 0) return std::wstring();
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), &w[0], n);
+    return w;
+}
+
+// RAII for a WinHTTP handle so early returns don't leak.
+struct WinHttpHandle {
+    HINTERNET h = nullptr;
+    WinHttpHandle() = default;
+    explicit WinHttpHandle(HINTERNET x) : h(x) {}
+    ~WinHttpHandle() { if (h) WinHttpCloseHandle(h); }
+    WinHttpHandle(const WinHttpHandle&) = delete;
+    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+    operator HINTERNET() const { return h; }
+    explicit operator bool() const { return h != nullptr; }
+};
+
+#else // POSIX socket path
+
+void closeSocket(socket_t s) { close(s); }
+
+void setRecvTimeout(socket_t s, int seconds) {
+    if (seconds <= 0) return;
+    struct timeval tv;
+    tv.tv_sec = seconds;
+    tv.tv_usec = 0;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
+bool sendAll(socket_t s, const char* data, size_t len) {
+    size_t sent = 0;
+    while (sent < len) {
+        int n = static_cast<int>(::send(s, data + sent, static_cast<int>(len - sent), 0));
+        if (n <= 0) return false;
+        sent += static_cast<size_t>(n);
+    }
+    return true;
+}
+
+// Reads until the peer closes the connection (we always ask for Connection: close),
+// capped at kMaxResponseBytes so an endless stream can't exhaust memory.
+std::string readAll(socket_t s) {
+    std::string out;
+    char buf[8192];
+    for (;;) {
+        int n = static_cast<int>(::recv(s, buf, sizeof(buf), 0));
+        if (n <= 0) break;
+        out.append(buf, static_cast<size_t>(n));
+        if (out.size() > kMaxResponseBytes) break; // DoS guard: stop an unbounded stream
+    }
+    return out;
+}
+
+#endif // platform helpers
+
 } // namespace
+
+#if defined(_WIN32)
 
 HttpResponse httpRequest(const std::string& host,
                          unsigned short port,
@@ -185,12 +191,87 @@ HttpResponse httpRequest(const std::string& host,
                          const std::string& contentType,
                          int timeoutSeconds) {
     HttpResponse resp;
-    ensurePlatform();
+
+    const bool secure = (port == 443); // 443 -> TLS via WINHTTP_FLAG_SECURE
+    const std::wstring hostW   = toWide(host);
+    const std::wstring pathW   = toWide(path.empty() ? "/" : path);
+    const std::wstring methodW = toWide(method.empty() ? "GET" : method);
+    const std::wstring uaW     = toWide(userAgent());
+
+    WinHttpHandle session(WinHttpOpen(uaW.c_str(),
+                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    if (!session) { resp.error = "WinHttpOpen failed"; return resp; }
+
+    if (timeoutSeconds > 0) {
+        int ms = timeoutSeconds * 1000;
+        WinHttpSetTimeouts(session, ms, ms, ms, ms);
+    }
+
+    WinHttpHandle conn(WinHttpConnect(session, hostW.c_str(), port, 0));
+    if (!conn) { resp.error = "WinHttpConnect failed for " + host; return resp; }
+
+    WinHttpHandle req(WinHttpOpenRequest(conn, methodW.c_str(), pathW.c_str(),
+                                         nullptr, WINHTTP_NO_REFERER,
+                                         WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                         secure ? WINHTTP_FLAG_SECURE : 0));
+    if (!req) { resp.error = "WinHttpOpenRequest failed"; return resp; }
+
+    std::wstring headers;
+    if (!body.empty() && !contentType.empty())
+        headers = L"Content-Type: " + toWide(contentType) + L"\r\n";
+
+    BOOL ok = WinHttpSendRequest(
+        req,
+        headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
+        headers.empty() ? 0 : static_cast<DWORD>(-1),
+        body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data()),
+        static_cast<DWORD>(body.size()),
+        static_cast<DWORD>(body.size()),
+        0);
+    if (ok) ok = WinHttpReceiveResponse(req, nullptr);
+    if (!ok) {
+        resp.error = "WinHTTP request failed (error " + std::to_string(GetLastError()) + ")";
+        return resp;
+    }
+
+    // Status code as a number.
+    DWORD status = 0, statusLen = sizeof(status);
+    WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusLen,
+                        WINHTTP_NO_HEADER_INDEX);
+    resp.status = static_cast<int>(status);
+
+    // Body (WinHTTP de-chunks transparently), capped at kMaxResponseBytes.
+    std::string out;
+    for (;;) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
+        std::string chunk(avail, '\0');
+        DWORD read = 0;
+        if (!WinHttpReadData(req, &chunk[0], avail, &read) || read == 0) break;
+        out.append(chunk.data(), read);
+        if (out.size() > kMaxResponseBytes) break; // DoS guard
+    }
+    resp.body = std::move(out);
+    return resp;
+}
+
+#else // POSIX socket transport
+
+HttpResponse httpRequest(const std::string& host,
+                         unsigned short port,
+                         const std::string& path,
+                         const std::string& method,
+                         const std::string& body,
+                         const std::string& contentType,
+                         int timeoutSeconds) {
+    HttpResponse resp;
 
     // Resolve host. Force IPv4: the station is IPv4-only, and AF_UNSPEC can return an
     // IPv6 address first whose blocking connect() hangs for the OS default (~12s,
     // unaffected by our recv timeout) before falling back - seen as a huge first-poll
-    // stall in hosts that aren't already connected to the stream (e.g. foobar at start).
+    // stall in hosts that aren't already connected to the stream.
     struct addrinfo hints;
     std::memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -275,5 +356,7 @@ HttpResponse httpRequest(const std::string& host,
     resp.body = std::move(bodyPart);
     return resp;
 }
+
+#endif // transport
 
 } // namespace ssc

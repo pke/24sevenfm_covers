@@ -61,14 +61,17 @@ using HttpTransport = std::function<HttpResponse(
 
 struct Config {
     // Use the bare host, NOT www.*: www.streamingsoundtracks.com issues a 301
-    // redirect. The JSON endpoint is served over plain HTTP on port 80 (and
-    // HTTPS), so no TLS is required. The old SOAP endpoint (FM24seven.php) is
-    // dead (HTTP 500); this JSON one (FM24sevenJSON.php) is what the site's own
-    // player uses.
+    // redirect. The endpoint is served over both HTTP:80 and HTTPS:443. The old
+    // SOAP endpoint (FM24seven.php) is dead (HTTP 500); this JSON one
+    // (FM24sevenJSON.php) is what the site's own player uses.
     std::string host = "streamingsoundtracks.com";
     std::string path = "/soap/FM24sevenJSON.php";
     std::string action = "GetCurrentlyPlaying"; // query: ?action=<action>&_t=<cachebuster>
-    unsigned short port = 80;
+#if defined(_WIN32)
+    unsigned short port = 443; // Windows: HTTPS via WinHTTP (native TLS + cert validation)
+#else
+    unsigned short port = 80;  // other platforms: plain-socket path until a TLS lib is wired in
+#endif
 
     // Requested cover pixel size. The bare CoverLink is a medium image; 500 is
     // the large art (the reference app used 500), 40 the thumbnail. Set to 0 to

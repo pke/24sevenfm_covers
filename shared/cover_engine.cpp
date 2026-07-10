@@ -28,7 +28,8 @@ void logLine(const std::string& msg) {
     }
 }
 
-// Downloads a cover image over plain HTTP:80 (station serves images without TLS).
+// Downloads a cover image. Windows goes over HTTPS:443 (WinHTTP/TLS); the station
+// also serves the images on plain HTTP:80, which the socket path uses elsewhere.
 std::string downloadCover(const std::string& url) {
     std::string rest = url;
     const auto scheme = rest.find("://");
@@ -37,7 +38,12 @@ std::string downloadCover(const std::string& url) {
     const auto slash = rest.find('/');
     const std::string host = (slash == std::string::npos) ? rest : rest.substr(0, slash);
     const std::string path = (slash == std::string::npos) ? "/" : rest.substr(slash);
-    ssc::HttpResponse res = ssc::httpRequest(host, 80, path, "GET");
+#if defined(_WIN32)
+    const unsigned short port = 443;
+#else
+    const unsigned short port = 80;
+#endif
+    ssc::HttpResponse res = ssc::httpRequest(host, port, path, "GET");
     if (!res.ok())
         logLine("download failed: status=" + std::to_string(res.status) + " " + res.error);
     return res.ok() ? res.body : std::string();

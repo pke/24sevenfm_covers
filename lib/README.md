@@ -27,8 +27,11 @@ It returns the same data model the SOAP service used to, as flat JSON:
  "ThumbnailLink":".../images/cover/040/B00LR1YTT4.jpg","SiteLink":"...","RequestedBy":"...","ListenerCount":"139"}
 ```
 
-It is served over **plain HTTP on port 80** (and HTTPS), so **no TLS/OpenSSL is
-needed** — the built-in socket client is enough.
+It is served over both **HTTP:80 and HTTPS:443**. On Windows the client uses
+**WinHTTP**, so requests go over **TLS (443)** with certificate validation from
+the OS store and no extra dependency. Other platforms use the dependency-free
+plain-socket client (HTTP:80) until a native TLS path (NSURLSession / OkHttp) is
+wired in.
 
 ## Files
 
@@ -36,12 +39,13 @@ needed** — the built-in socket client is enough.
 |------|---------|
 | `coverfetch.h` / `.cpp` | The `ssc::CoverMonitor` C++ API (JSON parsing is built in) |
 | `coverfetch_c.h` / `.cpp` | Plain **C ABI** wrapper (easy JNI / Swift binding) |
-| `http_client.h` / `.cpp` | Dependency-free socket HTTP/1.1 client (Winsock / POSIX) |
+| `http_client.h` / `.cpp` | HTTP client: WinHTTP (TLS) on Windows, plain socket on POSIX |
 | `example/main.cpp` | Console demo |
 | `CMakeLists.txt` | Build for all three platforms |
 
-Dependencies: **none** beyond the C++11 standard library and the OS
-socket/thread libraries. No tinyxml2, no OpenSSL.
+Dependencies: **none** beyond the C++11 standard library and the OS libraries
+(WinHTTP on Windows; sockets/threads elsewhere). No tinyxml2, no OpenSSL —
+Windows TLS comes from WinHTTP.
 
 ## C++ usage
 
@@ -105,7 +109,7 @@ cmake --build build
 ./build/coverfetch_example     # desktop demo
 ```
 
-- **Windows**: MSVC or clang; links `ws2_32` automatically.
+- **Windows**: MSVC or clang; uses WinHTTP (TLS), links `winhttp` automatically.
 - **Android**: build with the NDK toolchain (`android.toolchain.cmake`); links
   `pthread`/libc (sockets are in libc). Add the `INTERNET` permission to the app
   manifest. Bind through `coverfetch_c.h`.
