@@ -1,11 +1,19 @@
 #!/bin/sh
-# Semantic-version bump from Conventional Commits.
-# Reads the commit just made and, if it's a fix/feat/breaking change, bumps
-# shared/version.h and folds the change into that same commit (amend).
-#   fix:  -> patch      feat: -> minor      feat! / BREAKING CHANGE -> major
+# Per-module semantic-version bump from Conventional Commits.
+#
+# Each shipped binary has its OWN version header. A commit bumps a binary iff it touches
+# that binary's code OR the shared code (lib/, shared/). The commit type sets the size:
+#   fix: -> patch     feat: -> minor     feat! / BREAKING CHANGE -> major
 # Other types (chore/docs/refactor/test/ci/style/perf/build) do not bump.
 #
-# Enable once per clone:  git config core.hooksPath .githooks
+#   Shared    lib/**, shared/**                    -> bumps ALL three modules
+#   Winamp    winamp/**                            -> winamp/gen_version.h
+#   foobar    foobar2000/foo_24sevenfm_covers/**   -> .../foo_version.h
+#   Desktop   root viewer sources                  -> viewer_version.h
+#   (installer/, lib/tests/, docs, *.md, the version files themselves -> no bump)
+#
+# The bump is folded into the same commit (amend). Enable once per clone:
+#   git config core.hooksPath .githooks
 
 GUARD=".git/.ssc-version-bumping"
 # The amend below re-triggers post-commit; this guard stops the recursion.
@@ -25,27 +33,53 @@ elif printf '%s' "$subject" | grep -qE '^fix(\([^)]*\))?:'; then
 fi
 [ -z "$bump" ] && exit 0
 
-vh="shared/version.h"
-[ -f "$vh" ] || exit 0
-maj=$(sed -n 's/^#define SSC_VER_MAJOR \([0-9][0-9]*\).*/\1/p' "$vh")
-min=$(sed -n 's/^#define SSC_VER_MINOR \([0-9][0-9]*\).*/\1/p' "$vh")
-pat=$(sed -n 's/^#define SSC_VER_PATCH \([0-9][0-9]*\).*/\1/p' "$vh")
+# Files changed in the commit just made; classify each into a module bucket.
+shared=0; winamp=0; foobar=0; desktop=0
+for f in $(git diff-tree --no-commit-id --name-only -r HEAD); do
+  case "$f" in
+    lib/tests/*)                                        ;;  # tests do not ship
+    lib/*|shared/*)                             shared=1 ;; # shared -> all modules
+    winamp/gen_version.h)                               ;;  # ignore the version files themselves
+    winamp/*)                                   winamp=1 ;;
+    foobar2000/foo_24sevenfm_covers/foo_version.h)      ;;
+    foobar2000/foo_24sevenfm_covers/*)          foobar=1 ;;
+    viewer_version.h)                                   ;;
+    24sevenfm_covers.*|viewer_resource.h|Resource.h|framework.h|targetver.h) desktop=1 ;;
+    *)                                                  ;;  # installer/, docs, etc. -> no bump
+  esac
+done
 
-case "$bump" in
-  major) maj=$((maj + 1)); min=0; pat=0 ;;
-  minor) min=$((min + 1)); pat=0 ;;
-  patch) pat=$((pat + 1)) ;;
-esac
+# Shared code fans out to every module.
+if [ "$shared" = 1 ]; then winamp=1; foobar=1; desktop=1; fi
+[ "$winamp" = 0 ] && [ "$foobar" = 0 ] && [ "$desktop" = 0 ] && exit 0
 
-sed -i \
-  -e "s/^#define SSC_VER_MAJOR .*/#define SSC_VER_MAJOR $maj/" \
-  -e "s/^#define SSC_VER_MINOR .*/#define SSC_VER_MINOR $min/" \
-  -e "s/^#define SSC_VER_PATCH .*/#define SSC_VER_PATCH $pat/" \
-  -e "s/^#define SSC_VER_NUM .*/#define SSC_VER_NUM   $maj, $min, $pat, 0/" \
-  -e "s/^#define SSC_VER_STR .*/#define SSC_VER_STR   \"$maj.$min.$pat\"/" \
-  "$vh"
+# Rewrite one module's SSC_VER_* lines by $bump.
+bump_file() {
+  vf="$1"; label="$2"
+  [ -f "$vf" ] || return 0
+  maj=$(sed -n 's/^#define SSC_VER_MAJOR \([0-9][0-9]*\).*/\1/p' "$vf")
+  min=$(sed -n 's/^#define SSC_VER_MINOR \([0-9][0-9]*\).*/\1/p' "$vf")
+  pat=$(sed -n 's/^#define SSC_VER_PATCH \([0-9][0-9]*\).*/\1/p' "$vf")
+  case "$bump" in
+    major) maj=$((maj + 1)); min=0; pat=0 ;;
+    minor) min=$((min + 1)); pat=0 ;;
+    patch) pat=$((pat + 1)) ;;
+  esac
+  sed -i \
+    -e "s/^#define SSC_VER_MAJOR .*/#define SSC_VER_MAJOR $maj/" \
+    -e "s/^#define SSC_VER_MINOR .*/#define SSC_VER_MINOR $min/" \
+    -e "s/^#define SSC_VER_PATCH .*/#define SSC_VER_PATCH $pat/" \
+    -e "s/^#define SSC_VER_NUM .*/#define SSC_VER_NUM   $maj, $min, $pat, 0/" \
+    -e "s/^#define SSC_VER_STR .*/#define SSC_VER_STR   \"$maj.$min.$pat\"/" \
+    "$vf"
+  git add "$vf"
+  echo "  $label -> $maj.$min.$pat"
+}
 
-git add "$vh"
+echo "[version] $bump bump:"
+[ "$winamp" = 1 ]  && bump_file "winamp/gen_version.h"                          "winamp "
+[ "$foobar" = 1 ]  && bump_file "foobar2000/foo_24sevenfm_covers/foo_version.h" "foobar "
+[ "$desktop" = 1 ] && bump_file "viewer_version.h"                             "desktop"
+
 : > "$GUARD"
 git commit --amend --no-edit --no-verify >/dev/null 2>&1
-echo "[version] $bump bump -> $maj.$min.$pat  (shared/version.h)"
