@@ -1,15 +1,16 @@
 # Build & distribution output
 /winamp/build/
-/foobar2000/foo_24sevencover/build/
+/foobar2000/foo_24sevenfm_covers/build/
 /lib/build/
+/lib/build-tests/
 /lib/build-android-*/
 /x64/
+/build/
 /dist/
 *.aps
 
 # Vendored dependencies (re-add per installer/README + memory notes)
 /foobar2000/sdk/
-/foobar2000/wtl/
 
 # Visual Studio / tooling
 *.user
@@ -17,4 +18,4 @@
 .vs/
 
 # Runtime log written by both plugins
-24sevencover*.log
+24seven.fm-covers*.log
