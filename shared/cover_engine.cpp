@@ -8,6 +8,7 @@
 
 #include "coverfetch.h"
 #include "http_client.h"
+#include "stations.h"
 
 // --- logging ----------------------------------------------------------------
 namespace {
@@ -77,10 +78,20 @@ void CoverEngine::start(bool autoAdvance) {
     // Plugins (autoAdvance=false): covers advance off the host's track-title changes
     // (onTitleChanged -> refresh), not the station's live clock, so covers track what
     // is actually playing. Desktop viewer (autoAdvance=true): no player, so the monitor
-    // follows the station's live clock on its own. Flaky server -> recover quickly.
+    // follows the station's live clock on its own.
+    autoAdvance_ = autoAdvance;
+    startMonitor();
+    logLine("engine started");
+}
+
+// Creates the CoverMonitor for the currently-selected station. Split out of start()
+// so setStation() can rebuild it against a new host. Flaky server -> recover quickly.
+void CoverEngine::startMonitor() {
+    const ssc::StationInfo& st = ssc::station(settings.station);
     ssc::Config cfg;
     cfg.errorRetrySeconds = 8;
-    cfg.autoAdvance = autoAdvance;
+    cfg.autoAdvance = autoAdvance_;
+    cfg.host = st.host; // JSON + cover host; CoverLink is then pinned to this host
     monitor_ = new ssc::CoverMonitor([this](const std::string& url, const ssc::TrackInfo& info) {
         // Anchor the countdown from the current-playing endpoint's remaining
         // (Length - |SystemTime - PlayStart|) - known even when we join mid-track. This
@@ -96,7 +107,30 @@ void CoverEngine::start(bool autoAdvance) {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     });
     monitor_->start();
-    logLine("engine started");
+    logLine(std::string("monitor on ") + st.displayName + " (" + st.host + ")");
+}
+
+void CoverEngine::setStation(int index) {
+    index = ssc::validStationIndex(index);
+    if (index == settings.station && monitor_) return; // already on this station
+    settings.station = index;
+    if (!monitor_) return; // not started yet; start() will pick up settings.station
+
+    // Rebuild the monitor against the new host and drop the old station's cover so
+    // we don't briefly show the wrong art. Safe on the UI thread: stop() joins the
+    // monitor's background thread before we tear it down.
+    monitor_->stop(); delete monitor_; monitor_ = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        coverBytes_.clear(); dirty_ = false;
+        shownUrl_.clear(); shownBytes_.clear();
+        nextUrl_.clear(); nextBytes_.clear(); nextLen_ = -1;
+    }
+    resetTitle();          // next accepted title reloads; hide the countdown
+    loading_.store(true);  // show "Loading..." until the new station replies
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    startMonitor();
+    if (monitor_) monitor_->refresh(); // fetch the new station's current cover now
 }
 
 void CoverEngine::stop() {
@@ -195,7 +229,7 @@ void CoverEngine::onTitleChanged(const std::string& title) {
                    [](unsigned char c){ return (char)std::tolower(c); });
     const bool realTitle = !title.empty() && title[0] != '[' &&
         lower.rfind("http://", 0) != 0 && lower.rfind("https://", 0) != 0 &&
-        lower.rfind("streamingsoundtracks.com", 0) != 0;
+        lower.rfind(ssc::station(settings.station).host, 0) != 0; // bare station host placeholder
     if (!realTitle || title == lastTitle_) return;
 
     // First real title after tune-in only establishes the current track (the

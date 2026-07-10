@@ -1,7 +1,8 @@
 # 24seven.fm Covers
 
-Cover-art for the **Streaming Soundtracks (24seven.fm)** internet radio station. A shared,
-host-agnostic C++ engine drives three Windows front-ends plus a cross-platform core library:
+Cover-art for the **24seven.fm** family of internet radio stations — Streaming Soundtracks,
+1980s.FM, Adagio.FM, Death.FM, and Entranced.FM. A shared, host-agnostic C++ engine drives
+three Windows front-ends plus a cross-platform core library:
 
 | Component | Directory | Output | Build system |
 |-----------|-----------|--------|--------------|
@@ -157,6 +158,11 @@ image decode; cleartext transport on non-Windows until native TLS lands).
 
 ## Runtime notes
 
+- **Stations.** All five 24seven.fm stations share one API (`/soap/FM24sevenJSON.php`), each on
+  its own host, so the same code serves any of them (`shared/stations.h`). The **plugins
+  auto-follow** whichever family stream the player is tuned to — detected from the stream URL
+  (`hi5.death.fm`, …) — and switch covers automatically. The **desktop viewer** has no player, so
+  it exposes a *Station* tab in *Options…* to pick one (persisted per station id).
 - The remaining-time **countdown** and cover **transitions** are configurable; the countdown
   overlay defaults to **off** — enable it in each host's options (Winamp: Prefs → Plug-ins →
   General Purpose → Configure; foobar: Preferences → Display; viewer: window system-menu or

@@ -23,6 +23,7 @@
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
 #include "options_panel.h"  // shared options page (dialog + control logic)
+#include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "viewer_resource.h"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -69,6 +70,9 @@ static void loadSettings() {
     s.fadeMs      = GetPrivateProfileIntA("options", "fadeMs", 500, p.c_str());
     if (s.fadeMs < 500)  s.fadeMs = 500;
     if (s.fadeMs > 2000) s.fadeMs = 2000;
+    char stid[32] = {0}; // station stored by stable id so reordering the list is safe
+    GetPrivateProfileStringA("options", "station", "sst", stid, sizeof(stid), p.c_str());
+    s.station = ssc::validStationIndex(ssc::stationIndexForId(stid));
 }
 static void saveSettings() {
     const std::string p = iniPath();
@@ -79,6 +83,7 @@ static void saveSettings() {
     WritePrivateProfileStringA("options", "roll", s.rollDigits ? "1" : "0", p.c_str());
     wsprintfA(buf, "%d", s.transition);  WritePrivateProfileStringA("options", "transition", buf, p.c_str());
     wsprintfA(buf, "%d", s.fadeMs);      WritePrivateProfileStringA("options", "fadeMs", buf, p.c_str());
+    WritePrivateProfileStringA("options", "station", ssc::station(s.station).id, p.c_str());
 }
 
 // --- Options: a property sheet hosting the shared options page --------------
@@ -152,13 +157,50 @@ static INT_PTR CALLBACK AboutPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
             break;
         case WM_COMMAND:
             if (LOWORD(wp) == IDC_ABOUT_LINK && HIWORD(wp) == STN_CLICKED) {
-                ShellExecuteA(dlg, "open", "https://streamingsoundtracks.com/",
+                ShellExecuteA(dlg, "open", "https://24seven.fm/",
                               nullptr, nullptr, SW_SHOWNORMAL);
                 return TRUE;
             }
             break;
         case WM_DESTROY:
             if (g_linkFont) { DeleteObject(g_linkFont); g_linkFont = nullptr; }
+            break;
+    }
+    return FALSE;
+}
+
+// "Station" page (viewer only): pick which 24seven.fm station's now-playing cover
+// to display. The viewer has no player, so unlike the plugins it can't auto-follow -
+// the user chooses here. Applying rebuilds the engine's monitor for the new host
+// (live), so the cover swaps to the selected station without restarting.
+static INT_PTR CALLBACK StationPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_INITDIALOG: {
+            HWND cb = GetDlgItem(dlg, IDC_VIEW_STATION);
+            for (int i = 0; i < ssc::kStationCount; ++i)
+                SendMessageA(cb, CB_ADDSTRING, 0, (LPARAM)ssc::kStations[i].displayName);
+            const int cur = ssc::validStationIndex(eng().settings.station);
+            SendMessageA(cb, CB_SETCURSEL, cur, 0);
+            SetDlgItemTextA(dlg, IDC_VIEW_STATION_DESC, ssc::kStations[cur].desc);
+            return TRUE;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wp) == IDC_VIEW_STATION && HIWORD(wp) == CBN_SELCHANGE) {
+                const int idx = ssc::validStationIndex(
+                    (int)SendDlgItemMessageA(dlg, IDC_VIEW_STATION, CB_GETCURSEL, 0, 0));
+                SetDlgItemTextA(dlg, IDC_VIEW_STATION_DESC, ssc::kStations[idx].desc);
+                PropSheet_Changed(GetParent(dlg), dlg); // enable Apply
+            }
+            return TRUE;
+        case WM_NOTIFY:
+            if (reinterpret_cast<LPNMHDR>(lp)->code == PSN_APPLY) { // Apply or OK
+                const int idx = ssc::validStationIndex(
+                    (int)SendDlgItemMessageA(dlg, IDC_VIEW_STATION, CB_GETCURSEL, 0, 0));
+                eng().setStation(idx); // live: rebuilds the monitor for the new host
+                saveSettings();
+                SetWindowLongPtrA(dlg, DWLP_MSGRESULT, PSNRET_NOERROR);
+                return TRUE;
+            }
             break;
     }
     return FALSE;
@@ -176,6 +218,7 @@ static PROPSHEETPAGEA makePage(WORD templateId, DLGPROC proc, const char* title)
 
 static void openOptions() {
     PROPSHEETPAGEA pages[] = {
+        makePage(IDD_TAB_STATION,  StationPageProc, "Station"), // viewer-only station picker
         makePage(IDD_OPTIONS_PAGE, OptionsPageProc, "Options"), // shared options page
         makePage(IDD_TAB_ABOUT,    AboutPageProc,   "About"),
     };

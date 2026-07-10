@@ -6,20 +6,18 @@
 //     doesn't drive the station cover.
 #include <SDK/foobar2000.h>
 
-#include <algorithm>
 #include <string>
 
 #include "cover_engine.h"
+#include "stations.h" // 24seven.fm station table + stream-URL detection
 
 namespace {
 
-static bool pathIsStation(const metadb_handle_ptr& track) {
-    if (track.is_empty()) return false;
+// Which 24seven.fm station this track's path (the stream URL) belongs to, or -1.
+static int trackStationIndex(const metadb_handle_ptr& track) {
+    if (track.is_empty()) return -1;
     const char* p = track->get_path();
-    if (!p) return false;
-    std::string s(p);
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-    return s.find("streamingsoundtracks") != std::string::npos;
+    return p ? ssc::stationIndexForText(p) : -1;
 }
 
 class ssc_play_callback : public play_callback_static {
@@ -30,8 +28,12 @@ public:
     }
 
     void on_playback_new_track(metadb_handle_ptr track) override {
-        m_tuned = pathIsStation(track);
-        if (!m_tuned) CoverEngine::instance().resetTitle();
+        const int idx = trackStationIndex(track);
+        m_tuned = idx >= 0;
+        if (m_tuned)
+            CoverEngine::instance().setStation(idx); // auto-follow the tuned station
+        else
+            CoverEngine::instance().resetTitle();
     }
     void on_playback_stop(play_control::t_stop_reason) override {
         m_tuned = false;

@@ -41,6 +41,7 @@ public:
         int  transition  = 1;     // 0 none, 1 crossfade, 2 flip-h, 3 flip-v
         bool rollDigits  = false; // animate the countdown (rolling)
         int  fadeMs      = 500;   // transition duration, 500..2000
+        int  station     = 0;     // index into ssc::kStations (see stations.h); 0 = SST
     };
     Settings settings;
 
@@ -55,6 +56,13 @@ public:
     void start(bool autoAdvance = false);
     void stop();             // stop the monitor (host shutdown)
     void setWindow(HWND h);  // the D2D drawing window (nullptr when destroyed)
+
+    // Switch to a different 24seven.fm station (index into ssc::kStations). If the
+    // monitor is already running it is rebuilt against the new host and the current
+    // cover state is dropped so the new station loads fresh. No-op if unchanged.
+    // The viewer calls this from its station picker; the plugins call it to
+    // auto-follow whichever family stream the player is tuned to.
+    void setStation(int index);
 
     // --- host events -------------------------------------------------------
     // A track title the host observed (Winamp: polled IPC title; foobar: ICY
@@ -84,6 +92,7 @@ private:
     CoverEngine(const CoverEngine&) = delete;
     CoverEngine& operator=(const CoverEngine&) = delete;
 
+    void startMonitor();     // create + start the CoverMonitor for settings.station
     void decodePending(HWND h);
     void onCoverChanged(const std::string& url); // monitor bg-thread callback body
     d2d::Transition transitionEffect() const;
@@ -112,6 +121,7 @@ private:
     DWORD fadeStart_ = 0;
 
     ssc::CoverMonitor* monitor_ = nullptr;
+    bool autoAdvance_ = false;           // run mode remembered from start(), for setStation() rebuilds
     HWND hwnd_ = nullptr;
     std::string lastTitle_;              // last accepted real title (UI thread)
 };

@@ -7,7 +7,11 @@
 #define IDI_APPICON     107  // app icon (24sevenfm_covers.ico)
 #define IDD_TAB_ABOUT   103  // the "About" property-sheet page
 #define IDC_ABOUT_VER   1011 // version line on the About page
-#define IDC_ABOUT_LINK  1012 // clickable streamingsoundtracks.com link
+#define IDC_ABOUT_LINK  1012 // clickable 24seven.fm link
+
+#define IDD_TAB_STATION      105  // the "Station" property-sheet page (viewer only)
+#define IDC_VIEW_STATION     1021 // station picker combo
+#define IDC_VIEW_STATION_DESC 1022 // one-line genre blurb for the selected station
 
 // The options page (IDD_OPTIONS_PAGE) and its control IDs come from the shared
 // shared/options_ids.h + shared/options_page.rc; the viewer's own version is in

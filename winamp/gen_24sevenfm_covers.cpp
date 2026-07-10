@@ -32,6 +32,7 @@
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
 #include "options_panel.h"  // shared options page (dialog + control logic)
+#include "stations.h"       // 24seven.fm station table + stream-URL detection
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "comctl32.lib")
@@ -119,25 +120,20 @@ static winampGeneralPurposePlugin g_plugin = {
 };
 
 // --- tuned-to-station detection (Winamp IPC) --------------------------------
-static bool icontains(const char* hay, const char* needle) {
-    if (!hay || !needle) return false;
-    std::string h(hay), n(needle);
-    std::transform(h.begin(), h.end(), h.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-    std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-    return h.find(n) != std::string::npos;
-}
-
-static bool tunedToStation() {
+// Which 24seven.fm station is Winamp tuned to? Returns an index into ssc::kStations,
+// or -1 when playing something that isn't a family stream. The playlist FILE (the
+// stream URL, e.g. http://hi5.death.fm/) is authoritative; the title is a fallback.
+static int tunedStationIndex() {
     if (!g_winamp || !IsWindow(g_winamp))
-        return true;
+        return 0; // no host window (e.g. options preview): show the default station
     if (SendMessageA(g_winamp, WM_WA_IPC, 0, IPC_ISPLAYING) == 0)
-        return false;
+        return -1;
     const int pos = (int)SendMessageA(g_winamp, WM_WA_IPC, 0, IPC_GETLISTPOS);
     const char* url = (const char*)SendMessageA(g_winamp, WM_WA_IPC, pos, IPC_GETPLAYLISTFILE);
-    if (icontains(url, "streamingsoundtracks"))
-        return true;
+    const int byUrl = ssc::stationIndexForText(url);
+    if (byUrl >= 0) return byUrl;
     const char* title = (const char*)SendMessageA(g_winamp, WM_WA_IPC, pos, IPC_GETPLAYLISTTITLE);
-    return icontains(title, "streamingsoundtracks") || icontains(title, "24seven");
+    return ssc::stationIndexForText(title);
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -152,7 +148,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // the content area - we must not touch the child's position/size (doing
             // so paints over the frame's title bar and kills its drag).
             HWND top = g_embedFrame ? g_embedFrame : hwnd;
-            const bool tuned = tunedToStation();
+            const int stationIdx = tunedStationIndex();
+            const bool tuned = stationIdx >= 0;
+
+            // Auto-follow: point the engine at whichever family station Winamp is
+            // tuned to, so its covers match what's playing (no-op if unchanged).
+            if (tuned) eng().setStation(stationIdx);
 
             // Feed Winamp's current stream title (the ICY metadata it's decoding) to
             // the engine; it advances the cover off genuine title changes, so covers

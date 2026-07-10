@@ -33,6 +33,12 @@ the OS store and no extra dependency. Other platforms use the dependency-free
 plain-socket client (HTTP:80) until a native TLS path (NSURLSession / OkHttp) is
 wired in.
 
+**All 24seven.fm stations expose this same endpoint**, each on its own host —
+`streamingsoundtracks.com`, `1980s.fm`, `adagio.fm`, `death.fm`, `entranced.fm`
+(covers live on the same host as the JSON). Point `Config::host` at any of them to
+switch stations; the cover-URL validation pins `CoverLink` to that host. The
+station table shared by the front-ends is `shared/stations.h`.
+
 ## Files
 
 | File | Purpose |

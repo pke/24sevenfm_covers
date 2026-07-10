@@ -9,6 +9,7 @@
 
 #include "../http_client.cpp" // ssc:: dechunk, toLower  (+ httpRequest, unused here)
 #include "../coverfetch.cpp"  // ssc:: parseAsin, sizedCoverUrl, jsonString, isoToUnixTime
+#include "../../shared/stations.h" // ssc:: station table + stream-URL detection (auto-follow)
 
 using namespace ssc; // anonymous-namespace helpers are reachable as ssc:: in this TU
 
@@ -244,4 +245,29 @@ TEST_CASE("isTrustedCoverUrl rejects off-domain hosts (SSRF)") {
 TEST_CASE("dechunk clamps a malicious oversized chunk size and terminates") {
     CHECK(dechunk("fffffff0\r\nabc") == "abc");        // huge size -> clamp to remainder, then stop
     CHECK(dechunk("ffffffffffffffff\r\nxy") == "xy");  // larger than any remaining bytes
+}
+
+// --- 24seven.fm station detection (plugin auto-follow) ----------------------
+TEST_CASE("stationIndexForText identifies the family station from a stream URL") {
+    CHECK(stationIndexForText("http://hi5.streamingsoundtracks.com/") == 0); // SST
+    CHECK(stationIndexForText("http://hi.1980s.fm/")                  == 1);
+    CHECK(stationIndexForText("https://adagio.fm/listen.pls")         == 2);
+    CHECK(stationIndexForText("http://hi5.death.fm/")                 == 3);
+    CHECK(stationIndexForText("http://hi.entranced.fm/")              == 4);
+    CHECK(stationIndexForText("StreamingSoundtracks")                 == 0); // bare name, no TLD
+    CHECK(stationIndexForText("DEATH.FM (extreme metal)")             == 3); // case-insensitive
+}
+TEST_CASE("stationIndexForText rejects non-family streams and local files") {
+    CHECK(stationIndexForText("http://example.com/song.mp3") == -1);
+    CHECK(stationIndexForText("C:\\music\\track.flac")       == -1);
+    CHECK(stationIndexForText("")                            == -1);
+    CHECK(stationIndexForText(nullptr)                       == -1);
+}
+TEST_CASE("station id lookup + index clamping are stable for persistence") {
+    CHECK(stationIndexForId("sst")   == 0);
+    CHECK(stationIndexForId("death") == 3);
+    CHECK(stationIndexForId("nope")  == -1);
+    CHECK(validStationIndex(-1)  == 0); // out of range -> default station
+    CHECK(validStationIndex(999) == 0);
+    CHECK(validStationIndex(3)   == 3);
 }
