@@ -47,7 +47,12 @@ public:
     static CoverEngine& instance();
 
     // --- lifecycle ---------------------------------------------------------
-    void start();            // create + start the CoverMonitor (idempotent)
+    // Create + start the CoverMonitor (idempotent). autoAdvance=false (default):
+    // covers advance only when the host reports a track change via onTitleChanged()
+    // - used by the Winamp/foobar plugins so covers track the player's actual
+    // (buffered) playback. autoAdvance=true: the monitor follows the station's live
+    // clock on its own - used by the standalone desktop viewer, which has no player.
+    void start(bool autoAdvance = false);
     void stop();             // stop the monitor (host shutdown)
     void setWindow(HWND h);  // the D2D drawing window (nullptr when destroyed)
 

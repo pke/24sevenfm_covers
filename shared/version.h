@@ -1,21 +1,14 @@
 #ifndef SSC_VERSION_H
 #define SSC_VERSION_H
-/* Single source of truth for the plugin version + copyright, shared by the Winamp
-   plugin (VERSIONINFO + About), the foobar2000 component (DECLARE_COMPONENT_VERSION),
-   and the NSIS installer (via build_artifacts.ps1).
-
-   The version is bumped AUTOMATICALLY by the git post-commit hook
-   (.githooks/post-commit) from Conventional Commits:
-     fix:  -> patch      feat: -> minor      feat! / BREAKING CHANGE -> major
-   The hook rewrites the five SSC_VER_* lines below together; only set them by hand
-   if you must pin a version. RC-safe: SSC_VER_STR is a pre-built literal (the resource
-   compiler does not concatenate adjacent string literals). */
-#define SSC_VER_MAJOR 1
-#define SSC_VER_MINOR 0
-#define SSC_VER_PATCH 0
-#define SSC_VER_NUM   1, 0, 0, 0
-#define SSC_VER_STR   "1.0.0"
-
+/* Shared IDENTITY (company / copyright / homepage) - the same for all three binaries.
+   It intentionally does NOT define a version: each binary versions INDEPENDENTLY in its
+   own header, bumped separately by the git post-commit hook (.githooks/post-commit):
+     winamp/gen_version.h                          -> gen_24sevenfm_covers.dll
+     foobar2000/foo_24sevenfm_covers/foo_version.h -> foo_24sevenfm_covers.dll
+     viewer_version.h                              -> 24sevenfm_covers.exe
+   A commit bumps a binary iff it touches that module's code OR the shared code
+   (lib/, shared/). Each of those headers includes THIS file for the strings below. */
 #define SSC_COMPANY   "DudeSoft"
-#define SSC_COPYRIGHT "Copyright (C) 2026 DudeSoft"
+#define SSC_COPYRIGHT "Copyright (C) 2026 DudeSoft - https://dudesoft.app"
+#define SSC_WEB       "https://dudesoft.app"
 #endif /* SSC_VERSION_H */

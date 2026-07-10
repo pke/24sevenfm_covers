@@ -14,10 +14,10 @@ namespace {
 std::mutex g_logMutex;
 void logLine(const std::string& msg) {
     std::lock_guard<std::mutex> lock(g_logMutex);
-    OutputDebugStringA(("[24sevencover] " + msg + "\n").c_str());
+    OutputDebugStringA(("[24seven.fm-covers] " + msg + "\n").c_str());
     char tmp[MAX_PATH] = {0};
     GetTempPathA(MAX_PATH, tmp);
-    const std::string path = std::string(tmp) + "24sevencover.log";
+    const std::string path = std::string(tmp) + "24seven.fm-covers.log";
     HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
@@ -66,14 +66,15 @@ d2d::Transition CoverEngine::transitionEffect() const {
 }
 
 // --- lifecycle --------------------------------------------------------------
-void CoverEngine::start() {
+void CoverEngine::start(bool autoAdvance) {
     if (monitor_) return;
-    // Manual mode: covers advance off the host's track-title changes (onTitleChanged
-    // -> refresh), not the station's live clock, so covers track what is actually
-    // playing. Flaky server -> recover quickly from a failed fetch.
+    // Plugins (autoAdvance=false): covers advance off the host's track-title changes
+    // (onTitleChanged -> refresh), not the station's live clock, so covers track what
+    // is actually playing. Desktop viewer (autoAdvance=true): no player, so the monitor
+    // follows the station's live clock on its own. Flaky server -> recover quickly.
     ssc::Config cfg;
     cfg.errorRetrySeconds = 8;
-    cfg.autoAdvance = false;
+    cfg.autoAdvance = autoAdvance;
     monitor_ = new ssc::CoverMonitor([this](const std::string& url, const ssc::TrackInfo& info) {
         // Anchor the countdown from the current-playing endpoint's remaining
         // (Length - |SystemTime - PlayStart|) - known even when we join mid-track. This

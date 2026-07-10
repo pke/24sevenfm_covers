@@ -6,7 +6,7 @@
 #include <commctrl.h>
 #include "options_ids.h"
 
-IDD_OPTIONS_PAGE DIALOGEX 0, 0, 205, 112
+IDD_OPTIONS_PAGE DIALOGEX 0, 0, 205, 118
 STYLE DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg"
 BEGIN
