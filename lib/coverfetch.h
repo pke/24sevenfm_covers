@@ -22,6 +22,8 @@
 #include <string>
 #include <thread>
 
+#include "http_client.h" // HttpResponse (used by the injectable transport)
+
 namespace ssc {
 
 // Everything known about the track that is currently playing.
@@ -47,6 +49,15 @@ using TickCallback = std::function<void(const TrackInfo& info)>;
 
 // Optional error/log hook, also invoked on the background thread.
 using ErrorCallback = std::function<void(const std::string& message)>;
+
+// Injectable HTTP transport. When a Config leaves this empty (the default) the monitor
+// uses the built-in ssc::httpRequest. Set it to return canned responses and the monitor
+// never touches the network - the seam used by the unit tests. Same signature as
+// httpRequest, so `cfg.transport = ssc::httpRequest;` is also valid.
+using HttpTransport = std::function<HttpResponse(
+    const std::string& host, unsigned short port, const std::string& path,
+    const std::string& method, const std::string& body,
+    const std::string& contentType, int timeoutSeconds)>;
 
 struct Config {
     // Use the bare host, NOT www.*: www.streamingsoundtracks.com issues a 301
@@ -81,6 +92,9 @@ struct Config {
     // (e.g. drive it off the player's own track-change events). The per-second
     // tick still fires either way.
     bool autoAdvance = true;
+
+    // Injected HTTP transport; empty -> real network (see HttpTransport above).
+    HttpTransport transport;
 };
 
 class CoverMonitor {

@@ -19,6 +19,7 @@
     #include <netdb.h>
     #include <unistd.h>
     #include <sys/time.h>
+    #include <sys/utsname.h>
     typedef int socket_t;
     static const socket_t kInvalidSocket = -1;
 #endif
@@ -45,6 +46,55 @@ void ensurePlatform() {
     // Constructed on first use, destroyed at process exit.
     static SocketPlatform platform;
     (void)platform;
+}
+
+// A short OS/architecture descriptor for the User-Agent, e.g.
+// "Windows NT 10.0.26100; Win64; x64" or "Linux 5.15.0; aarch64".
+std::string osPlatform() {
+#if defined(_WIN32)
+    // GetVersionEx reports 6.2 for Win8+ unless the app is manifested; RtlGetVersion
+    // (ntdll) returns the true version regardless, which is what we want here.
+    std::string ver = "Windows";
+    typedef LONG(WINAPI * RtlGetVersionFn)(OSVERSIONINFOW*);
+    if (HMODULE nt = GetModuleHandleW(L"ntdll.dll")) {
+        if (auto fn = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(nt, "RtlGetVersion"))) {
+            OSVERSIONINFOW vi;
+            std::memset(&vi, 0, sizeof(vi));
+            vi.dwOSVersionInfoSize = sizeof(vi);
+            if (fn(&vi) == 0) {
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), "Windows NT %lu.%lu.%lu",
+                              vi.dwMajorVersion, vi.dwMinorVersion, vi.dwBuildNumber);
+                ver = buf;
+            }
+        }
+    }
+#if defined(_WIN64)
+    ver += "; Win64; x64";
+#else
+    // 32-bit build: distinguish native 32-bit Windows from WOW64 (on 64-bit Windows).
+    BOOL wow = FALSE;
+    typedef BOOL(WINAPI * IsWow64Fn)(HANDLE, PBOOL);
+    if (HMODULE k = GetModuleHandleW(L"kernel32.dll")) {
+        if (auto fn = reinterpret_cast<IsWow64Fn>(GetProcAddress(k, "IsWow64Process")))
+            fn(GetCurrentProcess(), &wow);
+    }
+    ver += wow ? "; WOW64" : "; Win32";
+#endif
+    return ver;
+#else
+    struct utsname u;
+    if (uname(&u) == 0)
+        return std::string(u.sysname) + " " + u.release + "; " + u.machine;
+    return "Unknown";
+#endif
+}
+
+// Built once; the station serves the same content regardless, but a descriptive
+// User-Agent helps the operator see who's polling.
+const std::string& userAgent() {
+    static const std::string ua = "24seven.fm-covers/1.0 (" + osPlatform() + ")";
+    return ua;
 }
 
 void closeSocket(socket_t s) {
@@ -170,7 +220,7 @@ HttpResponse httpRequest(const std::string& host,
     request.reserve(256 + body.size());
     request += method; request += ' '; request += path; request += " HTTP/1.1\r\n";
     request += "Host: "; request += host; request += "\r\n";
-    request += "User-Agent: 24sevencover/1.0\r\n";
+    request += "User-Agent: "; request += userAgent(); request += "\r\n";
     request += "Accept: */*\r\n";
     request += "Connection: close\r\n";
     if (!body.empty()) {

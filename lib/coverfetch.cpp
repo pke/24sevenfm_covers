@@ -36,6 +36,21 @@ time_t isoToUnixTime(const std::string& value) {
 #endif
 }
 
+// Seconds remaining in the current track: full length minus elapsed play time.
+// lengthMs is the raw feed value (MILLISECONDS - the JSON feed's "Length" unit);
+// elapsed = |systemTime - playStart|, both from the server clock. A 0 timestamp
+// means "unknown" (e.g. joined mid-track with no timing) so elapsed is treated as 0.
+// Never returns negative.
+int computeRemainingSeconds(long long lengthMs, time_t playStart, time_t systemTime) {
+    const int lengthSec = static_cast<int>(lengthMs / 1000);
+    int elapsed = 0;
+    if (playStart != 0 && systemTime != 0)
+        elapsed = static_cast<int>(std::llabs(static_cast<long long>(systemTime) -
+                                              static_cast<long long>(playStart)));
+    const int remaining = lengthSec - elapsed;
+    return remaining < 0 ? 0 : remaining;
+}
+
 // Product id = the cover filename without directory or extension
 // (".../images/cover/B00LR1YTT4.jpg" -> "B00LR1YTT4").
 std::string parseAsin(const std::string& uri) {
@@ -130,6 +145,17 @@ bool jsonString(const std::string& json, const char* key, std::string& out) {
     return false;
 }
 
+// Dispatch a GET through the Config's injected transport if it has one, else the
+// built-in networking. Keeps pollOnce/nextCoverUrl agnostic of where bytes come from
+// (the seam the unit tests use to feed canned responses without a socket).
+HttpResponse fetch(const Config& cfg, const std::string& path) {
+    if (cfg.transport)
+        return cfg.transport(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
+                             cfg.requestTimeoutSeconds);
+    return httpRequest(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
+                       cfg.requestTimeoutSeconds);
+}
+
 } // namespace
 
 CoverMonitor::CoverMonitor(CoverChangedCallback onCoverChanged, Config config)
@@ -161,9 +187,7 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
     std::string requestPath =
         config_.path + "?action=" + config_.action + "&_t=" + std::to_string(cb);
 
-    HttpResponse response = httpRequest(config_.host, config_.port, requestPath,
-                                        "GET", std::string(), std::string(),
-                                        config_.requestTimeoutSeconds);
+    HttpResponse response = fetch(config_, requestPath);
     if (!response.ok()) {
         if (error) {
             *error = response.status == 0
@@ -199,13 +223,8 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
     long long lengthMs = lengthStr.empty() ? 0 : std::atoll(lengthStr.c_str());
     info.lengthSeconds = static_cast<int>(lengthMs / 1000);
 
-    time_t playStart = isoToUnixTime(playStartStr);
-    time_t systemTime = isoToUnixTime(systemTimeStr);
-    int elapsed = 0;
-    if (playStart != 0 && systemTime != 0)
-        elapsed = static_cast<int>(std::llabs(static_cast<long long>(systemTime) -
-                                              static_cast<long long>(playStart)));
-    int remaining = info.lengthSeconds - elapsed;
+    int remaining = computeRemainingSeconds(lengthMs, isoToUnixTime(playStartStr),
+                                            isoToUnixTime(systemTimeStr));
 
     // Correct for any time spent between capture and this computation.
     remaining -= static_cast<int>(std::time(nullptr) - captureNow);
@@ -228,9 +247,7 @@ bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
     // GetQueue returns a JSON array of upcoming tracks; the first "CoverLink" and
     // "Length" are the next track's (jsonString finds the first occurrence).
     std::string requestPath = config_.path + "?action=GetQueue&_t=" + std::to_string(cb);
-    HttpResponse response = httpRequest(config_.host, config_.port, requestPath,
-                                        "GET", std::string(), std::string(),
-                                        config_.requestTimeoutSeconds);
+    HttpResponse response = fetch(config_, requestPath);
     if (!response.ok())
         return false;
     std::string cover;
