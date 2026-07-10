@@ -145,6 +145,63 @@ bool jsonString(const std::string& json, const char* key, std::string& out) {
     return false;
 }
 
+// Appends a Unicode code point to `out` as UTF-8.
+void appendUtf8(std::string& out, unsigned cp) {
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+// Decodes the HTML entities the station stores its track text with (e.g.
+// "Rock &#039;n&#039; Roll", "R&amp;B") into UTF-8. Handles the named entities the
+// feed uses plus decimal/hex numeric references; unknown entities are left as-is.
+std::string htmlDecode(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size();) {
+        if (in[i] != '&') { out += in[i++]; continue; }
+        const size_t semi = in.find(';', i + 1);
+        if (semi == std::string::npos || semi - i > 12) { out += in[i++]; continue; }
+        const std::string ent = in.substr(i + 1, semi - i - 1);
+        if (!ent.empty() && ent[0] == '#') { // numeric: &#NN; or &#xHH;
+            unsigned cp = 0; bool ok = false;
+            const bool hex = ent.size() > 1 && (ent[1] == 'x' || ent[1] == 'X');
+            for (size_t k = hex ? 2 : 1; k < ent.size(); ++k) {
+                const char c = ent[k]; int d;
+                if (c >= '0' && c <= '9')                d = c - '0';
+                else if (hex && c >= 'a' && c <= 'f')    d = c - 'a' + 10;
+                else if (hex && c >= 'A' && c <= 'F')    d = c - 'A' + 10;
+                else { ok = false; break; }
+                cp = cp * (hex ? 16u : 10u) + static_cast<unsigned>(d); ok = true;
+            }
+            if (ok && cp > 0 && cp <= 0x10FFFF) { appendUtf8(out, cp); i = semi + 1; continue; }
+        } else {
+            const char* rep = nullptr;
+            if      (ent == "amp")  rep = "&";
+            else if (ent == "lt")   rep = "<";
+            else if (ent == "gt")   rep = ">";
+            else if (ent == "quot") rep = "\"";
+            else if (ent == "apos") rep = "'";
+            else if (ent == "nbsp") rep = " ";
+            if (rep) { out += rep; i = semi + 1; continue; }
+        }
+        out += in[i++]; // unrecognized -> keep the '&' literally
+    }
+    return out;
+}
+
 // Dispatch a GET through the Config's injected transport if it has one, else the
 // built-in networking. Keeps pollOnce/nextCoverUrl agnostic of where bytes come from
 // (the seam the unit tests use to feed canned responses without a socket).
@@ -246,6 +303,10 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
     jsonString(body, "Album", info.album);
     jsonString(body, "Artist", info.artist);
     jsonString(body, "Track", info.track);
+    // The feed stores these HTML-encoded ("R&amp;B", "&#039;"); decode for display.
+    info.album  = htmlDecode(info.album);
+    info.artist = htmlDecode(info.artist);
+    info.track  = htmlDecode(info.track);
 
     // remaining = Length - elapsed, where elapsed = |SystemTime - PlayStart|.
     // NOTE: the JSON feed reports Length in MILLISECONDS (e.g. "150572" = 2:30),

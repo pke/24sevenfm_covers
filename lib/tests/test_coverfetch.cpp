@@ -247,6 +247,19 @@ TEST_CASE("dechunk clamps a malicious oversized chunk size and terminates") {
     CHECK(dechunk("ffffffffffffffff\r\nxy") == "xy");  // larger than any remaining bytes
 }
 
+// --- htmlDecode: the feed stores track text HTML-encoded --------------------
+TEST_CASE("htmlDecode decodes the entities the station feed uses") {
+    CHECK(htmlDecode("Rock &#039;n&#039; Roll") == "Rock 'n' Roll"); // decimal apostrophe
+    CHECK(htmlDecode("R&amp;B")                 == "R&B");
+    CHECK(htmlDecode("&quot;Quoted&quot;")      == "\"Quoted\"");
+    CHECK(htmlDecode("&lt;tag&gt;")             == "<tag>");
+    CHECK(htmlDecode("&#233;")                  == "\xC3\xA9"); // e-acute -> UTF-8
+    CHECK(htmlDecode("&#xE9;")                  == "\xC3\xA9"); // hex form
+    CHECK(htmlDecode("plain text")              == "plain text");
+    CHECK(htmlDecode("A & B")                   == "A & B");      // bare '&' (no ';') untouched
+    CHECK(htmlDecode("&bogus;")                 == "&bogus;");    // unknown entity kept
+}
+
 // --- 24seven.fm station detection (plugin auto-follow) ----------------------
 TEST_CASE("stationIndexForText identifies the family station from a stream URL") {
     CHECK(stationIndexForText("http://hi5.streamingsoundtracks.com/") == 0); // SST
