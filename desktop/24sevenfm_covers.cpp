@@ -173,31 +173,43 @@ static INT_PTR CALLBACK AboutPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
 
 // "Station" page (viewer only): pick which 24seven.fm station's now-playing cover
 // to display. The viewer has no player, so unlike the plugins it can't auto-follow -
-// the user chooses here. Applying rebuilds the engine's monitor for the new host
-// (live), so the cover swaps to the selected station without restarting.
+// the user chooses here. A vertical radio group (one station per line) built from
+// ssc::kStations at runtime, so adding a station needs no resource edit. Applying
+// rebuilds the engine's monitor for the new host (live), swapping the cover.
 static INT_PTR CALLBACK StationPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_INITDIALOG: {
-            HWND cb = GetDlgItem(dlg, IDC_VIEW_STATION);
-            for (int i = 0; i < ssc::kStationCount; ++i)
-                SendMessageA(cb, CB_ADDSTRING, 0, (LPARAM)ssc::kStations[i].displayName);
+            HFONT font = (HFONT)SendMessageA(dlg, WM_GETFONT, 0, 0);
             const int cur = ssc::validStationIndex(eng().settings.station);
-            SendMessageA(cb, CB_SETCURSEL, cur, 0);
+            for (int i = 0; i < ssc::kStationCount; ++i) {
+                RECT r = { 14, 18 + i * 14, 14 + 176, 18 + i * 14 + 12 }; // dialog units
+                MapDialogRect(dlg, &r);
+                HWND rb = CreateWindowExA(
+                    0, "BUTTON", ssc::kStations[i].displayName,
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON | (i == 0 ? WS_GROUP : 0),
+                    r.left, r.top, r.right - r.left, r.bottom - r.top,
+                    dlg, (HMENU)(INT_PTR)(IDC_VIEW_STATION_FIRST + i), g_hInst, nullptr);
+                if (font) SendMessageA(rb, WM_SETFONT, (WPARAM)font, TRUE);
+                if (i == cur) SendMessageA(rb, BM_SETCHECK, BST_CHECKED, 0);
+            }
             SetDlgItemTextA(dlg, IDC_VIEW_STATION_DESC, ssc::kStations[cur].desc);
             return TRUE;
         }
-        case WM_COMMAND:
-            if (LOWORD(wp) == IDC_VIEW_STATION && HIWORD(wp) == CBN_SELCHANGE) {
-                const int idx = ssc::validStationIndex(
-                    (int)SendDlgItemMessageA(dlg, IDC_VIEW_STATION, CB_GETCURSEL, 0, 0));
-                SetDlgItemTextA(dlg, IDC_VIEW_STATION_DESC, ssc::kStations[idx].desc);
+        case WM_COMMAND: {
+            const int id = LOWORD(wp);
+            if (HIWORD(wp) == BN_CLICKED &&
+                id >= IDC_VIEW_STATION_FIRST && id < IDC_VIEW_STATION_FIRST + ssc::kStationCount) {
+                SetDlgItemTextA(dlg, IDC_VIEW_STATION_DESC, ssc::kStations[id - IDC_VIEW_STATION_FIRST].desc);
                 PropSheet_Changed(GetParent(dlg), dlg); // enable Apply
+                return TRUE;
             }
-            return TRUE;
+            break;
+        }
         case WM_NOTIFY:
             if (reinterpret_cast<LPNMHDR>(lp)->code == PSN_APPLY) { // Apply or OK
-                const int idx = ssc::validStationIndex(
-                    (int)SendDlgItemMessageA(dlg, IDC_VIEW_STATION, CB_GETCURSEL, 0, 0));
+                int idx = ssc::validStationIndex(eng().settings.station); // fallback: unchanged
+                for (int i = 0; i < ssc::kStationCount; ++i)
+                    if (IsDlgButtonChecked(dlg, IDC_VIEW_STATION_FIRST + i) == BST_CHECKED) { idx = i; break; }
                 eng().setStation(idx); // live: rebuilds the monitor for the new host
                 saveSettings();
                 SetWindowLongPtrA(dlg, DWLP_MSGRESULT, PSNRET_NOERROR);
