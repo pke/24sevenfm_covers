@@ -131,13 +131,17 @@ bool sendAll(socket_t s, const char* data, size_t len) {
 }
 
 // Reads until the peer closes the connection (we always ask for Connection: close).
+// Capped: the station's JSON is a few KB and covers are a few hundred KB, so a hostile
+// server / MITM that streams without end can't grow this unbounded into std::bad_alloc.
 std::string readAll(socket_t s) {
+    static const size_t kMaxResponseBytes = 16u * 1024u * 1024u; // 16 MB ceiling
     std::string out;
     char buf[8192];
     for (;;) {
         int n = static_cast<int>(::recv(s, buf, sizeof(buf), 0));
         if (n <= 0) break;
         out.append(buf, static_cast<size_t>(n));
+        if (out.size() > kMaxResponseBytes) break; // DoS guard: stop an unbounded stream
     }
     return out;
 }
@@ -161,7 +165,10 @@ std::string dechunk(const std::string& body) {
         size_t chunkSize = static_cast<size_t>(std::strtoul(sizeLine.c_str(), nullptr, 16));
         pos = eol + 2;
         if (chunkSize == 0) break;
-        if (pos + chunkSize > body.size()) chunkSize = body.size() - pos;
+        // Compare with subtraction (pos <= body.size() here) rather than `pos + chunkSize`,
+        // which overflows for an attacker-chosen huge chunk size on 32-bit builds and would
+        // skip this clamp -> pos underflows below -> infinite re-scan / unbounded growth.
+        if (chunkSize > body.size() - pos) chunkSize = body.size() - pos;
         out.append(body, pos, chunkSize);
         pos += chunkSize + 2; // skip chunk data + trailing CRLF
     }

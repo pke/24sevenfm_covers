@@ -118,6 +118,7 @@ static const auto kNoop = [](const std::string&, const TrackInfo&) {};
 
 TEST_CASE("pollOnce maps a GetCurrentlyPlaying response to TrackInfo") {
     Config cfg; // coverSize defaults to 500
+    cfg.host = "s"; // the canned CoverLinks below use host "s" as the station
     std::string seenPath;
     cfg.transport = [&](const std::string&, unsigned short, const std::string& path,
                         const std::string&, const std::string&, const std::string&, int) {
@@ -149,6 +150,7 @@ TEST_CASE("pollOnce maps a GetCurrentlyPlaying response to TrackInfo") {
 TEST_CASE("pollOnce honours coverSize=0 (leaves the CoverLink untouched)") {
     Config cfg;
     cfg.coverSize = 0;
+    cfg.host = "s"; // canned CoverLink uses host "s" as the station
     cfg.transport = [](const std::string&, unsigned short, const std::string&,
                        const std::string&, const std::string&, const std::string&, int) {
         HttpResponse r; r.status = 200;
@@ -194,6 +196,7 @@ TEST_CASE("pollOnce fails on HTTP error, transport failure, and missing CoverLin
 
 TEST_CASE("nextCoverUrl parses the queue's first cover + length") {
     Config cfg; // coverSize 500
+    cfg.host = "s"; // canned CoverLinks use host "s" as the station
     std::string seenPath;
     cfg.transport = [&](const std::string&, unsigned short, const std::string& path,
                         const std::string&, const std::string&, const std::string&, int) {
@@ -211,4 +214,34 @@ TEST_CASE("nextCoverUrl parses the queue's first cover + length") {
     CHECK(url == "https://s/images/cover/500/B0009VQANG.jpg"); // first entry, sized
     CHECK(len == 121);                                          // 121000 ms -> 121 s
     CHECK(seenPath.find("action=GetQueue") != std::string::npos);
+}
+
+// --- Security: CoverLink validation (request-injection + SSRF) ---------------
+TEST_CASE("isTrustedCoverUrl accepts the station host and its subdomains") {
+    const std::string h = "streamingsoundtracks.com";
+    CHECK(isTrustedCoverUrl("http://streamingsoundtracks.com/images/cover/500/X.jpg", h));
+    CHECK(isTrustedCoverUrl("https://streamingsoundtracks.com/a.jpg", h));
+    CHECK(isTrustedCoverUrl("http://cdn.streamingsoundtracks.com/a.jpg", h)); // subdomain
+    CHECK(isTrustedCoverUrl("http://streamingsoundtracks.com:80/a.jpg", h));  // explicit :port
+}
+TEST_CASE("isTrustedCoverUrl rejects control chars (HTTP request injection)") {
+    const std::string h = "streamingsoundtracks.com";
+    CHECK_FALSE(isTrustedCoverUrl("http://streamingsoundtracks.com/a\r\nEvil: 1", h)); // CRLF
+    CHECK_FALSE(isTrustedCoverUrl("http://streamingsoundtracks.com/a\tb", h));         // TAB
+    std::string nul = "http://streamingsoundtracks.com/a"; nul.push_back('\0'); nul += "b";
+    CHECK_FALSE(isTrustedCoverUrl(nul, h));                                            // embedded NUL
+}
+TEST_CASE("isTrustedCoverUrl rejects off-domain hosts (SSRF)") {
+    const std::string h = "streamingsoundtracks.com";
+    CHECK_FALSE(isTrustedCoverUrl("http://169.254.169.254/latest/meta-data/", h)); // cloud metadata
+    CHECK_FALSE(isTrustedCoverUrl("http://192.168.1.1/", h));                       // LAN
+    CHECK_FALSE(isTrustedCoverUrl("http://evil.com/a.jpg", h));
+    CHECK_FALSE(isTrustedCoverUrl("http://evilstreamingsoundtracks.com/a.jpg", h)); // suffix lookalike
+    CHECK_FALSE(isTrustedCoverUrl("http://streamingsoundtracks.com.evil.com/a.jpg", h));
+    CHECK_FALSE(isTrustedCoverUrl("http://streamingsoundtracks.com@evil.com/a.jpg", h)); // userinfo trick
+    CHECK_FALSE(isTrustedCoverUrl("", h));
+}
+TEST_CASE("dechunk clamps a malicious oversized chunk size and terminates") {
+    CHECK(dechunk("fffffff0\r\nabc") == "abc");        // huge size -> clamp to remainder, then stop
+    CHECK(dechunk("ffffffffffffffff\r\nxy") == "xy");  // larger than any remaining bytes
 }

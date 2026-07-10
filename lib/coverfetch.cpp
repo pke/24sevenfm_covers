@@ -156,6 +156,37 @@ HttpResponse fetch(const Config& cfg, const std::string& path) {
                        cfg.requestTimeoutSeconds);
 }
 
+// Rejects a cover URL a hostile server/MITM could weaponize, BEFORE we ever fetch it:
+//  - any control byte (CR/LF/NUL/TAB/...) -> HTTP request-line/header injection when the
+//    URL's path is spliced into "GET <path> HTTP/1.1\r\n";
+//  - a host outside the station's own domain -> SSRF to internal/LAN/localhost services.
+// stationHost is Config::host; the URL host must equal it or be a subdomain of it.
+bool isTrustedCoverUrl(const std::string& url, const std::string& stationHost) {
+    if (url.empty() || stationHost.empty()) return false;
+    for (unsigned char c : url)
+        if (c < 0x20 || c == 0x7F) return false; // control chars incl. CR, LF, NUL, TAB
+
+    auto lower = [](std::string s) {
+        for (char& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
+        return s;
+    };
+    // Extract the host: strip scheme, then path, then userinfo (user@), then :port.
+    std::string rest = url;
+    const size_t scheme = rest.find("://");
+    if (scheme != std::string::npos) rest = rest.substr(scheme + 3);
+    const size_t slash = rest.find('/');
+    std::string host = (slash == std::string::npos) ? rest : rest.substr(0, slash);
+    const size_t at = host.rfind('@');
+    if (at != std::string::npos) host = host.substr(at + 1);      // drop "user:pass@" trickery
+    const size_t colon = host.find(':');
+    if (colon != std::string::npos) host = host.substr(0, colon); // drop ":port"
+    host = lower(host);
+    const std::string base = lower(stationHost);
+    return host == base ||                                        // exact station host, or
+           (host.size() > base.size() + 1 &&                      // a subdomain "*.<base>"
+            host.compare(host.size() - base.size() - 1, base.size() + 1, "." + base) == 0);
+}
+
 } // namespace
 
 CoverMonitor::CoverMonitor(CoverChangedCallback onCoverChanged, Config config)
@@ -206,6 +237,10 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
         if (error) *error = "No CoverLink in response";
         return false;
     }
+    if (!isTrustedCoverUrl(cover, config_.host)) {
+        if (error) *error = "Rejected untrusted CoverLink (off-domain host or control chars)";
+        return false;
+    }
 
     TrackInfo info;
     jsonString(body, "Album", info.album);
@@ -253,6 +288,7 @@ bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
     std::string cover;
     if (!jsonString(response.body, "CoverLink", cover) || cover.empty())
         return false;
+    if (!isTrustedCoverUrl(cover, config_.host)) return false;
     out = sizedCoverUrl(cover, config_.coverSize);
     if (lengthSeconds) {
         std::string len;
