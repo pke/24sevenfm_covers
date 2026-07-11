@@ -1,0 +1,109 @@
+# Release: build all three binaries from source, run the test gate, publish a
+# GitHub Release with every artifact, and deploy the website (rendered against
+# that release's download URLs) to GitHub Pages.
+#
+# Trigger manually (Actions > Release > Run workflow). Tag format: vYYYY.MM.DD-<run>
+# where <run> is the workflow run number - unique even for several releases a day.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the tag + release
+  pages: write      # deploy the site
+  id-token: write   # Pages OIDC
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Pinned dependency archives - bump deliberately, the cache is keyed on them.
+  FB2K_SDK_URL: https://www.foobar2000.org/downloads/SDK-2025-03-07.7z
+  WTL_URL: https://sourceforge.net/projects/wtl/files/WTL%2010/WTL%2010.0.10320/WTL10_10320_Release.zip/download
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = 'v' + (Get-Date -Format 'yyyy.MM.dd') + '-' + '${{ github.run_number }}'
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "release tag: $tag"
+
+      - name: Cache foobar2000 SDK + WTL
+        id: sdkcache
+        uses: actions/cache@v4
+        with:
+          path: |
+            foobar2000/sdk
+            foobar2000/wtl
+          key: deps-${{ env.FB2K_SDK_URL }}-${{ env.WTL_URL }}
+
+      - name: Provision foobar2000 SDK + WTL
+        if: steps.sdkcache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          curl.exe -sSL -o sdk.7z $env:FB2K_SDK_URL
+          7z x sdk.7z -ofoobar2000/sdk | Out-Null
+          # WTL ships its headers under Include/ - our tree expects them flat in wtl/
+          curl.exe -sSL -o wtl.zip $env:WTL_URL
+          7z x wtl.zip -owtl_tmp | Out-Null
+          New-Item -ItemType Directory -Force foobar2000/wtl | Out-Null
+          Copy-Item wtl_tmp/Include/* foobar2000/wtl/ -Recurse -Force
+          Write-Host "SDK + WTL provisioned"
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Test, build & package
+        shell: pwsh
+        run: |
+          ./installer/build_artifacts.ps1 -Build -Toolset v143 `
+            -ReleaseTag '${{ steps.tag.outputs.tag }}' `
+            -SiteUrl '${{ steps.pages.outputs.base_url }}/'
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The tag comes in via env, not an inline expression: GitHub's workflow
+          # parser refused to register the file with ${{ }} inside this line, and
+          # env indirection avoids template injection anyway.
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          function Ver([string]$file) {
+            $c = Get-Content $file -Raw
+            $p = @('MAJOR','MINOR','PATCH') | ForEach-Object {
+              if ($c -match "#define\s+SSC_VER_$_\s+(\d+)") { $Matches[1] } else { '0' } }
+            $p -join '.'
+          }
+          $notes = @(
+            ('Winamp plugin **v{0}** - foobar2000 component **v{1}** - desktop viewer **v{2}**' -f `
+              (Ver 'winamp/gen_version.h'), (Ver 'foobar2000/foo_24sevenfm_covers/foo_version.h'), (Ver 'desktop/viewer_version.h')),
+            '',
+            'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).'
+          ) -join "`n"
+          $files = Get-ChildItem www/downloads -File | ForEach-Object FullName
+          gh release create $env:TAG @files --title $env:TAG --notes $notes
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
+
+      # The site links to the release assets - the downloads folder itself is not served.
+      - name: Strip downloads from the site output
+        shell: pwsh
+        run: Remove-Item www/downloads -Recurse -Force
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: www
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

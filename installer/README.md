@@ -1,9 +1,10 @@
 # Packaging / distribution
 
 `build_artifacts.ps1` runs the unit tests, then (only if they pass) regenerates every
-distribution file into `..\www\downloads\` (git-ignored) — the website links them directly,
-so `www\` is the complete publishable unit and the download links/version labels in
-`www\index.html` are rewritten to match. Artifacts are named **`<name>-<version>-<builddate>.<ext>`**
+distribution file into `..\www\downloads\` (git-ignored) and renders the website from
+`..\site\` into `..\www\` (token substitution; local preview links to `downloads\`, a
+`-ReleaseTag` build links to that GitHub release's assets — used by the Release workflow).
+Artifacts are named **`<name>-<version>-<builddate>.<ext>`**
 (Eclipse-style, e.g. `-1.0.0-20260710`); the `<ver>`/`<date>` below stand in for that suffix:
 
 | Artifact | For | How the user installs |
