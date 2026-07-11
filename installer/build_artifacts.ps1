@@ -18,7 +18,14 @@
 #   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1 -Build       (test, rebuild the plugins, package)
 #   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1 -SkipTests   (bypass the test gate - not recommended)
 
-param([switch]$Build, [switch]$SkipTests)
+param(
+    [switch]$Build,
+    [switch]$SkipTests,
+    [string]$ReleaseTag = '',    # set by the release workflow: links point at this GitHub release
+    [string]$SiteUrl    = '',    # absolute site base URL (og:image); empty = relative (local preview)
+    [string]$Toolset    = 'v145', # MSBuild platform toolset (CI runners have v143)
+    [string]$VCToolsVersion = '' # pin a specific MSVC tools version (ATL is not in every one)
+)
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -88,11 +95,31 @@ if ($Build) {
     if (-not $cmake -or -not $msb) { throw "cmake/MSBuild not found - build the plugins manually, then run without -Build." }
     & $cmake -S (Join-Path $root 'winamp') -B (Join-Path $root 'winamp\build') -A Win32 | Out-Null
     & $cmake --build (Join-Path $root 'winamp\build') --config Release
+    # ATL ships only with SOME side-by-side MSVC tools versions (e.g. 14.51 has it,
+    # 14.52 does not) and the foobar SDK needs it. Unless the caller pinned one,
+    # pick the newest toolset that actually contains atlbase.h - self-healing on
+    # both the dev machine and CI runners when VS updates shuffle the defaults.
+    if (-not $VCToolsVersion) {
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vswhere) {
+            $vsRoot = & $vswhere -latest -property installationPath
+            $withAtl = Get-ChildItem (Join-Path $vsRoot 'VC\Tools\MSVC') -Directory -ErrorAction SilentlyContinue |
+                       Where-Object { Test-Path (Join-Path $_.FullName 'atlmfc\include\atlbase.h') } |
+                       Sort-Object Name | Select-Object -Last 1
+            if ($withAtl) {
+                $VCToolsVersion = $withAtl.Name
+                Write-Host "  ATL-capable MSVC toolset: $VCToolsVersion"
+            }
+        }
+    }
+    $vcPin = if ($VCToolsVersion) { "/p:VCToolsVersion=$VCToolsVersion" } else { $null }
     $props = Join-Path $root 'foobar2000\wtl.props'
     & $msb (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_24sevenfm_covers.vcxproj') `
-        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /p:ForceImportAfterCppProps=$props /m /v:minimal
+        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /p:ForceImportAfterCppProps=$props $vcPin /m /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "foobar2000 component build FAILED" }
     & $msb (Join-Path $root 'desktop\24sevenfm_covers.vcxproj') `
-        /p:Configuration=Release /p:Platform=x64 /m /v:minimal
+        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /m /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "desktop viewer build FAILED" }
 }
 
 foreach ($d in @($winDll, $fbDll, $viExe)) {
@@ -161,21 +188,46 @@ foreach ($f in $files) {
     Write-Host "  $($f.Name).sha256"
 }
 
-# 5. Sync the website with the names just built: download hrefs (matched by the
-#    versioned filename pattern) and the visible version labels (matched by the
-#    data-ver markers on the .meta spans), so the page never goes stale.
-$site = Join-Path $root 'www\index.html'
-if (Test-Path $site) {
+# 5. Render the website: site\ (source with {{TOKEN}} placeholders) -> www\ (the
+#    gh-pages root). Local preview links to the downloads\ folder; a release build
+#    (-ReleaseTag) links to that GitHub release's assets instead.
+$siteSrc = Join-Path $root 'site'
+if (Test-Path (Join-Path $siteSrc 'index.html')) {
+    Copy-Item (Join-Path $siteSrc 'css') (Join-Path $root 'www') -Recurse -Force
+    Copy-Item (Join-Path $siteSrc 'img') (Join-Path $root 'www') -Recurse -Force
+    $base = if ($ReleaseTag) { "https://github.com/pke/24sevenfm_covers/releases/download/$ReleaseTag/" } else { 'downloads/' }
+    function SizeOf([string]$name) {
+        $f = Join-Path $dist $name
+        if (Test-Path $f) { '{0} KB' -f [math]::Round((Get-Item $f).Length / 1KB) } else { 'n/a' }
+    }
+    $tokens = @{
+        '{{VER_WINAMP}}'            = $winVer
+        '{{VER_FOOBAR}}'            = $fbVer
+        '{{VER_VIEWER}}'            = $viVer
+        '{{URL_WINAMP_EXE}}'        = $base + $nWinExe
+        '{{URL_WINAMP_ZIP}}'        = $base + $nWinZip
+        '{{URL_FOOBAR_COMPONENT}}'  = $base + $nFbComp
+        '{{URL_FOOBAR_EXE}}'        = $base + $nFbExe
+        '{{URL_FOOBAR_ZIP}}'        = $base + $nFbZip
+        '{{URL_VIEWER_EXE}}'        = $base + $nViExe
+        '{{URL_VIEWER_ZIP}}'        = $base + $nViZip
+        '{{SIZE_WINAMP_EXE}}'       = SizeOf $nWinExe
+        '{{SIZE_WINAMP_ZIP}}'       = SizeOf $nWinZip
+        '{{SIZE_FOOBAR_COMPONENT}}' = SizeOf $nFbComp
+        '{{SIZE_FOOBAR_EXE}}'       = SizeOf $nFbExe
+        '{{SIZE_FOOBAR_ZIP}}'       = SizeOf $nFbZip
+        '{{SIZE_VIEWER_EXE}}'       = SizeOf $nViExe
+        '{{SIZE_VIEWER_ZIP}}'       = SizeOf $nViZip
+        '{{SITE_URL}}'              = $SiteUrl
+        '{{UPDATED}}'               = (Get-Date -Format 'yyyy-MM-dd')
+        '{{RELEASE_TAG}}'           = $(if ($ReleaseTag) { $ReleaseTag } else { 'local preview' })
+    }
     $utf8 = New-Object System.Text.UTF8Encoding($false)   # 5.1 default would mangle the emoji
-    $html = [System.IO.File]::ReadAllText($site, $utf8)
-    $html = $html -replace 'viewer_24sevenfm_covers-[\d.]+-\d{8}', "viewer_24sevenfm_covers-$viVer-$stamp"
-    $html = $html -replace 'winamp_24sevenfm_covers-[\d.]+-\d{8}', "winamp_24sevenfm_covers-$winVer-$stamp"
-    $html = $html -replace 'foobar_24sevenfm_covers-[\d.]+-\d{8}', "foobar_24sevenfm_covers-$fbVer-$stamp"
-    $html = $html -replace '(data-ver="viewer">)v[\d.]+', ('${1}' + "v$viVer")
-    $html = $html -replace '(data-ver="winamp">)v[\d.]+', ('${1}' + "v$winVer")
-    $html = $html -replace '(data-ver="foobar">)v[\d.]+', ('${1}' + "v$fbVer")
-    [System.IO.File]::WriteAllText($site, $html, $utf8)
-    Write-Host "  www\index.html links + versions synced"
+    $html = [System.IO.File]::ReadAllText((Join-Path $siteSrc 'index.html'), $utf8)
+    foreach ($t in $tokens.Keys) { $html = $html.Replace($t, [string]$tokens[$t]) }
+    if ($html -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\index.html: $($Matches[0])" }
+    [System.IO.File]::WriteAllText((Join-Path $root 'www\index.html'), $html, $utf8)
+    Write-Host "  www\index.html rendered ($(if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }))"
 }
 
 Write-Host "`nArtifacts in $dist :" -ForegroundColor Green

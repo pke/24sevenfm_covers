@@ -124,10 +124,16 @@ logs don't interleave: `%TEMP%\24seven.fm-covers-winamp.log`, `-foobar.log`, and
 
 ## Packaging / building the artifacts
 
-One script — `installer\build_artifacts.ps1` — regenerates **every** distributable into a
-freshly-cleaned `www\downloads\` (git-ignored), so the website in `www\` is the complete
-publishable unit. It first runs the `lib/` unit tests and **aborts if any fail**, so a release
-is never packaged from an unverified build.
+Releases are published by the **Release workflow** (`.github/workflows/release.yml`, run
+manually from the Actions tab): it provisions the foobar2000 SDK + WTL from their pinned
+archives, runs the test gate, builds all three binaries, creates a GitHub release tagged
+`vYYYY.MM.DD-<run>` with every artifact, and deploys the website (rendered from `site\`
+against that release's download URLs) to GitHub Pages.
+
+Locally, the same script the workflow uses — `installer\build_artifacts.ps1` — regenerates
+every distributable into `www\downloads\` and renders a **local preview** of the site into
+`www\` (both git-ignored). It first runs the `lib/` unit tests and **aborts if any fail**,
+so a release is never packaged from an unverified build.
 
 ```powershell
 # Package the already-built binaries (runs the test gate, then packages):
@@ -148,8 +154,9 @@ errors out naming any that are missing).
 Each artifact is named `<name>-<version>-<builddate>.<ext>` and carries **its own module
 version** (read from `winamp/gen_version.h`, `foobar2000/foo_24sevenfm_covers/foo_version.h`,
 `desktop/viewer_version.h`), so the three front-ends version independently. Every artifact gets a
-matching `.sha256` sidecar (`sha256sum -c` format). The script also rewrites the download links
-and version labels in `www\index.html` to the names it just built, so the site never goes stale.
+matching `.sha256` sidecar (`sha256sum -c` format). The script also renders the website from the
+`site\` source (filling in the `{{TOKEN}}` placeholders — links, versions, sizes, build date), so
+the page is always exactly in step with the artifacts; see [site/README.md](site/README.md).
 
 | Artifact | Install method |
 |----------|----------------|

@@ -1,0 +1,145 @@
+# Release: build all three binaries from source, run the test gate, publish a
+# GitHub Release with every artifact, and deploy the website (rendered against
+# that release's download URLs) to GitHub Pages.
+#
+# Trigger manually (Actions > Release > Run workflow). Tag format: vYYYY.MM.DD-<run>
+# where <run> is the workflow run number - unique even for several releases a day.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the tag + release
+  pages: write      # deploy the site
+  id-token: write   # Pages OIDC
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Pinned dependency archives - bump deliberately, the cache is keyed on them.
+  # WTL comes from NuGet (a .nupkg is a zip): SourceForge's /download endpoint
+  # serves an HTML mirror page to curl, not the file.
+  FB2K_SDK_URL: https://www.foobar2000.org/downloads/SDK-2025-03-07.7z
+  WTL_URL: https://www.nuget.org/api/v2/package/wtl/10.0.10320
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute release tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = 'v' + (Get-Date -Format 'yyyy.MM.dd') + '-' + '${{ github.run_number }}'
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "release tag: $tag"
+
+      - name: Cache foobar2000 SDK + WTL
+        id: sdkcache
+        uses: actions/cache@v4
+        with:
+          path: |
+            foobar2000/sdk
+            foobar2000/wtl
+          key: deps-${{ env.FB2K_SDK_URL }}-${{ env.WTL_URL }}
+
+      - name: Provision foobar2000 SDK + WTL
+        if: steps.sdkcache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          # Layout-agnostic extraction: archives may or may not carry a top-level
+          # folder, so locate a known landmark file instead of assuming paths.
+          # Magic-byte check: a server can answer 200 with an HTML page (looking
+          # at you, SourceForge) - fail with a clear message, not a 7z error.
+          function Assert-Archive([string]$path) {
+            $fs = [System.IO.File]::OpenRead($path)        # works in PS 5.1 AND pwsh 7
+            $b0 = $fs.ReadByte(); $b1 = $fs.ReadByte(); $fs.Dispose()
+            $isZip = ($b0 -eq 0x50 -and $b1 -eq 0x4B)      # PK
+            $is7z  = ($b0 -eq 0x37 -and $b1 -eq 0x7A)      # 7z
+            if (-not ($isZip -or $is7z)) { throw "$path is not a zip/7z archive - the server likely returned an HTML page" }
+          }
+          curl.exe -fsSL -o sdk.7z $env:FB2K_SDK_URL
+          Assert-Archive sdk.7z
+          7z x sdk.7z -osdk_tmp | Out-Null
+          $pfc = Get-ChildItem sdk_tmp -Recurse -Directory -Filter pfc | Select-Object -First 1
+          if (-not $pfc) { throw 'pfc/ not found in the SDK archive - layout changed?' }
+          New-Item -ItemType Directory -Force foobar2000/sdk | Out-Null
+          Copy-Item (Join-Path $pfc.Parent.FullName '*') foobar2000/sdk/ -Recurse -Force
+          if (-not (Test-Path foobar2000/sdk/foobar2000/SDK)) { throw 'SDK layout unexpected after extraction' }
+
+          curl.exe -fsSL -o wtl.zip $env:WTL_URL
+          Assert-Archive wtl.zip
+          7z x wtl.zip -owtl_tmp | Out-Null
+          $atlapp = Get-ChildItem wtl_tmp -Recurse -Filter atlapp.h | Select-Object -First 1
+          if (-not $atlapp) { throw 'atlapp.h not found in the WTL archive - layout changed?' }
+          New-Item -ItemType Directory -Force foobar2000/wtl | Out-Null
+          Copy-Item (Join-Path $atlapp.DirectoryName '*') foobar2000/wtl/ -Recurse -Force
+          Write-Host "SDK + WTL provisioned"
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      # Runners do not have MSBuild on PATH; build_artifacts.ps1 locates it via Get-Command.
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      # The image no longer preinstalls NSIS; without it the script would skip
+      # the three installers and ship a half release.
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress | Out-Null
+
+      # Toolset selection (v145 + an ATL-capable VCToolsVersion) is handled inside
+      # build_artifacts.ps1 - the runner image carries VS 2026 like the dev machine.
+      - name: Test, build & package
+        shell: pwsh
+        run: |
+          ./installer/build_artifacts.ps1 -Build `
+            -ReleaseTag '${{ steps.tag.outputs.tag }}' `
+            -SiteUrl '${{ steps.pages.outputs.base_url }}/'
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # The tag comes in via env, not an inline expression: GitHub's workflow
+          # parser refused to register the file with ${{ }} inside this line, and
+          # env indirection avoids template injection anyway.
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          function Ver([string]$file) {
+            $c = Get-Content $file -Raw
+            $p = @('MAJOR','MINOR','PATCH') | ForEach-Object {
+              if ($c -match "#define\s+SSC_VER_$_\s+(\d+)") { $Matches[1] } else { '0' } }
+            $p -join '.'
+          }
+          $notes = @(
+            ('Winamp plugin **v{0}** - foobar2000 component **v{1}** - desktop viewer **v{2}**' -f `
+              (Ver 'winamp/gen_version.h'), (Ver 'foobar2000/foo_24sevenfm_covers/foo_version.h'), (Ver 'desktop/viewer_version.h')),
+            '',
+            'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).'
+          ) -join "`n"
+          $files = Get-ChildItem www/downloads -File | ForEach-Object FullName
+          # 7 artifacts + 7 sha256 sidecars; fewer means something was skipped upstream
+          if ($files.Count -ne 14) { throw "expected 14 release files, found $($files.Count) - refusing to ship a partial release" }
+          gh release create $env:TAG @files --title $env:TAG --notes $notes
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
+
+      # The site links to the release assets - the downloads folder itself is not served.
+      - name: Strip downloads from the site output
+        shell: pwsh
+        run: Remove-Item www/downloads -Recurse -Force
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: www
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
