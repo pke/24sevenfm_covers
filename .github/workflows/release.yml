@@ -85,6 +85,10 @@ jobs:
         id: pages
         uses: actions/configure-pages@v5
 
+      # Runners do not have MSBuild on PATH; build_artifacts.ps1 locates it via Get-Command.
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
       - name: Test, build & package
         shell: pwsh
         run: |
