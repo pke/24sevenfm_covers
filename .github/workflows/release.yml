@@ -50,13 +50,22 @@ jobs:
         if: steps.sdkcache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
+          # Layout-agnostic extraction: archives may or may not carry a top-level
+          # folder, so locate a known landmark file instead of assuming paths.
           curl.exe -sSL -o sdk.7z $env:FB2K_SDK_URL
-          7z x sdk.7z -ofoobar2000/sdk | Out-Null
-          # WTL ships its headers under Include/ - our tree expects them flat in wtl/
+          7z x sdk.7z -osdk_tmp | Out-Null
+          $pfc = Get-ChildItem sdk_tmp -Recurse -Directory -Filter pfc | Select-Object -First 1
+          if (-not $pfc) { throw 'pfc/ not found in the SDK archive - layout changed?' }
+          New-Item -ItemType Directory -Force foobar2000/sdk | Out-Null
+          Copy-Item (Join-Path $pfc.Parent.FullName '*') foobar2000/sdk/ -Recurse -Force
+          if (-not (Test-Path foobar2000/sdk/foobar2000/SDK)) { throw 'SDK layout unexpected after extraction' }
+
           curl.exe -sSL -o wtl.zip $env:WTL_URL
           7z x wtl.zip -owtl_tmp | Out-Null
+          $atlapp = Get-ChildItem wtl_tmp -Recurse -Filter atlapp.h | Select-Object -First 1
+          if (-not $atlapp) { throw 'atlapp.h not found in the WTL archive - layout changed?' }
           New-Item -ItemType Directory -Force foobar2000/wtl | Out-Null
-          Copy-Item wtl_tmp/Include/* foobar2000/wtl/ -Recurse -Force
+          Copy-Item (Join-Path $atlapp.DirectoryName '*') foobar2000/wtl/ -Recurse -Force
           Write-Host "SDK + WTL provisioned"
 
       - name: Configure Pages
