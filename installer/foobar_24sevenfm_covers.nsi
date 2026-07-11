@@ -4,7 +4,7 @@
 ; auto-detects a normal install from the registry, browse+validate for portable.
 ;
 ; Build:  "C:\Program Files (x86)\NSIS\makensis.exe" foobar_24sevenfm_covers.nsi
-; Output: dist\foobar_24sevenfm_covers.exe
+; Output: www\downloads\foobar_24sevenfm_covers.exe
 
 !define APPNAME    "24seven.fm Covers foobar2000 component"
 !define HOSTNAME   "foobar2000"
@@ -13,7 +13,7 @@
 !define DLL        "..\foobar2000\foo_24sevenfm_covers\build\Release\foo_24sevenfm_covers.dll"
 !define DLLNAME    "foo_24sevenfm_covers.dll"
 !define DEFAULTDIR "$PROGRAMFILES64\foobar2000"
-!define OUTFILE    "..\dist\foobar_24sevenfm_covers.exe"
+!define OUTFILE    "..\www\downloads\foobar_24sevenfm_covers.exe"
 !define ORIGFILE   "foobar_24sevenfm_covers.exe"
 !define UNINSTKEY  "Software\Microsoft\Windows\CurrentVersion\Uninstall\foobar_24sevenfm_covers"
 !define FILEDESC   "24seven.fm Covers - foobar2000 component installer"

@@ -1,4 +1,5 @@
-# build_artifacts.ps1 - regenerate all distribution artifacts into ..\dist
+# build_artifacts.ps1 - regenerate all distribution artifacts into ..\www\downloads
+# (the website links them directly, so www\ is the complete publishable unit)
 #
 # Produces (from the already-built plugin DLLs), named <name>-<version>-<builddate>.<ext>:
 #   foobar_24sevenfm_covers-<ver>-<date>.fb2k-component  foobar native package (double-click)
@@ -22,7 +23,7 @@ param([switch]$Build, [switch]$SkipTests)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $here
-$dist = Join-Path $root 'dist'
+$dist = Join-Path $root 'www\downloads'
 $winDll = Join-Path $root 'winamp\build\Release\gen_24sevenfm_covers.dll'
 $fbDll  = Join-Path $root 'foobar2000\foo_24sevenfm_covers\build\Release\foo_24sevenfm_covers.dll'
 $viExe  = Join-Path $root 'desktop\build\Release\24sevenfm_covers.exe'
@@ -101,7 +102,7 @@ foreach ($d in @($winDll, $fbDll, $viExe)) {
 # Fresh dist + scratch (clean contents, not the dir itself - avoids "dir in use" if a
 # shell is cwd'd there or an AV is scanning a just-written file).
 if (Test-Path $dist) { Get-ChildItem $dist -Force -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue }
-else { New-Item -ItemType Directory -Path $dist | Out-Null }
+else { New-Item -ItemType Directory -Path $dist -Force | Out-Null }
 $wWin = Join-Path $dist '_win'; $wFb = Join-Path $dist '_fb'; $wVi = Join-Path $dist '_vi'
 New-Item -ItemType Directory -Path $wWin, $wFb, $wVi | Out-Null
 
@@ -158,6 +159,23 @@ foreach ($f in $files) {
     $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
     "$h  $($f.Name)" | Set-Content "$($f.FullName).sha256" -Encoding Ascii
     Write-Host "  $($f.Name).sha256"
+}
+
+# 5. Sync the website with the names just built: download hrefs (matched by the
+#    versioned filename pattern) and the visible version labels (matched by the
+#    data-ver markers on the .meta spans), so the page never goes stale.
+$site = Join-Path $root 'www\index.html'
+if (Test-Path $site) {
+    $utf8 = New-Object System.Text.UTF8Encoding($false)   # 5.1 default would mangle the emoji
+    $html = [System.IO.File]::ReadAllText($site, $utf8)
+    $html = $html -replace 'viewer_24sevenfm_covers-[\d.]+-\d{8}', "viewer_24sevenfm_covers-$viVer-$stamp"
+    $html = $html -replace 'winamp_24sevenfm_covers-[\d.]+-\d{8}', "winamp_24sevenfm_covers-$winVer-$stamp"
+    $html = $html -replace 'foobar_24sevenfm_covers-[\d.]+-\d{8}', "foobar_24sevenfm_covers-$fbVer-$stamp"
+    $html = $html -replace '(data-ver="viewer">)v[\d.]+', ('${1}' + "v$viVer")
+    $html = $html -replace '(data-ver="winamp">)v[\d.]+', ('${1}' + "v$winVer")
+    $html = $html -replace '(data-ver="foobar">)v[\d.]+', ('${1}' + "v$fbVer")
+    [System.IO.File]::WriteAllText($site, $html, $utf8)
+    Write-Host "  www\index.html links + versions synced"
 }
 
 Write-Host "`nArtifacts in $dist :" -ForegroundColor Green

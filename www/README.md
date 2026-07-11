@@ -12,10 +12,10 @@ dependencies — deploy by copying the folder to any web host.
 
 ## Downloads
 
-`index.html` links `downloads/<artifact>` using the current artifact names. When
-publishing, run `installer\build_artifacts.ps1` and copy `dist\*` into `www\downloads\`
-(git-ignored, like `dist\`). After a version bump, update the names/versions in the
-Download section.
+`installer\build_artifacts.ps1` builds every artifact directly into `www\downloads\`
+(git-ignored) and rewrites the download links and version labels in `index.html` to the
+names it just built (the version labels are matched via the `data-ver` attributes on the
+`.meta` spans — keep those when editing). So: run the script, then publish `www\` as-is.
 
 ## Screenshots
 

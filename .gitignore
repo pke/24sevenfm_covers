@@ -6,7 +6,6 @@
 /lib/build-android-*/
 /x64/
 /desktop/build/
-/dist/
 *.aps
 
 # Vendored dependencies (re-add per installer/README + memory notes)
@@ -20,5 +19,5 @@
 # Runtime log written by both plugins
 24seven.fm-covers*.log
 
-# Website: published artifacts are copied in from dist/ at deploy time
+# Website: build_artifacts.ps1 builds the distributables directly into here
 /www/downloads/

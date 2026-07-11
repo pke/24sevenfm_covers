@@ -125,8 +125,9 @@ logs don't interleave: `%TEMP%\24seven.fm-covers-winamp.log`, `-foobar.log`, and
 ## Packaging / building the artifacts
 
 One script — `installer\build_artifacts.ps1` — regenerates **every** distributable into a
-freshly-cleaned `dist\`. It first runs the `lib/` unit tests and **aborts if any fail**, so a
-release is never packaged from an unverified build.
+freshly-cleaned `www\downloads\` (git-ignored), so the website in `www\` is the complete
+publishable unit. It first runs the `lib/` unit tests and **aborts if any fail**, so a release
+is never packaged from an unverified build.
 
 ```powershell
 # Package the already-built binaries (runs the test gate, then packages):
@@ -147,7 +148,8 @@ errors out naming any that are missing).
 Each artifact is named `<name>-<version>-<builddate>.<ext>` and carries **its own module
 version** (read from `winamp/gen_version.h`, `foobar2000/foo_24sevenfm_covers/foo_version.h`,
 `desktop/viewer_version.h`), so the three front-ends version independently. Every artifact gets a
-matching `.sha256` sidecar (`sha256sum -c` format).
+matching `.sha256` sidecar (`sha256sum -c` format). The script also rewrites the download links
+and version labels in `www\index.html` to the names it just built, so the site never goes stale.
 
 | Artifact | Install method |
 |----------|----------------|

@@ -4,7 +4,7 @@
 ; detect, so this does NOT use installer_common.nsh (which is host-plugin shaped).
 ;
 ; Build:  "C:\Program Files (x86)\NSIS\makensis.exe" viewer_24sevenfm_covers.nsi
-; Output: dist\viewer_24sevenfm_covers.exe
+; Output: www\downloads\viewer_24sevenfm_covers.exe
 ; APPVER / APPVER4 are passed by build_artifacts.ps1 (/DAPPVER..); fallbacks below.
 
 Unicode true
@@ -25,7 +25,7 @@ Unicode true
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\24sevenfm_covers_viewer"
 
 Name "${APPNAME}"
-OutFile "..\dist\viewer_24sevenfm_covers.exe"
+OutFile "..\www\downloads\viewer_24sevenfm_covers.exe"
 InstallDir "$PROGRAMFILES64\24seven.fm Covers"
 InstallDirRegKey HKLM "${UNINSTKEY}" "InstallLocation"
 RequestExecutionLevel admin

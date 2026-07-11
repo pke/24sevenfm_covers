@@ -6,7 +6,7 @@
 ; page flow and the uninstall-registry writes are edited in ONE place.
 ;
 ; Required from the wrapper (before the !include):
-;   !define APPNAME    <shown name>                     !define OUTFILE   <..\dist\...exe>
+;   !define APPNAME    <shown name>                     !define OUTFILE   <..\www\downloads\...exe>
 ;   !define HOSTNAME   <e.g. Winamp / foobar2000>       !define ORIGFILE  <the setup exe filename>
 ;   !define HOSTEXE    <e.g. winamp.exe>                !define UNINSTKEY <Uninstall registry subkey>
 ;   !define SUBDIR     <e.g. Plugins / components>      !define FILEDESC  <version-info FileDescription>

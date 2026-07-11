@@ -4,7 +4,7 @@
 ; auto-detects a normal install from the registry, browse+validate for portable.
 ;
 ; Build:  "C:\Program Files (x86)\NSIS\makensis.exe" winamp_24sevenfm_covers.nsi
-; Output: dist\winamp_24sevenfm_covers.exe
+; Output: www\downloads\winamp_24sevenfm_covers.exe
 
 !define APPNAME    "24seven.fm Covers Winamp plugin"
 !define HOSTNAME   "Winamp"
@@ -13,7 +13,7 @@
 !define DLL        "..\winamp\build\Release\gen_24sevenfm_covers.dll"
 !define DLLNAME    "gen_24sevenfm_covers.dll"
 !define DEFAULTDIR "$PROGRAMFILES32\Winamp"
-!define OUTFILE    "..\dist\winamp_24sevenfm_covers.exe"
+!define OUTFILE    "..\www\downloads\winamp_24sevenfm_covers.exe"
 !define ORIGFILE   "winamp_24sevenfm_covers.exe"
 !define UNINSTKEY  "Software\Microsoft\Windows\CurrentVersion\Uninstall\winamp_24sevenfm_covers"
 !define FILEDESC   "24seven.fm Covers - Winamp plugin installer"

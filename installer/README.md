@@ -1,7 +1,9 @@
 # Packaging / distribution
 
 `build_artifacts.ps1` runs the unit tests, then (only if they pass) regenerates every
-distribution file into `..\dist\`. Artifacts are named **`<name>-<version>-<builddate>.<ext>`**
+distribution file into `..\www\downloads\` (git-ignored) — the website links them directly,
+so `www\` is the complete publishable unit and the download links/version labels in
+`www\index.html` are rewritten to match. Artifacts are named **`<name>-<version>-<builddate>.<ext>`**
 (Eclipse-style, e.g. `-1.0.0-20260710`); the `<ver>`/`<date>` below stand in for that suffix:
 
 | Artifact | For | How the user installs |
@@ -32,9 +34,9 @@ powershell -ExecutionPolicy Bypass -File build_artifacts.ps1
 Each artifact has a matching `<artifact>.sha256` sidecar:
 
 ```powershell
-Get-FileHash .\dist\<file> -Algorithm SHA256    # compare against <file>.sha256
+Get-FileHash .\www\downloads\<file> -Algorithm SHA256    # compare against <file>.sha256
 ```
-or, in Git Bash: `cd dist && sha256sum -c <file>.sha256`
+or, in Git Bash: `cd www/downloads && sha256sum -c <file>.sha256`
 
 ## Source scripts
 
