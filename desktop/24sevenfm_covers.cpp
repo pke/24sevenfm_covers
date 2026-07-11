@@ -24,6 +24,7 @@
 #include "cover_engine.h"   // shared cover/preload/animation engine
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
+#include "config.h"         // shared option schema + INI adapter
 #include "viewer_resource.h"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -61,41 +62,13 @@ static std::string iniPath() {
     p = (slash == std::string::npos) ? std::string() : p.substr(0, slash + 1);
     return p + "24seven.fm-covers.ini";
 }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
-
 static void loadSettings() {
-    const std::string iniFile = iniPath();
-    const auto readInt = [&iniFile](const char* key, int def, int lo, int hi) {
-        return clampi(GetPrivateProfileIntA("options", key, def, iniFile.c_str()), lo, hi);
-    };
-    CoverEngine::Settings& s = eng().settings;
-    s.showRemaining = readInt("showRemaining", 0, 0, 1) != 0;
-    s.remainingSize = readInt("remainingSize", 0, 0, 2);
-    s.rollDigits    = readInt("roll", 0, 0, 1) != 0;
-    s.transition    = readInt("transition", 1, 0, 3);
-    s.fadeMs        = readInt("fadeMs", 1000, 500, 2000);
-    s.layout        = readInt("layout", 0, 0, 1);
-    s.posterBlur    = readInt("posterBlur", 24, 0, 200); // no UI; INI only
-    char stationId[64] = {0}; // station stored by stable id so reordering the list is safe
-    GetPrivateProfileStringA("options", "station", "", stationId, sizeof(stationId), iniFile.c_str());
-    g_firstRun = (stationId[0] == '\0'); // no station entry yet -> always prompt for one
-    s.station = ssc::validStationIndex(ssc::stationIndexForId(stationId)); // empty/unknown -> SST
+    ssccfg::IniConfigStore store(iniPath());
+    g_firstRun = !ssccfg::load(eng().settings, store); // no station stored yet -> prompt on first run
 }
 static void saveSettings() {
-    const std::string iniFile = iniPath();
-    const CoverEngine::Settings& s = eng().settings;
-    const auto writeInt = [&iniFile](const char* key, int value) {
-        char buf[16]; wsprintfA(buf, "%d", value);
-        WritePrivateProfileStringA("options", key, buf, iniFile.c_str());
-    };
-    writeInt("showRemaining", s.showRemaining ? 1 : 0);
-    writeInt("remainingSize", s.remainingSize);
-    writeInt("roll", s.rollDigits ? 1 : 0);
-    writeInt("transition", s.transition);
-    writeInt("fadeMs", s.fadeMs);
-    writeInt("layout", s.layout);
-    writeInt("posterBlur", s.posterBlur);
-    WritePrivateProfileStringA("options", "station", ssc::station(s.station).id, iniFile.c_str());
+    ssccfg::IniConfigStore store(iniPath());
+    ssccfg::save(eng().settings, store);
 }
 
 // --- Options: a property sheet hosting the shared options page --------------

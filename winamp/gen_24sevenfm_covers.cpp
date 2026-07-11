@@ -33,6 +33,7 @@
 #include "cover_engine.h"   // shared cover/preload/animation engine
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table + stream-URL detection
+#include "config.h"         // shared option schema + INI adapter
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "comctl32.lib")
@@ -77,39 +78,13 @@ static std::string iniPath() {
     if (!p.empty() && p.back() != '\\' && p.back() != '/') p += '\\';
     return p + "24seven.fm-covers.ini";
 }
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
-
 static void loadSettings() {
-    const std::string iniFile = iniPath();
-    const auto readInt = [&iniFile](const char* key, int def, int lo, int hi) {
-        return clampi(GetPrivateProfileIntA("options", key, def, iniFile.c_str()), lo, hi);
-    };
-    CoverEngine::Settings& s = eng().settings;
-    s.showRemaining = readInt("showRemaining", 0, 0, 1) != 0;
-    s.remainingSize = readInt("remainingSize", 0, 0, 2);
-    s.rollDigits    = readInt("roll", 0, 0, 1) != 0;
-    // "transition" superseded the old "crossfade" bool; fall back to it so an existing
-    // INI keeps its on/off choice (on -> Crossfade, off -> None).
-    const int legacyCrossfade = readInt("crossfade", 1, 0, 1);
-    s.transition    = readInt("transition", legacyCrossfade, 0, 3);
-    s.fadeMs        = readInt("fadeMs", 1000, 500, 2000);
-    s.layout        = readInt("layout", 0, 0, 1);
-    s.posterBlur    = readInt("posterBlur", 24, 0, 200); // no UI; INI only
+    ssccfg::IniConfigStore store(iniPath());
+    ssccfg::load(eng().settings, store);
 }
 static void saveSettings() {
-    const std::string iniFile = iniPath();
-    const CoverEngine::Settings& s = eng().settings;
-    const auto writeInt = [&iniFile](const char* key, int value) {
-        char buf[16]; wsprintfA(buf, "%d", value);
-        WritePrivateProfileStringA("options", key, buf, iniFile.c_str());
-    };
-    writeInt("showRemaining", s.showRemaining ? 1 : 0);
-    writeInt("remainingSize", s.remainingSize);
-    writeInt("roll", s.rollDigits ? 1 : 0);
-    writeInt("transition", s.transition);
-    writeInt("fadeMs", s.fadeMs);
-    writeInt("layout", s.layout);
-    writeInt("posterBlur", s.posterBlur);
+    ssccfg::IniConfigStore store(iniPath());
+    ssccfg::save(eng().settings, store);
 }
 
 // Plugin entry points (defined below) and the descriptor Winamp fills in.
