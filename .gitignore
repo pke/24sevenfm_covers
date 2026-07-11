@@ -19,3 +19,6 @@
 
 # Runtime log written by both plugins
 24seven.fm-covers*.log
+
+# Website: published artifacts are copied in from dist/ at deploy time
+/www/downloads/
