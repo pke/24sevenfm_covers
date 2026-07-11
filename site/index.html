@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>24seven.fm Covers — cover art plugins for Winamp, foobar2000 &amp; desktop</title>
+<meta name="description" content="Cover art for the 24seven.fm radio family (StreamingSoundtracks, 1980s.FM, Adagio.FM, Death.FM, Entranced.FM) — right in your player. Free plugins for Winamp and foobar2000, plus a standalone desktop viewer.">
+<link rel="icon" href="img/favicon.ico">
+<meta property="og:title" content="24seven.fm Covers">
+<meta property="og:description" content="Hear the music. See the covers. Cover art for the 24seven.fm stations — in Winamp, foobar2000, or its own window.">
+<meta property="og:image" content="{{SITE_URL}}img/social.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- No-JS theme toggle: the ◐ label flips this checkbox; CSS flips the palette.
+     The script below is optional sugar - it only persists the choice. -->
+<input type="checkbox" id="themeswitch" hidden>
+<script>
+// Progressive enhancement: remember the resolved theme across visits. The checkbox
+// flips relative to the OS scheme, so restore checked = saved XOR os-preference.
+(function () {
+    var box = document.getElementById("themeswitch");
+    var osDark = matchMedia("(prefers-color-scheme: dark)").matches;
+    var saved = localStorage.getItem("theme");
+    if (saved === "dark" || saved === "light") box.checked = (saved === "dark") !== osDark;
+    box.addEventListener("change", function () {
+        localStorage.setItem("theme", (osDark !== box.checked) ? "dark" : "light");
+    });
+})();
+</script>
+<div class="page">
+
+<header>
+    <nav class="nav">
+        <a class="brand" href="#"><img src="img/logo.png" alt="" width="28" height="28">24seven.fm Covers</a>
+        <span class="spacer"></span>
+        <a class="link" href="#desktop">Desktop</a>
+        <a class="link" href="#plugins">Plugins</a>
+        <label for="themeswitch" class="theme-toggle" title="Toggle dark / light" aria-label="Toggle dark / light theme">◐</label>
+    </nav>
+</header>
+
+<main class="wrap">
+
+    <!-- Hero -->
+    <div class="hero">
+        <h1>Hear the music.<br><span class="grad">See the covers.</span></h1>
+        <p class="tag">
+            The <strong>24seven.fm</strong> stations have always shown the current cover on their
+            websites. Your favourite player couldn't — there simply was no plugin. Now there is:
+            for Winamp, for foobar2000, and a standalone viewer for every other way you listen.
+        </p>
+        <div class="cta">
+            <a class="btn primary" href="#plugins">Get it for your player</a>
+        </div>
+        <div class="shot">
+            <img src="img/poster.svg" alt="Poster view: a blurred cover backdrop, the sharp cover, and a box with title, composer and countdown" loading="lazy">
+        </div>
+        <p class="shot-caption">Poster view — the current track, its composer, and the time until the next one.</p>
+    </div>
+
+    <!-- What you get -->
+    <section id="features">
+        <h2>What you get</h2>
+        <p class="lead">Small, free, and quiet — it simply shows the music.</p>
+        <div class="grid">
+            <div class="card"><span class="emoji">🖼️</span><h3>Always the right cover</h3><p>The artwork changes the moment the music does — matched to the track, not sometime later.</p></div>
+            <div class="card"><span class="emoji">⏱️</span><h3>Know what's coming</h3><p>A live countdown shows how long the current track still runs — rolling digits included, if you like.</p></div>
+            <div class="card"><span class="emoji">🎬</span><h3>Two views</h3><p>A clean cover that fills the window, or a poster view with title and composer — beautiful on a big screen.</p></div>
+        </div>
+    </section>
+
+    <!-- Plugins -->
+    <section id="plugins">
+        <h2>Pick your player</h2>
+        <p class="lead">The same covers, three ways to get them. Windows 7 or later.</p>
+
+        <article class="plugin">
+            <div class="shot"><img src="img/winamp.svg" alt="Winamp plugin window showing a synthwave cover with the remaining-time countdown" loading="lazy"></div>
+            <div class="plugin-body">
+                <h3>⚡ Winamp</h3>
+                <p class="meta">v{{VER_WINAMP}} · for Winamp 5 · docks beside the main window</p>
+                <p>The plugin adds a cover window that docks right beside Winamp and follows whichever
+                   24seven.fm station you're tuned to. Start the stream — the artwork is just there,
+                   track after track.</p>
+                <p class="links">
+                    <a class="main" href="{{URL_WINAMP_EXE}}">Installer <span class="size">({{SIZE_WINAMP_EXE}})</span></a>
+                    <a href="{{URL_WINAMP_ZIP}}">Manual .zip <span class="size">({{SIZE_WINAMP_ZIP}})</span></a>
+                </p>
+            </div>
+        </article>
+
+        <article class="plugin">
+            <div class="shot"><img src="img/foobar.svg" alt="foobar2000 cover element showing a trance cover with the remaining-time countdown" loading="lazy"></div>
+            <div class="plugin-body">
+                <h3>🎧 foobar2000</h3>
+                <p class="meta">v{{VER_FOOBAR}} · for foobar2000 v2 (64-bit)</p>
+                <p>Adds a cover element to your foobar2000 layout — and hands the artwork to foobar's
+                   own album-art views too, so it shows up wherever you expect it. Follows the station
+                   you're playing, automatically.</p>
+                <p class="links">
+                    <a class="main" href="{{URL_FOOBAR_COMPONENT}}">Component <span class="size">({{SIZE_FOOBAR_COMPONENT}})</span></a>
+                    <a href="{{URL_FOOBAR_EXE}}">Installer <span class="size">({{SIZE_FOOBAR_EXE}})</span></a>
+                    <a href="{{URL_FOOBAR_ZIP}}">Manual .zip <span class="size">({{SIZE_FOOBAR_ZIP}})</span></a>
+                </p>
+            </div>
+        </article>
+
+        <article class="plugin" id="desktop">
+            <div class="shot"><img src="img/viewer.svg" alt="Desktop viewer in poster view: blurred backdrop, sharp cover, and track info with countdown" loading="lazy"></div>
+            <div class="plugin-body">
+                <h3>🖥️ Desktop viewer</h3>
+                <p class="meta">v{{VER_VIEWER}} · standalone app · no player needed</p>
+                <p>For everyone whose music plays somewhere without a screen — a hi-fi streamer, a
+                   Raspberry&nbsp;Pi, a phone on the shelf. Pick your station and let the covers fill a
+                   24-inch monitor on your desk, or project them 120 inches across the wall, in full glory.</p>
+                <p class="links">
+                    <a class="main" href="{{URL_VIEWER_EXE}}">Installer <span class="size">({{SIZE_VIEWER_EXE}})</span></a>
+                    <a href="{{URL_VIEWER_ZIP}}">Portable .zip <span class="size">({{SIZE_VIEWER_ZIP}})</span></a>
+                </p>
+            </div>
+        </article>
+
+    </section>
+
+    <!-- Support -->
+    <section id="support-help">
+        <h2>Need help? Found a bug?!</h2>
+        <p class="lead">
+            Head over to the <a href="https://github.com/pke/24sevenfm_covers/issues">issue tracker on GitHub</a>
+            and tell us what happened — questions, ideas and wishes are just as welcome as bug reports.
+        </p>
+    </section>
+
+</main>
+
+<footer>
+    <p class="support">
+        24seven.fm stations are listener-supported: if you enjoy them, support your favourite station —
+        <a href="https://streamingsoundtracks.com/modules.php?name=Donations">StreamingSoundtracks</a>,
+        <a href="https://1980s.fm/modules.php?name=Donations">1980s.FM</a>,
+        <a href="https://adagio.fm/modules.php?name=Donations">Adagio.FM</a>,
+        <a href="https://death.fm/modules.php?name=Donations">Death.FM</a> or
+        <a href="https://entranced.fm/modules.php?name=Donations">Entranced.FM</a>.
+    </p>
+    <p>© 2026 <a href="https://dudesoft.app">DudeSoft</a> · Open source on <a href="https://github.com/pke/24sevenfm_covers">GitHub</a><br>
+    Not affiliated with 24seven.fm — a fan-made companion for its stations.</p>
+    <p class="updated">Last updated {{UPDATED}} · {{RELEASE_TAG}}</p>
+</footer>
+
+</div><!-- /.page -->
+
+</body>
+</html>

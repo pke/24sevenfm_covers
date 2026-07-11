@@ -2,19 +2,19 @@
 #
 # RUN THIS FROM YOUR OWN (interactive) SESSION - it launches the viewer, waits for
 # a cover to arrive from the station, captures the window, and writes
-# www\img\poster.png and www\img\fill.png. Then point index.html at the .png files
-# instead of the .svg mockups.
+# site\img\poster.png and site\img\fill.png. Then point site\index.html at the .png
+# files instead of the .svg mockups.
 #
-#   powershell -File www\shoot.ps1
+#   powershell -File site\shoot.ps1
 #
 # The viewer window will appear twice for ~30 s each (poster, then fill mode).
 # NOTE: it overwrites desktop\build\Release\24seven.fm-covers.ini with
 # screenshot-friendly options (SST, countdown on, rolling digits).
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)  # repo root (www\..)
+$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)  # repo root (site\..)
 $exe = Join-Path $root 'desktop\build\Release\24sevenfm_covers.exe'
 $ini = Join-Path $root 'desktop\build\Release\24seven.fm-covers.ini'
-$out = Join-Path $root 'www\img'
+$out = Join-Path $root 'site\img'
 if (-not (Test-Path $exe)) { throw "Build the viewer first: $exe" }
 
 Add-Type -AssemblyName System.Drawing
@@ -82,4 +82,4 @@ Start-Process $exe
 Capture 'fill' 640 640
 Get-Process 24sevenfm_covers -ErrorAction SilentlyContinue | Stop-Process -Force
 
-Write-Host "done. Update www\index.html: img/poster.svg -> img/poster.png, img/fill.svg -> img/fill.png"
+Write-Host "done. Update site\index.html: img/poster.svg -> img/poster.png, img/fill.svg -> img/fill.png"

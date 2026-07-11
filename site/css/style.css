@@ -1,7 +1,9 @@
 /* 24seven.fm Covers — site stylesheet. Mobile-first; dark is the default theme,
-   light kicks in via prefers-color-scheme or the manual toggle ([data-theme]). */
+   light kicks in via prefers-color-scheme. The manual toggle is a hidden checkbox
+   (#themeswitch) that sits BEFORE the .page wrapper — no JavaScript: when checked,
+   the sibling selector flips the palette relative to the OS scheme. */
 
-:root {
+.page {
     --bg: #0b0d12;
     --bg-raised: #141824;
     --bg-card: #171c2a;
@@ -13,10 +15,38 @@
     --accent-grad: linear-gradient(135deg, #7c5cff, #ff5c9d);
     --shadow: 0 10px 30px rgba(0, 0, 0, .45);
     color-scheme: dark;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
 }
 
 @media (prefers-color-scheme: light) {
-    :root {
+    .page {
+        --bg: #f6f7fa;
+        --bg-raised: #ffffff;
+        --bg-card: #ffffff;
+        --text: #1a1e2b;
+        --text-dim: #5b6274;
+        --line: #e2e5ee;
+        --shadow: 0 10px 30px rgba(30, 35, 60, .12);
+        color-scheme: light;
+    }
+    /* toggled: dark on a light OS */
+    #themeswitch:checked ~ .page {
+        --bg: #0b0d12;
+        --bg-raised: #141824;
+        --bg-card: #171c2a;
+        --text: #e8eaf2;
+        --text-dim: #9aa1b5;
+        --line: #262c3f;
+        --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+        color-scheme: dark;
+    }
+}
+
+@media (prefers-color-scheme: dark) {
+    /* toggled: light on a dark OS */
+    #themeswitch:checked ~ .page {
         --bg: #f6f7fa;
         --bg-raised: #ffffff;
         --bg-card: #ffffff;
@@ -28,37 +58,12 @@
     }
 }
 
-/* Manual toggle wins over the OS preference, in both directions. */
-:root[data-theme="dark"] {
-    --bg: #0b0d12;
-    --bg-raised: #141824;
-    --bg-card: #171c2a;
-    --text: #e8eaf2;
-    --text-dim: #9aa1b5;
-    --line: #262c3f;
-    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
-    color-scheme: dark;
-}
-
-:root[data-theme="light"] {
-    --bg: #f6f7fa;
-    --bg-raised: #ffffff;
-    --bg-card: #ffffff;
-    --text: #1a1e2b;
-    --text-dim: #5b6274;
-    --line: #e2e5ee;
-    --shadow: 0 10px 30px rgba(30, 35, 60, .12);
-    color-scheme: light;
-}
-
 * { box-sizing: border-box; }
 
 html { scroll-behavior: smooth; }
 
 body {
     margin: 0;
-    background: var(--bg);
-    color: var(--text);
     font: 16px/1.6 system-ui, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
 }
@@ -105,7 +110,9 @@ header {
 .nav a.link { color: var(--text-dim); font-size: .9rem; display: none; }
 .nav a.link:hover { color: var(--text); text-decoration: none; }
 
-#themeToggle {
+.theme-toggle {
+    display: grid;
+    place-items: center;
     border: 1px solid var(--line);
     background: var(--bg-raised);
     color: var(--text);
@@ -115,6 +122,7 @@ header {
     font-size: 1.05rem;
     cursor: pointer;
     line-height: 1;
+    user-select: none;
 }
 
 /* --- Hero -------------------------------------------------------------- */
@@ -182,6 +190,9 @@ header {
 /* --- Sections ----------------------------------------------------------- */
 section { padding: 2.75rem 0; border-top: 1px solid var(--line); }
 
+/* Anchor jumps must clear the sticky header */
+section[id], .plugin[id] { scroll-margin-top: 4rem; }
+
 section h2 { font-size: 1.6rem; margin: 0 0 .4rem; }
 
 section p.lead { color: var(--text-dim); margin: 0 0 1.75rem; max-width: 38rem; }
@@ -199,47 +210,40 @@ section p.lead { color: var(--text-dim); margin: 0 0 1.75rem; max-width: 38rem; 
 .card p { margin: 0; color: var(--text-dim); font-size: .92rem; }
 .card .emoji { font-size: 1.4rem; display: block; margin-bottom: .5rem; }
 
-/* Display modes: screenshots side by side on wide screens */
-.modes { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
-.modes figure { margin: 0; }
-.modes figcaption { color: var(--text-dim); font-size: .88rem; margin-top: .55rem; }
-.modes figcaption strong { color: var(--text); }
-
-/* Stations */
-.stations { display: grid; gap: .6rem; grid-template-columns: 1fr; }
-
-.station {
-    display: flex;
-    align-items: baseline;
-    gap: .75rem;
+/* Plugin cards: one per host — screenshot, description, download links */
+.plugin {
+    display: grid;
+    gap: 1.25rem;
+    grid-template-columns: 1fr;
     background: var(--bg-card);
     border: 1px solid var(--line);
-    border-radius: .7rem;
-    padding: .7rem 1rem;
+    border-radius: .9rem;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
 }
 
-.station .name { font-weight: 650; white-space: nowrap; }
-.station .desc { color: var(--text-dim); font-size: .88rem; }
+.plugin .shot { align-self: center; }
+.plugin h3 { margin: 0 0 .3rem; font-size: 1.3rem; }
+.plugin .meta { color: var(--text-dim); font-size: .85rem; margin: 0 0 .8rem; }
+.plugin p { margin: 0 0 .5rem; }
 
-/* Downloads */
-.dl { display: grid; gap: 1rem; grid-template-columns: 1fr; }
-
-.dl .card { display: flex; flex-direction: column; gap: .35rem; }
-.dl .host { font-weight: 700; font-size: 1.1rem; }
-.dl .meta { color: var(--text-dim); font-size: .85rem; }
-.dl .links { margin-top: .6rem; display: flex; flex-wrap: wrap; gap: .5rem; }
-.dl .links a {
+.links { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.links a {
     font-size: .85rem;
     border: 1px solid var(--line);
     border-radius: .5rem;
     padding: .35rem .7rem;
     background: var(--bg-raised);
 }
-.dl .links a.main { background: var(--accent-grad); border: 0; color: #fff; font-weight: 600; }
-.dl .links a:hover { text-decoration: none; filter: brightness(1.08); }
+.links a.main { background: var(--accent-grad); border: 0; color: #fff; font-weight: 600; }
+.links a:hover { text-decoration: none; filter: brightness(1.08); }
+.links .size { font-weight: 400; font-size: .9em; opacity: .75; }
 
 .note { color: var(--text-dim); font-size: .85rem; margin-top: 1rem; }
 .note code { background: var(--bg-raised); border: 1px solid var(--line); border-radius: .3rem; padding: .05rem .35rem; }
+
+/* Listener-support line in the footer */
+.support { max-width: 42rem; margin: 0 auto 1.25rem; }
 
 /* Footer */
 footer {
@@ -255,13 +259,16 @@ footer a { color: var(--text-dim); text-decoration: underline; }
 @media (min-width: 640px) {
     .cta { flex-direction: row; justify-content: center; }
     .grid { grid-template-columns: repeat(2, 1fr); }
-    .stations { grid-template-columns: repeat(2, 1fr); }
     .nav a.link { display: inline; }
+}
+
+@media (min-width: 768px) {
+    /* Plugin cards go two-column, image and text alternating sides */
+    .plugin { grid-template-columns: 1fr 1fr; align-items: center; padding: 1.5rem; }
+    .plugin:nth-of-type(even) .shot { order: 2; }
 }
 
 @media (min-width: 900px) {
     .grid { grid-template-columns: repeat(3, 1fr); }
-    .modes { grid-template-columns: 1fr 1fr; }
-    .dl { grid-template-columns: repeat(3, 1fr); }
     .hero { padding-top: 4rem; }
 }

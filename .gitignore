@@ -16,8 +16,15 @@
 *.suo
 .vs/
 
+# Local Claude Code settings (holds secrets like API keys - never commit)
+.claude/settings.local.json
+
 # Runtime log written by both plugins
 24seven.fm-covers*.log
 
-# Website: build_artifacts.ps1 builds the distributables directly into here
-/www/downloads/
+# Website: generated output (gh-pages root), rendered from site/ by
+# build_artifacts.ps1 (local preview) or the release workflow
+/www/
+
+# Windows Explorer thumbnail cache
+Thumbs.db
