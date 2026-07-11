@@ -81,8 +81,8 @@ cmake --build winamp\build --config Release
 
 ### foobar2000 component — `foo_24sevenfm_covers.dll` (x64)
 
-Needs the vendored SDK + WTL (above). The bundled SDK projects target the v143 toolset, so
-override to **v145** and inject WTL onto the include path via `wtl.props`:
+Needs the vendored SDK + WTL (above). The bundled SDK projects target older toolsets
+(v142/v143), so override to **v145** and inject WTL onto the include path via `wtl.props`:
 
 ```bat
 msbuild foobar2000\foo_24sevenfm_covers\foo_24sevenfm_covers.vcxproj ^
@@ -122,22 +122,45 @@ The other layers (engine, Direct2D, plugins, viewer) are Windows GUI/host code a
 by launching the binary and checking its debug log. Each host writes a distinct file so their
 logs don't interleave: `%TEMP%\24seven.fm-covers-winamp.log`, `-foobar.log`, and `-viewer.log`.
 
-## Packaging / installers
+## Packaging / building the artifacts
 
-`installer\build_artifacts.ps1` regenerates every distributable into `dist\`:
+One script — `installer\build_artifacts.ps1` — regenerates **every** distributable into a
+freshly-cleaned `dist\`. It first runs the `lib/` unit tests and **aborts if any fail**, so a
+release is never packaged from an unverified build.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File installer\build_artifacts.ps1        # package existing builds
-powershell -ExecutionPolicy Bypass -File installer\build_artifacts.ps1 -Build # rebuild the plugins first
+# Package the already-built binaries (runs the test gate, then packages):
+powershell -ExecutionPolicy Bypass -File installer\build_artifacts.ps1
+
+# Rebuild all three binaries from source first, then package (recommended for a release):
+powershell -ExecutionPolicy Bypass -File installer\build_artifacts.ps1 -Build
+
+# Bypass the test gate (packages an unverified build — not recommended):
+powershell -ExecutionPolicy Bypass -File installer\build_artifacts.ps1 -SkipTests
 ```
 
-Produces (each with a `.sha256` sidecar):
+`-Build` compiles the Winamp plugin (CMake, Win32), the foobar2000 component (MSBuild, x64, with
+the `v145` + `wtl.props` overrides above) and the desktop viewer (MSBuild, x64) before packaging.
+Without it, the three outputs must already exist under their `build\Release\` folders (the script
+errors out naming any that are missing).
 
-- `foobar_24sevenfm_covers.fb2k-component` — native foobar package (double-click to install)
-- `winamp_24sevenfm_covers.exe` — NSIS installer (needs `makensis` on `PATH`; skipped with a warning if absent)
-- `winamp_24sevenfm_covers.zip` / `foobar_24sevenfm_covers.zip` — manual-install zips (DLL + README)
+Each artifact is named `<name>-<version>-<builddate>.<ext>` and carries **its own module
+version** (read from `winamp/gen_version.h`, `foobar2000/foo_24sevenfm_covers/foo_version.h`,
+`desktop/viewer_version.h`), so the three front-ends version independently. Every artifact gets a
+matching `.sha256` sidecar (`sha256sum -c` format).
 
-See [installer/README.md](installer/README.md) for details.
+| Artifact | Install method |
+|----------|----------------|
+| `foobar_24sevenfm_covers-<ver>-<date>.fb2k-component` | native foobar package — double-click to install |
+| `winamp_24sevenfm_covers-<ver>-<date>.exe` | Winamp NSIS installer |
+| `foobar_24sevenfm_covers-<ver>-<date>.exe` | foobar NSIS installer |
+| `viewer_24sevenfm_covers-<ver>-<date>.exe` | desktop viewer NSIS installer |
+| `winamp_…zip` / `foobar_…zip` / `viewer_…zip` | manual-install zips (binary + README) |
+
+The three **NSIS installers** need [`makensis`](https://nsis.sourceforge.io) on `PATH` (or in the
+default `Program Files` location); if it's absent the script skips just those three with a warning
+and still produces the `.fb2k-component` and the zips. See [installer/README.md](installer/README.md)
+for details.
 
 ## Versioning
 
