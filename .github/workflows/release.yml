@@ -108,10 +108,12 @@ jobs:
           "vctools=$($best.Name)" >> $env:GITHUB_OUTPUT
           Write-Host "pinning VCToolsVersion $($best.Name)"
 
+      # The runner image carries VS 2026 (v145), same as the dev machine - and only
+      # its 14.5x toolset ships ATL, so v145 + the detected pin mirrors the local build.
       - name: Test, build & package
         shell: pwsh
         run: |
-          ./installer/build_artifacts.ps1 -Build -Toolset v143 `
+          ./installer/build_artifacts.ps1 -Build -Toolset v145 `
             -VCToolsVersion '${{ steps.atl.outputs.vctools }}' `
             -ReleaseTag '${{ steps.tag.outputs.tag }}' `
             -SiteUrl '${{ steps.pages.outputs.base_url }}/'
