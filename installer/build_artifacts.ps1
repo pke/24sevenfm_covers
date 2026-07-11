@@ -21,9 +21,10 @@
 param(
     [switch]$Build,
     [switch]$SkipTests,
-    [string]$ReleaseTag = '',   # set by the release workflow: links point at this GitHub release
-    [string]$SiteUrl    = '',   # absolute site base URL (og:image); empty = relative (local preview)
-    [string]$Toolset    = 'v145' # MSBuild platform toolset (CI runners have v143)
+    [string]$ReleaseTag = '',    # set by the release workflow: links point at this GitHub release
+    [string]$SiteUrl    = '',    # absolute site base URL (og:image); empty = relative (local preview)
+    [string]$Toolset    = 'v145', # MSBuild platform toolset (CI runners have v143)
+    [string]$VCToolsVersion = '' # pin a specific MSVC tools version (ATL is not in every one)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -94,11 +95,16 @@ if ($Build) {
     if (-not $cmake -or -not $msb) { throw "cmake/MSBuild not found - build the plugins manually, then run without -Build." }
     & $cmake -S (Join-Path $root 'winamp') -B (Join-Path $root 'winamp\build') -A Win32 | Out-Null
     & $cmake --build (Join-Path $root 'winamp\build') --config Release
+    # ATL ships only with SOME side-by-side MSVC tools versions; the foobar SDK
+    # needs it, so callers can pin one (the release workflow auto-detects it).
+    $vcPin = if ($VCToolsVersion) { "/p:VCToolsVersion=$VCToolsVersion" } else { $null }
     $props = Join-Path $root 'foobar2000\wtl.props'
     & $msb (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_24sevenfm_covers.vcxproj') `
-        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /p:ForceImportAfterCppProps=$props /m /v:minimal
+        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /p:ForceImportAfterCppProps=$props $vcPin /m /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "foobar2000 component build FAILED" }
     & $msb (Join-Path $root 'desktop\24sevenfm_covers.vcxproj') `
         /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /m /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "desktop viewer build FAILED" }
 }
 
 foreach ($d in @($winDll, $fbDll, $viExe)) {

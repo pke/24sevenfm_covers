@@ -89,10 +89,30 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
+      # ATL (needed by the foobar SDK) ships only with SOME of the side-by-side
+      # MSVC tools versions - find one that actually has atlbase.h and pin it.
+      - name: Locate ATL-capable MSVC toolset
+        id: atl
+        shell: pwsh
+        run: |
+          $vsRoot = & 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe' -latest -property installationPath
+          $msvc = Join-Path $vsRoot 'VC\Tools\MSVC'
+          $all = Get-ChildItem $msvc -Directory
+          foreach ($v in $all) {
+            $atl = Test-Path (Join-Path $v.FullName 'atlmfc\include\atlbase.h')
+            Write-Host ("{0}  atl={1}" -f $v.Name, $atl)
+          }
+          $best = $all | Where-Object { Test-Path (Join-Path $_.FullName 'atlmfc\include\atlbase.h') } |
+                  Sort-Object Name | Select-Object -Last 1
+          if (-not $best) { throw 'no MSVC tools version with ATL found on this runner' }
+          "vctools=$($best.Name)" >> $env:GITHUB_OUTPUT
+          Write-Host "pinning VCToolsVersion $($best.Name)"
+
       - name: Test, build & package
         shell: pwsh
         run: |
           ./installer/build_artifacts.ps1 -Build -Toolset v143 `
+            -VCToolsVersion '${{ steps.atl.outputs.vctools }}' `
             -ReleaseTag '${{ steps.tag.outputs.tag }}' `
             -SiteUrl '${{ steps.pages.outputs.base_url }}/'
 
