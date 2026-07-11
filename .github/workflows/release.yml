@@ -89,6 +89,12 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
+      # The image no longer preinstalls NSIS; without it the script would skip
+      # the three installers and ship a half release.
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress | Out-Null
+
       # ATL (needed by the foobar SDK) ships only with SOME of the side-by-side
       # MSVC tools versions - find one that actually has atlbase.h and pin it.
       - name: Locate ATL-capable MSVC toolset
@@ -140,6 +146,8 @@ jobs:
             'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).'
           ) -join "`n"
           $files = Get-ChildItem www/downloads -File | ForEach-Object FullName
+          # 7 artifacts + 7 sha256 sidecars; fewer means something was skipped upstream
+          if ($files.Count -ne 14) { throw "expected 14 release files, found $($files.Count) - refusing to ship a partial release" }
           gh release create $env:TAG @files --title $env:TAG --notes $notes
           if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
 
