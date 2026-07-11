@@ -57,9 +57,10 @@ jobs:
           # Magic-byte check: a server can answer 200 with an HTML page (looking
           # at you, SourceForge) - fail with a clear message, not a 7z error.
           function Assert-Archive([string]$path) {
-            $b = Get-Content $path -Encoding Byte -TotalCount 2
-            $isZip = ($b[0] -eq 0x50 -and $b[1] -eq 0x4B)   # PK
-            $is7z  = ($b[0] -eq 0x37 -and $b[1] -eq 0x7A)   # 7z
+            $fs = [System.IO.File]::OpenRead($path)        # works in PS 5.1 AND pwsh 7
+            $b0 = $fs.ReadByte(); $b1 = $fs.ReadByte(); $fs.Dispose()
+            $isZip = ($b0 -eq 0x50 -and $b1 -eq 0x4B)      # PK
+            $is7z  = ($b0 -eq 0x37 -and $b1 -eq 0x7A)      # 7z
             if (-not ($isZip -or $is7z)) { throw "$path is not a zip/7z archive - the server likely returned an HTML page" }
           }
           curl.exe -fsSL -o sdk.7z $env:FB2K_SDK_URL
