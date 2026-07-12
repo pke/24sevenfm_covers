@@ -29,7 +29,7 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Compute release tag
         id: tag
@@ -41,7 +41,7 @@ jobs:
 
       - name: Cache foobar2000 SDK + WTL
         id: sdkcache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             foobar2000/sdk
@@ -83,11 +83,11 @@ jobs:
 
       - name: Configure Pages
         id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       # Runners do not have MSBuild on PATH; build_artifacts.ps1 locates it via Get-Command.
       - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v3
 
       # The image no longer preinstalls NSIS; without it the script would skip
       # the three installers and ship a half release.
@@ -137,9 +137,9 @@ jobs:
         run: Remove-Item www/downloads -Recurse -Force
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: www
 
       - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
