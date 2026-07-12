@@ -43,5 +43,8 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         find_package(Threads REQUIRED)
         target_link_libraries(coverfetch_tests PRIVATE Threads::Threads)
     endif()
-    add_test(NAME coverfetch_tests COMMAND coverfetch_tests)
+    # doctest.cmake (vendored, ships with doctest) registers every doctest TEST_CASE
+    # as its own CTest entry, so ctest reports 26/26 cases instead of one opaque exe.
+    include(tests/doctest.cmake)
+    doctest_discover_tests(coverfetch_tests)
 endif()
