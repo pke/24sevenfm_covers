@@ -66,6 +66,7 @@ static HWND               g_hwnd = nullptr;       // our drawing child window
 static HWND               g_embedFrame = nullptr; // gen_ff dockable frame
 static embedWindowState   g_embedState;
 static bool               g_d2dReady = false;
+static bool               g_userClosed = false;    // user dismissed the frame; don't auto-reopen until re-tune
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
@@ -152,8 +153,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 eng().resetTitle(); // reset so the next tune-in reloads
             }
 
+            if (!tuned) g_userClosed = false; // tuning out re-arms the auto-show
             const BOOL visible = IsWindowVisible(top);
-            if (tuned && !visible) {
+            if (tuned && !visible && !g_userClosed) {
                 ShowWindow(top, SW_SHOWNA);
                 InvalidateRect(hwnd, nullptr, FALSE);
             } else if (!tuned && visible) {
@@ -161,6 +163,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
+        case WM_CLOSE:
+            // gen_ff posts WM_CLOSE to the content window when its title-bar close
+            // button is clicked. DefWindowProc would DESTROY the window, leaving the
+            // frame a permanently black empty shell. Instead dismiss it: hide the
+            // frame and latch it so the gate doesn't reopen it until the user tunes
+            // out and back in. (Also covers the standalone-window fallback.)
+            ShowWindow(g_embedFrame ? g_embedFrame : hwnd, SW_HIDE);
+            g_userClosed = true;
+            return 0;
         case WM_SIZE: // gen_ff resized our child - just repaint at the new size
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
