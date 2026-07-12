@@ -222,12 +222,13 @@ std::string htmlDecode(const std::string& in) {
 // Dispatch a GET through the Config's injected transport if it has one, else the
 // built-in networking. Keeps pollOnce/nextCoverUrl agnostic of where bytes come from
 // (the seam the unit tests use to feed canned responses without a socket).
-HttpResponse fetch(const Config& cfg, const std::string& path) {
+HttpResponse fetch(const Config& cfg, const std::string& path,
+                   const std::atomic<bool>* cancel = nullptr) {
     if (cfg.transport)
         return cfg.transport(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
                              cfg.requestTimeoutSeconds);
     return httpRequest(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
-                       cfg.requestTimeoutSeconds);
+                       cfg.requestTimeoutSeconds, cancel);
 }
 
 // Rejects a cover URL a hostile server/MITM could weaponize, BEFORE we ever fetch it:
@@ -292,7 +293,7 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
     std::string requestPath =
         config_.path + "?action=" + config_.action + "&_t=" + std::to_string(cb);
 
-    HttpResponse response = fetch(config_, requestPath);
+    HttpResponse response = fetch(config_, requestPath, cancelToken());
     if (!response.ok()) {
         if (error) {
             *error = response.status == 0
@@ -360,7 +361,7 @@ bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
     // GetQueue returns a JSON array of upcoming tracks; the first "CoverLink" and
     // "Length" are the next track's (jsonString finds the first occurrence).
     std::string requestPath = config_.path + "?action=GetQueue&_t=" + std::to_string(cb);
-    HttpResponse response = fetch(config_, requestPath);
+    HttpResponse response = fetch(config_, requestPath, cancelToken());
     if (!response.ok())
         return false;
     std::string cover;

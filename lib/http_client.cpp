@@ -164,11 +164,14 @@ bool sendAll(socket_t s, const char* data, size_t len) {
 }
 
 // Reads until the peer closes the connection (we always ask for Connection: close),
-// capped at kMaxResponseBytes so an endless stream can't exhaust memory.
-std::string readAll(socket_t s) {
+// capped at kMaxResponseBytes so an endless stream can't exhaust memory. If `cancel`
+// is set it is polled between recvs so an aborting caller isn't held for the full
+// stream (bounded by the socket's recv timeout on a stalled read).
+std::string readAll(socket_t s, const std::atomic<bool>* cancel) {
     std::string out;
     char buf[8192];
     for (;;) {
+        if (cancel && cancel->load()) break;
         int n = static_cast<int>(::recv(s, buf, sizeof(buf), 0));
         if (n <= 0) break;
         out.append(buf, static_cast<size_t>(n));
@@ -189,8 +192,10 @@ HttpResponse httpRequest(const std::string& host,
                          const std::string& method,
                          const std::string& body,
                          const std::string& contentType,
-                         int timeoutSeconds) {
+                         int timeoutSeconds,
+                         const std::atomic<bool>* cancel) {
     HttpResponse resp;
+    if (cancel && cancel->load()) { resp.error = "cancelled"; return resp; }
 
     const bool secure = (port == 443); // 443 -> TLS via WINHTTP_FLAG_SECURE
     const std::wstring hostW   = toWide(host);
@@ -204,8 +209,13 @@ HttpResponse httpRequest(const std::string& host,
     if (!session) { resp.error = "WinHttpOpen failed"; return resp; }
 
     if (timeoutSeconds > 0) {
-        int ms = timeoutSeconds * 1000;
-        WinHttpSetTimeouts(session, ms, ms, ms, ms);
+        const int ms = timeoutSeconds * 1000;
+        // When cancellable, bound the pre-body phases (resolve/connect/send) to a
+        // few seconds so a stalled connect can't hold up an abort; the receive
+        // timeout stays generous because the read loop below polls `cancel` between
+        // chunks and aborts a live transfer near-instantly regardless.
+        const int connectMs = cancel ? (ms < 8000 ? ms : 8000) : ms;
+        WinHttpSetTimeouts(session, connectMs, connectMs, connectMs, ms);
     }
 
     WinHttpHandle conn(WinHttpConnect(session, hostW.c_str(), port, 0));
@@ -245,6 +255,7 @@ HttpResponse httpRequest(const std::string& host,
     // Body (WinHTTP de-chunks transparently), capped at kMaxResponseBytes.
     std::string out;
     for (;;) {
+        if (cancel && cancel->load()) { resp.error = "cancelled"; return resp; }
         DWORD avail = 0;
         if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
         std::string chunk(avail, '\0');
@@ -265,8 +276,10 @@ HttpResponse httpRequest(const std::string& host,
                          const std::string& method,
                          const std::string& body,
                          const std::string& contentType,
-                         int timeoutSeconds) {
+                         int timeoutSeconds,
+                         const std::atomic<bool>* cancel) {
     HttpResponse resp;
+    if (cancel && cancel->load()) { resp.error = "cancelled"; return resp; }
 
     // Resolve host. Force IPv4: the station is IPv4-only, and AF_UNSPEC can return an
     // IPv6 address first whose blocking connect() hangs for the OS default (~12s,
@@ -325,7 +338,7 @@ HttpResponse httpRequest(const std::string& host,
         return resp;
     }
 
-    std::string raw = readAll(sock);
+    std::string raw = readAll(sock, cancel);
     closeSocket(sock);
 
     if (raw.empty()) {

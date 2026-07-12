@@ -45,7 +45,7 @@ std::wstring toWide(const std::string& s) {
 
 // Downloads a cover image. Windows goes over HTTPS:443 (WinHTTP/TLS); the station
 // also serves the images on plain HTTP:80, which the socket path uses elsewhere.
-std::string downloadCover(const std::string& url) {
+std::string downloadCover(const std::string& url, const std::atomic<bool>* cancel = nullptr) {
     std::string rest = url;
     const auto scheme = rest.find("://");
     if (scheme != std::string::npos)
@@ -58,7 +58,8 @@ std::string downloadCover(const std::string& url) {
 #else
     const unsigned short port = 80;
 #endif
-    ssc::HttpResponse res = ssc::httpRequest(host, port, path, "GET");
+    ssc::HttpResponse res = ssc::httpRequest(host, port, path, "GET",
+                                             std::string(), std::string(), 20, cancel);
     if (!res.ok())
         logLine("download failed: status=" + std::to_string(res.status) + " " + res.error);
     return res.ok() ? res.body : std::string();
@@ -212,6 +213,7 @@ void CoverEngine::onCoverChanged(const std::string& url) {
     // If we are mid-retry when that happens, abandon the remaining downloads so the
     // join returns promptly instead of grinding through every attempt's timeout.
     const auto aborting = [this] { return monitor_ && monitor_->cancelled(); };
+    const std::atomic<bool>* cancelTok = monitor_ ? monitor_->cancelToken() : nullptr;
 
     // (1) Reconcile: only (re)show if `url` isn't already displayed.
     bool alreadyShown;
@@ -225,7 +227,7 @@ void CoverEngine::onCoverChanged(const std::string& url) {
         if (img.empty()) {
             loading_.store(true);
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-            for (int a = 0; a < 3 && img.empty() && !aborting(); ++a) img = downloadCover(url);
+            for (int a = 0; a < 3 && img.empty() && !aborting(); ++a) img = downloadCover(url, cancelTok);
             logLine("downloaded current " + std::to_string(img.size()) + " bytes");
         } else {
             logLine("current already preloaded, no download");
@@ -247,7 +249,7 @@ void CoverEngine::onCoverChanged(const std::string& url) {
         { std::lock_guard<std::mutex> lock(mutex_); haveIt = (nextUrl == nextUrl_ && !nextBytes_.empty()); }
         if (!haveIt) {
             std::string nextImg;
-            for (int a = 0; a < 2 && nextImg.empty() && !aborting(); ++a) nextImg = downloadCover(nextUrl);
+            for (int a = 0; a < 2 && nextImg.empty() && !aborting(); ++a) nextImg = downloadCover(nextUrl, cancelTok);
             logLine("preloaded next " + std::to_string(nextImg.size()) + " bytes, len=" +
                     std::to_string(nextLen) + "s: " + nextUrl);
             std::lock_guard<std::mutex> lock(mutex_);

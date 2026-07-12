@@ -133,6 +133,10 @@ public:
     // for the full remaining request timeout(s), freezing the caller's thread.
     bool cancelled() const { return cancelled_.load(); }
 
+    // The cancellation flag's address, to hand to httpRequest so an in-flight
+    // request aborts the moment stop() begins rather than waiting out its timeout.
+    const std::atomic<bool>* cancelToken() const { return &cancelled_; }
+
     // Performs a single synchronous fetch+parse without touching the background
     // thread. Useful for a one-shot query or for driving your own scheduler.
     // Returns true on success and fills `out`; on failure returns false and, if

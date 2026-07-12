@@ -6,6 +6,7 @@
 // if the server uses Transfer-Encoding: chunked, and returns status + body.
 #pragma once
 
+#include <atomic>
 #include <string>
 
 namespace ssc {
@@ -19,12 +20,18 @@ struct HttpResponse {
 
 // Performs a blocking HTTP request. `method` is e.g. "POST" or "GET".
 // `body` and `contentType` are ignored for bodiless requests (pass "").
+//
+// If `cancel` is non-null the call watches it and aborts early once it turns
+// true: the response read is checked between chunks (near-instant on Windows),
+// and the connect/send phases are bounded to a few seconds. Lets a caller on
+// another thread unblock this request instead of waiting out the full timeout.
 HttpResponse httpRequest(const std::string& host,
                          unsigned short port,
                          const std::string& path,
                          const std::string& method,
                          const std::string& body = std::string(),
                          const std::string& contentType = std::string(),
-                         int timeoutSeconds = 20);
+                         int timeoutSeconds = 20,
+                         const std::atomic<bool>* cancel = nullptr);
 
 } // namespace ssc
