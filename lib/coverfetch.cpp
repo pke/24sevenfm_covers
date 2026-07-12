@@ -13,12 +13,26 @@ namespace ssc {
 namespace {
 
 // Parses an ISO-8601 timestamp ("2026-07-08T05:24:57") into a Unix time_t.
-// Uses sscanf rather than std::get_time to avoid pulling in the (large) C++
-// <locale> machinery. Both timestamps we compare come from the same (server)
-// clock, so the absolute UTC offset cancels out in the difference.
+// Hand-rolled fixed-layout parse: std::get_time would pull in the (large) C++
+// <locale> machinery and MSVC deprecates sscanf (C4996). Both timestamps we
+// compare come from the same (server) clock, so the absolute UTC offset
+// cancels out in the difference.
 time_t isoToUnixTime(const std::string& value) {
-    int y, mo, d, h, mi, s;
-    if (std::sscanf(value.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d", &y, &mo, &d, &h, &mi, &s) != 6)
+    if (value.size() < 19 || value[4] != '-' || value[7] != '-' ||
+        value[10] != 'T' || value[13] != ':' || value[16] != ':')
+        return 0;
+    const auto num = [&value](int pos, int len) -> int {
+        int v = 0;
+        for (int i = 0; i < len; ++i) {
+            const char c = value[pos + i];
+            if (c < '0' || c > '9') return -1;
+            v = v * 10 + (c - '0');
+        }
+        return v;
+    };
+    const int y = num(0, 4), mo = num(5, 2), d = num(8, 2);
+    const int h = num(11, 2), mi = num(14, 2), s = num(17, 2);
+    if (y < 0 || mo < 0 || d < 0 || h < 0 || mi < 0 || s < 0)
         return 0;
     std::tm tm;
     std::memset(&tm, 0, sizeof(tm));
