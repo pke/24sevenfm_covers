@@ -7,9 +7,9 @@
    to pin. RC-safe: SSC_VER_STR is a pre-built literal. */
 #define SSC_VER_MAJOR 1
 #define SSC_VER_MINOR 5
-#define SSC_VER_PATCH 3
-#define SSC_VER_NUM   1, 5, 3, 0
-#define SSC_VER_STR   "1.5.3"
+#define SSC_VER_PATCH 4
+#define SSC_VER_NUM   1, 5, 4, 0
+#define SSC_VER_STR   "1.5.4"
 
 #include "../../shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
 #endif /* FOO_VERSION_H */

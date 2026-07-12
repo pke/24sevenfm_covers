@@ -1,6 +1,7 @@
 // d2d_renderer.cpp - Direct2D/WIC/DirectWrite implementation. See header.
 #include "d2d_renderer.h"
 #include "d2d_rolldigits.h" // rolling countdown overlay
+#include "image_limits.h"   // coverDimsOk - reject decompression-bomb covers
 
 #include <d2d1.h>
 #include <d2d1_1.h>       // ID2D1Device/DeviceContext + effects (real Gaussian blur)
@@ -120,15 +121,22 @@ ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_
     IWICFormatConverter* conv = nullptr;
     ID2D1Bitmap* bmp = nullptr;
 
+    // GetSize reports the frame's declared dimensions from the header WITHOUT
+    // decoding pixels, so gating on it here rejects a decompression-bomb cover
+    // (untrusted input) before the format converter or the D2D bitmap ever pull
+    // the pixels through. See image_limits.h.
+    UINT fw = 0, fh = 0;
     if (SUCCEEDED(g_wic->CreateStream(&stream)) &&
         SUCCEEDED(stream->InitializeFromMemory((BYTE*)bytes.data(), (DWORD)bytes.size())) &&
         SUCCEEDED(g_wic->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder)) &&
         SUCCEEDED(decoder->GetFrame(0, &frame)) &&
+        SUCCEEDED(frame->GetSize(&fw, &fh)) && ssc::coverDimsOk(fw, fh) &&
         SUCCEEDED(g_wic->CreateFormatConverter(&conv)) &&
         SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppPBGRA,
                                    WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut))) {
-        rt->CreateBitmapFromWicBitmap(conv, nullptr, &bmp);
-        if (tintOut)
+        // Only tint once the bitmap actually decoded - a failed CreateBitmap must
+        // not leave the full-res image being dragged through overlayTintFrom.
+        if (SUCCEEDED(rt->CreateBitmapFromWicBitmap(conv, nullptr, &bmp)) && bmp && tintOut)
             *tintOut = overlayTintFrom(conv);
     }
     SafeRelease(conv);

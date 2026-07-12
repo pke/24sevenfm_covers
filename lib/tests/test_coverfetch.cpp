@@ -9,7 +9,8 @@
 
 #include "../http_client.cpp" // ssc:: dechunk, toLower  (+ httpRequest, unused here)
 #include "../coverfetch.cpp"  // ssc:: parseAsin, sizedCoverUrl, jsonString, isoToUnixTime
-#include "../../shared/stations.h" // ssc:: station table + stream-URL detection (auto-follow)
+#include "../../shared/stations.h"     // ssc:: station table + stream-URL detection (auto-follow)
+#include "../../shared/image_limits.h" // ssc:: coverDimsOk - untrusted-cover size guard
 
 using namespace ssc; // anonymous-namespace helpers are reachable as ssc:: in this TU
 
@@ -286,3 +287,93 @@ TEST_CASE("station id lookup + index clamping are stable for persistence") {
     CHECK(validStationIndex(999) == 0);
     CHECK(validStationIndex(3)   == 3);
 }
+
+// --- coverDimsOk: reject decompression-bomb covers (untrusted input) ---------
+TEST_CASE("coverDimsOk accepts real covers and rejects oversized/empty frames") {
+    CHECK(coverDimsOk(1, 1));                 // minimal
+    CHECK(coverDimsOk(500, 500));             // the requested cover size
+    CHECK(coverDimsOk(kMaxCoverDim, kMaxCoverDim)); // exactly at the cap
+    CHECK_FALSE(coverDimsOk(0, 10));          // empty frame
+    CHECK_FALSE(coverDimsOk(10, 0));
+    CHECK_FALSE(coverDimsOk(kMaxCoverDim + 1, 1)); // one past the cap on either axis
+    CHECK_FALSE(coverDimsOk(1, kMaxCoverDim + 1));
+    CHECK_FALSE(coverDimsOk(65500, 65500));   // the classic bomb
+    CHECK_FALSE(coverDimsOk(100000, 1));      // huge single axis (pixel count alone wouldn't catch)
+}
+
+#if defined(_WIN32)
+// End-to-end: feed a CRAFTED malicious cover through real WIC and prove the
+// dimension gate fires on the header (before any pixel decode). The renderer's
+// decodeBitmap uses the same GetSize + coverDimsOk sequence tested here.
+#include <wincodec.h>
+#include <cstdint>
+#pragma comment(lib, "windowscodecs")
+#pragma comment(lib, "ole32")
+
+namespace {
+void put16(std::string& s, uint16_t v) { s.push_back((char)(v & 0xff)); s.push_back((char)((v >> 8) & 0xff)); }
+void put32(std::string& s, uint32_t v) { for (int i = 0; i < 4; ++i) s.push_back((char)((v >> (8 * i)) & 0xff)); }
+
+// A 24bpp BMP. When withPixels is false the header DECLARES w x h but no pixel
+// bytes follow - a tiny file claiming an enormous image, exactly the bomb.
+std::string makeBmp(int32_t w, int32_t h, bool withPixels) {
+    std::string px;
+    if (withPixels) {
+        const int rowBytes = (((w * 3) + 3) / 4) * 4;
+        px.assign((size_t)rowBytes * (size_t)(h < 0 ? -h : h), '\0');
+    }
+    std::string s;
+    s += "BM";
+    put32(s, (uint32_t)(54 + px.size())); put16(s, 0); put16(s, 0); put32(s, 54); // FILEHEADER
+    put32(s, 40); put32(s, (uint32_t)w); put32(s, (uint32_t)h);                    // INFOHEADER
+    put16(s, 1); put16(s, 24); put32(s, 0); put32(s, 0);
+    put32(s, 2835); put32(s, 2835); put32(s, 0); put32(s, 0);
+    s += px;
+    return s;
+}
+
+// Decode just the size via WIC, the same cheap header read decodeBitmap gates on.
+bool wicSize(const std::string& bytes, UINT& w, UINT& h) {
+    w = h = 0;
+    const HRESULT hrco = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool ok = false;
+    IWICImagingFactory* fac = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_PPV_ARGS(&fac)))) {
+        IWICStream* st = nullptr; IWICBitmapDecoder* dec = nullptr; IWICBitmapFrameDecode* fr = nullptr;
+        if (SUCCEEDED(fac->CreateStream(&st)) &&
+            SUCCEEDED(st->InitializeFromMemory((BYTE*)bytes.data(), (DWORD)bytes.size())) &&
+            SUCCEEDED(fac->CreateDecoderFromStream(st, nullptr, WICDecodeMetadataCacheOnLoad, &dec)) &&
+            SUCCEEDED(dec->GetFrame(0, &fr)) &&
+            SUCCEEDED(fr->GetSize(&w, &h)))
+            ok = true;
+        if (fr) fr->Release();
+        if (dec) dec->Release();
+        if (st) st->Release();
+        fac->Release();
+    }
+    if (SUCCEEDED(hrco)) CoUninitialize();
+    return ok;
+}
+} // namespace
+
+TEST_CASE("a real cover decodes; a crafted oversized cover is rejected on its header") {
+    UINT w = 0, h = 0;
+
+    // A legitimate small cover: WIC reads it and the gate lets it through.
+    REQUIRE(wicSize(makeBmp(4, 4, true), w, h));
+    CHECK(w == 4u); CHECK(h == 4u);
+    CHECK(coverDimsOk(w, h));
+
+    // A fully-valid image one pixel past the cap on one axis: still rejected.
+    REQUIRE(wicSize(makeBmp((int)kMaxCoverDim + 1, 1, true), w, h));
+    CHECK(w == kMaxCoverDim + 1);
+    CHECK_FALSE(coverDimsOk(w, h));
+
+    // The bomb: a ~54-byte file declaring 65500x65500. WIC reports the size from
+    // the header WITHOUT decoding 4.3 gigapixels, and the gate refuses it.
+    REQUIRE(wicSize(makeBmp(65500, 65500, false), w, h));
+    CHECK(w == 65500u); CHECK(h == 65500u);
+    CHECK_FALSE(coverDimsOk(w, h));
+}
+#endif // _WIN32

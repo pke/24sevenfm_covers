@@ -227,6 +227,14 @@ HttpResponse httpRequest(const std::string& host,
                                          secure ? WINHTTP_FLAG_SECURE : 0));
     if (!req) { resp.error = "WinHttpOpenRequest failed"; return resp; }
 
+    // Do NOT follow redirects. The caller pins the host before the fetch (SSRF
+    // guard); WinHTTP's default policy would silently chase a 3xx from the trusted
+    // host to anywhere (internal/LAN/metadata services), escaping that pin. The
+    // station's endpoints don't legitimately redirect, so a 3xx is an error or an
+    // attack - hand it back to the caller (non-2xx -> treated as a failed fetch).
+    DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+    WinHttpSetOption(req, WINHTTP_OPTION_REDIRECT_POLICY, &redirectPolicy, sizeof(redirectPolicy));
+
     std::wstring headers;
     if (!body.empty() && !contentType.empty())
         headers = L"Content-Type: " + toWide(contentType) + L"\r\n";
