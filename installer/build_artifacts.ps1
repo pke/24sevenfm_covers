@@ -94,7 +94,9 @@ if ($Build) {
     $msb   = Find-Tool 'MSBuild.exe' @('C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe')
     if (-not $cmake -or -not $msb) { throw "cmake/MSBuild not found - build the plugins manually, then run without -Build." }
     & $cmake -S (Join-Path $root 'winamp') -B (Join-Path $root 'winamp\build') -A Win32 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Winamp CMake configure FAILED" }
     & $cmake --build (Join-Path $root 'winamp\build') --config Release
+    if ($LASTEXITCODE -ne 0) { throw "Winamp plugin build FAILED" }
     # ATL ships only with SOME side-by-side MSVC tools versions (e.g. 14.51 has it,
     # 14.52 does not) and the foobar SDK needs it. Unless the caller pinned one,
     # pick the newest toolset that actually contains atlbase.h - self-healing on
