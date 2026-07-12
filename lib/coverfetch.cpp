@@ -379,6 +379,7 @@ bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
 void CoverMonitor::start() {
     if (running_.exchange(true))
         return; // already running
+    cancelled_.store(false); // fresh run: callbacks may work again
     {
         std::lock_guard<std::mutex> lock(mutex_);
         stopRequested_ = false;
@@ -387,6 +388,7 @@ void CoverMonitor::start() {
 }
 
 void CoverMonitor::stop() {
+    cancelled_.store(true); // let a long in-flight callback abort before we join
     if (!running_.exchange(false)) {
         // Not running, but a thread object may still be joinable from a prior run.
         if (thread_.joinable())

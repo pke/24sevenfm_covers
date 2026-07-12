@@ -127,6 +127,12 @@ public:
 
     bool isRunning() const { return running_.load(); }
 
+    // True from the moment stop() begins until the next start(). Long-running work
+    // invoked from the monitor's callbacks (e.g. a host downloading covers with
+    // retries) should poll this and abort promptly - otherwise stop()'s join blocks
+    // for the full remaining request timeout(s), freezing the caller's thread.
+    bool cancelled() const { return cancelled_.load(); }
+
     // Performs a single synchronous fetch+parse without touching the background
     // thread. Useful for a one-shot query or for driving your own scheduler.
     // Returns true on success and fills `out`; on failure returns false and, if
@@ -151,6 +157,7 @@ private:
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> cancelled_{false}; // set by stop() so in-flight callbacks can bail
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     bool stopRequested_ = false;

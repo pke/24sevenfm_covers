@@ -208,6 +208,11 @@ void CoverEngine::setWindow(HWND h) {
 void CoverEngine::onCoverChanged(const std::string& url) {
     logLine("poll: current cover = " + url);
 
+    // stop()/setStation() run on the host UI thread and join this (monitor) thread.
+    // If we are mid-retry when that happens, abandon the remaining downloads so the
+    // join returns promptly instead of grinding through every attempt's timeout.
+    const auto aborting = [this] { return monitor_ && monitor_->cancelled(); };
+
     // (1) Reconcile: only (re)show if `url` isn't already displayed.
     bool alreadyShown;
     std::string img;
@@ -220,7 +225,7 @@ void CoverEngine::onCoverChanged(const std::string& url) {
         if (img.empty()) {
             loading_.store(true);
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-            for (int a = 0; a < 3 && img.empty(); ++a) img = downloadCover(url);
+            for (int a = 0; a < 3 && img.empty() && !aborting(); ++a) img = downloadCover(url);
             logLine("downloaded current " + std::to_string(img.size()) + " bytes");
         } else {
             logLine("current already preloaded, no download");
@@ -242,7 +247,7 @@ void CoverEngine::onCoverChanged(const std::string& url) {
         { std::lock_guard<std::mutex> lock(mutex_); haveIt = (nextUrl == nextUrl_ && !nextBytes_.empty()); }
         if (!haveIt) {
             std::string nextImg;
-            for (int a = 0; a < 2 && nextImg.empty(); ++a) nextImg = downloadCover(nextUrl);
+            for (int a = 0; a < 2 && nextImg.empty() && !aborting(); ++a) nextImg = downloadCover(nextUrl);
             logLine("preloaded next " + std::to_string(nextImg.size()) + " bytes, len=" +
                     std::to_string(nextLen) + "s: " + nextUrl);
             std::lock_guard<std::mutex> lock(mutex_);
