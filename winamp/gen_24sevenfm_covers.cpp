@@ -66,7 +66,6 @@ static HWND               g_hwnd = nullptr;       // our drawing child window
 static HWND               g_embedFrame = nullptr; // gen_ff dockable frame
 static embedWindowState   g_embedState;
 static bool               g_d2dReady = false;
-static bool               g_prevTuned = false;     // last gate state, for edge-triggered show/hide
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
@@ -153,18 +152,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 eng().resetTitle(); // reset so the next tune-in reloads
             }
 
-            // Show/hide only on the tune EDGE, never continuously. The gen_ff frame
-            // hides (doesn't destroy) on its close button, so the old "show whenever
-            // tuned && !visible" re-opened a user-closed window within 500ms - it
-            // couldn't be dismissed. Now a fresh tune-in shows it, closing it keeps
-            // it closed, and tuning out hides it + re-arms the next tune-in's show.
-            if (tuned && !g_prevTuned) {
+            const BOOL visible = IsWindowVisible(top);
+            if (tuned && !visible) {
                 ShowWindow(top, SW_SHOWNA);
                 InvalidateRect(hwnd, nullptr, FALSE);
-            } else if (!tuned && g_prevTuned) {
+            } else if (!tuned && visible) {
                 ShowWindow(top, SW_HIDE);
             }
-            g_prevTuned = tuned;
             return 0;
         }
         case WM_SIZE: // gen_ff resized our child - just repaint at the new size
