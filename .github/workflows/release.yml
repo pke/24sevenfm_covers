@@ -90,10 +90,16 @@ jobs:
         uses: microsoft/setup-msbuild@v3
 
       # The image no longer preinstalls NSIS; without it the script would skip
-      # the three installers and ship a half release.
+      # the three installers. Verify the install really happened - a choco
+      # download flake behind a pipe otherwise passes silently (seen in run 9).
       - name: Install NSIS
         shell: pwsh
-        run: choco install nsis -y --no-progress | Out-Null
+        run: |
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed ($LASTEXITCODE)" }
+          $mk = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $mk)) { throw "makensis.exe missing after install" }
+          Write-Host "NSIS ready: $mk"
 
       # Toolset selection (v145 + an ATL-capable VCToolsVersion) is handled inside
       # build_artifacts.ps1 - the runner image carries VS 2026 like the dev machine.
