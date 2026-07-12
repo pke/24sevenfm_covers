@@ -94,4 +94,12 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   RMDir "$INSTDIR"
   DeleteRegKey SHCTX "${UNINSTKEY}"
+
+  ; Remove this user's settings. The installed viewer stores its INI in per-user
+  ; %APPDATA% (Program Files isn't writable), so switch to the current-user context
+  ; for the lookup. Other users' copies, if any, are inherently out of reach of a
+  ; per-machine uninstaller.
+  SetShellVarContext current
+  Delete "$APPDATA\24seven.fm Covers\24seven.fm-covers.ini"
+  RMDir  "$APPDATA\24seven.fm Covers"
 SectionEnd

@@ -16,6 +16,7 @@
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM
 #include <commctrl.h>   // trackbar (duration slider), property sheet
 #include <shellapi.h>   // ShellExecute (About link)
+#include <shlobj.h>     // SHGetFolderPath (per-user %APPDATA%)
 #pragma comment(lib, "shell32.lib")
 
 #include <string>
@@ -53,14 +54,45 @@ static LONG_PTR         g_prevStyle  = 0;
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
-// --- settings (INI next to the .exe <-> engine.settings) --------------------
+// --- settings (INI <-> engine.settings) -------------------------------------
+static const char kIniName[] = "24seven.fm-covers.ini";
+static const char kAppDataSubdir[] = "24seven.fm Covers";
+
+// True if we can create files in `dir` (probe file auto-deletes on close). A 64-bit
+// process gets no UAC file virtualization, so this correctly reports false for
+// Program Files - which is exactly the installed case we must redirect elsewhere.
+static bool dirWritable(const std::string& dir) {
+    const std::string probe = dir + "._sscprobe.tmp";
+    HANDLE h = CreateFileA(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(h);
+    return true;
+}
+
+// Portable use (zip in a writable folder) keeps the INI next to the exe so settings
+// travel with it; an existing local INI is always honoured. Installed use (Program
+// Files, not writable) falls back to per-user %APPDATA%\24seven.fm Covers\.
 static std::string iniPath() {
     char exe[MAX_PATH] = {0};
     GetModuleFileNameA(nullptr, exe, MAX_PATH);
     std::string p = exe;
     const auto slash = p.find_last_of("\\/");
-    p = (slash == std::string::npos) ? std::string() : p.substr(0, slash + 1);
-    return p + "24seven.fm-covers.ini";
+    const std::string exeDir = (slash == std::string::npos) ? std::string() : p.substr(0, slash + 1);
+    const std::string localIni = exeDir + kIniName;
+
+    if (GetFileAttributesA(localIni.c_str()) != INVALID_FILE_ATTRIBUTES) return localIni;
+    if (!exeDir.empty() && dirWritable(exeDir)) return localIni;
+
+    // SHGetFolderPath, not the APPDATA env var: it resolves per-user Roaming
+    // regardless of the launching process's environment block.
+    char appdata[MAX_PATH] = {0};
+    if (SUCCEEDED(SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, appdata))) {
+        const std::string dir = std::string(appdata) + "\\" + kAppDataSubdir;
+        CreateDirectoryA(dir.c_str(), nullptr); // harmless if it already exists
+        return dir + "\\" + kIniName;
+    }
+    return localIni; // last resort
 }
 static void loadSettings() {
     ssccfg::IniConfigStore store(iniPath());

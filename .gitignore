@@ -8,8 +8,10 @@
 /desktop/build/
 *.aps
 
-# Vendored dependencies (re-add per installer/README + memory notes)
+# Vendored dependencies (re-add per installer/README + memory notes; the release
+# workflow provisions both into these paths, so never commit them)
 /foobar2000/sdk/
+/foobar2000/wtl/
 
 # Visual Studio / tooling
 *.user
