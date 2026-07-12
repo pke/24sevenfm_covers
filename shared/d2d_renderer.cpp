@@ -518,8 +518,15 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
         g_rt->CreateLayer(nullptr, &g_layer);                                    // poster cover rounded clip
     } else {
         const D2D1_SIZE_U ps = g_rt->GetPixelSize();
-        if (ps.width != cw || ps.height != ch)
-            g_rt->Resize(D2D1::SizeU(cw, ch));
+        if (ps.width != cw || ps.height != ch) {
+            // A failed Resize (seen when the gen_ff frame collapses to its title bar
+            // or is hidden/reshown) leaves the target stuck in an error state where
+            // every later draw is dropped - the window then stays black. Rebuild it.
+            if (FAILED(g_rt->Resize(D2D1::SizeU(cw, ch)))) {
+                discardDeviceResources();
+                return false; // recreated cleanly on the next render
+            }
+        }
     }
 
     if (!g_curBmp && !g_curBytes.empty())   g_curBmp = createBitmap(g_curBytes, true);
@@ -536,8 +543,12 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
                                        remainingSeconds, overlayFontFrac, rollDigits, statusText);
     }
     const HRESULT hr = g_rt->EndDraw();
-    if (hr == D2DERR_RECREATE_TARGET)
-        discardDeviceResources(); // device lost; rebuild on next render
+    // Recreate on ANY failure, not just D2DERR_RECREATE_TARGET: a target left in a
+    // non-recreate error state (e.g. after a bad resize) would otherwise render
+    // black forever, since EndDraw keeps returning that stuck code and we'd never
+    // rebuild. Discarding here self-heals on the next render.
+    if (FAILED(hr))
+        discardDeviceResources();
     return overlayAnimating;
 }
 
