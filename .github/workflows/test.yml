@@ -1,0 +1,26 @@
+# Fast feedback: run the lib/ unit tests on every push and PR. The release
+# workflow runs the same gate before packaging; this one just answers
+# "did I break the parser?" within minutes of a commit.
+name: Tests
+
+on:
+  push:
+    branches: [master]
+    paths: [lib/**, .github/workflows/test.yml]
+  pull_request:
+    paths: [lib/**]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure, build & run tests
+        shell: pwsh
+        run: |
+          cmake -S lib -B lib/build-tests -A x64 -DCOVERFETCH_BUILD_TESTS=ON -DCOVERFETCH_BUILD_EXAMPLE=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'configure failed' }
+          cmake --build lib/build-tests --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+          ctest --test-dir lib/build-tests -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw 'tests failed' }

@@ -1,5 +1,11 @@
 # 24seven.fm Covers
 
+[![Tests](https://github.com/pke/24sevenfm_covers/actions/workflows/test.yml/badge.svg)](https://github.com/pke/24sevenfm_covers/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/pke/24sevenfm_covers)](https://github.com/pke/24sevenfm_covers/releases/latest)
+[![Website](https://img.shields.io/badge/website-24sevenfm--covers.dudesoft.app-7c5cff)](https://24sevenfm-covers.dudesoft.app/)
+
+[![Hear the music. See the covers.](site/img/social.jpg)](https://24sevenfm-covers.dudesoft.app/)
+
 Cover-art for the **24seven.fm** family of internet radio stations — Streaming Soundtracks,
 1980s.FM, Adagio.FM, Death.FM, and Entranced.FM. A shared, host-agnostic C++ engine drives
 three Windows front-ends plus a cross-platform core library:
