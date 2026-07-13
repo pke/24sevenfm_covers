@@ -247,7 +247,12 @@ static PROPSHEETPAGEA makePage(WORD templateId, DLGPROC proc, const char* title)
     return p;
 }
 
-static void openOptions() {
+// Page indices in the property sheet below (also the startPage values for openOptions).
+enum { kPageStation = 0, kPageOptions = 1, kPageAbout = 2 };
+
+// startPage picks the initially-selected tab: the "Options..." menu opens on Options;
+// first-run opens on Station (kPageStation) to prompt for a station.
+static void openOptions(int startPage = kPageOptions) {
     PROPSHEETPAGEA pages[] = {
         makePage(IDD_TAB_STATION,  StationPageProc, "Station"), // viewer-only station picker
         makePage(IDD_OPTIONS_PAGE, OptionsPageProc, "Options"), // shared options page
@@ -259,6 +264,7 @@ static void openOptions() {
     psh.hInstance  = g_hInst;
     psh.pszCaption = "24seven.fm Covers";
     psh.nPages     = ARRAYSIZE(pages);
+    psh.nStartPage = (UINT)startPage;
     psh.ppsp       = pages;
     PropertySheetA(&psh);
 }
@@ -392,10 +398,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     eng().start(/*autoAdvance=*/true);
 
     // No station chosen yet (missing INI entry): the viewer has no player to auto-follow,
-    // so ask which station to show. openOptions() opens on the Station tab (page 0); saving
-    // afterwards writes the station key so we don't prompt again even if they just close it.
+    // so ask which station to show - open on the Station tab. Saving afterwards writes the
+    // station key so we don't prompt again even if they just close it.
     if (g_firstRun) {
-        openOptions();
+        openOptions(kPageStation);
         saveSettings();
     }
 
