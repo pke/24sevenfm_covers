@@ -21,6 +21,11 @@
   Streaming Soundtracks.
 --]]
 
+-- The server exposes several cover sizes under /cover/<size>/ (500 = large, 040 = a
+-- thumbnail); the bare CoverLink is a medium image. Request the large one, matching the
+-- plugins' default (lib Config::coverSize = 500).
+local COVER_SIZE = 500
+
 -- Monotonic cache-buster for the now-playing URL. VLC's art-fetcher Lua sandbox exposes
 -- neither os.* nor vlc.misc.*, so a per-session counter is the portable way to defeat any
 -- HTTP caching of the (dynamic) endpoint.
@@ -78,12 +83,10 @@ function fetch_art()
     -- HTTPS; fall back to HTTP where TLS isn't available.
     nonce = nonce + 1
     local path = "/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" .. tostring(nonce)
-    local scheme = "https"
+    -- Prefer HTTPS but fall back to HTTP: some stations have no working HTTPS (SST), and
+    -- VLC's Lua stream can't always create an HTTPS access ("no suitable access module").
     local body = http_get("https://" .. host .. path)
-    if not body or body == "" then
-        scheme = "http" -- this station serves no working HTTPS (e.g. streamingsoundtracks.com)
-        body = http_get("http://" .. host .. path)
-    end
+    if not body or body == "" then body = http_get("http://" .. host .. path) end
     if not body or body == "" then
         vlc.msg.warn("[24seven.fm] no now-playing response from " .. host)
         return nil
@@ -94,9 +97,14 @@ function fetch_art()
     if not cover or cover == "" then return nil end
     cover = string.gsub(cover, "\\/", "/")
 
-    -- If the JSON needed the HTTP fallback this station has no working HTTPS, so its HTTPS
-    -- cover image won't load either - serve the cover over HTTP to match (SST does this).
-    if scheme == "http" then cover = string.gsub(cover, "^https://", "http://") end
+    -- Ask for the large variant: .../cover/ID.jpg -> .../cover/500/ID.jpg (first match only).
+    cover = string.gsub(cover, "/cover/", "/cover/" .. COVER_SIZE .. "/", 1)
+
+    -- Always hand VLC an HTTP cover URL. Every station serves the image over HTTP, and
+    -- VLC's HTTPS support is unreliable here (SST has no HTTPS at all; VLC's Lua/access
+    -- layer sometimes can't do HTTPS) - reliability beats HTTPS for low-sensitivity art
+    -- (the host check below still applies).
+    cover = string.gsub(cover, "^https://", "http://")
 
     -- Only trust a cover served from the station's own host - a hostile/compromised
     -- server shouldn't be able to point VLC at an arbitrary URL.
