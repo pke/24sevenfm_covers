@@ -58,6 +58,7 @@ public:
     void start(bool autoAdvance = false);
     void stop();             // stop the monitor (host shutdown)
     void setWindow(HWND h);  // the D2D drawing window (nullptr when destroyed)
+    HWND currentWindow() const { return hwnd_.load(); } // who the engine currently draws into
 
     // Set the log basename (OutputDebugString tag + %TEMP%\<base>.log). Each host
     // uses a distinct name so their logs don't interleave. Call once before start().

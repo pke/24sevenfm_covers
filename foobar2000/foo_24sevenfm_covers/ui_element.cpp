@@ -61,12 +61,18 @@ private:
         return 0;
     }
     void OnDestroy() {
-        CoverEngine::instance().setWindow(nullptr);
-        // No element = nothing renders (the album-art provider uses the raw JPEG
-        // bytes, not the render target), so free the GPU resources. The monitor
-        // keeps running if a family stream is playing, to feed native album art.
-        d2d::resetTarget(); // render target + cover bitmaps
-        d2d::releaseBlur(); // poster-mode blur device
+        // Only detach/free if the engine is actually drawing into THIS window. A
+        // second cover element isn't really supported (single-instance renderer), but
+        // if one stole the engine, destroying this one must not blank it - nor free
+        // the render target it's still using.
+        if (CoverEngine::instance().currentWindow() == m_hWnd) {
+            CoverEngine::instance().setWindow(nullptr);
+            // No element = nothing renders (the album-art provider uses the raw JPEG
+            // bytes, not the render target), so free the GPU resources. The monitor
+            // keeps running if a family stream is playing, to feed native album art.
+            d2d::resetTarget(); // render target + cover bitmaps
+            d2d::releaseBlur(); // poster-mode blur device
+        }
         SetMsgHandled(FALSE); // let Bumpable/default cleanup run too
     }
     BOOL OnEraseBkgnd(CDCHandle) { return TRUE; } // D2D paints the whole client area

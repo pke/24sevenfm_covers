@@ -7,9 +7,9 @@
    RC-safe: SSC_VER_STR is a pre-built literal (rc.exe does not concat adjacent literals). */
 #define SSC_VER_MAJOR 1
 #define SSC_VER_MINOR 6
-#define SSC_VER_PATCH 8
-#define SSC_VER_NUM   1, 6, 8, 0
-#define SSC_VER_STR   "1.6.8"
+#define SSC_VER_PATCH 9
+#define SSC_VER_NUM   1, 6, 9, 0
+#define SSC_VER_STR   "1.6.9"
 
 #include "../shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
 #endif /* GEN_VERSION_H */
