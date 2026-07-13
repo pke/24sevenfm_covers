@@ -8,10 +8,15 @@
 /desktop/build/
 *.aps
 
-# Vendored dependencies (re-add per installer/README + memory notes; the release
-# workflow provisions both into these paths, so never commit them)
-/foobar2000/sdk/
-/foobar2000/wtl/
+# Vendored deps are committed as SOURCE (foobar2000/sdk/, foobar2000/wtl/). Ignore
+# only their build output, not the trees themselves - a blocklist, not an allowlist.
+foobar2000/sdk/**/x64/**
+foobar2000/sdk/**/[Ww]in32/**
+foobar2000/sdk/**/[Dd]ebug/**
+foobar2000/sdk/**/[Rr]elease/**
+foobar2000/sdk/**/.vs/**
+foobar2000/sdk/**/*.dll
+# (shared/shared-*.lib is a REQUIRED import library, not build output - keep it)
 
 # Visual Studio / tooling
 *.user

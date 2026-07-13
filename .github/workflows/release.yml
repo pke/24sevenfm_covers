@@ -18,13 +18,6 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-env:
-  # Pinned dependency archives - bump deliberately, the cache is keyed on them.
-  # WTL comes from NuGet (a .nupkg is a zip): SourceForge's /download endpoint
-  # serves an HTML mirror page to curl, not the file.
-  FB2K_SDK_URL: https://www.foobar2000.org/downloads/SDK-2025-03-07.7z
-  WTL_URL: https://www.nuget.org/api/v2/package/wtl/10.0.10320
-
 jobs:
   release:
     runs-on: windows-latest
@@ -38,48 +31,6 @@ jobs:
           $tag = 'v' + (Get-Date -Format 'yyyy.MM.dd') + '-' + '${{ github.run_number }}'
           "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "release tag: $tag"
-
-      - name: Cache foobar2000 SDK + WTL
-        id: sdkcache
-        uses: actions/cache@v6
-        with:
-          path: |
-            foobar2000/sdk
-            foobar2000/wtl
-          key: deps-${{ env.FB2K_SDK_URL }}-${{ env.WTL_URL }}
-
-      - name: Provision foobar2000 SDK + WTL
-        if: steps.sdkcache.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          # Layout-agnostic extraction: archives may or may not carry a top-level
-          # folder, so locate a known landmark file instead of assuming paths.
-          # Magic-byte check: a server can answer 200 with an HTML page (looking
-          # at you, SourceForge) - fail with a clear message, not a 7z error.
-          function Assert-Archive([string]$path) {
-            $fs = [System.IO.File]::OpenRead($path)        # works in PS 5.1 AND pwsh 7
-            $b0 = $fs.ReadByte(); $b1 = $fs.ReadByte(); $fs.Dispose()
-            $isZip = ($b0 -eq 0x50 -and $b1 -eq 0x4B)      # PK
-            $is7z  = ($b0 -eq 0x37 -and $b1 -eq 0x7A)      # 7z
-            if (-not ($isZip -or $is7z)) { throw "$path is not a zip/7z archive - the server likely returned an HTML page" }
-          }
-          curl.exe -fsSL -o sdk.7z $env:FB2K_SDK_URL
-          Assert-Archive sdk.7z
-          7z x sdk.7z -osdk_tmp | Out-Null
-          $pfc = Get-ChildItem sdk_tmp -Recurse -Directory -Filter pfc | Select-Object -First 1
-          if (-not $pfc) { throw 'pfc/ not found in the SDK archive - layout changed?' }
-          New-Item -ItemType Directory -Force foobar2000/sdk | Out-Null
-          Copy-Item (Join-Path $pfc.Parent.FullName '*') foobar2000/sdk/ -Recurse -Force
-          if (-not (Test-Path foobar2000/sdk/foobar2000/SDK)) { throw 'SDK layout unexpected after extraction' }
-
-          curl.exe -fsSL -o wtl.zip $env:WTL_URL
-          Assert-Archive wtl.zip
-          7z x wtl.zip -owtl_tmp | Out-Null
-          $atlapp = Get-ChildItem wtl_tmp -Recurse -Filter atlapp.h | Select-Object -First 1
-          if (-not $atlapp) { throw 'atlapp.h not found in the WTL archive - layout changed?' }
-          New-Item -ItemType Directory -Force foobar2000/wtl | Out-Null
-          Copy-Item (Join-Path $atlapp.DirectoryName '*') foobar2000/wtl/ -Recurse -Force
-          Write-Host "SDK + WTL provisioned"
 
       - name: Configure Pages
         id: pages
