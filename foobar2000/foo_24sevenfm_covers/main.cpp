@@ -9,6 +9,7 @@
 
 #include "d2d_renderer.h"   // shared GPU renderer (from ../../shared)
 #include "cover_engine.h"   // shared cover/preload/animation engine (from ../../shared)
+#include "stations.h"       // station table + stream-URL detection
 #include "foobar_settings.h"
 #include "foo_version.h"    // this module's version; SSC_COPYRIGHT via shared/version.h
 
@@ -25,17 +26,28 @@ VALIDATE_COMPONENT_FILENAME("foo_24sevenfm_covers.dll");
 
 namespace {
 
-// Direct2D + the cover engine keep process-global single-instance state, so set
-// them up once at startup and tear them down at shutdown rather than per UI-element.
-// The engine's CoverMonitor starts fetching immediately; the UI element (when the
-// user's layout creates it) just hands the engine its HWND to draw into.
+// Direct2D + the cover engine keep process-global single-instance state, so set them
+// up once at startup and tear them down at shutdown rather than per UI-element. The
+// monitor is NOT started here: playback.cpp starts it when a 24seven.fm stream begins
+// playing and stops it otherwise, so foobar sitting idle (or playing local files)
+// never polls the station. We only kick it off here if such a stream is already
+// playing as the component loads.
 class ssc_initquit : public initquit {
 public:
     void on_init() override {
         d2d::init();
         CoverEngine::instance().setLogName("24seven.fm-covers-foobar");
         ssccfg::loadIntoEngine();
-        CoverEngine::instance().start();
+
+        metadb_handle_ptr np;
+        if (playback_control::get()->get_now_playing(np) && !np.is_empty()) {
+            const char* p = np->get_path();
+            const int idx = p ? ssc::stationIndexForText(p) : -1;
+            if (idx >= 0) {
+                CoverEngine::instance().setStation(idx);
+                CoverEngine::instance().start();
+            }
+        }
     }
     void on_quit() override {
         CoverEngine::instance().stop();

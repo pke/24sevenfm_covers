@@ -62,6 +62,11 @@ private:
     }
     void OnDestroy() {
         CoverEngine::instance().setWindow(nullptr);
+        // No element = nothing renders (the album-art provider uses the raw JPEG
+        // bytes, not the render target), so free the GPU resources. The monitor
+        // keeps running if a family stream is playing, to feed native album art.
+        d2d::resetTarget(); // render target + cover bitmaps
+        d2d::releaseBlur(); // poster-mode blur device
         SetMsgHandled(FALSE); // let Bumpable/default cleanup run too
     }
     BOOL OnEraseBkgnd(CDCHandle) { return TRUE; } // D2D paints the whole client area

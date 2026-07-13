@@ -30,13 +30,17 @@ public:
     void on_playback_new_track(metadb_handle_ptr track) override {
         const int idx = trackStationIndex(track);
         m_tuned = idx >= 0;
-        if (m_tuned)
+        if (m_tuned) {
             CoverEngine::instance().setStation(idx); // auto-follow the tuned station
-        else
+            CoverEngine::instance().start();         // run the monitor only while a family stream plays
+        } else {
+            CoverEngine::instance().stop();          // local/other playback: idle, don't poll the station
             CoverEngine::instance().resetTitle();
+        }
     }
     void on_playback_stop(play_control::t_stop_reason) override {
         m_tuned = false;
+        CoverEngine::instance().stop();
         CoverEngine::instance().resetTitle();
     }
     void on_playback_dynamic_info_track(const file_info& info) override {
