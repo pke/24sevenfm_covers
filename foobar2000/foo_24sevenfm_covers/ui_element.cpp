@@ -11,7 +11,8 @@
 #include <libPPUI/win32_op.h>
 
 #include "cover_engine.h"    // pulls d2d_renderer.h; defines SSC_WM_NEWCOVER/TICK
-#include "cover_menu.h"      // shared right-click context menu (Poster / Options)
+#include "cover_menu.h"      // shared right-click context menu (Poster / Options / Fullscreen)
+#include "fullscreen.h"      // shared borderless-fullscreen toggle
 #include "foobar_settings.h" // ssccfg::saveFromEngine + g_ssc_prefs_guid
 
 namespace {
@@ -22,7 +23,7 @@ static const GUID guid_ssc_cover_elem =
 
 class ssc_cover_elem : public ui_element_instance, public CWindowImpl<ssc_cover_elem> {
 public:
-    DECLARE_WND_CLASS_EX(TEXT("{5B2E9D77-3A14-4C88-9F0A-7C1D2E3F4A5B}"), CS_VREDRAW | CS_HREDRAW, (-1));
+    DECLARE_WND_CLASS_EX(TEXT("{5B2E9D77-3A14-4C88-9F0A-7C1D2E3F4A5B}"), CS_VREDRAW | CS_HREDRAW | CS_DBLCLKS, (-1));
 
     void initialize_window(HWND parent) { WIN32_OP(Create(parent) != NULL); }
 
@@ -34,6 +35,8 @@ public:
         MSG_WM_SIZE(OnSize)
         MSG_WM_TIMER(OnTimer)
         MSG_WM_CONTEXTMENU(OnContextMenu)
+        MSG_WM_LBUTTONDBLCLK(OnLButtonDblClk)
+        MSG_WM_KEYDOWN(OnKeyDown)
         MESSAGE_HANDLER(SSC_WM_NEWCOVER, OnNewCover)
     END_MSG_MAP()
 
@@ -93,12 +96,38 @@ private:
             pt = rc.CenterPoint(); ClientToScreen(&pt);
         }
         covermenu::Actions act;
-        act.openOptions = [] { ui_control::get()->show_preferences(g_ssc_prefs_guid); };
-        act.persist     = [] { ssccfg::saveFromEngine(); };
-        covermenu::showPopup(m_hWnd, pt, CoverEngine::instance(), act); // no station list, no Fullscreen
+        act.openOptions      = []     { ui_control::get()->show_preferences(g_ssc_prefs_guid); };
+        act.persist          = []     { ssccfg::saveFromEngine(); };
+        act.toggleFullscreen = [this] { toggleFullscreen(); };
+        covermenu::showPopup(m_hWnd, pt, CoverEngine::instance(), act,
+                             /*includeFullscreen*/ true, m_fs.active); // no station list
+    }
+    void OnLButtonDblClk(UINT, CPoint) { // double-click the cover -> fullscreen (as viewer/Winamp)
+        if (!m_callback->is_edit_mode_enabled()) toggleFullscreen();
+    }
+    void OnKeyDown(TCHAR vk, UINT, UINT) {
+        if (vk == VK_ESCAPE && m_fs.active) toggleFullscreen(); else SetMsgHandled(FALSE);
+    }
+    // Borderless fullscreen: the shared helper reparents this embedded element out to a
+    // top-level popup and back. foobar owns the element's geometry inside its layout, so
+    // we save our rect (in parent coords) going in and restore it coming out - foobar
+    // re-lays-out on its own next pass, this just snaps us back in the meantime.
+    void toggleFullscreen() {
+        if (!m_fs.active) {
+            GetWindowRect(&m_fsRect);
+            if (HWND parent = GetParent()) ::MapWindowPoints(HWND_DESKTOP, parent, (LPPOINT)&m_fsRect, 2);
+            m_fs.enter(m_hWnd);
+        } else {
+            m_fs.exit(m_hWnd);
+            SetWindowPos(nullptr, m_fsRect.left, m_fsRect.top,
+                         m_fsRect.Width(), m_fsRect.Height(), SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        Invalidate();
     }
     LRESULT OnNewCover(UINT, WPARAM, LPARAM, BOOL&) { CoverEngine::instance().onNewCover(m_hWnd); return 0; }
 
+    ssc::Fullscreen m_fs;   // borderless-fullscreen state (shared helper)
+    CRect           m_fsRect; // our pre-fullscreen rect (parent coords) to restore on exit
     ui_element_config::ptr m_config;
 protected:
     const ui_element_instance_callback_ptr m_callback; // protected: ui_element_impl_withpopup needs it
