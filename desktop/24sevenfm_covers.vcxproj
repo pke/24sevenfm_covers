@@ -109,6 +109,7 @@
     <ClCompile Include="24sevenfm_covers.cpp" />
     <ClCompile Include="..\shared\cover_engine.cpp" />
     <ClCompile Include="..\shared\cover_menu.cpp" />
+    <ClCompile Include="..\shared\fullscreen_window.cpp" />
     <ClCompile Include="..\shared\options_panel.cpp" />
     <ClCompile Include="..\shared\d2d_renderer.cpp" />
     <ClCompile Include="..\shared\d2d_transitions.cpp" />
@@ -120,7 +121,7 @@
     <ClInclude Include="viewer_resource.h" />
     <ClInclude Include="..\shared\cover_engine.h" />
     <ClInclude Include="..\shared\cover_menu.h" />
-    <ClInclude Include="..\shared\fullscreen.h" />
+    <ClInclude Include="..\shared\fullscreen_window.h" />
     <ClInclude Include="..\shared\options_panel.h" />
     <ClInclude Include="..\shared\options_ids.h" />
     <ClInclude Include="..\shared\version.h" />

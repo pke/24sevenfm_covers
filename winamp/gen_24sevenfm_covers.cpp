@@ -32,8 +32,8 @@
 #include "gen_resource.h"
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
-#include "cover_menu.h"     // shared right-click context menu (Poster / Options)
-#include "fullscreen.h"     // shared borderless-fullscreen toggle
+#include "cover_menu.h"        // shared right-click context menu (Poster / Options)
+#include "fullscreen_window.h" // shared dedicated per-monitor fullscreen window
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table + stream-URL detection
 #include "config.h"         // shared option schema + INI adapter
@@ -145,32 +145,25 @@ static void setActive(bool on) {
     }
 }
 
-// --- borderless fullscreen --------------------------------------------------
-// The shared helper does the window work: our cover is a WS_CHILD inside the gen_ff
-// dock frame, so it reparents the SAME child out to a borderless top-level covering
-// the monitor (a standalone-fallback window just drops its border in place). The
-// engine draws into the same HWND throughout. Winamp-specific bits stay here: hide the
-// now-empty dock frame on the way in, and nudge gen_ff to re-place the child on the way
-// out. The gate (below) drops fullscreen when we tune out.
-static ssc::Fullscreen g_fsState;
+// --- fullscreen -------------------------------------------------------------
+// The shared FullscreenWindow creates a dedicated per-monitor top-level window and
+// points the engine at it; the gen_ff frame + our child are left untouched (the
+// fullscreen window simply covers them). The gate (below) drops fullscreen when we
+// tune out. Nothing to hide or re-lay-out here anymore.
+static ssc::FullscreenWindow g_fsWin;
 
 static void setFullscreen(bool on) {
-    if (on == g_fsState.active || !g_hwnd) return;
+    if (on == g_fsWin.active() || !g_hwnd) return;
     if (on) {
-        g_fsState.enter(g_hwnd);
-        if (g_embedFrame) ShowWindow(g_embedFrame, SW_HIDE); // hide the now-empty frame
+        covermenu::Actions act;
+        act.openOptions = [] { // open Winamp Preferences straight to our page
+            if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_OPENPREFSTOPAGE);
+        };
+        act.persist = [] { saveSettings(); };
+        g_fsWin.enter(g_hwnd, act, [] {});
     } else {
-        g_fsState.exit(g_hwnd);
-        if (g_embedFrame && IsWindow(g_embedFrame)) {
-            ShowWindow(g_embedFrame, SW_SHOWNA);
-            // Nudge gen_ff to re-size our child back into its content area (it owns the
-            // child's geometry and does so on the frame's WM_SIZE).
-            RECT fr; GetWindowRect(g_embedFrame, &fr);
-            SetWindowPos(g_embedFrame, nullptr, 0, 0, fr.right - fr.left, fr.bottom - fr.top,
-                         SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
-        }
+        g_fsWin.exit();
     }
-    InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -202,12 +195,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     const char* t = (const char*)SendMessageA(g_winamp, WM_WA_IPC, pos, IPC_GETPLAYLISTTITLE);
                     eng().onTitleChanged(t ? t : "");
                 }
-                if (!g_fsState.active && !IsWindowVisible(top)) { // frame stays hidden in fullscreen
+                if (!g_fsWin.active() && !IsWindowVisible(top)) { // frame stays hidden in fullscreen
                     ShowWindow(top, SW_SHOWNA);
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
             } else {
-                if (g_fsState.active) setFullscreen(false); // tuning out / dismissing drops fullscreen first
+                if (g_fsWin.active()) setFullscreen(false); // tuning out / dismissing drops fullscreen first
                 if (IsWindowVisible(top)) ShowWindow(top, SW_HIDE);
                 setActive(false); // stop polling + free the render target
             }
@@ -235,16 +228,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_OPENPREFSTOPAGE);
             };
             act.persist          = [] { saveSettings(); };
-            act.toggleFullscreen = [] { setFullscreen(!g_fsState.active); };
-            covermenu::showPopup(hwnd, pt, eng(), act, /*includeFullscreen*/ true, g_fsState.active);
+            act.toggleFullscreen = [] { setFullscreen(!g_fsWin.active()); };
+            covermenu::showPopup(hwnd, pt, eng(), act, /*includeFullscreen*/ true, g_fsWin.active());
             return 0;
         }
-        case WM_LBUTTONDBLCLK: // double-click the cover -> toggle fullscreen (like the viewer)
-            setFullscreen(!g_fsState.active);
+        case WM_LBUTTONDBLCLK: // double-click the cover -> enter fullscreen (Esc/dbl-click there exits)
+            setFullscreen(!g_fsWin.active());
             return 0;
-        case WM_KEYDOWN:
-            if (wp == VK_ESCAPE && g_fsState.active) { setFullscreen(false); return 0; }
-            break;
         case WM_SIZE: // gen_ff resized our child - just repaint at the new size
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;

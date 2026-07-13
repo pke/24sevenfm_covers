@@ -24,8 +24,8 @@
 
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
-#include "cover_menu.h"     // shared right-click context menu (Fullscreen / Poster / Options)
-#include "fullscreen.h"     // shared borderless-fullscreen toggle
+#include "cover_menu.h"        // shared right-click context menu (Fullscreen / Poster / Options)
+#include "fullscreen_window.h" // shared dedicated per-monitor fullscreen window
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "config.h"         // shared option schema + INI adapter
@@ -40,8 +40,7 @@
 
 static const char* kWndClass = "SST24CoverViewerWnd";
 static const UINT   SC_OPTIONS     = 0x1000; // system-menu command id (must be < 0xF000, low nibble 0)
-// Fullscreen / Options / Poster ids live in covermenu:: (shared with the plugins).
-static const UINT   IDM_STATION    = 0x2100; // station submenu: IDM_STATION + i selects station i
+// Station / Fullscreen / Options / Poster menu ids all live in covermenu:: now.
 
 static HINSTANCE g_hInst    = nullptr;
 static HWND      g_hwnd     = nullptr;
@@ -49,7 +48,7 @@ static bool      g_d2dReady = false;
 static bool      g_firstRun = false; // no INI yet -> prompt for a station on first launch
 
 // Borderless-fullscreen state (double-click / context menu / Esc toggle it).
-static ssc::Fullscreen  g_fs; // borderless-fullscreen state (shared helper)
+static ssc::FullscreenWindow g_fsWin; // dedicated per-monitor fullscreen window
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
@@ -264,12 +263,14 @@ static void openOptions() {
     PropertySheetA(&psh);
 }
 
-// Toggle borderless fullscreen via the shared helper (top-level window -> drop the
-// frame in place). The D2D renderer resizes its target to the client area on the next
-// paint, so the cover fills the screen automatically.
+// Toggle fullscreen via the shared dedicated per-monitor window: it covers the monitor
+// containing hwnd and the engine renders into it until dismissed (Esc / double-click /
+// its own right-click menu), then hands rendering back to the main window.
 static void toggleFullscreen(HWND hwnd) {
-    g_fs.toggle(hwnd);
-    InvalidateRect(hwnd, nullptr, FALSE);
+    covermenu::Actions act;
+    act.openOptions = [] { openOptions(); };
+    act.persist     = [] { saveSettings(); };
+    g_fsWin.toggle(hwnd, act, [] {}, /*includeStations*/ true); // viewer keeps its station picker
 }
 
 // --- window -----------------------------------------------------------------
@@ -297,7 +298,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             toggleFullscreen(hwnd);
             return 0;
         case WM_KEYDOWN:
-            if (wp == VK_ESCAPE && g_fs.active) { toggleFullscreen(hwnd); return 0; }
+            if (wp == VK_ESCAPE && g_fsWin.active()) { toggleFullscreen(hwnd); return 0; }
             break;
         case WM_CONTEXTMENU: { // right-click the canvas -> popup menu
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -307,23 +308,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ClientToScreen(hwnd, &pt);
             }
             HMENU m = CreatePopupMenu();
-            const int curStation = ssc::validStationIndex(eng().settings.station);
-            for (int i = 0; i < ssc::kStationCount; ++i) // stations as top-level entries
-                AppendMenuA(m, MF_STRING | (i == curStation ? MF_CHECKED : MF_UNCHECKED),
-                            IDM_STATION + i, ssc::kStations[i].displayName);
-            AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
-            covermenu::appendItems(m, eng().settings, /*includeFullscreen*/ true, g_fs.active);
+            covermenu::appendItems(m, eng().settings, /*includeFullscreen*/ true,
+                                   g_fsWin.active(), /*includeStations*/ true);
             TrackPopupMenu(m, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
             DestroyMenu(m);
             return 0;
         }
         case WM_COMMAND: {
             const UINT cmd = LOWORD(wp);
-            if (cmd >= IDM_STATION && cmd < IDM_STATION + (UINT)ssc::kStationCount) {
-                eng().setStation((int)(cmd - IDM_STATION)); // switches + repaints live
-                saveSettings();
-                return 0;
-            }
             covermenu::Actions act;
             act.openOptions      = []      { openOptions(); };
             act.persist          = []      { saveSettings(); };

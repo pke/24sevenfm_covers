@@ -17,9 +17,10 @@ namespace covermenu {
 // Shared command IDs - all three hosts use these, so onCommand() is one code path.
 // Kept equal to the viewer's original IDM_* values so nothing else has to change.
 enum {
-    kFullscreen = 0x2001, // viewer only (a docked plugin window can't go fullscreen)
-    kOptions    = 0x2002,
-    kPoster     = 0x2003,
+    kFullscreen  = 0x2001,
+    kOptions     = 0x2002,
+    kPoster      = 0x2003,
+    kStationBase = 0x2100, // station i -> kStationBase + i (viewer's station picker)
 };
 
 // Host-specific actions. openOptions/persist are always supplied; toggleFullscreen is
@@ -30,10 +31,11 @@ struct Actions {
     std::function<void()> toggleFullscreen;
 };
 
-// Append the shared items (optional Fullscreen, Poster mode, separator, Options...) to
-// an existing popup. The viewer calls this right after adding its station entries.
+// Append the shared items to a popup: optional station list (viewer only) + separator,
+// then optional Fullscreen, Poster mode, separator, Options... includeStations builds
+// the station picker from ssc::kStations with the current station checked.
 void appendItems(HMENU m, const CoverEngine::Settings& s,
-                 bool includeFullscreen, bool fullscreenOn);
+                 bool includeFullscreen, bool fullscreenOn, bool includeStations = false);
 
 // Handle a menu command id. Returns true iff it was one of ours (so the caller can
 // stop). Poster toggles the layout, persists, and repaints; the rest defer to Actions.
@@ -44,7 +46,8 @@ bool onCommand(UINT cmd, CoverEngine& eng, const Actions& a);
 // includeFullscreen adds the Fullscreen item (Winamp supplies a toggleFullscreen
 // action; foobar leaves it off since an embedded element can't go fullscreen).
 void showPopup(HWND hwnd, POINT pt, CoverEngine& eng, const Actions& a,
-               bool includeFullscreen = false, bool fullscreenOn = false);
+               bool includeFullscreen = false, bool fullscreenOn = false,
+               bool includeStations = false);
 
 } // namespace covermenu
 

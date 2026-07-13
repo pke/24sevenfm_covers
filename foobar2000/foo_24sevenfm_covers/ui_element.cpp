@@ -11,9 +11,9 @@
 #include <libPPUI/win32_op.h>
 
 #include "cover_engine.h"    // pulls d2d_renderer.h; defines SSC_WM_NEWCOVER/TICK
-#include "cover_menu.h"      // shared right-click context menu (Poster / Options / Fullscreen)
-#include "fullscreen.h"      // shared borderless-fullscreen toggle
-#include "foobar_settings.h" // ssccfg::saveFromEngine + g_ssc_prefs_guid
+#include "cover_menu.h"       // shared right-click context menu (Poster / Options / Fullscreen)
+#include "fullscreen_window.h" // shared dedicated per-monitor fullscreen window
+#include "foobar_settings.h"  // ssccfg::saveFromEngine + g_ssc_prefs_guid
 
 namespace {
 
@@ -36,7 +36,6 @@ public:
         MSG_WM_TIMER(OnTimer)
         MSG_WM_CONTEXTMENU(OnContextMenu)
         MSG_WM_LBUTTONDBLCLK(OnLButtonDblClk)
-        MSG_WM_KEYDOWN(OnKeyDown)
         MESSAGE_HANDLER(SSC_WM_NEWCOVER, OnNewCover)
     END_MSG_MAP()
 
@@ -67,6 +66,7 @@ private:
         return 0;
     }
     void OnDestroy() {
+        if (m_fsWin.active()) m_fsWin.exit(); // leave fullscreen before this element goes away
         // Only detach/free if the engine is actually drawing into THIS window. A
         // second cover element isn't really supported (single-instance renderer), but
         // if one stole the engine, destroying this one must not blank it - nor free
@@ -100,34 +100,24 @@ private:
         act.persist          = []     { ssccfg::saveFromEngine(); };
         act.toggleFullscreen = [this] { toggleFullscreen(); };
         covermenu::showPopup(m_hWnd, pt, CoverEngine::instance(), act,
-                             /*includeFullscreen*/ true, m_fs.active); // no station list
+                             /*includeFullscreen*/ true, m_fsWin.active()); // no station list
     }
-    void OnLButtonDblClk(UINT, CPoint) { // double-click the cover -> fullscreen (as viewer/Winamp)
+    void OnLButtonDblClk(UINT, CPoint) { // double-click the cover -> enter fullscreen (Esc there exits)
         if (!m_callback->is_edit_mode_enabled()) toggleFullscreen();
     }
-    void OnKeyDown(TCHAR vk, UINT, UINT) {
-        if (vk == VK_ESCAPE && m_fs.active) toggleFullscreen(); else SetMsgHandled(FALSE);
-    }
-    // Borderless fullscreen: the shared helper reparents this embedded element out to a
-    // top-level popup and back. foobar owns the element's geometry inside its layout, so
-    // we save our rect (in parent coords) going in and restore it coming out - foobar
-    // re-lays-out on its own next pass, this just snaps us back in the meantime.
+    // Fullscreen via the shared dedicated per-monitor window: it covers the monitor and
+    // the engine renders into it, leaving this embedded element untouched. Because the
+    // window is per-monitor DPI aware it covers the physical monitor exactly, even though
+    // foobar2000 is only system-DPI aware (no bitmap-stretch seam).
     void toggleFullscreen() {
-        if (!m_fs.active) {
-            GetWindowRect(&m_fsRect);
-            if (HWND parent = GetParent()) ::MapWindowPoints(HWND_DESKTOP, parent, (LPPOINT)&m_fsRect, 2);
-            m_fs.enter(m_hWnd);
-        } else {
-            m_fs.exit(m_hWnd);
-            SetWindowPos(nullptr, m_fsRect.left, m_fsRect.top,
-                         m_fsRect.Width(), m_fsRect.Height(), SWP_NOZORDER | SWP_NOACTIVATE);
-        }
-        Invalidate();
+        covermenu::Actions act;
+        act.openOptions = [] { ui_control::get()->show_preferences(g_ssc_prefs_guid); };
+        act.persist     = [] { ssccfg::saveFromEngine(); };
+        m_fsWin.toggle(m_hWnd, act, [] {});
     }
     LRESULT OnNewCover(UINT, WPARAM, LPARAM, BOOL&) { CoverEngine::instance().onNewCover(m_hWnd); return 0; }
 
-    ssc::Fullscreen m_fs;   // borderless-fullscreen state (shared helper)
-    CRect           m_fsRect; // our pre-fullscreen rect (parent coords) to restore on exit
+    ssc::FullscreenWindow m_fsWin; // dedicated per-monitor fullscreen window
     ui_element_config::ptr m_config;
 protected:
     const ui_element_instance_callback_ptr m_callback; // protected: ui_element_impl_withpopup needs it
