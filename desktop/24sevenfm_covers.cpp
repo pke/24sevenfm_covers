@@ -25,6 +25,7 @@
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
 #include "cover_menu.h"     // shared right-click context menu (Fullscreen / Poster / Options)
+#include "fullscreen.h"     // shared borderless-fullscreen toggle
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "config.h"         // shared option schema + INI adapter
@@ -48,9 +49,7 @@ static bool      g_d2dReady = false;
 static bool      g_firstRun = false; // no INI yet -> prompt for a station on first launch
 
 // Borderless-fullscreen state (double-click / context menu / Esc toggle it).
-static bool             g_fullscreen = false;
-static WINDOWPLACEMENT  g_prevPlace  = { sizeof(WINDOWPLACEMENT) };
-static LONG_PTR         g_prevStyle  = 0;
+static ssc::Fullscreen  g_fs; // borderless-fullscreen state (shared helper)
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
@@ -265,31 +264,11 @@ static void openOptions() {
     PropertySheetA(&psh);
 }
 
-// Toggle borderless fullscreen: drop the window frame and cover the current monitor,
-// or restore the previous windowed placement. The D2D renderer resizes its target to
-// the client area on the next paint, so the cover fills the screen automatically.
+// Toggle borderless fullscreen via the shared helper (top-level window -> drop the
+// frame in place). The D2D renderer resizes its target to the client area on the next
+// paint, so the cover fills the screen automatically.
 static void toggleFullscreen(HWND hwnd) {
-    if (!g_fullscreen) {
-        g_prevPlace.length = sizeof(g_prevPlace);
-        GetWindowPlacement(hwnd, &g_prevPlace);
-        g_prevStyle = GetWindowLongPtrA(hwnd, GWL_STYLE);
-        MONITORINFO mi = { sizeof(mi) };
-        GetMonitorInfoA(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
-        SetWindowLongPtrA(hwnd, GWL_STYLE, g_prevStyle & ~(LONG_PTR)WS_OVERLAPPEDWINDOW);
-        SetWindowPos(hwnd, HWND_TOPMOST, mi.rcMonitor.left, mi.rcMonitor.top,
-                     mi.rcMonitor.right - mi.rcMonitor.left,
-                     mi.rcMonitor.bottom - mi.rcMonitor.top,
-                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
-        g_fullscreen = true;
-    } else {
-        SetWindowLongPtrA(hwnd, GWL_STYLE, g_prevStyle);
-        // NOTE: no SWP_NOZORDER here - it would make Windows ignore HWND_NOTOPMOST and
-        // leave the window stuck topmost. We must let the z-order change to drop topmost.
-        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
-        SetWindowPlacement(hwnd, &g_prevPlace);
-        g_fullscreen = false;
-    }
+    g_fs.toggle(hwnd);
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -318,7 +297,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             toggleFullscreen(hwnd);
             return 0;
         case WM_KEYDOWN:
-            if (wp == VK_ESCAPE && g_fullscreen) { toggleFullscreen(hwnd); return 0; }
+            if (wp == VK_ESCAPE && g_fs.active) { toggleFullscreen(hwnd); return 0; }
             break;
         case WM_CONTEXTMENU: { // right-click the canvas -> popup menu
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -333,7 +312,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 AppendMenuA(m, MF_STRING | (i == curStation ? MF_CHECKED : MF_UNCHECKED),
                             IDM_STATION + i, ssc::kStations[i].displayName);
             AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
-            covermenu::appendItems(m, eng().settings, /*includeFullscreen*/ true, g_fullscreen);
+            covermenu::appendItems(m, eng().settings, /*includeFullscreen*/ true, g_fs.active);
             TrackPopupMenu(m, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
             DestroyMenu(m);
             return 0;

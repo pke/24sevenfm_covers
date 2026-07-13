@@ -116,6 +116,7 @@
     <ClInclude Include="viewer_resource.h" />
     <ClInclude Include="..\shared\cover_engine.h" />
     <ClInclude Include="..\shared\cover_menu.h" />
+    <ClInclude Include="..\shared\fullscreen.h" />
     <ClInclude Include="..\shared\options_panel.h" />
     <ClInclude Include="..\shared\options_ids.h" />
     <ClInclude Include="..\shared\version.h" />
