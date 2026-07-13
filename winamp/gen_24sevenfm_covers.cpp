@@ -178,6 +178,18 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // the content area - we must not touch the child's position/size (doing
             // so paints over the frame's title bar and kills its drag).
             HWND top = g_embedFrame ? g_embedFrame : hwnd;
+
+            // Demo/screenshot mode: always show the window and let the engine self-drive
+            // (it entered demo mode in start()); no tuning or title feeding.
+            if (ssc::Demo::active()) {
+                setActive(true);
+                if (!g_fsWin.active() && !IsWindowVisible(top)) {
+                    ShowWindow(top, SW_SHOWNA);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
+
             const int stationIdx = tunedStationIndex();
             const bool tuned = stationIdx >= 0;
             if (!tuned) g_userClosed = false; // tuning out re-arms the auto-show
@@ -235,6 +247,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONDBLCLK: // double-click the cover -> enter fullscreen (Esc/dbl-click there exits)
             setFullscreen(!g_fsWin.active());
             return 0;
+        case WM_KEYDOWN:
+            if (wp == 'N') { eng().demoNext(); return 0; } // demo mode: next cover (no-op otherwise)
+            break;
         case WM_SIZE: // gen_ff resized our child - just repaint at the new size
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;

@@ -40,6 +40,7 @@ LRESULT CALLBACK FullscreenWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
             return 0;
         case WM_KEYDOWN:
             if (wp == VK_ESCAPE && self) { self->exit(); return 0; }
+            if (wp == 'N') { CoverEngine::instance().demoNext(); return 0; } // demo mode: next cover
             break;
         case WM_CONTEXTMENU: {
             if (!self) break;

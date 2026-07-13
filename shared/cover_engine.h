@@ -25,6 +25,7 @@
 #include <string>
 
 #include "d2d_renderer.h" // d2d::Transition + render/setCover/...
+#include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
 
 namespace ssc { class CoverMonitor; }
 
@@ -81,6 +82,13 @@ public:
     void resetTitle();       // playback stopped -> next tune-in reloads
     void repaint();          // request a redraw (e.g. after a settings change)
 
+    // Advance to the next demo cover (with the crossfade). No-op unless demo mode is
+    // active (the %TEMP%\24seven.fm-covers-demo\ sentinel was present at start()). Hosts
+    // wire the 'N' hotkey to this; the engine also auto-advances when a frame's countdown
+    // expires. See demo.h.
+    void demoNext();
+    bool demoActive() const { return demoOn_; }
+
     // The JPEG bytes of the cover currently on screen, for handing to a host's own
     // album-art system (foobar's album_art_fallback). False if nothing shown yet.
     bool currentCover(std::string& out);
@@ -100,6 +108,7 @@ private:
     CoverEngine& operator=(const CoverEngine&) = delete;
 
     void startMonitor();     // create + start the CoverMonitor for settings.station
+    void showDemoFrame();    // feed the current demo cover + metadata through the render path
     void decodePending(HWND h);
     void onCoverChanged(const std::string& url); // monitor bg-thread callback body
     // hwnd_ is written on the UI thread (setWindow) and read on the monitor thread
@@ -135,6 +144,8 @@ private:
     ssc::CoverMonitor* monitor_ = nullptr;
     std::mutex  monitorLifecycle_;       // serializes start()/stop()/setStation() monitor_ transitions
     bool autoAdvance_ = false;           // run mode remembered from start(), for setStation() rebuilds
+    ssc::Demo demo_;                     // demo cover source (loaded iff demoOn_)
+    bool demoOn_ = false;                // demo mode active: play demo_ instead of the monitor
     std::atomic<HWND> hwnd_{nullptr};    // render window; UI thread writes, monitor thread reads
     std::string lastTitle_;              // last accepted real title (UI thread)
 };

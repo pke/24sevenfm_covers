@@ -108,6 +108,7 @@
   <ItemGroup>
     <ClCompile Include="24sevenfm_covers.cpp" />
     <ClCompile Include="..\shared\cover_engine.cpp" />
+    <ClCompile Include="..\shared\demo.cpp" />
     <ClCompile Include="..\shared\cover_menu.cpp" />
     <ClCompile Include="..\shared\fullscreen_window.cpp" />
     <ClCompile Include="..\shared\options_panel.cpp" />

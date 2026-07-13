@@ -128,12 +128,18 @@ void CoverEngine::setLogName(const std::string& base) {
 
 void CoverEngine::start(bool autoAdvance) {
     std::lock_guard<std::mutex> life(monitorLifecycle_);
-    if (monitor_) return;
-    // Plugins (autoAdvance=false): covers advance off the host's track-title changes
-    // (onTitleChanged -> refresh), not the station's live clock, so covers track what
-    // is actually playing. Desktop viewer (autoAdvance=true): no player, so the monitor
-    // follows the station's live clock on its own.
+    if (monitor_ || demoOn_) return;
     autoAdvance_ = autoAdvance;
+    // Screenshot/demo mode (checked once, here): if the demo folder exists, play its
+    // covers instead of a station. Everything downstream is the unchanged real engine.
+    if (ssc::Demo::active() && demo_.load()) {
+        demoOn_ = true;
+        logLine("demo mode: " + std::to_string(demo_.count()) + " covers");
+        showDemoFrame();
+        return;
+    }
+    // Live: plugins (autoAdvance=false) advance covers off the host's track-title changes
+    // (onTitleChanged -> refresh); the viewer (autoAdvance=true) follows the station clock.
     startMonitor();
     logLine("engine started");
 }
@@ -179,6 +185,7 @@ void CoverEngine::startMonitor() {
 }
 
 void CoverEngine::setStation(int index) {
+    if (demoOn_) return; // demo mode drives its own covers; ignore station switches
     // Robust against a caller that forgot to gate on a family-stream match:
     // ssc::stationIndexForText() returns -1 for a foreign stream, and we must NOT let
     // that silently clamp to 0 (SST) and show SST covers for something unrecognized.
@@ -213,7 +220,38 @@ void CoverEngine::setStation(int index) {
 void CoverEngine::stop() {
     std::lock_guard<std::mutex> life(monitorLifecycle_);
     if (monitor_) { monitor_->stop(); delete monitor_; monitor_ = nullptr; }
+    demoOn_ = false;
     logLine("engine stopped");
+}
+
+// Advance to the next demo cover (crossfades via the same setCover path). No-op unless
+// demo mode is active; called by the 'N' hotkey and by onTimer's auto-advance.
+void CoverEngine::demoNext() {
+    if (!demoOn_) return;
+    demo_.advance();
+    showDemoFrame();
+}
+
+// Feed the current demo frame's cover + metadata through the normal display path, so the
+// crossfade, poster overlay and countdown all work exactly as with a live cover.
+void CoverEngine::showDemoFrame() {
+    const ssc::DemoFrame& f = demo_.current();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        coverBytes_ = f.bytes; dirty_ = true;
+        std::string t = f.album;
+        if (!f.album.empty() && !f.track.empty()) t = f.album + " - " + f.track;
+        else if (!f.track.empty())                t = f.track;
+        if (!t.empty() && f.seconds > 0) {
+            const int mm = f.seconds / 60, ss = f.seconds % 60;
+            t += " (" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "") + std::to_string(ss) + ")";
+        }
+        infoTitle_  = toWide(t);
+        infoArtist_ = toWide(f.artist);
+    }
+    setRemaining(f.seconds > 0 ? f.seconds : -1); // seconds>0: countdown + auto-advance; 0: static
+    loading_.store(false);
+    notifyNewCover(); // -> decodePending on the UI thread -> d2d::setCover (fades if a cover is up)
 }
 
 // Anchor the countdown so onPaint can compute it locally from the clock. The
@@ -314,6 +352,7 @@ void CoverEngine::onCoverChanged(const std::string& url) {
 
 // --- host events ------------------------------------------------------------
 void CoverEngine::onTitleChanged(const std::string& title) {
+    if (demoOn_) return; // demo mode ignores host track-title changes
     // Only real ICY track titles drive cover advance. Reject Winamp/foobar status
     // placeholders ("[Connecting]", "[Buffering: N%]"), the bare stream URL, and the
     // station's own name string (real titles only CONTAIN it, in a trailing paren).
@@ -426,6 +465,9 @@ void CoverEngine::onPaint(HWND h) {
 // transition is the same fading_ case, so a settled poster frame stays idle too.
 void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     if (id != kHeartbeat) return;
+    // Demo auto-advance: when a demo frame's countdown expires, roll to the next cover
+    // (which crossfades). Frames with seconds==0 have no countdown, so they stay put.
+    if (demoOn_ && demo_.current().seconds > 0 && currentRemaining() == 0) { demoNext(); return; }
     if (fading_ || loading_.load() || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);
 }

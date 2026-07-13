@@ -36,6 +36,7 @@ public:
         MSG_WM_TIMER(OnTimer)
         MSG_WM_CONTEXTMENU(OnContextMenu)
         MSG_WM_LBUTTONDBLCLK(OnLButtonDblClk)
+        MSG_WM_KEYDOWN(OnKeyDown)
         MESSAGE_HANDLER(SSC_WM_NEWCOVER, OnNewCover)
     END_MSG_MAP()
 
@@ -63,6 +64,7 @@ public:
 private:
     int OnCreate(LPCREATESTRUCT) {
         CoverEngine::instance().setWindow(m_hWnd); // engine draws into us + owns its heartbeat
+        if (ssc::Demo::active()) CoverEngine::instance().start(); // demo mode: covers without playback
         return 0;
     }
     void OnDestroy() {
@@ -104,6 +106,9 @@ private:
     }
     void OnLButtonDblClk(UINT, CPoint) { // double-click the cover -> enter fullscreen (Esc there exits)
         if (!m_callback->is_edit_mode_enabled()) toggleFullscreen();
+    }
+    void OnKeyDown(TCHAR vk, UINT, UINT) { // demo mode: next cover (no-op otherwise)
+        if (vk == 'N') CoverEngine::instance().demoNext(); else SetMsgHandled(FALSE);
     }
     // Fullscreen via the shared dedicated per-monitor window: it covers the monitor and
     // the engine renders into it, leaving this embedded element untouched. Because the
