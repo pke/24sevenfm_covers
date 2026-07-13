@@ -91,6 +91,27 @@ std::string sizedCoverUrl(const std::string& original, int size) {
     return result;
 }
 
+void appendUtf8(std::string& out, unsigned cp); // defined below; used by jsonString
+
+// Reads exactly 4 hex digits at s[pos..pos+4) into `out`. Returns false without
+// touching pos-advance if fewer than 4 hex digits are present, so a malformed \uXX
+// escape can't desync the scan by having strtol silently consume non-hex bytes.
+bool parseHex4(const std::string& s, size_t pos, int& out) {
+    if (pos + 4 > s.size()) return false;
+    int v = 0;
+    for (int k = 0; k < 4; ++k) {
+        const char c = s[pos + k];
+        int d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else return false;
+        v = (v << 4) | d;
+    }
+    out = v;
+    return true;
+}
+
 // Minimal extractor for a string value of a top-level key in a flat JSON object.
 // Handles the JSON string escapes present in the feed (\/ \" \\ \n \t \r \uXXXX).
 // The GetCurrentlyPlaying payload is a flat object of quoted values, including
@@ -135,20 +156,20 @@ bool jsonString(const std::string& json, const char* key, std::string& out) {
                 case '\\': result += '\\'; break;
                 case '"': result += '"'; break;
                 case 'u': {
-                    if (i + 4 <= json.size()) {
-                        int cp = static_cast<int>(std::strtol(json.substr(i, 4).c_str(), nullptr, 16));
-                        i += 4;
-                        if (cp < 0x80) {
-                            result += static_cast<char>(cp);
-                        } else if (cp < 0x800) {
-                            result += static_cast<char>(0xC0 | (cp >> 6));
-                            result += static_cast<char>(0x80 | (cp & 0x3F));
-                        } else {
-                            result += static_cast<char>(0xE0 | (cp >> 12));
-                            result += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-                            result += static_cast<char>(0x80 | (cp & 0x3F));
-                        }
+                    int cp;
+                    if (!parseHex4(json, i, cp)) { result += 'u'; break; } // not \uXXXX: literal, no desync
+                    i += 4;
+                    if (cp >= 0xD800 && cp <= 0xDBFF) {            // high surrogate: expect a low one next
+                        int lo;
+                        if (i + 6 <= json.size() && json[i] == '\\' && json[i + 1] == 'u' &&
+                            parseHex4(json, i + 2, lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            i += 6;
+                        } else break;                             // lone high surrogate: drop
+                    } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                        break;                                    // lone low surrogate: drop
                     }
+                    if (cp != 0) appendUtf8(result, static_cast<unsigned>(cp)); // drop NUL (would truncate)
                     break;
                 }
                 default: result += e; break;
@@ -157,6 +178,18 @@ bool jsonString(const std::string& json, const char* key, std::string& out) {
         return false; // unterminated string
     }
     return false;
+}
+
+// Parse the feed's "Length" (milliseconds) from an untrusted string. atoll/atol are
+// UNDEFINED on out-of-range input; strtoll is well-defined (clamps to LLONG_MAX and
+// stops at the first non-digit). Reject negatives/garbage and cap at a sane ceiling
+// so a hostile "99999999999999999999" can't yield a garbage/negative track length.
+long long parseLengthMs(const std::string& s) {
+    char* end = nullptr;
+    const long long v = std::strtoll(s.c_str(), &end, 10);
+    if (end == s.c_str() || v < 0) return 0;         // no digits or negative -> unknown
+    const long long kMaxLenMs = 24ll * 3600 * 1000;  // 24h; longer is nonsense for a track
+    return v > kMaxLenMs ? kMaxLenMs : v;
 }
 
 // Appends a Unicode code point to `out` as UTF-8.
@@ -334,7 +367,7 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
     jsonString(body, "PlayStart", playStartStr);
     jsonString(body, "SystemTime", systemTimeStr);
 
-    long long lengthMs = lengthStr.empty() ? 0 : std::atoll(lengthStr.c_str());
+    const long long lengthMs = parseLengthMs(lengthStr);
     info.lengthSeconds = static_cast<int>(lengthMs / 1000);
 
     int remaining = computeRemainingSeconds(lengthMs, isoToUnixTime(playStartStr),
@@ -371,8 +404,8 @@ bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
     out = sizedCoverUrl(cover, config_.coverSize);
     if (lengthSeconds) {
         std::string len;
-        long ms = jsonString(response.body, "Length", len) ? std::atol(len.c_str()) : 0;
-        *lengthSeconds = ms > 0 ? static_cast<int>(ms / 1000) : 0; // Length is in ms
+        jsonString(response.body, "Length", len);
+        *lengthSeconds = static_cast<int>(parseLengthMs(len) / 1000); // Length is in ms
     }
     return true;
 }
