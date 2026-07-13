@@ -1,85 +1,64 @@
-# shoot.ps1 - capture real screenshots of the desktop viewer for the website.
+# shoot.ps1 - set up demo/screenshot mode from the local demo\ covers and launch the
+# players, so you can take the screenshots by hand.
 #
-# RUN THIS FROM YOUR OWN (interactive) SESSION - it launches the viewer, waits for
-# a cover to arrive from the station, captures the window, and writes
-# site\img\poster.png and site\img\fill.png. Then point site\index.html at the .png
-# files instead of the .svg mockups.
+# It copies whatever you keep in the repo's demo\ folder (cover images + demo.txt) into the
+# folder the apps read - %TEMP%\24seven.fm-covers-demo\ - then launches the desktop viewer,
+# Winamp and foobar2000. With that folder present each app runs in "demo mode": it shows
+# those covers instead of a live station, 'N' cycles to the next (crossfade), and each
+# frame's Seconds seed the countdown + auto-advance. Delete the folder and restart an app
+# to return to the live station.
 #
 #   powershell -File site\shoot.ps1
+#   powershell -File site\shoot.ps1 -Winamp "C:\Path\winamp.exe" -Foobar "C:\Path\foobar2000.exe"
+#   powershell -File site\shoot.ps1 -NoLaunch      # only (re)build the demo folder
 #
-# The viewer window will appear twice for ~30 s each (poster, then fill mode).
-# NOTE: it overwrites desktop\build\Release\24seven.fm-covers.ini with
-# screenshot-friendly options (SST, countdown on, rolling digits).
+# Curate demo\ with the covers you want - name them so they sort (01.jpg, 02.jpg, ...) and
+# add a demo.txt with one "Album | Track | Artist | Seconds" line per cover. The plugins
+# must already be installed in Winamp / foobar2000; this only launches the hosts.
+param(
+    [string]$Winamp,     # winamp.exe (auto-detected if omitted)
+    [string]$Foobar,     # foobar2000.exe (auto-detected if omitted)
+    [switch]$NoLaunch    # build the demo folder but don't launch anything
+)
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)  # repo root (site\..)
-$exe = Join-Path $root 'desktop\build\Release\24sevenfm_covers.exe'
-$ini = Join-Path $root 'desktop\build\Release\24seven.fm-covers.ini'
-$out = Join-Path $root 'site\img'
-if (-not (Test-Path $exe)) { throw "Build the viewer first: $exe" }
 
-Add-Type -AssemblyName System.Drawing
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class Win {
-    [DllImport("user32.dll")] public static extern IntPtr FindWindowA(string cls, string title);
-    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int hh, uint f);
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
-    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
-}
-'@
+$root   = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)  # repo root (site\..)
+$viewer = Join-Path $root 'desktop\build\Release\24sevenfm_covers.exe'
+$ini    = Join-Path $root 'desktop\build\Release\24seven.fm-covers.ini'
+$src    = Join-Path $root 'demo'
+$demo   = Join-Path $env:TEMP '24seven.fm-covers-demo'
 
-function Capture([string]$name, [int]$w, [int]$h) {
-    $hwnd = [IntPtr]::Zero
-    foreach ($i in 1..30) {
-        $hwnd = [Win]::FindWindowA($null, '24seven.fm Covers')
-        if ($hwnd -ne [IntPtr]::Zero) { break }
-        Start-Sleep -Milliseconds 500
-    }
-    if ($hwnd -eq [IntPtr]::Zero) { Write-Warning "viewer window not found for $name"; return }
-    [Win]::SetWindowPos($hwnd, [IntPtr]::Zero, 60, 60, $w, $h, 0x0040) | Out-Null
-    [Win]::SetForegroundWindow($hwnd) | Out-Null
-    Write-Host "waiting 30 s for the cover to load ($name)..."
-    Start-Sleep -Seconds 30
-    $r = New-Object Win+RECT
-    [Win]::GetWindowRect($hwnd, [ref]$r) | Out-Null
-    $bmp = New-Object System.Drawing.Bitmap(($r.R - $r.L), ($r.B - $r.T))
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $dc = $g.GetHdc()
-    [Win]::PrintWindow($hwnd, $dc, 2) | Out-Null   # PW_RENDERFULLCONTENT for D2D
-    $g.ReleaseHdc($dc); $g.Dispose()
-    $bmp.Save((Join-Path $out "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-    $bmp.Dispose()
-    Write-Host "  -> img\$name.png"
+if (-not (Test-Path $src)) {
+    throw "No demo covers at $src - create demo\ with your covers (01.jpg, 02.jpg, ...) and a demo.txt."
 }
 
-function SetLayout([int]$layout) {
-    @(
-        '[options]',
-        'station=sst',
-        "layout=$layout",
-        'showRemaining=1',
-        'remainingSize=0',
-        'roll=1',
-        'transition=1',
-        'fadeMs=1000'
-    ) | Set-Content $ini -Encoding Ascii
+# --- copy the local demo covers into the folder the apps read --------------------------
+Write-Host "== Demo folder: $demo ==" -ForegroundColor Cyan
+if (Test-Path $demo) { Get-ChildItem $demo -Force | Remove-Item -Recurse -Force }
+else { New-Item -ItemType Directory -Force $demo | Out-Null }
+Copy-Item (Join-Path $src '*') $demo -Recurse -Force
+Get-ChildItem $demo | ForEach-Object { Write-Host ("  {0}" -f $_.Name) }
+
+# Screenshot-friendly viewer options (poster layout + rolling countdown). Station is
+# irrelevant in demo mode; these just make the viewer open camera-ready. Overwrites the ini.
+@('[options]','station=sst','layout=1','showRemaining=1','remainingSize=1','roll=1','transition=1','fadeMs=1000') |
+    Set-Content $ini -Encoding Ascii
+
+if ($NoLaunch) { Write-Host "`nDemo folder ready. (-NoLaunch: not launching players.)"; return }
+
+# --- launch the players ----------------------------------------------------------------
+Write-Host "`n== Launching players ==" -ForegroundColor Cyan
+function Find-Exe([string]$given, [string[]]$candidates) {
+    foreach ($p in @($given) + $candidates) { if ($p -and (Test-Path $p)) { return $p } }
+    return $null
 }
+$wa = Find-Exe $Winamp @("$env:ProgramFiles\Winamp\winamp.exe", "${env:ProgramFiles(x86)}\Winamp\winamp.exe", "$env:USERPROFILE\OneDrive\tools\Winamp\winamp.exe")
+$fb = Find-Exe $Foobar @("$env:ProgramFiles\foobar2000\foobar2000.exe", "${env:ProgramFiles(x86)}\foobar2000\foobar2000.exe", "$env:USERPROFILE\OneDrive\tools\foobar2000\foobar2000.exe")
 
-Get-Process 24sevenfm_covers -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 1
+if (Test-Path $viewer) { Start-Process $viewer; Write-Host "  viewer" } else { Write-Warning "viewer not built: run installer\build_artifacts.ps1 -Build" }
+if ($wa) { Start-Process $wa; Write-Host "  Winamp     ($wa)" }    else { Write-Warning "Winamp not found - pass -Winamp <path>" }
+if ($fb) { Start-Process $fb; Write-Host "  foobar2000 ($fb)" }    else { Write-Warning "foobar2000 not found - pass -Foobar <path>" }
 
-SetLayout 1                          # poster, landscape window
-Start-Process $exe
-Capture 'poster' 1100 680
-Get-Process 24sevenfm_covers -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
-
-SetLayout 0                          # fill, square window
-Start-Process $exe
-Capture 'fill' 640 640
-Get-Process 24sevenfm_covers -ErrorAction SilentlyContinue | Stop-Process -Force
-
-Write-Host "done. Update site\index.html: img/poster.svg -> img/poster.png, img/fill.svg -> img/fill.png"
+Write-Host "`nAll set. In each app: 'N' cycles covers, double-click / F = fullscreen." -ForegroundColor Green
+Write-Host "The plugins show the cover without tuning to a station while demo mode is on."
+Write-Host "Done? Delete $demo and restart the apps to return to the live station."

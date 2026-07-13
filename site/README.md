@@ -10,7 +10,7 @@ substitution.
 ├─ index.html      single page with {{TOKEN}} placeholders (see below)
 ├─ css/style.css   mobile-first; dark by default, light via OS preference
 ├─ img/            logo/favicon/social artwork + screenshots
-└─ shoot.ps1       captures real viewer screenshots into img/ (run interactively)
+└─ shoot.ps1       sets up demo mode + launches the players for hand screenshots
 ```
 
 ## Tokens
@@ -48,13 +48,18 @@ renders the page into `www\index.html` with links pointing at `www\downloads\`
 ## Screenshots
 
 `img/poster.svg`, `img/fill.svg` and the per-plugin artworks are hand-made
-mockups. To replace the display-mode ones with real captures, run **from an
-interactive desktop session** (the capture APIs need a visible window station):
+mockups. To replace them with real captures, run **from an interactive desktop
+session** (`N`, fullscreen and window capture all need a visible desktop):
 
 ```powershell
 powershell -File site\shoot.ps1
 ```
 
-It launches the built viewer twice (poster, then fill mode), waits for a live
-cover, captures the window into `img\poster.png` / `img\fill.png`, and tells you
-which `img` references to switch in `index.html`.
+It copies the covers you keep in the repo's `demo\` folder (film-soundtrack art +
+`demo.txt`) into `%TEMP%\24seven.fm-covers-demo\`, sets
+a screenshot-friendly viewer INI, then launches the viewer, Winamp and
+foobar2000. Each app finds that folder and runs in **demo mode** — showing those
+covers with no live station — so you can frame and grab the shots by hand (`N`
+cycles covers, double-click / `F` for fullscreen). Delete the folder and restart
+an app to return to the live station. `-NoLaunch` only (re)builds the folder;
+`-Winamp` / `-Foobar` pin host paths if auto-detect misses them.
