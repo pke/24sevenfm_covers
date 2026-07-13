@@ -13,18 +13,17 @@
 #include <SDK/album_art.h>
 #include <SDK/album_art_helpers.h>
 
-#include <algorithm>
 #include <string>
 
 #include "cover_engine.h"
+#include "stations.h" // family stream-URL detection (all 5 stations, not just SST)
 
 namespace {
 
+// True for any of the 5 24seven.fm family stream URLs (death.fm, 1980s.fm, ...),
+// not just Streaming Soundtracks - so native album art works on every station.
 static bool isStationPath(const char* p) {
-    if (!p) return false;
-    std::string s(p);
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return (char)std::tolower(c); });
-    return s.find("streamingsoundtracks") != std::string::npos;
+    return p && ssc::stationIndexForText(p) >= 0;
 }
 
 // The extractor instance foobar queries for the actual bytes.
