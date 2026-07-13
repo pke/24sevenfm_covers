@@ -23,6 +23,7 @@
 
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
+#include "cover_menu.h"     // shared right-click context menu (Fullscreen / Poster / Options)
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "config.h"         // shared option schema + INI adapter
@@ -37,9 +38,7 @@
 
 static const char* kWndClass = "SST24CoverViewerWnd";
 static const UINT   SC_OPTIONS     = 0x1000; // system-menu command id (must be < 0xF000, low nibble 0)
-static const UINT   IDM_FULLSCREEN = 0x2001; // right-click context menu
-static const UINT   IDM_OPTIONS    = 0x2002;
-static const UINT   IDM_POSTER     = 0x2003; // toggle Fill <-> Poster layout
+// Fullscreen / Options / Poster ids live in covermenu:: (shared with the plugins).
 static const UINT   IDM_STATION    = 0x2100; // station submenu: IDM_STATION + i selects station i
 
 static HINSTANCE g_hInst    = nullptr;
@@ -333,10 +332,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 AppendMenuA(m, MF_STRING | (i == curStation ? MF_CHECKED : MF_UNCHECKED),
                             IDM_STATION + i, ssc::kStations[i].displayName);
             AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
-            AppendMenuA(m, MF_STRING | (g_fullscreen ? MF_CHECKED : MF_UNCHECKED), IDM_FULLSCREEN, "&Fullscreen");
-            AppendMenuA(m, MF_STRING | (eng().settings.layout == 1 ? MF_CHECKED : MF_UNCHECKED), IDM_POSTER, "&Poster mode");
-            AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
-            AppendMenuA(m, MF_STRING, IDM_OPTIONS, "&Options...");
+            covermenu::appendItems(m, eng().settings, /*includeFullscreen*/ true, g_fullscreen);
             TrackPopupMenu(m, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
             DestroyMenu(m);
             return 0;
@@ -348,15 +344,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 saveSettings();
                 return 0;
             }
-            switch (cmd) {
-                case IDM_FULLSCREEN: toggleFullscreen(hwnd); return 0;
-                case IDM_OPTIONS:    openOptions();          return 0;
-                case IDM_POSTER:     // toggle Fill <-> Poster and persist
-                    eng().settings.layout = eng().settings.layout == 1 ? 0 : 1;
-                    saveSettings();
-                    eng().repaint();
-                    return 0;
-            }
+            covermenu::Actions act;
+            act.openOptions      = []      { openOptions(); };
+            act.persist          = []      { saveSettings(); };
+            act.toggleFullscreen = [hwnd]  { toggleFullscreen(hwnd); };
+            if (covermenu::onCommand(cmd, eng(), act)) return 0;
             break;
         }
         case WM_SYSCOMMAND:

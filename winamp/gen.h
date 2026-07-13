@@ -23,6 +23,9 @@ typedef struct {
 // prefs content pane (no per-page OK - Winamp owns the Close button).
 #define IPC_ADD_PREFS_DLG    332
 #define IPC_REMOVE_PREFS_DLG 333
+// Open the Preferences dialog straight to a page: pass (WPARAM)&prefsDlgRec of a page
+// you added yourself (the same record given to IPC_ADD_PREFS_DLG).
+#define IPC_OPENPREFSTOPAGE  380
 
 typedef struct _prefsDlgRec {
     HINSTANCE hInst;   // DLL instance holding the dialog resource

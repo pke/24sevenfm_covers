@@ -6,10 +6,10 @@
    (foobar2000/foo_24sevenfm_covers/) OR the shared code (lib/, shared/); edit by hand only
    to pin. RC-safe: SSC_VER_STR is a pre-built literal. */
 #define SSC_VER_MAJOR 1
-#define SSC_VER_MINOR 5
-#define SSC_VER_PATCH 12
-#define SSC_VER_NUM   1, 5, 12, 0
-#define SSC_VER_STR   "1.5.12"
+#define SSC_VER_MINOR 6
+#define SSC_VER_PATCH 0
+#define SSC_VER_NUM   1, 6, 0, 0
+#define SSC_VER_STR   "1.6.0"
 
 #include "../../shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
 #endif /* FOO_VERSION_H */

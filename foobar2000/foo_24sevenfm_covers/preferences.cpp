@@ -11,6 +11,11 @@
 #include "cover_engine.h"
 #include "foobar_settings.h"
 
+// External linkage (declared in foobar_settings.h) so the UI element's context menu
+// can open Preferences straight to this page via ui_control::show_preferences().
+extern const GUID g_ssc_prefs_guid =
+    { 0x6d2a41e7, 0x3c9b, 0x4a5f, { 0x9e, 0x21, 0x7b, 0x44, 0x0c, 0x8e, 0x13, 0xd2 } };
+
 namespace {
 
 class CSscPrefs : public CDialogImpl<CSscPrefs>, public preferences_page_instance {
@@ -66,9 +71,7 @@ private:
 class preferences_page_ssc : public preferences_page_impl<CSscPrefs> {
 public:
     const char* get_name() { return "24seven.fm Covers"; }
-    GUID get_guid() {
-        return GUID { 0x6d2a41e7, 0x3c9b, 0x4a5f, { 0x9e, 0x21, 0x7b, 0x44, 0x0c, 0x8e, 0x13, 0xd2 } };
-    }
+    GUID get_guid() { return g_ssc_prefs_guid; }
     GUID get_parent_guid() { return preferences_page::guid_display; }
 };
 

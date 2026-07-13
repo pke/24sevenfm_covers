@@ -37,6 +37,7 @@ add_library(gen_24sevenfm_covers SHARED
     "${SHAREDDIR}/d2d_transitions.cpp"
     "${SHAREDDIR}/d2d_rolldigits.cpp"
     "${SHAREDDIR}/cover_engine.cpp"
+    "${SHAREDDIR}/cover_menu.cpp"
     "${SHAREDDIR}/options_panel.cpp"
     "${LIBDIR}/coverfetch.cpp"
     "${LIBDIR}/http_client.cpp"

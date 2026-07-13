@@ -18,6 +18,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM (context-menu coords)
 #include <commctrl.h>   // trackbar (duration slider), tab control
 #include <shellapi.h>   // ShellExecute (About link)
 #pragma comment(lib, "shell32.lib")
@@ -31,6 +32,7 @@
 #include "gen_resource.h"
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
+#include "cover_menu.h"     // shared right-click context menu (Poster / Options)
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table + stream-URL detection
 #include "config.h"         // shared option schema + INI adapter
@@ -190,6 +192,22 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ShowWindow(g_embedFrame ? g_embedFrame : hwnd, SW_HIDE);
             g_userClosed = true;
             return 0;
+        case WM_CONTEXTMENU: { // right-click the cover -> shared popup (no station list,
+                               // no Fullscreen: gen_ff owns the docked frame's geometry)
+            POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            if (pt.x == -1 && pt.y == -1) { // keyboard-invoked (Menu key): client centre
+                RECT rc; GetClientRect(hwnd, &rc);
+                pt.x = rc.right / 2; pt.y = rc.bottom / 2;
+                ClientToScreen(hwnd, &pt);
+            }
+            covermenu::Actions act;
+            act.openOptions = [] { // open Winamp Preferences straight to our page
+                if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_OPENPREFSTOPAGE);
+            };
+            act.persist = [] { saveSettings(); };
+            covermenu::showPopup(hwnd, pt, eng(), act);
+            return 0;
+        }
         case WM_SIZE: // gen_ff resized our child - just repaint at the new size
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;

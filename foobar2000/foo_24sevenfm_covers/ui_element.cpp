@@ -10,7 +10,9 @@
 #include <helpers/BumpableElem.h>
 #include <libPPUI/win32_op.h>
 
-#include "cover_engine.h" // pulls d2d_renderer.h; defines SSC_WM_NEWCOVER/TICK
+#include "cover_engine.h"    // pulls d2d_renderer.h; defines SSC_WM_NEWCOVER/TICK
+#include "cover_menu.h"      // shared right-click context menu (Poster / Options)
+#include "foobar_settings.h" // ssccfg::saveFromEngine + g_ssc_prefs_guid
 
 namespace {
 
@@ -31,6 +33,7 @@ public:
         MSG_WM_PAINT(OnPaint)
         MSG_WM_SIZE(OnSize)
         MSG_WM_TIMER(OnTimer)
+        MSG_WM_CONTEXTMENU(OnContextMenu)
         MESSAGE_HANDLER(SSC_WM_NEWCOVER, OnNewCover)
     END_MSG_MAP()
 
@@ -82,6 +85,18 @@ private:
     }
     void OnSize(UINT, CSize) { Invalidate(); }
     void OnTimer(UINT_PTR id) { CoverEngine::instance().onTimer(m_hWnd, id); } // engine heartbeat
+    void OnContextMenu(HWND, CPoint pt) {
+        // In layout-edit mode, defer to foobar's own element context menu.
+        if (m_callback->is_edit_mode_enabled()) { SetMsgHandled(FALSE); return; }
+        if (pt == CPoint(-1, -1)) { // keyboard-invoked (Menu key): use the client centre
+            CRect rc; GetClientRect(&rc);
+            pt = rc.CenterPoint(); ClientToScreen(&pt);
+        }
+        covermenu::Actions act;
+        act.openOptions = [] { ui_control::get()->show_preferences(g_ssc_prefs_guid); };
+        act.persist     = [] { ssccfg::saveFromEngine(); };
+        covermenu::showPopup(m_hWnd, pt, CoverEngine::instance(), act); // no station list, no Fullscreen
+    }
     LRESULT OnNewCover(UINT, WPARAM, LPARAM, BOOL&) { CoverEngine::instance().onNewCover(m_hWnd); return 0; }
 
     ui_element_config::ptr m_config;
