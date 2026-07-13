@@ -17,6 +17,7 @@
 #include <commctrl.h>   // trackbar (duration slider), property sheet
 #include <shellapi.h>   // ShellExecute (About link)
 #include <shlobj.h>     // SHGetFolderPath (per-user %APPDATA%)
+#include <shobjidl.h>   // SetCurrentProcessExplicitAppUserModelID (taskbar identity / pinning)
 #pragma comment(lib, "shell32.lib")
 
 #include <string>
@@ -363,6 +364,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     g_hInst = hInstance;
+
+    // A stable AppUserModelID gives the viewer its own taskbar identity - proper
+    // window grouping and a reliable "Pin to taskbar" (Windows won't offer pinning
+    // for a running app it can't identify). Note: apps launched from a network/mapped
+    // drive still can't be pinned - that's a shell limitation, use the local install.
+    SetCurrentProcessExplicitAppUserModelID(L"app.dudesoft.24sevenfmcovers.viewer");
 
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&icc); // trackbar (duration slider) + standard controls
