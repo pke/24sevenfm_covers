@@ -455,13 +455,21 @@ void resetTarget() {
     discardDeviceResources();
 }
 
-void shutdown() {
-    shutdownRollingTime();
-    discardDeviceResources();
-    SafeRelease(g_blurEffect); // offscreen blur generator (its own device)
+void releaseBlur() {
+    // Free the offscreen Gaussian-blur generator (its own D3D11 + D2D1.1 device,
+    // context and effect) - the heaviest GPU resource, and only poster mode ever
+    // creates it. Rebuilt lazily on the next poster render. Call when the window is
+    // hidden so a dismissed cover window holds no GPU device.
+    SafeRelease(g_blurEffect); // the effect is the "fully built" sentinel (createBlurGen)
     SafeRelease(g_blurCtx);
     SafeRelease(g_blurDevice);
     SafeRelease(g_blurD3D);
+}
+
+void shutdown() {
+    shutdownRollingTime();
+    discardDeviceResources();
+    releaseBlur();
     g_curBytes.clear();
     g_prevBytes.clear();
     SafeRelease(g_dwrite);

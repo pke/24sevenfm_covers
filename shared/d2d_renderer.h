@@ -22,6 +22,11 @@ void shutdown();
 // destroyed and recreated its window (foobar can recreate a UI element).
 void resetTarget();
 
+// Frees the offscreen Gaussian-blur device (poster mode only; the heaviest GPU
+// resource). Rebuilt lazily on the next poster render. Call when the cover window
+// is hidden so a dismissed window holds no GPU device.
+void releaseBlur();
+
 // Sets the current cover from JPEG bytes. If fadeFromCurrent and a cover is
 // already shown, the current one becomes the outgoing image for a crossfade.
 void setCover(const void* data, size_t len, bool fadeFromCurrent);

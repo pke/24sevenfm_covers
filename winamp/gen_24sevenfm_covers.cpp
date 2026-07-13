@@ -67,6 +67,7 @@ static HWND               g_embedFrame = nullptr; // gen_ff dockable frame
 static embedWindowState   g_embedState;
 static bool               g_d2dReady = false;
 static bool               g_userClosed = false;    // user dismissed the frame; don't auto-reopen until re-tune
+static bool               g_active = false;        // engine + GPU resources live only while the window is shown
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
@@ -122,6 +123,25 @@ static int tunedStationIndex() {
     return ssc::stationIndexForText(title);
 }
 
+// The cover monitor (poll/download thread) and the Direct2D render target exist only
+// while the window is actually shown. When it's dismissed - user-closed or not tuned
+// to a family stream - we stop polling the station and free the GPU resources, so a
+// hidden window costs no network, no background thread and no render target / VRAM.
+static void setActive(bool on) {
+    if (on == g_active) return;
+    g_active = on;
+    if (on) {
+        eng().setWindow(g_hwnd); // heartbeat timer + render target (rebuilt on next paint)
+        eng().start();           // cover monitor (autoAdvance=false: follows the ICY title)
+    } else {
+        eng().stop();             // stop the poll/download thread (returns promptly)
+        eng().setWindow(nullptr); // kill the ~30fps heartbeat, detach the HWND
+        eng().resetTitle();       // so the next show reloads the current cover
+        d2d::resetTarget();       // release the render target + cached cover bitmaps
+        d2d::releaseBlur();       // release the poster-mode blur device (if any)
+    }
+}
+
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case SSC_WM_NEWCOVER:
@@ -136,30 +156,28 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             HWND top = g_embedFrame ? g_embedFrame : hwnd;
             const int stationIdx = tunedStationIndex();
             const bool tuned = stationIdx >= 0;
-
-            // Auto-follow: point the engine at whichever family station Winamp is
-            // tuned to, so its covers match what's playing (no-op if unchanged).
-            if (tuned) eng().setStation(stationIdx);
-
-            // Feed Winamp's current stream title (the ICY metadata it's decoding) to
-            // the engine; it advances the cover off genuine title changes, so covers
-            // track what Winamp is actually playing rather than the station's live
-            // (buffered-ahead) clock. The engine filters placeholders + dedups.
-            if (tuned && g_winamp) {
-                const int pos = (int)SendMessageA(g_winamp, WM_WA_IPC, 0, IPC_GETLISTPOS);
-                const char* t = (const char*)SendMessageA(g_winamp, WM_WA_IPC, pos, IPC_GETPLAYLISTTITLE);
-                eng().onTitleChanged(t ? t : "");
-            } else {
-                eng().resetTitle(); // reset so the next tune-in reloads
-            }
-
             if (!tuned) g_userClosed = false; // tuning out re-arms the auto-show
-            const BOOL visible = IsWindowVisible(top);
-            if (tuned && !visible && !g_userClosed) {
-                ShowWindow(top, SW_SHOWNA);
-                InvalidateRect(hwnd, nullptr, FALSE);
-            } else if (!tuned && visible) {
-                ShowWindow(top, SW_HIDE);
+
+            // The window is shown iff tuned to a family stream and not user-dismissed.
+            // The engine + GPU resources track that visibility via setActive().
+            if (tuned && !g_userClosed) {
+                setActive(true);
+                // Auto-follow whichever family station Winamp is tuned to (no-op if
+                // unchanged), and feed its ICY stream title so covers advance off what
+                // Winamp is actually playing (the engine filters placeholders + dedups).
+                eng().setStation(stationIdx);
+                if (g_winamp) {
+                    const int pos = (int)SendMessageA(g_winamp, WM_WA_IPC, 0, IPC_GETLISTPOS);
+                    const char* t = (const char*)SendMessageA(g_winamp, WM_WA_IPC, pos, IPC_GETPLAYLISTTITLE);
+                    eng().onTitleChanged(t ? t : "");
+                }
+                if (!IsWindowVisible(top)) {
+                    ShowWindow(top, SW_SHOWNA);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            } else {
+                if (IsWindowVisible(top)) ShowWindow(top, SW_HIDE);
+                setActive(false); // stop polling + free the render target
             }
             return 0;
         }
@@ -239,10 +257,10 @@ static int init() {
         return 1;
     SetTimer(g_hwnd, kGateTimer, 500, nullptr);
 
-    // Hand the window to the engine and start the cover monitor.
+    // The gate timer activates the engine (setActive) the first time Winamp is tuned
+    // to a family stream and the window is shown - not here - so a plugin loaded while
+    // idle (or not listening to the family) uses no thread, no network and no GPU.
     eng().setLogName("24seven.fm-covers-winamp");
-    eng().setWindow(g_hwnd);
-    eng().start();
 
     // Add our options to Winamp's Preferences treeview (Plug-ins section). The page is
     // the shared options dialog and applies live - the prefs tree has no per-page OK
