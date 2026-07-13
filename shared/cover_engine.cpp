@@ -11,18 +11,51 @@
 #include "stations.h"
 
 // --- logging ----------------------------------------------------------------
+// Diagnostics are OFF in production and have no UI toggle. Both the %TEMP% file AND
+// OutputDebugString stay silent unless a sentinel file exists next to where the log
+// would go: %TEMP%\<base>.log.enable. Support drops that file, restarts the host,
+// reproduces, then sends %TEMP%\<base>.log. When enabled, the file is capped at 1 MB
+// with one rolled generation (<base>.log.1), so it can never grow without bound.
 namespace {
 std::mutex g_logMutex;
 // Log basename, shared by the OutputDebugString tag and the %TEMP% file. Each host
 // overrides it (CoverEngine::setLogName) so Winamp / foobar / the viewer write to
 // distinct files instead of interleaving into one. Set once at startup.
 std::string g_logBase = "24seven.fm-covers";
+bool g_logEnabled  = false;  // resolved once from the sentinel (see logEnabled)
+bool g_logResolved = false;
+
+std::string tempDir() { char t[MAX_PATH] = {0}; GetTempPathA(MAX_PATH, t); return t; }
+
+// Enabled iff the per-host sentinel file exists. Resolved once and cached - the tech
+// drops the file and restarts the host, so there is no need to re-probe per line.
+bool logEnabled() {
+    if (!g_logResolved) {
+        const std::string sentinel = tempDir() + g_logBase + ".log.enable";
+        g_logEnabled  = GetFileAttributesA(sentinel.c_str()) != INVALID_FILE_ATTRIBUTES;
+        g_logResolved = true;
+    }
+    return g_logEnabled;
+}
+
+// 1 MB cap, single generation: at the cap, move <base>.log to <base>.log.1 (replacing
+// any previous roll) and start fresh. Bounds total on-disk size at ~2 MB.
+void rotateIfLarge(const std::string& path) {
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &fad)) return;
+    const ULONGLONG size = ((ULONGLONG)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+    if (size < (1ull << 20)) return;
+    const std::string prev = path + ".1";
+    DeleteFileA(prev.c_str());               // MoveFileA won't overwrite an existing dest
+    MoveFileA(path.c_str(), prev.c_str());
+}
+
 void logLine(const std::string& msg) {
     std::lock_guard<std::mutex> lock(g_logMutex);
+    if (!logEnabled()) return;               // prod default: no file, no OutputDebugString
     OutputDebugStringA(("[" + g_logBase + "] " + msg + "\n").c_str());
-    char tmp[MAX_PATH] = {0};
-    GetTempPathA(MAX_PATH, tmp);
-    const std::string path = std::string(tmp) + g_logBase + ".log";
+    const std::string path = tempDir() + g_logBase + ".log";
+    rotateIfLarge(path);
     HANDLE h = CreateFileA(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
                            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h != INVALID_HANDLE_VALUE) {
@@ -90,10 +123,11 @@ d2d::Transition CoverEngine::transitionEffect() const {
 // --- lifecycle --------------------------------------------------------------
 void CoverEngine::setLogName(const std::string& base) {
     std::lock_guard<std::mutex> lock(g_logMutex);
-    if (!base.empty()) g_logBase = base; // call before start(); host-distinct log file/tag
+    if (!base.empty()) { g_logBase = base; g_logResolved = false; } // re-resolve sentinel for new base
 }
 
 void CoverEngine::start(bool autoAdvance) {
+    std::lock_guard<std::mutex> life(monitorLifecycle_);
     if (monitor_) return;
     // Plugins (autoAdvance=false): covers advance off the host's track-title changes
     // (onTitleChanged -> refresh), not the station's live clock, so covers track what
@@ -145,7 +179,15 @@ void CoverEngine::startMonitor() {
 }
 
 void CoverEngine::setStation(int index) {
-    index = ssc::validStationIndex(index);
+    // Robust against a caller that forgot to gate on a family-stream match:
+    // ssc::stationIndexForText() returns -1 for a foreign stream, and we must NOT let
+    // that silently clamp to 0 (SST) and show SST covers for something unrecognized.
+    // Any out-of-range index is ignored; the current station stays untouched.
+    if (index < 0 || index >= ssc::kStationCount) {
+        logLine("setStation: ignoring invalid index " + std::to_string(index));
+        return;
+    }
+    std::lock_guard<std::mutex> life(monitorLifecycle_);
     if (index == settings.station && monitor_) return; // already on this station
     settings.station = index;
     if (!monitor_) return; // not started yet; start() will pick up settings.station
@@ -169,6 +211,7 @@ void CoverEngine::setStation(int index) {
 }
 
 void CoverEngine::stop() {
+    std::lock_guard<std::mutex> life(monitorLifecycle_);
     if (monitor_) { monitor_->stop(); delete monitor_; monitor_ = nullptr; }
     logLine("engine stopped");
 }

@@ -46,7 +46,9 @@ target_include_directories(gen_24sevenfm_covers PRIVATE
     "${SHAREDDIR}"
     "${LIBDIR}"
 )
-target_link_libraries(gen_24sevenfm_covers PRIVATE ole32 ws2_32 d2d1 windowscodecs dwrite)
+# winhttp is also pulled in by http_client.cpp's #pragma comment(lib,...); listing it
+# here makes the dependency explicit in the build graph (robust if the pragma changes).
+target_link_libraries(gen_24sevenfm_covers PRIVATE ole32 ws2_32 winhttp d2d1 windowscodecs dwrite)
 set_target_properties(gen_24sevenfm_covers PROPERTIES
     PREFIX ""
     OUTPUT_NAME "gen_24sevenfm_covers"

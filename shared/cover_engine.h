@@ -133,6 +133,7 @@ private:
     DWORD fadeStart_ = 0;
 
     ssc::CoverMonitor* monitor_ = nullptr;
+    std::mutex  monitorLifecycle_;       // serializes start()/stop()/setStation() monitor_ transitions
     bool autoAdvance_ = false;           // run mode remembered from start(), for setStation() rebuilds
     std::atomic<HWND> hwnd_{nullptr};    // render window; UI thread writes, monitor thread reads
     std::string lastTitle_;              // last accepted real title (UI thread)

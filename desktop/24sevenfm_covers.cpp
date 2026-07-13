@@ -74,8 +74,16 @@ static bool dirWritable(const std::string& dir) {
 // travel with it; an existing local INI is always honoured. Installed use (Program
 // Files, not writable) falls back to per-user %APPDATA%\24seven.fm Covers\.
 static std::string iniPath() {
-    char exe[MAX_PATH] = {0};
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    // Grow the buffer until the path fits: a fixed MAX_PATH buffer truncates on long
+    // paths (and pre-Win10 does not null-terminate on truncation). n == size means the
+    // API had to truncate - double and retry; n < size means it fit (n excludes the NUL).
+    std::string exe(MAX_PATH, '\0');
+    for (;;) {
+        DWORD n = GetModuleFileNameA(nullptr, &exe[0], (DWORD)exe.size());
+        if (n == 0) { exe.clear(); break; }             // API failure
+        if (n < exe.size()) { exe.resize(n); break; }   // fit
+        exe.resize(exe.size() * 2);                     // truncated: grow
+    }
     std::string p = exe;
     const auto slash = p.find_last_of("\\/");
     const std::string exeDir = (slash == std::string::npos) ? std::string() : p.substr(0, slash + 1);
