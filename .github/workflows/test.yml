@@ -10,6 +10,12 @@ on:
   pull_request:
     paths: [lib/**]
 
+# Least privilege: this job only reads the repo. checkout persists the token into
+# git config, and lib/CMakeLists.txt + doctest.cmake run at configure time, so a
+# branch PR shouldn't get a write-scoped token.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: windows-latest

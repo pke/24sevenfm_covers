@@ -186,7 +186,11 @@ Remove-Item $wWin, $wFb, $wVi -Recurse -Force
 $files = Get-ChildItem $dist -File | Where-Object { $_.Extension -ne '.sha256' } | Sort-Object Name
 foreach ($f in $files) {
     $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
-    "$h  $($f.Name)" | Set-Content "$($f.FullName).sha256" -Encoding Ascii
+    # LF-terminated, no BOM: Set-Content would write CRLF, and the trailing CR then
+    # becomes part of the filename for `sha256sum -c` on older coreutils (Ubuntu
+    # 22.04, Git-for-Windows) - "no file was verified".
+    [System.IO.File]::WriteAllText("$($f.FullName).sha256", "$h  $($f.Name)`n",
+                                   (New-Object System.Text.ASCIIEncoding))
     Write-Host "  $($f.Name).sha256"
 }
 
