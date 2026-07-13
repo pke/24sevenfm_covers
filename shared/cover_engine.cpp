@@ -138,7 +138,7 @@ void CoverEngine::startMonitor() {
     monitor_->setErrorCallback([this](const std::string& m) {
         logLine("monitor error: " + m);
         loading_.store(false);
-        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        invalidate();
     });
     monitor_->start();
     logLine(std::string("monitor on ") + st.displayName + " (" + st.host + ")");
@@ -163,7 +163,7 @@ void CoverEngine::setStation(int index) {
     }
     resetTitle();          // next accepted title reloads; hide the countdown
     loading_.store(true);  // show "Loading..." until the new station replies
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    invalidate();
     startMonitor();
     if (monitor_) monitor_->refresh(); // fetch the new station's current cover now
 }
@@ -190,9 +190,18 @@ int CoverEngine::currentRemaining() const {
     return rem > 0 ? rem : 0;
 }
 
+// Snapshot the atomic window once, then act on the local - the monitor thread may
+// null it (setWindow) between the check and the use otherwise.
+void CoverEngine::invalidate() const {
+    if (HWND w = hwnd_.load()) InvalidateRect(w, nullptr, FALSE);
+}
+void CoverEngine::notifyNewCover() const {
+    if (HWND w = hwnd_.load()) PostMessageA(w, SSC_WM_NEWCOVER, 0, 0);
+}
+
 void CoverEngine::setWindow(HWND h) {
-    if (hwnd_) KillTimer(hwnd_, kHeartbeat);
-    hwnd_ = h;
+    if (HWND w = hwnd_.load()) KillTimer(w, kHeartbeat);
+    hwnd_.store(h);
     if (!h) return;
     SetTimer(h, kHeartbeat, 33, nullptr); // ~30fps repaint heartbeat (fade + countdown)
     d2d::resetTarget(); // rebuild the render target for the (possibly new) window
@@ -226,7 +235,7 @@ void CoverEngine::onCoverChanged(const std::string& url) {
     if (!alreadyShown) {
         if (img.empty()) {
             loading_.store(true);
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            invalidate();
             for (int a = 0; a < 3 && img.empty() && !aborting(); ++a) img = downloadCover(url, cancelTok);
             logLine("downloaded current " + std::to_string(img.size()) + " bytes");
         } else {
@@ -234,10 +243,10 @@ void CoverEngine::onCoverChanged(const std::string& url) {
         }
         if (img.empty()) {
             loading_.store(false);
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            invalidate();
         } else {
             { std::lock_guard<std::mutex> lock(mutex_); coverBytes_ = img; dirty_ = true; shownUrl_ = url; shownBytes_ = img; }
-            if (hwnd_) PostMessageA(hwnd_, SSC_WM_NEWCOVER, 0, 0);
+            notifyNewCover();
         }
     }
 
@@ -298,11 +307,11 @@ void CoverEngine::onTitleChanged(const std::string& title) {
         setRemaining(swapLen);
         if (swapped) {
             logLine("track change: instant swap to preloaded cover (len=" + std::to_string(swapLen) + "s)");
-            if (hwnd_) PostMessageA(hwnd_, SSC_WM_NEWCOVER, 0, 0);
+            notifyNewCover();
         } else {
             logLine("track change: no preload ready, loading...");
             loading_.store(true);
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            invalidate();
         }
     }
     if (monitor_) monitor_->refresh(); // reconcile + preload following track (bg)
@@ -314,7 +323,7 @@ void CoverEngine::resetTitle() {
 }
 
 void CoverEngine::repaint() {
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    invalidate();
 }
 
 bool CoverEngine::currentCover(std::string& out) {

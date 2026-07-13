@@ -101,6 +101,10 @@ private:
     void startMonitor();     // create + start the CoverMonitor for settings.station
     void decodePending(HWND h);
     void onCoverChanged(const std::string& url); // monitor bg-thread callback body
+    // hwnd_ is written on the UI thread (setWindow) and read on the monitor thread
+    // (cover/error callbacks), so it is atomic and snapshotted before every use.
+    void invalidate() const;      // InvalidateRect(hwnd_) if still attached
+    void notifyNewCover() const;  // PostMessage(hwnd_, SSC_WM_NEWCOVER) if still attached
     d2d::Transition transitionEffect() const;
     bool transitionAnimates() const { return settings.transition != 0; }
     float remainingFrac() const;
@@ -129,7 +133,7 @@ private:
 
     ssc::CoverMonitor* monitor_ = nullptr;
     bool autoAdvance_ = false;           // run mode remembered from start(), for setStation() rebuilds
-    HWND hwnd_ = nullptr;
+    std::atomic<HWND> hwnd_{nullptr};    // render window; UI thread writes, monitor thread reads
     std::string lastTitle_;              // last accepted real title (UI thread)
 };
 
