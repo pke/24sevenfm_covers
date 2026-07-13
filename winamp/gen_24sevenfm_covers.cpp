@@ -144,6 +144,65 @@ static void setActive(bool on) {
     }
 }
 
+// --- borderless fullscreen --------------------------------------------------
+// The cover window is a WS_CHILD inside the gen_ff dock frame, so it can't just drop
+// its border like the viewer's top-level window. Instead we reparent the SAME child
+// out to a borderless topmost top-level covering the monitor, and slot it back into
+// the frame on exit. The engine draws into the same HWND throughout, so nothing about
+// the render path changes. The gate (below) drops fullscreen when we tune out.
+static bool           g_fs = false;
+static LONG_PTR       g_fsPrevStyle = 0, g_fsPrevExStyle = 0;
+static WINDOWPLACEMENT g_fsPrevPlace = {}; // standalone-fallback only (no dock frame)
+
+static void setFullscreen(bool on) {
+    if (on == g_fs || !g_hwnd) return;
+    const bool docked = (g_embedFrame != nullptr); // else: a plain top-level fallback window
+    if (on) {
+        g_fsPrevStyle   = GetWindowLongPtrA(g_hwnd, GWL_STYLE);
+        g_fsPrevExStyle = GetWindowLongPtrA(g_hwnd, GWL_EXSTYLE);
+        MONITORINFO mi = { sizeof(mi) };
+        GetMonitorInfoA(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+        if (docked) { // reparent the child out of gen_ff into a borderless top-level
+            SetParent(g_hwnd, nullptr);
+            SetWindowLongPtrA(g_hwnd, GWL_STYLE, (g_fsPrevStyle & ~(LONG_PTR)WS_CHILD) | WS_POPUP);
+        } else {      // already top-level: just drop the frame, like the viewer does
+            g_fsPrevPlace.length = sizeof(g_fsPrevPlace);
+            GetWindowPlacement(g_hwnd, &g_fsPrevPlace);
+            SetWindowLongPtrA(g_hwnd, GWL_STYLE, g_fsPrevStyle & ~(LONG_PTR)WS_OVERLAPPEDWINDOW);
+        }
+        SetWindowPos(g_hwnd, HWND_TOPMOST, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        if (docked) ShowWindow(g_embedFrame, SW_HIDE); // hide the now-empty frame
+        SetForegroundWindow(g_hwnd);
+        SetFocus(g_hwnd);                              // so ESC reaches our WndProc
+        g_fs = true;
+    } else {
+        SetWindowLongPtrA(g_hwnd, GWL_STYLE, g_fsPrevStyle);
+        SetWindowLongPtrA(g_hwnd, GWL_EXSTYLE, g_fsPrevExStyle);
+        if (docked) {
+            SetParent(g_hwnd, g_embedFrame);           // back into the frame
+            SetWindowPos(g_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
+            if (IsWindow(g_embedFrame)) {
+                ShowWindow(g_embedFrame, SW_SHOWNA);
+                // Nudge gen_ff to re-size our child back into its content area (it owns
+                // the child's geometry and does so on the frame's WM_SIZE).
+                RECT fr; GetWindowRect(g_embedFrame, &fr);
+                SetWindowPos(g_embedFrame, nullptr, 0, 0, fr.right - fr.left, fr.bottom - fr.top,
+                             SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            }
+        } else {
+            SetWindowPos(g_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
+            SetWindowPlacement(g_hwnd, &g_fsPrevPlace); // restore the windowed rect
+        }
+        g_fs = false;
+    }
+    InvalidateRect(g_hwnd, nullptr, FALSE);
+}
+
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case SSC_WM_NEWCOVER:
@@ -173,11 +232,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     const char* t = (const char*)SendMessageA(g_winamp, WM_WA_IPC, pos, IPC_GETPLAYLISTTITLE);
                     eng().onTitleChanged(t ? t : "");
                 }
-                if (!IsWindowVisible(top)) {
+                if (!g_fs && !IsWindowVisible(top)) { // in fullscreen the frame stays hidden
                     ShowWindow(top, SW_SHOWNA);
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
             } else {
+                if (g_fs) setFullscreen(false); // tuning out / dismissing drops fullscreen first
                 if (IsWindowVisible(top)) ShowWindow(top, SW_HIDE);
                 setActive(false); // stop polling + free the render target
             }
@@ -204,10 +264,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             act.openOptions = [] { // open Winamp Preferences straight to our page
                 if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_OPENPREFSTOPAGE);
             };
-            act.persist = [] { saveSettings(); };
-            covermenu::showPopup(hwnd, pt, eng(), act);
+            act.persist          = [] { saveSettings(); };
+            act.toggleFullscreen = [] { setFullscreen(!g_fs); };
+            covermenu::showPopup(hwnd, pt, eng(), act, /*includeFullscreen*/ true, g_fs);
             return 0;
         }
+        case WM_LBUTTONDBLCLK: // double-click the cover -> toggle fullscreen (like the viewer)
+            setFullscreen(!g_fs);
+            return 0;
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE && g_fs) { setFullscreen(false); return 0; }
+            break;
         case WM_SIZE: // gen_ff resized our child - just repaint at the new size
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -232,6 +299,7 @@ static int init() {
     g_d2dReady = d2d::init(); // hardware-accelerated render path (Windows 7+)
 
     WNDCLASSA wc = {};
+    wc.style = CS_DBLCLKS; // deliver WM_LBUTTONDBLCLK on the cover (double-click -> fullscreen)
     wc.lpfnWndProc = WndProc;
     wc.hInstance = g_hInst;
     wc.lpszClassName = kWndClass;

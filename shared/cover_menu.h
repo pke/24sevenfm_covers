@@ -41,7 +41,10 @@ bool onCommand(UINT cmd, CoverEngine& eng, const Actions& a);
 
 // Convenience for the plugins (no station list): build the popup, track it with
 // TPM_RETURNCMD, and dispatch inline - the host window needs no WM_COMMAND routing.
-void showPopup(HWND hwnd, POINT pt, CoverEngine& eng, const Actions& a);
+// includeFullscreen adds the Fullscreen item (Winamp supplies a toggleFullscreen
+// action; foobar leaves it off since an embedded element can't go fullscreen).
+void showPopup(HWND hwnd, POINT pt, CoverEngine& eng, const Actions& a,
+               bool includeFullscreen = false, bool fullscreenOn = false);
 
 } // namespace covermenu
 

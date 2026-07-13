@@ -30,9 +30,10 @@ bool onCommand(UINT cmd, CoverEngine& eng, const Actions& a) {
     return false;
 }
 
-void showPopup(HWND hwnd, POINT pt, CoverEngine& eng, const Actions& a) {
+void showPopup(HWND hwnd, POINT pt, CoverEngine& eng, const Actions& a,
+               bool includeFullscreen, bool fullscreenOn) {
     HMENU m = CreatePopupMenu();
-    appendItems(m, eng.settings, /*includeFullscreen*/ false, false);
+    appendItems(m, eng.settings, includeFullscreen, fullscreenOn);
     // Foreground trick: without it a popup owned by a background/child window won't
     // dismiss on click-away. TPM_RETURNCMD hands us the id directly (no WM_COMMAND).
     SetForegroundWindow(hwnd);
