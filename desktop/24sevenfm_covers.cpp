@@ -368,8 +368,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     wc.hIconSm       = icon;
     RegisterClassExA(&wc);
 
-    // Top-level resizable window with a 500x500 client area.
-    RECT rc = { 0, 0, 500, 500 };
+    // Top-level resizable window with a 500x500 client area, scaled by the system DPI so
+    // it isn't tiny on a high-DPI monitor now that we're per-monitor DPI aware.
+    // GetDpiForSystem is Win10 1607+; fall back to 96 (100%) on older Windows.
+    UINT dpi = 96;
+    if (HMODULE u = GetModuleHandleA("user32.dll")) {
+        typedef UINT (WINAPI *GetDpiForSystem_t)();
+        if (auto p = (GetDpiForSystem_t)GetProcAddress(u, "GetDpiForSystem")) dpi = p();
+    }
+    const int side = MulDiv(500, dpi, 96);
+    RECT rc = { 0, 0, side, side };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
     g_hwnd = CreateWindowExA(0, kWndClass, "24seven.fm Covers", WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT,

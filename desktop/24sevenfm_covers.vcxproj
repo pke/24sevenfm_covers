@@ -69,6 +69,10 @@
     <Link>
       <SubSystem>Windows</SubSystem>
     </Link>
+    <Manifest>
+      <!-- Merge our DPI-awareness settings into the linker-generated app manifest. -->
+      <AdditionalManifestFiles>$(ProjectDir)24sevenfm_covers.manifest</AdditionalManifestFiles>
+    </Manifest>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(ProjectDir)..\shared;$(ProjectDir)..\winamp;$(ProjectDir)..\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
@@ -130,6 +134,9 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="24sevenfm_covers.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="24sevenfm_covers.manifest" /> <!-- merged via Manifest/AdditionalManifestFiles above -->
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

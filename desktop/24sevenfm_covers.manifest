@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!-- Per-monitor DPI awareness: render crisply on high-DPI displays and avoid the
+       system-DPI bitmap-stretch (and its 1px fullscreen seam) when the viewer sits on
+       a monitor whose scale differs from the primary. PerMonitorV2 on Windows 10 1703+,
+       PerMonitor as a fallback; dpiAware "true/pm" covers Windows 8.1. On Windows 7 both
+       are ignored and the app runs system-DPI-aware (its previous behaviour). -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>
