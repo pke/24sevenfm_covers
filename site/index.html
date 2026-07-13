@@ -20,7 +20,8 @@
 
 <!-- No-JS theme toggle: the ◐ label flips this checkbox; CSS flips the palette.
      The script below is optional sugar - it only persists the choice. -->
-<input type="checkbox" id="themeswitch" hidden>
+<input type="checkbox" id="themeswitch" class="visually-hidden" role="switch"
+       aria-label="Switch between dark and light theme">
 <script>
 // Progressive enhancement: remember the resolved theme across visits. The checkbox
 // flips relative to the OS scheme, so restore checked = saved XOR os-preference.
@@ -42,7 +43,7 @@
         <span class="spacer"></span>
         <a class="link" href="#desktop">Desktop</a>
         <a class="link" href="#plugins">Plugins</a>
-        <label for="themeswitch" class="theme-toggle" title="Toggle dark / light" aria-label="Toggle dark / light theme">◐</label>
+        <label for="themeswitch" class="theme-toggle" title="Toggle dark / light" aria-hidden="true">◐</label>
     </nav>
 </header>
 
