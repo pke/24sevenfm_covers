@@ -1,0 +1,89 @@
+# Deploy the website on its own, without building anything or cutting a release.
+#
+# The site advertises the current downloads, and it used to be rendered as a by-product of
+# the release build - so fixing a typo meant a full rebuild and a new release. It doesn't
+# have to: a release's assets already carry the two facts the page needs (each artifact's
+# NAME and SIZE), and the version is embedded in the name. This workflow reads those from
+# the newest GitHub release and renders against them.
+#
+# Runs on every push that touches site\, and on demand. Takes seconds - no MSBuild, no NSIS.
+# Cutting a release still deploys the site too (release.yml), so the two never diverge.
+name: Deploy site
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'site/**'
+      - 'installer/render_site.ps1'
+      - '.github/workflows/deploy-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write      # deploy the site
+  id-token: write   # Pages OIDC
+
+# Never let two site deploys race; let a newer push win, but don't kill a run mid-deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v6
+
+      # The newest release supplies the tag + every asset's name and size. Prefer the
+      # `latest` endpoint (it ignores drafts/prereleases); fall back to the releases list,
+      # because /releases/latest has been seen returning 503 while the rest of the API is
+      # healthy, and a transient blip shouldn't fail a docs deploy.
+      - name: Read the newest release
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          # $LASTEXITCODE, not $?: for a native exe $? reflects stderr output as much as
+          # the exit status, so it reports failure on a perfectly good call.
+          $json = gh api "repos/${{ github.repository }}/releases/latest" 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::/releases/latest unavailable - falling back to the releases list"
+            $json = gh api "repos/${{ github.repository }}/releases" --jq '.[0]'
+            if ($LASTEXITCODE -ne 0) { throw "Could not read any release from the API." }
+          }
+          $rel = $json | ConvertFrom-Json
+          if (-not $rel.tag_name) { throw "No release found to render the site against." }
+          $assets = @($rel.assets | ForEach-Object { @{ name = $_.name; size = $_.size } })
+          Write-Host "Rendering against $($rel.tag_name) ($($assets.Count) assets)"
+          "tag=$($rel.tag_name)" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+          # Compact single-line JSON: it has to survive a step-output round-trip.
+          "assets=$(ConvertTo-Json $assets -Compress)" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # Values go through env, not inline ${{ }} interpolation: the assets JSON is full of
+      # quotes and braces, and splicing that straight into a command line is asking for a
+      # quoting bug (or worse) the day an asset is named something unexpected.
+      - name: Render the site
+        shell: pwsh
+        env:
+          ASSETS:   ${{ steps.rel.outputs.assets }}
+          TAG:      ${{ steps.rel.outputs.tag }}
+          SITE_URL: ${{ steps.pages.outputs.base_url }}/
+        run: ./installer/render_site.ps1 -Assets $env:ASSETS -ReleaseTag $env:TAG -SiteUrl $env:SITE_URL
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: www
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

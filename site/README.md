@@ -25,19 +25,43 @@ rendering **fails loudly** if any token is left over:
 | Token | Value |
 |-------|-------|
 | `{{VER_WINAMP}}` / `{{VER_FOOBAR}}` / `{{VER_VIEWER}}` | per-module versions from the version headers |
+| `{{VER_*}}` (3) | per-module versions, parsed from the artifact filenames |
 | `{{URL_*}}` (7) | download links — GitHub release assets, or `downloads/…` in a local preview |
-| `{{SIZE_*}}` (7) | artifact sizes, measured from the files just built |
+| `{{SIZE_*}}` (7) | artifact sizes, from the release assets (or the files just built) |
 | `{{SITE_URL}}` | absolute site base URL for `og:image` (empty locally) |
 | `{{UPDATED}}` / `{{RELEASE_TAG}}` | footer "Last updated" line |
 
-## Releasing (CI)
+## Rendering
 
-The **Release** workflow (`.github/workflows/release.yml`, run manually from the
-Actions tab) provisions the foobar2000 SDK + WTL from their pinned archives
-(cached), runs the test gate, builds all three binaries, publishes a GitHub
-release tagged `vYYYY.MM.DD-<run>` with all artifacts + `.sha256` sidecars, then
-renders this site against those release URLs and deploys it to GitHub Pages.
-The site is therefore always exactly in step with the newest release.
+`installer\render_site.ps1` is the **only** renderer, and it takes the artifact list
+as input rather than reading the filesystem. That one seam is what lets the site
+ship two ways:
+
+| Caller | Artifact list from | Result |
+|--------|--------------------|--------|
+| `build_artifacts.ps1` | the files it just packaged into `www\downloads` | local preview, or a release build |
+| `deploy-site.yml` | the newest GitHub release's assets (API) | site-only deploy, no build |
+
+Versions come from the artifact **filenames**, never the version headers: the page
+must advertise what is actually downloadable. After a version bump the headers run
+ahead of the newest release, so a site-only deploy that trusted them would offer a
+version that 404s.
+
+## Deploying
+
+Two workflows, both ending in a GitHub Pages deploy:
+
+- **Deploy site** (`.github/workflows/deploy-site.yml`) — runs on any push touching
+  `site\`, and on demand. Reads the newest release's assets and renders against
+  them. No MSBuild, no NSIS, no new release: a typo fix is live in seconds. This is
+  the normal way to change the site.
+- **Release** (`.github/workflows/release.yml`, manual) — runs the test gate, builds
+  all three binaries from the vendored SDK, publishes a release tagged
+  `vYYYY.MM.DD-<run>` with every artifact + `.sha256` sidecar, then renders and
+  deploys the site against that new release.
+
+Both use the same renderer, so they cannot drift. The site tracks the newest
+release either way.
 
 ## Local preview
 
