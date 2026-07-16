@@ -7,15 +7,19 @@ HTML: no JS-driven content, no framework, no build system beyond token
 substitution.
 
 ```
-├─ index.html      single page with {{TOKEN}} placeholders (see below)
+├─ index.html      landing page with {{TOKEN}} placeholders (see below)
+├─ privacy.html    privacy policy (linked from every footer)
 ├─ css/style.css   mobile-first; dark by default, light via OS preference
 ├─ img/            logo/favicon/social artwork + screenshots
 └─ shoot.ps1       sets up demo mode + launches the players for hand screenshots
 ```
 
+Every `*.html` in this folder is rendered to `www\` — adding a page needs no build
+change.
+
 ## Tokens
 
-`index.html` contains `{{TOKEN}}` placeholders that the render step fills in;
+The pages contain `{{TOKEN}}` placeholders that the render step fills in;
 rendering **fails loudly** if any token is left over:
 
 | Token | Value |

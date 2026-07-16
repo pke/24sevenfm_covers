@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — 24seven.fm Covers</title>
+<meta name="description" content="Privacy policy for 24seven.fm Covers: no accounts, no analytics, no tracking, no telemetry. What little data is involved, and who sees it.">
+<link rel="icon" href="img/favicon.ico">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- No-JS theme toggle: the ◐ label flips this checkbox; CSS flips the palette.
+     The script below is optional sugar - it only persists the choice. -->
+<input type="checkbox" id="themeswitch" class="visually-hidden" role="switch"
+       aria-label="Switch between dark and light theme">
+<script>
+// Progressive enhancement: remember the resolved theme across visits. The checkbox
+// flips relative to the OS scheme, so restore checked = saved XOR os-preference.
+(function () {
+    var box = document.getElementById("themeswitch");
+    var osDark = matchMedia("(prefers-color-scheme: dark)").matches;
+    var saved = localStorage.getItem("theme");
+    if (saved === "dark" || saved === "light") box.checked = (saved === "dark") !== osDark;
+    box.addEventListener("change", function () {
+        localStorage.setItem("theme", (osDark !== box.checked) ? "dark" : "light");
+    });
+})();
+</script>
+<div class="page">
+
+<header>
+    <nav class="nav">
+        <a class="brand" href="index.html"><img src="img/logo.png" alt="" width="28" height="28">24seven.fm Covers</a>
+        <span class="spacer"></span>
+        <a class="link" href="index.html#desktop">Desktop</a>
+        <a class="link" href="index.html#plugins">Plugins</a>
+        <label for="themeswitch" class="theme-toggle" title="Toggle dark / light" aria-hidden="true">◐</label>
+    </nav>
+</header>
+
+<main class="wrap">
+
+    <section style="border-top: 0;">
+        <h2>Privacy Policy</h2>
+        <p class="effective">Effective 16 July 2026</p>
+        <p class="lead">24seven.fm Covers is a free, open-source fan project. This policy covers
+        this website and all three downloads: the Winamp plugin, the foobar2000 component and the
+        standalone desktop player.</p>
+
+        <div class="card">
+            <h3>The short version</h3>
+            <p>The Winamp plugin, the foobar2000 component, the standalone player and this website
+            collect no data. None. There are no accounts, no sign-ups, no analytics, no tracking
+            scripts, no advertising, no cookies and no telemetry. <strong>No server belonging to this
+            project is ever involved</strong> — none exists that could receive anything. The only
+            network requests the software makes go directly to the radio station you’re listening
+            to, to fetch its cover art.</p>
+        </div>
+    </section>
+
+    <section>
+        <h2>This website</h2>
+        <p class="lead">Static pages, no scripts beyond a two-line theme toggle.</p>
+        <div class="grid">
+            <div class="card">
+                <h3>No cookies, no analytics</h3>
+                <p>This site sets no cookies, embeds no analytics or advertising, loads no fonts or
+                scripts from third parties, and has no contact forms. Nothing you do here is
+                measured or profiled.</p>
+            </div>
+            <div class="card">
+                <h3>One local preference</h3>
+                <p>If you use the dark/light toggle, your browser stores a single value
+                (<code>theme</code> = <code>dark</code> or <code>light</code>) in local storage. It
+                is not a cookie, never leaves your device, and is never sent anywhere. Clearing this
+                site’s data removes it.</p>
+            </div>
+            <div class="card">
+                <h3>Hosting</h3>
+                <p>The site is hosted on GitHub Pages. To deliver a page, GitHub necessarily
+                processes your IP address and standard request data (such as your browser’s
+                user-agent), and may log it for security and abuse prevention. That processing is
+                GitHub’s, under the
+                <a href="https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement">GitHub
+                Privacy Statement</a>. Those logs stay with GitHub and are never passed on to this
+                project.</p>
+            </div>
+        </div>
+        <p class="note">Downloads link to GitHub Releases, so fetching a file is a request to GitHub
+        and is covered by the same statement above.</p>
+    </section>
+
+    <section>
+        <h2>The plugins &amp; the standalone player</h2>
+        <p class="lead wide">This section covers all three downloads — the Winamp plugin
+        (<code>gen_24sevenfm_covers.dll</code>), the foobar2000 component
+        (<code>foo_24sevenfm_covers.dll</code>) and the standalone desktop player
+        (<code>24sevenfm_covers.exe</code>). They share the same engine and behave identically.</p>
+
+        <div class="stack">
+            <div class="card">
+                <h3>They collect no data. None.</h3>
+                <p>No accounts, no sign-up, no analytics, no advertising, no tracking SDKs, no crash
+                reporting, no update pings and no unique identifiers. They send data nowhere but the
+                station itself, and <strong>no server belonging to this project is ever
+                involved</strong> — none exists that could receive it. No personal data is
+                collected, stored, sold or shared, because none is ever held in the first place.</p>
+            </div>
+
+            <div class="card">
+                <h3>Talking to the station</h3>
+                <p>To show a cover, they connect <em>directly</em> to the 24seven.fm station you’re
+                tuned to and request its “now playing” information and the cover image. Those
+                servers can see your device’s IP address — exactly as they do when you listen to the
+                stream or visit the station’s website. Nothing is routed through this project.</p>
+            </div>
+
+            <div class="card">
+                <h3>Downloads</h3>
+                <p>The three downloads are hosted on GitHub, which publishes an aggregate count of
+                how often each file was downloaded. That number contains nothing that identifies
+                you, and it is the only figure this project ever sees.</p>
+            </div>
+
+            <div class="card">
+                <h3>Settings stay on your device</h3>
+                <p>Your choices — station, layout, transition, countdown — are written only to your
+                own machine, never transmitted, and removed by deleting the file below (or by
+                uninstalling). Exactly where each one keeps them:</p>
+                <ul class="paths">
+                    <li><strong>Winamp plugin</strong>
+                        <code>24seven.fm-covers.ini</code>, in the settings folder Winamp itself
+                        reports — normally
+                        <code>%APPDATA%\Winamp\24seven.fm-covers.ini</code>. If Winamp reports no
+                        folder, it falls back to <code>%TEMP%\24seven.fm-covers.ini</code>.</li>
+                    <li><strong>foobar2000 component</strong>
+                        No file of its own. The values are stored inside foobar2000’s own
+                        configuration, in your foobar2000 profile folder — normally
+                        <code>%APPDATA%\foobar2000-v2\</code>, or the program’s own folder for a
+                        portable installation. Removing the component removes them.</li>
+                    <li><strong>Standalone player</strong>
+                        <code>24seven.fm-covers.ini</code> next to
+                        <code>24sevenfm_covers.exe</code> when that folder is writable, so a
+                        portable copy keeps its settings with it. Otherwise (e.g. installed under
+                        Program Files) it uses
+                        <code>%APPDATA%\24seven.fm Covers\24seven.fm-covers.ini</code>.</li>
+                </ul>
+            </div>
+
+            <div class="card">
+                <h3>Optional local log</h3>
+                <p>Diagnostic logging is <strong>off by default</strong> and has no switch in the
+                user interface. It stays completely silent — no file, nothing — unless you
+                deliberately create an empty “sentinel” file in your <code>%TEMP%</code> folder and
+                restart the host; the setting is read once at startup. Each download logs under its
+                own name, so they never interleave:</p>
+                <ul class="paths">
+                    <li><strong>Winamp plugin</strong>
+                        create <code>%TEMP%\24seven.fm-covers-winamp.log.enable</code> →
+                        writes <code>%TEMP%\24seven.fm-covers-winamp.log</code></li>
+                    <li><strong>foobar2000 component</strong>
+                        create <code>%TEMP%\24seven.fm-covers-foobar.log.enable</code> →
+                        writes <code>%TEMP%\24seven.fm-covers-foobar.log</code></li>
+                    <li><strong>Standalone player</strong>
+                        create <code>%TEMP%\24seven.fm-covers-viewer.log.enable</code> →
+                        writes <code>%TEMP%\24seven.fm-covers-viewer.log</code></li>
+                </ul>
+                <p style="margin-top:.9rem">The log holds technical trace lines only — the station
+                host, cover image URLs, byte counts and error messages — and no personal data. It is
+                capped at 1 MB; on reaching the cap it rolls once to
+                <code>&lt;name&gt;.log.1</code>, so it can never exceed roughly 2 MB on disk. It is
+                written solely to your own <code>%TEMP%</code> folder and is never transmitted
+                anywhere. Delete the <code>.log.enable</code> file to switch logging back off, and
+                the <code>.log</code> and <code>.log.1</code> files to erase what it recorded.</p>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>The radio stations (third parties)</h2>
+        <p class="lead">This project is not affiliated with 24seven.fm.</p>
+        <p>Cover art and track information come from the 24seven.fm family of stations —
+        StreamingSoundtracks, 1980s.FM, Adagio.FM, Death.FM and Entranced.FM. When a cover is
+        fetched, that request goes to the station’s own servers. What those operators log and how
+        they handle it is governed by their own policies and is outside this project’s control. The
+        same applies to any external site linked from these pages, including GitHub.</p>
+        <p class="note">This is a fan-made companion. No endorsement by, or affiliation with,
+        24seven.fm or its stations is claimed.</p>
+    </section>
+
+    <section>
+        <h2>Your choices</h2>
+        <p>Because no data about you is ever held, there is nothing to look up, export, correct or
+        delete on request. Everything the software keeps lives on your own device and is yours to
+        remove at any time:</p>
+        <div class="grid">
+            <div class="card">
+                <h3>Theme preference</h3>
+                <p>Clear this site’s data in your browser.</p>
+            </div>
+            <div class="card">
+                <h3>Plugin / player settings</h3>
+                <p>Uninstall it, or delete the <code>.ini</code> listed above.</p>
+            </div>
+            <div class="card">
+                <h3>Diagnostic log</h3>
+                <p>Delete the <code>.log.enable</code> sentinel plus the <code>.log</code> and
+                <code>.log.1</code> files listed above.</p>
+            </div>
+        </div>
+        <p class="note">To stop contacting a station entirely, close the player or remove the plugin
+        — no cover requests are made when it isn’t running.</p>
+    </section>
+
+    <section>
+        <h2>Changes &amp; contact</h2>
+        <p>If this policy ever changes, the revised version will be published on this page with a new
+        effective date. Because the project is open source, you can also read exactly what the
+        software does — and every change to this page — in
+        <a href="https://github.com/pke/24sevenfm_covers">the public repository</a>.</p>
+        <p>Questions about privacy? Please open an issue on the
+        <a href="https://github.com/pke/24sevenfm_covers/issues">GitHub issue tracker</a>.</p>
+    </section>
+
+</main>
+
+<footer>
+    <p>© 2026 <a href="https://dudesoft.app">DudeSoft</a> · Open source on <a href="https://github.com/pke/24sevenfm_covers">GitHub</a> · <a href="index.html">Home</a><br>
+    Not affiliated with 24seven.fm — a fan-made companion for its stations.</p>
+    <p class="updated">Last updated {{UPDATED}} · {{RELEASE_TAG}}</p>
+</footer>
+
+</div><!-- /.page -->
+
+</body>
+</html>
