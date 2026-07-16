@@ -58,6 +58,23 @@
     }
 }
 
+/* Flipping the toggle crossfades the palette instead of snapping. The custom properties
+   themselves can't animate, but every property that READS one (background-color, color,
+   border-color, box-shadow) tweens when its computed value changes - so transitioning
+   those on everything inside .page fades the whole page at once. `color-scheme` can't
+   tween, so native scrollbars/controls still flip instantly; that's unnoticeable.
+   No fade on load: the checkbox is set by the script BEFORE .page exists, so a restored
+   theme is already correct at first paint and has nothing to transition from. */
+.page, .page *, .page *::before, .page *::after {
+    transition: background-color .35s ease, border-color .35s ease,
+                color .35s ease, box-shadow .35s ease;
+}
+
+/* Honour a reduced-motion preference: switch instantly rather than animate. */
+@media (prefers-reduced-motion: reduce) {
+    .page, .page *, .page *::before, .page *::after { transition: none; }
+}
+
 * { box-sizing: border-box; }
 
 html { scroll-behavior: smooth; }
