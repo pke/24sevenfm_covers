@@ -194,50 +194,16 @@ foreach ($f in $files) {
     Write-Host "  $($f.Name).sha256"
 }
 
-# 5. Render the website: site\ (source with {{TOKEN}} placeholders) -> www\ (the
-#    gh-pages root). Local preview links to the downloads\ folder; a release build
-#    (-ReleaseTag) links to that GitHub release's assets instead.
-$siteSrc = Join-Path $root 'site'
-if (Test-Path (Join-Path $siteSrc 'index.html')) {
-    Copy-Item (Join-Path $siteSrc 'css') (Join-Path $root 'www') -Recurse -Force
-    Copy-Item (Join-Path $siteSrc 'img') (Join-Path $root 'www') -Recurse -Force
-    $base = if ($ReleaseTag) { "https://github.com/pke/24sevenfm_covers/releases/download/$ReleaseTag/" } else { 'downloads/' }
-    function SizeOf([string]$name) {
-        $f = Join-Path $dist $name
-        if (Test-Path $f) { '{0} KB' -f [math]::Round((Get-Item $f).Length / 1KB) } else { 'n/a' }
-    }
-    $tokens = @{
-        '{{VER_WINAMP}}'            = $winVer
-        '{{VER_FOOBAR}}'            = $fbVer
-        '{{VER_VIEWER}}'            = $viVer
-        '{{URL_WINAMP_EXE}}'        = $base + $nWinExe
-        '{{URL_WINAMP_ZIP}}'        = $base + $nWinZip
-        '{{URL_FOOBAR_COMPONENT}}'  = $base + $nFbComp
-        '{{URL_FOOBAR_EXE}}'        = $base + $nFbExe
-        '{{URL_FOOBAR_ZIP}}'        = $base + $nFbZip
-        '{{URL_VIEWER_EXE}}'        = $base + $nViExe
-        '{{URL_VIEWER_ZIP}}'        = $base + $nViZip
-        '{{SIZE_WINAMP_EXE}}'       = SizeOf $nWinExe
-        '{{SIZE_WINAMP_ZIP}}'       = SizeOf $nWinZip
-        '{{SIZE_FOOBAR_COMPONENT}}' = SizeOf $nFbComp
-        '{{SIZE_FOOBAR_EXE}}'       = SizeOf $nFbExe
-        '{{SIZE_FOOBAR_ZIP}}'       = SizeOf $nFbZip
-        '{{SIZE_VIEWER_EXE}}'       = SizeOf $nViExe
-        '{{SIZE_VIEWER_ZIP}}'       = SizeOf $nViZip
-        '{{SITE_URL}}'              = $SiteUrl
-        '{{UPDATED}}'               = (Get-Date -Format 'yyyy-MM-dd')
-        '{{RELEASE_TAG}}'           = $(if ($ReleaseTag) { $ReleaseTag } else { 'local preview' })
-    }
-    $utf8 = New-Object System.Text.UTF8Encoding($false)   # 5.1 default would mangle the emoji
-    $stamp = if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }
-    # Every .html in site\ is a page (index, privacy, ...) - adding one needs no change here.
-    foreach ($page in Get-ChildItem $siteSrc -Filter '*.html' -File) {
-        $html = [System.IO.File]::ReadAllText($page.FullName, $utf8)
-        foreach ($t in $tokens.Keys) { $html = $html.Replace($t, [string]$tokens[$t]) }
-        if ($html -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\$($page.Name): $($Matches[0])" }
-        [System.IO.File]::WriteAllText((Join-Path $root "www\$($page.Name)"), $html, $utf8)
-        Write-Host "  www\$($page.Name) rendered ($stamp)"
-    }
+# 5. Render the website: site\ (source with {{TOKEN}} placeholders) -> www\ (the gh-pages
+#    root), from the artifacts just packaged. render_site.ps1 is the single renderer -
+#    .github\workflows\deploy-site.yml drives the same script from an existing release's
+#    assets, so a site-only change ships without rebuilding. Local preview links to the
+#    downloads\ folder; a release build (-ReleaseTag) links to that release's assets.
+if (Test-Path (Join-Path $root 'site\index.html')) {
+    $assets = @(Get-ChildItem $dist -File | Where-Object { $_.Extension -ne '.sha256' } |
+                ForEach-Object { @{ name = $_.Name; size = $_.Length } })
+    & (Join-Path $here 'render_site.ps1') -Assets (ConvertTo-Json $assets -Compress) `
+        -ReleaseTag $ReleaseTag -SiteUrl $SiteUrl
 }
 
 Write-Host "`nArtifacts in $dist :" -ForegroundColor Green
