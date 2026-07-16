@@ -210,3 +210,20 @@ image decode; cleartext transport on non-Windows until native TLS lands).
   connects (an unroutable IPv6 AAAA record otherwise stalls the first request) and exponential
   backoff. Don't run two front-ends against the station at once — they share a log and double the
   server load.
+
+## License
+
+[MIT](LICENSE) — © 2026 DudeSoft.
+
+Every dependency is vendored into this repository as source and is permissively licensed, so a
+build pulls in nothing that isn't visible here:
+
+| Component | License |
+|-----------|---------|
+| foobar2000 SDK (`foobar2000/sdk/`) | BSD-style — © Peter Pawlowski, see `sdk-license.txt` |
+| `pfc`, `libPPUI` (within that SDK) | zlib |
+| WTL 10 (`foobar2000/wtl/`) | Microsoft Public License (Ms-PL) |
+| `winamp/gen.h` | none — a minimal hand-written declaration of Winamp's plugin ABI, not the Winamp SDK |
+
+No component is dual-licensed for commercial use, and nothing proprietary is linked in beyond the
+Windows system libraries.
