@@ -11,14 +11,18 @@
 #   powershell -File site\shoot.ps1
 #   powershell -File site\shoot.ps1 -Winamp "C:\Path\winamp.exe" -Foobar "C:\Path\foobar2000.exe"
 #   powershell -File site\shoot.ps1 -NoLaunch      # only (re)build the demo folder
+#   powershell -File site\shoot.ps1 -Clean         # delete the demo folder -> back to live
 #
 # Curate demo\ with the covers you want - name them so they sort (01.jpg, 02.jpg, ...) and
 # add a demo.txt with one "Album | Track | Artist | Seconds" line per cover. The plugins
-# must already be installed in Winamp / foobar2000; this only launches the hosts.
+# must already be installed in Winamp / foobar2000; this only launches the hosts. The demo
+# folder is a sticky sentinel: while it exists every app starts in demo mode, so run -Clean
+# (then restart the apps) when you're done shooting to return to the live station.
 param(
     [string]$Winamp,     # winamp.exe (auto-detected if omitted)
     [string]$Foobar,     # foobar2000.exe (auto-detected if omitted)
-    [switch]$NoLaunch    # build the demo folder but don't launch anything
+    [switch]$NoLaunch,   # build the demo folder but don't launch anything
+    [switch]$Clean       # just delete the demo folder (exit demo mode) and stop
 )
 $ErrorActionPreference = 'Stop'
 
@@ -27,6 +31,13 @@ $viewer = Join-Path $root 'desktop\build\Release\24sevenfm_covers.exe'
 $ini    = Join-Path $root 'desktop\build\Release\24seven.fm-covers.ini'
 $src    = Join-Path $root 'demo'
 $demo   = Join-Path $env:TEMP '24seven.fm-covers-demo'
+
+if ($Clean) {
+    if (Test-Path $demo) { Remove-Item $demo -Recurse -Force; Write-Host "Removed $demo" -ForegroundColor Green }
+    else { Write-Host "Nothing to clean: $demo doesn't exist." }
+    Write-Host "Restart the apps to return to the live station."
+    return
+}
 
 if (-not (Test-Path $src)) {
     throw "No demo covers at $src - create demo\ with your covers (01.jpg, 02.jpg, ...) and a demo.txt."
