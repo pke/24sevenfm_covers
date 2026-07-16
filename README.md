@@ -227,3 +227,10 @@ build pulls in nothing that isn't visible here:
 
 No component is dual-licensed for commercial use, and nothing proprietary is linked in beyond the
 Windows system libraries.
+
+## Code signing policy
+
+See the [Code signing policy](https://24sevenfm-covers.dudesoft.app/code-signing.html). Releases
+are built from source by the public `Release` workflow and published with a `.sha256` sidecar for
+every artifact. The binaries are **not signed yet** — an application to the SignPath Foundation is
+pending — so Windows SmartScreen warns on first run.

@@ -9,6 +9,7 @@ substitution.
 ```
 ├─ index.html      landing page with {{TOKEN}} placeholders (see below)
 ├─ privacy.html    privacy policy (linked from every footer)
+├─ code-signing.html  code signing policy — required wording for SignPath (see below)
 ├─ css/style.css   mobile-first; dark by default, light via OS preference
 ├─ img/            logo/favicon/social artwork + screenshots
 └─ shoot.ps1       sets up demo mode + launches the players for hand screenshots
