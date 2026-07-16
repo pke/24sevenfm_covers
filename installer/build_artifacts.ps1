@@ -229,11 +229,15 @@ if (Test-Path (Join-Path $siteSrc 'index.html')) {
         '{{RELEASE_TAG}}'           = $(if ($ReleaseTag) { $ReleaseTag } else { 'local preview' })
     }
     $utf8 = New-Object System.Text.UTF8Encoding($false)   # 5.1 default would mangle the emoji
-    $html = [System.IO.File]::ReadAllText((Join-Path $siteSrc 'index.html'), $utf8)
-    foreach ($t in $tokens.Keys) { $html = $html.Replace($t, [string]$tokens[$t]) }
-    if ($html -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\index.html: $($Matches[0])" }
-    [System.IO.File]::WriteAllText((Join-Path $root 'www\index.html'), $html, $utf8)
-    Write-Host "  www\index.html rendered ($(if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }))"
+    $stamp = if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }
+    # Every .html in site\ is a page (index, privacy, ...) - adding one needs no change here.
+    foreach ($page in Get-ChildItem $siteSrc -Filter '*.html' -File) {
+        $html = [System.IO.File]::ReadAllText($page.FullName, $utf8)
+        foreach ($t in $tokens.Keys) { $html = $html.Replace($t, [string]$tokens[$t]) }
+        if ($html -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\$($page.Name): $($Matches[0])" }
+        [System.IO.File]::WriteAllText((Join-Path $root "www\$($page.Name)"), $html, $utf8)
+        Write-Host "  www\$($page.Name) rendered ($stamp)"
+    }
 }
 
 Write-Host "`nArtifacts in $dist :" -ForegroundColor Green
