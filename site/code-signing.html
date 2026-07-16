@@ -62,10 +62,14 @@
                 <h3>Signing</h3>
                 <p>Free code signing provided by <a href="https://about.signpath.io">SignPath.io</a>,
                 certificate by <a href="https://signpath.org">SignPath Foundation</a>.</p>
-                <p>Signed binaries carry the product name <code>24seven.fm Covers</code> in their
-                file metadata. The certificate is issued to the SignPath Foundation, not to this
-                project — it attests that the binary was built from this repository by this
-                project's release pipeline, which is exactly what a signature should mean.</p>
+                <p><strong>Windows will name “SignPath Foundation” as the verified publisher — not
+                DudeSoft, and not this project.</strong> That is correct and expected, not a sign
+                that something is wrong: the certificate is issued to the SignPath Foundation, which
+                is therefore the publisher of record. This project is identified instead by the
+                product name <code>24seven.fm Covers</code> in each binary's file metadata.</p>
+                <p>What the signature actually attests to is the useful part: that the binary is a
+                valid, automated build produced from the source code in this project's repository —
+                not merely that somebody, somewhere, signed it.</p>
             </div>
 
             <div class="card">
@@ -83,7 +87,7 @@
                         Philipp Kursawe (<a href="https://github.com/pke">@pke</a>) — approves each
                         signing request individually. No release is signed automatically.</li>
                 </ul>
-                <p class="note">Multi-factor authentication is required for both source-repository
+                <p class="note">Multi-factor authentication is enabled for both source-repository
                 and signing-service access.</p>
             </div>
 
