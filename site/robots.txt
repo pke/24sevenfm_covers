@@ -1,0 +1,5 @@
+# 24seven.fm Covers - a three-page static site. All of it is meant to be indexed.
+User-agent: *
+Allow: /
+
+Sitemap: {{SITE_URL}}sitemap.xml

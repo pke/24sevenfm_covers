@@ -59,6 +59,14 @@ if ($missing) {
            (($parsed | ForEach-Object { $_.name }) -join ', '))
 }
 
+# sitemap.xml and the canonical links need ABSOLUTE urls. Rendering a deploy without
+# -SiteUrl would publish <loc></loc> and empty canonicals - invalid, and silently so, which
+# is exactly the kind of thing nobody notices until rankings are already wrong. A local
+# preview (no -ReleaseTag) is never published, so it may leave them relative.
+if ($ReleaseTag -and -not $SiteUrl) {
+    throw "render_site: -SiteUrl is required with -ReleaseTag; sitemap/canonical URLs must be absolute."
+}
+
 $base = if ($ReleaseTag) { "https://github.com/$Repo/releases/download/$ReleaseTag/" } else { 'downloads/' }
 function Url([string]$key)  { $base + $found[$key].name }
 function Size([string]$key) { '{0} KB' -f [math]::Round($found[$key].size / 1KB) }
@@ -94,11 +102,16 @@ Copy-Item (Join-Path $siteSrc 'img') $www -Recurse -Force
 $utf8  = New-Object System.Text.UTF8Encoding($false)   # 5.1's default would mangle the emoji
 $stamp = if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }
 # Every .html in site\ is a page (index, privacy, ...) - adding one needs no change here.
-foreach ($page in Get-ChildItem $siteSrc -Filter '*.html' -File) {
-    $html = [System.IO.File]::ReadAllText($page.FullName, $utf8)
-    foreach ($t in $tokens.Keys) { $html = $html.Replace($t, [string]$tokens[$t]) }
-    if ($html -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\$($page.Name): $($Matches[0])" }
-    [System.IO.File]::WriteAllText((Join-Path $www $page.Name), $html, $utf8)
+# robots.txt/sitemap.xml are named explicitly rather than copying whatever else lives in
+# site\, which would publish README.md and shoot.ps1 too. They carry {{SITE_URL}}, so they
+# must go through the token pass, not a plain copy.
+$publish = Get-ChildItem $siteSrc -File |
+           Where-Object { $_.Extension -eq '.html' -or $_.Name -in @('robots.txt', 'sitemap.xml') }
+foreach ($page in $publish) {
+    $text = [System.IO.File]::ReadAllText($page.FullName, $utf8)
+    foreach ($t in $tokens.Keys) { $text = $text.Replace($t, [string]$tokens[$t]) }
+    if ($text -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\$($page.Name): $($Matches[0])" }
+    [System.IO.File]::WriteAllText((Join-Path $www $page.Name), $text, $utf8)
     Write-Host "  www\$($page.Name) rendered ($stamp)"
 }
 Write-Host ("  Winamp {0} | foobar {1} | viewer {2}" -f `

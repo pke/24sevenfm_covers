@@ -6,6 +6,7 @@
 <title>24seven.fm Covers — cover art plugins for Winamp, foobar2000 &amp; desktop</title>
 <meta name="description" content="Cover art for the 24seven.fm radio family (StreamingSoundtracks, 1980s.FM, Adagio.FM, Death.FM, Entranced.FM) — right in your player. Free plugins for Winamp and foobar2000, plus a standalone desktop viewer.">
 <link rel="icon" href="img/favicon.ico">
+<link rel="canonical" href="{{SITE_URL}}">
 <meta property="og:type" content="website">
 <meta property="og:url" content="{{SITE_URL}}">
 <meta property="og:title" content="24seven.fm Covers">
@@ -15,6 +16,26 @@
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="css/style.css">
+<!-- Structured data: inert JSON, never executed, so the page stays JS-free apart from the
+     theme toggle. Tells search engines this is free, open-source Windows software rather
+     than leaving them to infer it from prose. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "24seven.fm Covers",
+  "url": "{{SITE_URL}}",
+  "description": "Cover art for the 24seven.fm radio stations (StreamingSoundtracks, 1980s.FM, Adagio.FM, Death.FM, Entranced.FM) - as a Winamp plugin, a foobar2000 component, or a standalone desktop player.",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Windows 7 or later",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "license": "https://opensource.org/licenses/MIT",
+  "image": "{{SITE_URL}}img/social.jpg",
+  "codeRepository": "https://github.com/pke/24sevenfm_covers",
+  "author": { "@type": "Organization", "name": "DudeSoft", "url": "https://dudesoft.app" }
+}
+</script>
 </head>
 <body>
 

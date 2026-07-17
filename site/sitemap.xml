@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Rendered from site\sitemap.xml: {{SITE_URL}} and {{UPDATED}} are filled in at deploy
+     time, so lastmod tracks the actual deploy rather than a hand-maintained date. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+        <loc>{{SITE_URL}}</loc>
+        <lastmod>{{UPDATED}}</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>1.0</priority>
+    </url>
+    <url>
+        <loc>{{SITE_URL}}privacy.html</loc>
+        <lastmod>{{UPDATED}}</lastmod>
+        <changefreq>yearly</changefreq>
+        <priority>0.3</priority>
+    </url>
+    <url>
+        <loc>{{SITE_URL}}code-signing.html</loc>
+        <lastmod>{{UPDATED}}</lastmod>
+        <changefreq>yearly</changefreq>
+        <priority>0.3</priority>
+    </url>
+</urlset>
