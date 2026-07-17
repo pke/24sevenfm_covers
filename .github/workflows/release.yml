@@ -76,11 +76,19 @@ jobs:
               if ($c -match "#define\s+SSC_VER_$_\s+(\d+)") { $Matches[1] } else { '0' } }
             $p -join '.'
           }
+          # SignPath expects the term "Code signing policy" on release pages too, naming who
+          # signs. Until the application is approved these binaries are unsigned, and saying so
+          # here is the difference between informing a reader and misleading one.
           $notes = @(
             ('Winamp plugin **v{0}** - foobar2000 component **v{1}** - desktop viewer **v{2}**' -f `
               (Ver 'winamp/gen_version.h'), (Ver 'foobar2000/foo_24sevenfm_covers/foo_version.h'), (Ver 'desktop/viewer_version.h')),
             '',
-            'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).'
+            'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).',
+            '',
+            ('**Code signing policy:** this project uses free code signing by [SignPath.io](https://about.signpath.io), ' +
+             'with a certificate from the [SignPath Foundation](https://signpath.org) - see the full ' +
+             '[code signing policy](https://24sevenfm-covers.dudesoft.app/code-signing.html). ' +
+             'That application is still pending, so these binaries are **not yet signed**.')
           ) -join "`n"
           $files = Get-ChildItem www/downloads -File | ForEach-Object FullName
           # 7 artifacts + 7 sha256 sidecars; fewer means something was skipped upstream
