@@ -63,8 +63,8 @@ ID2D1Bitmap*    g_curBmp = nullptr;
 ID2D1Bitmap*    g_prevBmp = nullptr;
 ID2D1Bitmap*    g_blurBmp = nullptr; // tiny downscaled current cover, upscaled as the poster background
 
-// A legible tint derived from the current cover's average colour, used for the
-// countdown text so it reads as part of the artwork.
+// A legible tint derived from the current cover's average colour, used for the poster
+// info box's title/artist and the countdown text so they read as part of the artwork.
 D2D1_COLOR_F    g_curTint = D2D1::ColorF(1, 1, 1, 1);
 
 void discardDeviceResources() {
