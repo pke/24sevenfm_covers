@@ -49,6 +49,24 @@ inline void saveWindowRect(ssccfg::ConfigStore& store, const WindowRect& r) {
     store.writeInt("winH", r.h);
 }
 
+inline bool sameRect(const WindowRect& a, const WindowRect& b) {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
+// Saves `now` only if it differs from `last` (which is then updated). Returns true if it
+// wrote. Hosts poll this while running rather than saving once on shutdown: a shutdown
+// hook is missed whenever the host is killed, crashes, or - as with Winamp closing to the
+// tray - simply never gets around to calling it. A degenerate rect (a minimised or
+// not-yet-placed window) is ignored, so it can't overwrite a good saved position.
+inline bool saveWindowRectIfMoved(ssccfg::ConfigStore& store, const WindowRect& now,
+                                  WindowRect& last) {
+    if (now.w <= 0 || now.h <= 0) return false;
+    if (sameRect(now, last)) return false;
+    saveWindowRect(store, now);
+    last = now;
+    return true;
+}
+
 // Reads a previously saved rect into `out`. Returns false when there is nothing usable
 // stored - first run, or a size that would restore an unusable window - in which case
 // `out` is untouched and the caller keeps its own default. Position is never second-
