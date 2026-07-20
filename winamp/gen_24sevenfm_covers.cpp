@@ -109,11 +109,20 @@ static bool currentFrameRect(ssc::WindowRect& out) {
     return out.w > 0 && out.h > 0;
 }
 
-static void saveWindowPos() {
+// Last geometry written, so the poll below only touches the INI when it actually moved.
+static ssc::WindowRect g_savedRect;
+
+// Persist the position if it changed. Called from the gate timer (~1s) rather than only
+// from quit(): Winamp is commonly set to minimise to the tray on close, so quit() may not
+// run for hours - and never at all if Winamp is killed or crashes. Polling costs one
+// GetWindowRect per tick and writes only on an actual move/resize.
+static void saveWindowPosIfMoved() {
     ssc::WindowRect r;
     if (!currentFrameRect(r)) return;
-    ssccfg::IniConfigStore store(iniPath());
-    ssc::saveWindowRect(store, r);
+    if (!ssc::sameRect(r, g_savedRect)) {
+        ssccfg::IniConfigStore store(iniPath());
+        ssc::saveWindowRectIfMoved(store, r, g_savedRect);
+    }
 }
 
 // The saved rect, or the default when nothing is stored or it would land off-screen -
@@ -216,6 +225,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // the content area - we must not touch the child's position/size (doing
             // so paints over the frame's title bar and kills its drag).
             HWND top = g_embedFrame ? g_embedFrame : hwnd;
+
+            saveWindowPosIfMoved(); // persist a move/resize now, not only at quit()
 
             // Demo/screenshot mode: always show the window and let the engine self-drive
             // (it entered demo mode in start()); no tuning or title feeding.
@@ -333,6 +344,7 @@ static int init() {
             const ssc::WindowRect wr = startupRect();
             g_embedState.r.left = wr.x;          g_embedState.r.top    = wr.y;
             g_embedState.r.right = wr.x + wr.w;  g_embedState.r.bottom = wr.y + wr.h;
+            g_savedRect = wr; // seed, so the poll doesn't rewrite what we just restored
             g_embedFrame = embedFn(&g_embedState);
             if (!(g_embedFrame && IsWindow(g_embedFrame)))
                 g_embedFrame = nullptr;
@@ -497,7 +509,7 @@ static void quit() {
     eng().stop();
     eng().setWindow(nullptr); // also kills the engine's repaint heartbeat
     if (g_hwnd) KillTimer(g_hwnd, kGateTimer);
-    saveWindowPos(); // BEFORE the frame goes away - afterwards there is no rect to read
+    saveWindowPosIfMoved(); // BEFORE the frame goes away - afterwards there is no rect to read
     if (g_embedFrame) DestroyWindow(g_embedFrame);
     else if (g_hwnd)  DestroyWindow(g_hwnd);
     g_hwnd = nullptr;
