@@ -37,6 +37,7 @@
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table + stream-URL detection
 #include "config.h"         // shared option schema + INI adapter
+#include "window_rect.h"    // save/restore the frame's position (Winamp won't do it)
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "comctl32.lib")
@@ -90,6 +91,43 @@ static void loadSettings() {
 static void saveSettings() {
     ssccfg::IniConfigStore store(iniPath());
     ssccfg::save(eng().settings, store);
+}
+
+// --- window geometry (see shared/window_rect.h) -----------------------------
+// Winamp does not persist a plugin window's position, so we do. The decisions live in
+// shared/window_rect.h (unit-tested); this is only the Win32 that feeds them.
+static const ssc::WindowRect kDefaultRect = { 200, 200, 500, 500 };
+
+// Where the frame is now. Works while it is hidden (the user closed it) - a hidden
+// window keeps its last position, which is exactly what should be restored next time.
+static bool currentFrameRect(ssc::WindowRect& out) {
+    if (!g_embedFrame || !IsWindow(g_embedFrame)) return false;
+    RECT rc;
+    if (!GetWindowRect(g_embedFrame, &rc)) return false;
+    out.x = rc.left; out.y = rc.top;
+    out.w = rc.right - rc.left; out.h = rc.bottom - rc.top;
+    return out.w > 0 && out.h > 0;
+}
+
+static void saveWindowPos() {
+    ssc::WindowRect r;
+    if (!currentFrameRect(r)) return;
+    ssccfg::IniConfigStore store(iniPath());
+    ssc::saveWindowRect(store, r);
+}
+
+// The saved rect, or the default when nothing is stored or it would land off-screen -
+// a monitor unplugged since last run must not strand the window where it can't be
+// reached. SM_?VIRTUALSCREEN covers all monitors, and its origin is negative when one
+// sits left of / above the primary.
+static ssc::WindowRect startupRect() {
+    ssccfg::IniConfigStore store(iniPath());
+    ssc::WindowRect r;
+    if (!ssc::loadWindowRect(store, r)) return kDefaultRect;
+    const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    if (!ssc::rectVisibleIn(r, vx, vy, vx + vw, vy + vh)) return kDefaultRect;
+    return r;
 }
 
 // Plugin entry points (defined below) and the descriptor Winamp fills in.
@@ -289,8 +327,12 @@ static int init() {
         if (embedFn) {
             ZeroMemory(&g_embedState, sizeof(g_embedState));
             g_embedState.flags = 0; // resizable
-            g_embedState.r.left = 200; g_embedState.r.top = 200;
-            g_embedState.r.right = 700; g_embedState.r.bottom = 700;
+            // Reopen where the user left it. embedWindowState.r is input only - Winamp
+            // places the frame with it and never writes it back - so this is the one
+            // chance to restore the position.
+            const ssc::WindowRect wr = startupRect();
+            g_embedState.r.left = wr.x;          g_embedState.r.top    = wr.y;
+            g_embedState.r.right = wr.x + wr.w;  g_embedState.r.bottom = wr.y + wr.h;
             g_embedFrame = embedFn(&g_embedState);
             if (!(g_embedFrame && IsWindow(g_embedFrame)))
                 g_embedFrame = nullptr;
@@ -455,6 +497,7 @@ static void quit() {
     eng().stop();
     eng().setWindow(nullptr); // also kills the engine's repaint heartbeat
     if (g_hwnd) KillTimer(g_hwnd, kGateTimer);
+    saveWindowPos(); // BEFORE the frame goes away - afterwards there is no rect to read
     if (g_embedFrame) DestroyWindow(g_embedFrame);
     else if (g_hwnd)  DestroyWindow(g_hwnd);
     g_hwnd = nullptr;
