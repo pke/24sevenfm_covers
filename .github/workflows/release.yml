@@ -2,11 +2,23 @@
 # GitHub Release with every artifact, and deploy the website (rendered against
 # that release's download URLs) to GitHub Pages.
 #
-# Trigger manually (Actions > Release > Run workflow). Tag format: vYYYY.MM.DD-<run>
-# where <run> is the workflow run number - unique even for several releases a day.
+# Runs when a push changes a per-module version header, and on demand (Actions > Release >
+# Run workflow). Tag format: vYYYY.MM.DD-<run>, <run> being the workflow run number - unique
+# even for several releases a day.
+#
+# Keying off the version headers means a release happens exactly when something SHIPPABLE
+# moved: .githooks/post-commit rewrites them only for fix/perf/feat commits touching that
+# module (or shared/), so pushing docs, CI or site-only changes releases nothing. Batch your
+# commits and push once - one push of shippable work is one release, not one per commit.
 name: Release
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - 'winamp/gen_version.h'
+      - 'foobar2000/foo_24sevenfm_covers/foo_version.h'
+      - 'desktop/viewer_version.h'
   workflow_dispatch:
 
 permissions:
@@ -14,8 +26,12 @@ permissions:
   pages: write      # deploy the site
   id-token: write   # Pages OIDC
 
+# Shares the group with deploy-site.yml: both end in a GitHub Pages deployment, and a push
+# that changes site\ AND a version header triggers both at once. Same group = the second
+# waits instead of racing the first to the same Pages environment. Never cancel in
+# progress - a half-published release is worse than a slow one.
 concurrency:
-  group: release
+  group: pages
   cancel-in-progress: false
 
 jobs:

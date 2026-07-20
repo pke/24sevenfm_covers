@@ -6,9 +6,12 @@ name: Tests
 on:
   push:
     branches: [master]
-    paths: [lib/**, .github/workflows/test.yml]
+    # shared/** too: the test TU includes shared headers (stations.h, image_limits.h,
+    # window_rect.h), so a change confined to shared/ can break tests that would
+    # otherwise never run.
+    paths: [lib/**, shared/**, .github/workflows/test.yml]
   pull_request:
-    paths: [lib/**]
+    paths: [lib/**, shared/**]
 
 # Least privilege: this job only reads the repo. checkout persists the token into
 # git config, and lib/CMakeLists.txt + doctest.cmake run at configure time, so a

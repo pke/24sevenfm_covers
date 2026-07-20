@@ -130,11 +130,16 @@ logs don't interleave: `%TEMP%\24seven.fm-covers-winamp.log`, `-foobar.log`, and
 
 ## Packaging / building the artifacts
 
-Releases are published by the **Release workflow** (`.github/workflows/release.yml`, run
-manually from the Actions tab): it provisions the foobar2000 SDK + WTL from their pinned
-archives, runs the test gate, builds all three binaries, creates a GitHub release tagged
-`vYYYY.MM.DD-<run>` with every artifact, and deploys the website (rendered from `site\`
-against that release's download URLs) to GitHub Pages.
+Releases are published by the **Release workflow** (`.github/workflows/release.yml`): it runs
+the test gate, builds all three binaries from the vendored SDKs, creates a GitHub release
+tagged `vYYYY.MM.DD-<run>` with every artifact + `.sha256` sidecar, and deploys the website
+(rendered from `site\` against that release's download URLs) to GitHub Pages.
+
+It triggers on a **push that changes a per-module version header**, and can also be run
+manually from the Actions tab. Since the hook rewrites those headers only for
+`fix:`/`perf:`/`feat:` commits, pushing docs, CI or site-only work releases nothing — so
+batch your commits and push once: one push of shippable work is one release, not one per
+commit.
 
 Locally, the same script the workflow uses — `installer\build_artifacts.ps1` — regenerates
 every distributable into `www\downloads\` and renders a **local preview** of the site into
