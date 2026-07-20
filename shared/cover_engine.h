@@ -45,6 +45,9 @@ public:
         int  station     = 0;     // index into ssc::kStations (see stations.h); 0 = SST
         int  layout      = 0;     // 0 = fill screen, 1 = poster (blurred bg + centered cover + info box)
         int  posterBlur  = 24;    // poster background blur strength (INI "posterBlur"; not in the UI)
+        int  borderRadius = 45;   // poster cover + info box corner radius, per mille of the
+                                  // cover's side (INI "borderRadius"; not in the UI).
+                                  // 0 = square, 500 = circle.
     };
     Settings settings;
 

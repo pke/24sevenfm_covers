@@ -20,6 +20,7 @@ static const GUID g_guid_trans   = { 0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0
 static const GUID g_guid_fade    = { 0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x05 } };
 static const GUID g_guid_layout  = { 0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x06 } };
 static const GUID g_guid_pblur   = { 0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x07 } };
+static const GUID g_guid_radius  = { 0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x08 } };
 
 static cfg_int cfg_overlay(g_guid_overlay, 0);
 static cfg_int cfg_size(g_guid_size, 0);
@@ -28,6 +29,7 @@ static cfg_int cfg_trans(g_guid_trans, 1);
 static cfg_int cfg_fade(g_guid_fade, 1000);
 static cfg_int cfg_layout(g_guid_layout, 0);
 static cfg_int cfg_pblur(g_guid_pblur, 24);
+static cfg_int cfg_radius(g_guid_radius, 45);
 
 // Maps a shared config key -> its cfg_int. foobar auto-follows the tuned stream, so it
 // does not persist the station: readStr/writeStr are inert (the engine's auto-follow
@@ -52,6 +54,7 @@ private:
         if (!std::strcmp(key, "fadeMs"))        return &cfg_fade;
         if (!std::strcmp(key, "layout"))        return &cfg_layout;
         if (!std::strcmp(key, "posterBlur"))    return &cfg_pblur;
+        if (!std::strcmp(key, "borderRadius"))  return &cfg_radius;
         return nullptr;
     }
 };

@@ -455,6 +455,7 @@ void CoverEngine::onPaint(HWND h) {
     std::wstring title, artist;
     if (poster) { std::lock_guard<std::mutex> lock(mutex_); title = infoTitle_; artist = infoArtist_; }
     d2d::setPosterBlur(settings.posterBlur);
+    d2d::setCoverRadius(settings.borderRadius);
     d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(), settings.rollDigits, status,
                 settings.layout, title.c_str(), artist.c_str());
 }

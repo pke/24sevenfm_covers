@@ -39,6 +39,15 @@ void endFade();
 // Changing it invalidates the cached blur so it regenerates on the next poster render.
 void setPosterBlur(int standardDeviation);
 
+// Corner radius of the poster-mode cover AND its info box, in THOUSANDTHS of the cover's
+// side, so the rounding scales with the window instead of being a fixed pixel count
+// (45 = 4.5%, the long-standing look; 0 = square corners; 500 = a circle). One value for
+// both: they sit next to each other, so mismatched corners are immediately visible - the
+// box was previously 5% against the cover's 4.5%. Persisted in the INI as "borderRadius"
+// but not exposed in the UI. Fill layout is always square - there the cover IS the window,
+// so rounding it would just expose the backdrop at the corners.
+void setCoverRadius(int perMille);
+
 // Renders hwnd's client area. `progress` in [0,1] drives the active transition
 // between the outgoing and incoming covers (1 = settled on the incoming one);
 // `transition` selects which effect. remainingSeconds < 0 hides the countdown

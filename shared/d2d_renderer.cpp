@@ -47,6 +47,7 @@ ID2D1Device*         g_blurDevice = nullptr;
 ID2D1DeviceContext*  g_blurCtx = nullptr;
 ID2D1Effect*         g_blurEffect = nullptr;
 int                  g_posterBlur = 24; // Gaussian stddev at the blur working res (INI "posterBlur")
+int                  g_coverRadius = 45; // poster cover corner radius, per mille of its side (INI "borderRadius")
 
 // Per-window device-dependent resources (recreated on device loss).
 ID2D1HwndRenderTarget* g_rt = nullptr;
@@ -369,13 +370,15 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
         boxY = coverY + coverS + gap;
     }
 
-    // Cover (rounded), with the active transition.
+    // Cover (rounded), with the active transition. The radius is per mille of the cover's
+    // side so it tracks the window size; 45 (4.5%) is the default look.
     drawCover(D2D1::RectF(coverX, coverY, coverX + coverS, coverY + coverS),
-              transition, progress, coverS * 0.045f);
+              transition, progress, coverS * (g_coverRadius / 1000.0f));
 
-    // Info box.
+    // Info box - same radius as the cover, so the two rounded shapes sitting side by side
+    // (or stacked) match. Both are relative to coverS, so the box tracks the cover exactly.
     if (g_boxBrush) {
-        const float br = coverS * 0.05f;
+        const float br = coverS * (g_coverRadius / 1000.0f);
         g_rt->FillRoundedRectangle(
             D2D1::RoundedRect(D2D1::RectF(boxX, boxY, boxX + boxW, boxY + boxH), br, br), g_boxBrush);
     }
@@ -502,6 +505,9 @@ void setPosterBlur(int standardDeviation) {
         SafeRelease(g_blurBmp); // regenerate the cached blur at the new strength
     }
 }
+
+// Nothing cached to invalidate: the radius is applied per frame when the cover is clipped.
+void setCoverRadius(int perMille) { g_coverRadius = perMille; }
 
 bool render(HWND hwnd, float progress, Transition transition, int remainingSeconds,
             float overlayFontFrac, bool rollDigits, const wchar_t* statusText,

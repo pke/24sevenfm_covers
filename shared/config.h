@@ -25,6 +25,9 @@ inline bool load(CoverEngine::Settings& s, ConfigStore& store) {
     s.fadeMs        = clampInt(store.readInt("fadeMs", 1000), 500, 2000);
     s.layout        = clampInt(store.readInt("layout", 0), 0, 1);
     s.posterBlur    = clampInt(store.readInt("posterBlur", 24), 0, 200);
+    // Per mille of the cover's side, so 500 (half) is already a circle - clamping there
+    // keeps a typo like 4500 from being silently treated as something meaningful.
+    s.borderRadius  = clampInt(store.readInt("borderRadius", 45), 0, 500);
     const std::string stationId = store.readStr("station", "");
     s.station = ssc::validStationIndex(ssc::stationIndexForId(stationId.c_str()));
     return !stationId.empty();
@@ -38,6 +41,7 @@ inline void save(const CoverEngine::Settings& s, ConfigStore& store) {
     store.writeInt("fadeMs",        s.fadeMs);
     store.writeInt("layout",        s.layout);
     store.writeInt("posterBlur",    s.posterBlur);
+    store.writeInt("borderRadius",  s.borderRadius);
     store.writeStr("station",       ssc::station(s.station).id);
 }
 

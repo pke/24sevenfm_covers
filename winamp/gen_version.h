@@ -6,10 +6,10 @@
    module (winamp/) OR the shared code (lib/, shared/); edit by hand only to pin.
    RC-safe: SSC_VER_STR is a pre-built literal (rc.exe does not concat adjacent literals). */
 #define SSC_VER_MAJOR 1
-#define SSC_VER_MINOR 11
-#define SSC_VER_PATCH 2
-#define SSC_VER_NUM   1, 11, 2, 0
-#define SSC_VER_STR   "1.11.2"
+#define SSC_VER_MINOR 12
+#define SSC_VER_PATCH 0
+#define SSC_VER_NUM   1, 12, 0, 0
+#define SSC_VER_STR   "1.12.0"
 
 #include "../shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
 #endif /* GEN_VERSION_H */
