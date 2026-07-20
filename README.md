@@ -217,6 +217,23 @@ image decode; cleartext transport on non-Windows until native TLS lands).
   backoff. Don't run two front-ends against the station at once — they share a log and double the
   server load.
 
+### Hidden settings
+
+Two poster-mode knobs are persisted but deliberately kept out of the options UI — they are
+taste, not everyday options. Edit them in the INI (`[options]` section) while the app is
+**closed**, or it will write its in-memory values back over your change:
+
+| Key | Default | Range | Effect |
+|-----|---------|-------|--------|
+| `posterBlur` | `24` | 0–200 | Gaussian blur strength of the poster background (the enlarged cover behind the artwork). `0` = a sharp, unblurred backdrop. |
+| `borderRadius` | `45` | 0–500 | Corner radius of the poster cover **and its info box**, in **thousandths of the cover's side**, so it scales with the window. `45` = 4.5% (the default look), `0` = square corners, `500` = a circle. |
+
+The INI lives next to the viewer's `.exe` (or `%APPDATA%\24seven.fm Covers\` when that folder
+isn't writable), and in Winamp's settings folder for the plugin. Neither key applies to the
+**fill** layout — there the cover *is* the window, so there is no backdrop to blur and rounding
+it would only expose the backdrop at the corners. foobar2000 keeps its settings in its own
+binary config rather than an INI, so these are not hand-editable there.
+
 ## License
 
 [MIT](LICENSE) — © 2026 DudeSoft.
