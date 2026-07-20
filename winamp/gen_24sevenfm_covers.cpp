@@ -181,6 +181,12 @@ static void setActive(bool on) {
     if (on == g_active) return;
     g_active = on;
     if (on) {
+        // Bring up Direct2D/WIC/DirectWrite on FIRST activation, not at plugin load.
+        // Doing it in init() ran on Winamp's UI thread during startup and loaded the
+        // graphics stack even for users who never tune to a 24seven.fm station -
+        // contradicting the rule the gate is built on: idle costs nothing. d2d::init()
+        // is idempotent, so re-activating is free.
+        if (!g_d2dReady) g_d2dReady = d2d::init();
         eng().setWindow(g_hwnd); // heartbeat timer + render target (rebuilt on next paint)
         eng().start();           // cover monitor (autoAdvance=false: follows the ICY title)
     } else {
@@ -320,7 +326,8 @@ static int init() {
     g_hInst = g_plugin.hDllInstance;
     loadSettings();
 
-    g_d2dReady = d2d::init(); // hardware-accelerated render path (Windows 7+)
+    // NOTE: Direct2D is deliberately NOT initialised here - setActive() brings it up on
+    // first activation, keeping the graphics stack off Winamp's startup path.
 
     WNDCLASSA wc = {};
     wc.style = CS_DBLCLKS; // deliver WM_LBUTTONDBLCLK on the cover (double-click -> fullscreen)
