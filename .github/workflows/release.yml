@@ -113,8 +113,11 @@ jobs:
             foreach ($s in @(git log "$prev..HEAD" --pretty=format:%s)) {
               if ($s -match '^(feat|fix|perf)(\(([^)]+)\))?!?:\s*(.+)$') {
                 $type = $Matches[1]; $scope = $Matches[3]; $text = $Matches[4]
-                $label = if ($scope) { if ($friendly[$scope]) { $friendly[$scope] } else { $scope } } else { $null }
-                $groups[$type] += $(if ($label) { "- **$label** - $text" } else { "- $text" })
+                # No scope means the change wasn't confined to one host - shared code, which
+                # ships in all three. Labelling it 'All apps' rather than leaving it bare
+                # keeps every line in the same shape, however carefully the scope was typed.
+                $label = if ($scope) { if ($friendly[$scope]) { $friendly[$scope] } else { $scope } } else { 'All apps' }
+                $groups[$type] += "- **$label** - $text"
               }
             }
           }
