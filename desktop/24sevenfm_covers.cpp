@@ -29,6 +29,7 @@
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "config.h"         // shared option schema + INI adapter
+#include "window_rect.h"    // remember the window's position/size across runs
 #include "viewer_resource.h"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -103,6 +104,51 @@ static std::string iniPath() {
 static void loadSettings() {
     ssccfg::IniConfigStore store(iniPath());
     g_firstRun = !ssccfg::load(eng().settings, store); // no station stored yet -> prompt on first run
+}
+
+// --- window geometry (see shared/window_rect.h) -----------------------------
+static ssc::WindowRect g_savedRect; // last geometry written, so we only write on a change
+
+// The window's RESTORED geometry plus whether it is maximized. rcNormalPosition, not
+// GetWindowRect: a maximized window would otherwise save the screen-sized rect and lose
+// the size to go back to.
+static bool currentWindowRect(HWND hwnd, ssc::WindowRect& out) {
+    if (!hwnd || !IsWindow(hwnd)) return false;
+    WINDOWPLACEMENT wp = { sizeof(wp) };
+    if (!GetWindowPlacement(hwnd, &wp)) return false;
+    const RECT& r = wp.rcNormalPosition;
+    out.x = r.left; out.y = r.top;
+    out.w = r.right - r.left; out.h = r.bottom - r.top;
+    out.maximized = (wp.showCmd == SW_SHOWMAXIMIZED);
+    return out.w > 0 && out.h > 0;
+}
+
+// Called when a move/resize finishes and on shutdown. Writes only on an actual change.
+static void saveWindowPosIfMoved(HWND hwnd) {
+    ssc::WindowRect r;
+    if (!currentWindowRect(hwnd, r)) return;
+    if (ssc::sameRect(r, g_savedRect)) return;
+    ssccfg::IniConfigStore store(iniPath());
+    ssc::saveWindowRectIfMoved(store, r, g_savedRect);
+}
+
+// The saved rect, or a DPI-scaled default when nothing is stored or it would land
+// off-screen (a monitor unplugged since last run must not strand the window).
+static ssc::WindowRect startupRect(int dpi) {
+    ssccfg::IniConfigStore store(iniPath());
+    ssc::WindowRect r;
+    if (ssc::loadWindowRect(store, r)) {
+        const int vx = GetSystemMetrics(SM_XVIRTUALSCREEN), vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN), vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if (ssc::rectVisibleIn(r, vx, vy, vx + vw, vy + vh)) return r;
+    }
+    const int side = MulDiv(500, dpi, 96);
+    RECT rc = { 0, 0, side, side };
+    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    ssc::WindowRect def;
+    def.x = CW_USEDEFAULT; def.y = CW_USEDEFAULT;
+    def.w = rc.right - rc.left; def.h = rc.bottom - rc.top;
+    return def;
 }
 static void saveSettings() {
     ssccfg::IniConfigStore store(iniPath());
@@ -290,6 +336,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SIZE:
             InvalidateRect(hwnd, nullptr, FALSE);
+            // Maximize/restore doesn't go through WM_EXITSIZEMOVE, so catch it here.
+            if (wp == SIZE_MAXIMIZED || wp == SIZE_RESTORED) saveWindowPosIfMoved(hwnd);
+            return 0;
+        case WM_EXITSIZEMOVE:
+            // Once, when the user lets go - not on every pixel of the drag.
+            saveWindowPosIfMoved(hwnd);
             return 0;
         case WM_ERASEBKGND:
             return 1; // D2D paints the whole client area
@@ -334,6 +386,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if ((wp & 0xFFF0) == SC_OPTIONS) { openOptions(); return 0; }
             break;
         case WM_DESTROY:
+            saveWindowPosIfMoved(hwnd); // last chance, while the window still exists
             PostQuitMessage(0);
             return 0;
     }
@@ -375,14 +428,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         typedef UINT (WINAPI *GetDpiForSystem_t)();
         if (auto p = (GetDpiForSystem_t)GetProcAddress(u, "GetDpiForSystem")) dpi = p();
     }
-    const int side = MulDiv(500, dpi, 96);
-    RECT rc = { 0, 0, side, side };
-    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    // Reopen where the user left it (falls back to a DPI-scaled default).
+    const ssc::WindowRect wr = startupRect(dpi);
     g_hwnd = CreateWindowExA(0, kWndClass, "24seven.fm Covers", WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT,
-                             rc.right - rc.left, rc.bottom - rc.top,
+                             wr.x, wr.y, wr.w, wr.h,
                              nullptr, nullptr, g_hInst, nullptr);
     if (!g_hwnd) return 1;
+    // Seed the comparison so the first save doesn't rewrite what we just restored. The
+    // window is created un-maximized and maximized below (if it was), so carry that flag
+    // over from what we loaded rather than reading it back off a not-yet-maximized window.
+    currentWindowRect(g_hwnd, g_savedRect);
+    g_savedRect.maximized = wr.maximized;
 
     // Add "Options..." to the window's system menu (right-click title bar / Alt+Space).
     if (HMENU sys = GetSystemMenu(g_hwnd, FALSE)) {
@@ -390,7 +446,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         AppendMenuA(sys, MF_STRING, SC_OPTIONS, "Options...");
     }
 
-    ShowWindow(g_hwnd, nCmdShow ? nCmdShow : SW_SHOWNORMAL);
+    // Reopen maximized if that's how it was left - unless the shell asked for something
+    // specific (e.g. a shortcut set to "Minimized"), which takes precedence.
+    const int show = nCmdShow ? nCmdShow : SW_SHOWNORMAL;
+    ShowWindow(g_hwnd, (g_savedRect.maximized && show == SW_SHOWNORMAL) ? SW_SHOWMAXIMIZED : show);
     UpdateWindow(g_hwnd);
 
     // Hand the window to the engine and start the monitor in live/auto-advance mode.
