@@ -3,8 +3,13 @@
 #
 # Each shipped binary has its OWN version header. A commit bumps a binary iff it touches
 # that binary's code OR the shared code (lib/, shared/). The commit type sets the size:
-#   fix: -> patch     feat: -> minor     feat! / BREAKING CHANGE -> major
-# Other types (chore/docs/refactor/test/ci/style/perf/build) do not bump.
+#   fix: / perf: -> patch     feat: -> minor     feat! / BREAKING CHANGE -> major
+# Other types (chore/docs/refactor/test/ci/style/build) do not bump.
+#
+# perf: bumps because it changes SHIPPED code, and a released binary must never be quietly
+# replaced by different bytes under the same version. Types that never reach a binary
+# (docs, ci, test, chore) don't bump; refactor: doesn't either, being behaviour-preserving
+# by definition - if it isn't, it wasn't a refactor.
 #
 #   Shared    lib/**, shared/**                    -> bumps ALL three modules
 #   Winamp    winamp/**                            -> winamp/gen_version.h
@@ -28,7 +33,7 @@ if printf '%s\n' "$body" | grep -qiE '^BREAKING[ -]CHANGE' \
   bump=major
 elif printf '%s' "$subject" | grep -qE '^feat(\([^)]*\))?:'; then
   bump=minor
-elif printf '%s' "$subject" | grep -qE '^fix(\([^)]*\))?:'; then
+elif printf '%s' "$subject" | grep -qE '^(fix|perf)(\([^)]*\))?:'; then
   bump=patch
 fi
 [ -z "$bump" ] && exit 0

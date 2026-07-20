@@ -183,8 +183,9 @@ The version and copyright/homepage are single-sourced in [`shared/version.h`](sh
 (`SSC_VER_*`, `SSC_COMPANY`, `SSC_COPYRIGHT`, `SSC_WEB`) and flow into every binary's `VERSIONINFO`,
 the About screens, and the NSIS installer (via `build_artifacts.ps1`). A git hook
 (`.githooks/post-commit`, enable with `git config core.hooksPath .githooks`) auto-bumps the version
-from [Conventional Commits](https://www.conventionalcommits.org) — `fix:` → patch, `feat:` → minor,
-`feat!`/`BREAKING CHANGE` → major.
+from [Conventional Commits](https://www.conventionalcommits.org) — `fix:`/`perf:` → patch, `feat:` →
+minor, `feat!`/`BREAKING CHANGE` → major. `perf:` bumps because it changes shipped code, and a
+released binary must never be quietly replaced by different bytes under the same version.
 
 ## Security
 
