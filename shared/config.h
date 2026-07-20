@@ -9,23 +9,11 @@
 #include <string>
 #include <utility>
 
+#include "config_store.h" // ssccfg::ConfigStore + clampInt (Win32-free, so tests can fake it)
 #include "cover_engine.h" // CoverEngine::Settings (pulls <windows.h>)
 #include "stations.h"     // station id <-> index
 
 namespace ssccfg {
-
-// Storage adapter: read/write a named value. The shared load()/save() below own the
-// keys, defaults and clamping; an implementation only has to persist a key/value pair
-// however it likes (INI entry, cfg_var, registry, ...).
-struct ConfigStore {
-    virtual ~ConfigStore() {}
-    virtual int         readInt (const char* key, int def) = 0;
-    virtual void        writeInt(const char* key, int value) = 0;
-    virtual std::string readStr (const char* key, const char* def) = 0;
-    virtual void        writeStr(const char* key, const char* value) = 0;
-};
-
-inline int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 // Load every option into `s`, clamped to its valid range. Returns true if a station
 // was stored (false = first run, so the viewer can prompt for one).
