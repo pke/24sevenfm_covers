@@ -63,6 +63,10 @@ public:
 
 private:
     int OnCreate(LPCREATESTRUCT) {
+        // Bring up Direct2D/WIC/DirectWrite here rather than at component load, so
+        // foobar2000's startup doesn't pay for a graphics stack nobody has asked to see.
+        // Idempotent, so a second element (or a re-created one) costs nothing.
+        d2d::init();
         CoverEngine::instance().setWindow(m_hWnd); // engine draws into us + owns its heartbeat
         if (ssc::Demo::active()) CoverEngine::instance().start(); // demo mode: covers without playback
         return 0;

@@ -35,7 +35,10 @@ namespace {
 class ssc_initquit : public initquit {
 public:
     void on_init() override {
-        d2d::init();
+        // Direct2D is NOT initialised here: on_init runs during foobar2000's startup, and
+        // loading the graphics stack for someone who never adds the cover element (or never
+        // plays a family stream) is exactly the idle cost the gate below avoids. The UI
+        // element brings it up in OnCreate, when there is finally something to render.
         CoverEngine::instance().setLogName("24seven.fm-covers-foobar");
         ssccfg::loadIntoEngine();
 
