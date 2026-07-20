@@ -19,6 +19,10 @@ namespace ssc {
 
 struct WindowRect {
     int x = 0, y = 0, w = 0, h = 0;
+    // x/y/w/h are always the RESTORED geometry (Win32: WINDOWPLACEMENT.rcNormalPosition),
+    // never what a maximized window currently measures - otherwise un-maximizing after a
+    // restart would hand back the screen-sized rect instead of the user's own size.
+    bool maximized = false;
 };
 
 // Smallest window we will restore. Anything less is treated as a mis-save and grown,
@@ -47,10 +51,11 @@ inline void saveWindowRect(ssccfg::ConfigStore& store, const WindowRect& r) {
     store.writeInt("winY", r.y);
     store.writeInt("winW", r.w);
     store.writeInt("winH", r.h);
+    store.writeInt("winMax", r.maximized ? 1 : 0);
 }
 
 inline bool sameRect(const WindowRect& a, const WindowRect& b) {
-    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h && a.maximized == b.maximized;
 }
 
 // Saves `now` only if it differs from `last` (which is then updated). Returns true if it
@@ -81,6 +86,7 @@ inline bool loadWindowRect(ssccfg::ConfigStore& store, WindowRect& out) {
     out.y = store.readInt("winY", 0);
     out.w = w < kMinWindowSize ? kMinWindowSize : w;
     out.h = h < kMinWindowSize ? kMinWindowSize : h;
+    out.maximized = store.readInt("winMax", 0) != 0; // absent in INIs written before the flag
     return true;
 }
 
