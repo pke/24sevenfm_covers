@@ -38,7 +38,11 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
+      # Full history + tags: the release notes are built from the commits since the
+      # previous tag, and the default shallow clone has neither.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Compute release tag
         id: tag
@@ -95,17 +99,47 @@ jobs:
           # SignPath expects the term "Code signing policy" on release pages too, naming who
           # signs. Until the application is approved these binaries are unsigned, and saying so
           # here is the difference between informing a reader and misleading one.
+          # --- changelog from the Conventional Commits since the previous release --------
+          # Only user-facing types appear: feat/fix/perf are exactly the ones that move a
+          # version (see .githooks/post-commit), so the notes and the version bumps can't
+          # tell different stories. chore/ci/docs/test/refactor are deliberately omitted.
+          $prev = git describe --tags --abbrev=0 2>$null
+          $groups = [ordered]@{ feat = @(); fix = @(); perf = @() }
+          if ($LASTEXITCODE -eq 0 -and $prev) {
+            $friendly = @{
+              winamp   = 'Winamp';   foobar = 'foobar2000'; viewer = 'Desktop viewer'
+              renderer = 'Renderer'; shared = 'All apps';   site   = 'Website'
+            }
+            foreach ($s in @(git log "$prev..HEAD" --pretty=format:%s)) {
+              if ($s -match '^(feat|fix|perf)(\(([^)]+)\))?!?:\s*(.+)$') {
+                $type = $Matches[1]; $scope = $Matches[3]; $text = $Matches[4]
+                $label = if ($scope) { if ($friendly[$scope]) { $friendly[$scope] } else { $scope } } else { $null }
+                $groups[$type] += $(if ($label) { "- **$label** - $text" } else { "- $text" })
+              }
+            }
+          }
+          $changelog = @()
+          foreach ($g in @(@('feat','### New'), @('fix','### Fixed'), @('perf','### Performance'))) {
+            if ($groups[$g[0]].Count) { $changelog += $g[1]; $changelog += $groups[$g[0]]; $changelog += '' }
+          }
+          if (-not $changelog.Count) { $changelog = @('No user-facing changes since the previous release.', '') }
+
           $notes = @(
             ('Winamp plugin **v{0}** - foobar2000 component **v{1}** - desktop viewer **v{2}**' -f `
               (Ver 'winamp/gen_version.h'), (Ver 'foobar2000/foo_24sevenfm_covers/foo_version.h'), (Ver 'desktop/viewer_version.h')),
-            '',
+            ''
+          ) + $changelog + @(
             'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).',
             '',
             ('**Code signing policy:** this project uses free code signing by [SignPath.io](https://about.signpath.io), ' +
              'with a certificate from the [SignPath Foundation](https://signpath.org) - see the full ' +
              '[code signing policy](https://24sevenfm-covers.dudesoft.app/code-signing.html). ' +
              'That application is still pending, so these binaries are **not yet signed**.')
-          ) -join "`n"
+          )
+          if ($prev) {
+            $notes += @('', "**Full changelog:** https://github.com/${{ github.repository }}/compare/$prev...$env:TAG")
+          }
+          $notes = $notes -join "`n"
           $files = Get-ChildItem www/downloads -File | ForEach-Object FullName
           # 7 artifacts + 7 sha256 sidecars; fewer means something was skipped upstream
           if ($files.Count -ne 14) { throw "expected 14 release files, found $($files.Count) - refusing to ship a partial release" }
