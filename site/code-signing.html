@@ -45,32 +45,37 @@
 
     <section style="border-top: 0;">
         <h2>Code signing policy</h2>
-        <p class="effective">Applies from 17 July 2026</p>
-        <p class="lead">How the downloads on this site are built, approved and signed — and how
-        anyone can check that for themselves.</p>
+        <p class="effective">Updated 21 July 2026</p>
+        <p class="lead">How the downloads on this site are built — and how anyone can check that
+        a file really is what it claims to be.</p>
 
         <div class="stack">
             <div class="card">
-                <h3>Status: not yet signed</h3>
-                <p>An application to the SignPath Foundation is <strong>pending</strong>. Until it
-                is granted, the downloads are <strong>not signed</strong>, and Windows SmartScreen
-                will warn the first time an installer runs. That warning is expected, and the
-                policy below describes how signing will work once the certificate is issued — it
-                does not describe the current downloads.</p>
+                <h3>The downloads are not signed</h3>
+                <p>Windows SmartScreen will warn the first time an installer runs. That warning is
+                expected, and it is worth being straightforward about why rather than leaving you
+                to guess.</p>
+                <p>A certificate from the <a href="https://signpath.org">SignPath Foundation</a>,
+                which provides free signing for open-source projects, was applied for in July 2026
+                and <strong>declined</strong>: the programme is for projects that have already built
+                public visibility — stars, forks, contributors, external write-ups — and this one is
+                new and small. That is a fair call, and the application can be renewed later. A
+                commercial certificate costs several hundred euros a year, which is hard to justify
+                for a free fan project.</p>
+                <p>So instead of asking you to trust a signature, everything below is arranged so
+                you can verify the download yourself.</p>
             </div>
 
             <div class="card">
-                <h3>Signing</h3>
-                <p>Free code signing provided by <a href="https://about.signpath.io">SignPath.io</a>,
-                certificate by <a href="https://signpath.org">SignPath Foundation</a>.</p>
-                <p><strong>Windows will name “SignPath Foundation” as the verified publisher — not
-                DudeSoft, and not this project.</strong> That is correct and expected, not a sign
-                that something is wrong: the certificate is issued to the SignPath Foundation, which
-                is therefore the publisher of record. This project is identified instead by the
-                product name <code>24seven.fm Covers</code> in each binary's file metadata.</p>
-                <p>What the signature actually attests to is the useful part: that the binary is a
-                valid, automated build produced from the source code in this project's repository —
-                not merely that somebody, somewhere, signed it.</p>
+                <h3>Verifying a download</h3>
+                <p>Every release publishes a <code>.sha256</code> sidecar next to each file.
+                Compare it against what you downloaded:</p>
+                <p><code>sha256sum -c &lt;file&gt;.sha256</code> — or on Windows, <code>certutil
+                -hashfile &lt;file&gt; SHA256</code> and check it matches the sidecar.</p>
+                <p>That tells you the file wasn't altered in transit. For where it came from in the
+                first place, every artifact is built by a public GitHub Actions run from the source
+                in this repository — the run log names the exact commit, so the chain from source to
+                download is inspectable end to end.</p>
             </div>
 
             <div class="card">
@@ -85,11 +90,11 @@
                         Philipp Kursawe (<a href="https://github.com/pke">@pke</a>) — reviews what
                         goes into a release.</li>
                     <li><strong>Approver</strong>
-                        Philipp Kursawe (<a href="https://github.com/pke">@pke</a>) — approves each
-                        signing request individually. No release is signed automatically.</li>
+                        Philipp Kursawe (<a href="https://github.com/pke">@pke</a>) — decides what
+                        is released, and when.</li>
                 </ul>
-                <p class="note">Multi-factor authentication is enabled for both source-repository
-                and signing-service access.</p>
+                <p class="note">Multi-factor authentication is enabled on the source repository, so
+                the only account that can publish a release is protected by more than a password.</p>
             </div>
 
             <div class="card">

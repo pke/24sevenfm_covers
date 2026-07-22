@@ -255,5 +255,9 @@ Windows system libraries.
 
 See the [Code signing policy](https://24sevenfm-covers.dudesoft.app/code-signing.html). Releases
 are built from source by the public `Release` workflow and published with a `.sha256` sidecar for
-every artifact. The binaries are **not signed yet** — an application to the SignPath Foundation is
-pending — so Windows SmartScreen warns on first run.
+every artifact, so a download can be verified without a signature.
+
+The binaries are **not signed**, so Windows SmartScreen warns on first run. A free
+[SignPath Foundation](https://signpath.org) certificate was applied for in July 2026 and declined —
+that programme requires public visibility (stars, forks, contributors, external write-ups) the
+project hasn't built yet, and it can be reapplied for later.
