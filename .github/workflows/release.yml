@@ -96,10 +96,9 @@ jobs:
               if ($c -match "#define\s+SSC_VER_$_\s+(\d+)") { $Matches[1] } else { '0' } }
             $p -join '.'
           }
-          # These binaries are unsigned (the SignPath Foundation application was declined in
-          # July 2026 for lack of public visibility). Saying so on the release page, next to the
-          # hashes that let a reader verify the download instead, is the difference between
-          # informing them and letting SmartScreen's warning be their first clue.
+          # These binaries are unsigned. Saying so on the release page, next to the hashes that
+          # let a reader verify the download instead, is the difference between informing them
+          # and letting SmartScreen's warning be their first clue.
           # --- changelog from the Conventional Commits since the previous release --------
           # Only user-facing types appear: feat/fix/perf are exactly the ones that move a
           # version (see .githooks/post-commit), so the notes and the version bumps can't
@@ -135,9 +134,8 @@ jobs:
           ) + $changelog + @(
             'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).',
             '',
-            ('**Code signing policy:** these binaries are **not signed**, so Windows SmartScreen will warn on ' +
-             'first run - verify a download against its `.sha256` sidecar instead. Full ' +
-             '[code signing policy](https://24sevenfm-covers.dudesoft.app/code-signing.html).')
+            ('These binaries are **not signed**, so Windows SmartScreen will warn on first run - ' +
+             'verify a download against its `.sha256` sidecar instead.')
           )
           if ($prev) {
             $notes += @('', "**Full changelog:** https://github.com/${{ github.repository }}/compare/$prev...$env:TAG")

@@ -251,13 +251,13 @@ build pulls in nothing that isn't visible here:
 No component is dual-licensed for commercial use, and nothing proprietary is linked in beyond the
 Windows system libraries.
 
-## Code signing policy
+## Verifying a download
 
-See the [Code signing policy](https://24sevenfm-covers.dudesoft.app/code-signing.html). Releases
-are built from source by the public `Release` workflow and published with a `.sha256` sidecar for
-every artifact, so a download can be verified without a signature.
+Releases are built from source by the public `Release` workflow and published with a `.sha256`
+sidecar for every artifact, so a download can be checked without a signature:
 
-The binaries are **not signed**, so Windows SmartScreen warns on first run. A free
-[SignPath Foundation](https://signpath.org) certificate was applied for in July 2026 and declined —
-that programme requires public visibility (stars, forks, contributors, external write-ups) the
-project hasn't built yet, and it can be reapplied for later.
+```bat
+certutil -hashfile <file> SHA256      :: compare against <file>.sha256
+```
+
+The binaries are **not signed**, so Windows SmartScreen warns on first run.

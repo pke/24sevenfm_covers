@@ -14,10 +14,4 @@
         <changefreq>yearly</changefreq>
         <priority>0.3</priority>
     </url>
-    <url>
-        <loc>{{SITE_URL}}code-signing.html</loc>
-        <lastmod>{{UPDATED}}</lastmod>
-        <changefreq>yearly</changefreq>
-        <priority>0.3</priority>
-    </url>
 </urlset>
