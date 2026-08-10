@@ -28,7 +28,10 @@ var STATIONS = [
 // borderRadius stay hidden here too - URL parameters instead of UI, like the INI.
 var STORE_KEY = "24sevenfm-covers.player";
 var DEFAULTS = {
-    station: "sst", layout: 0, transition: 1, fadeMs: 1000,
+    // layout intentionally differs from the apps' default (fill): a first-time web
+    // visitor gets the poster - the layout that shows title/artist without any host
+    // player around to provide them. Saved options always win over defaults.
+    station: "sst", layout: 1, transition: 1, fadeMs: 1000,
     showRemaining: 0, remainingSize: 0, roll: 0,
     posterBlur: 24, borderRadius: 45, volume: 0.8
 };
