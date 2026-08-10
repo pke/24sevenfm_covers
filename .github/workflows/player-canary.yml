@@ -3,8 +3,12 @@
 # The page is static and cannot rot by itself - what breaks overnight are the external
 # contracts it stands on (the station's CORS grant, the JSON shape, the HTTPS /live
 # streams, the cover URLs), none of which this project controls. So this runs daily
-# against the live site, plus right after every deploy, plus on demand. A failed
-# scheduled run emails the workflow's author - that IS the alert channel.
+# against the live site, plus right after every deploy, plus on demand.
+#
+# Alerting: GitHub's failure mail is a fixed template with no room for a reason, so on
+# failure the canary opens (or comments on) a 'canary'-labelled issue carrying the test
+# output - and THAT notification email does contain it. The next green run closes the
+# issue, which doubles as the "recovered" mail GitHub never sends on its own.
 #
 # NOTE: GitHub disables cron workflows on public repos after ~60 days without commits;
 # the Actions tab shows a re-enable banner if that ever happens.
@@ -14,6 +18,10 @@ on:
   schedule:
     - cron: "17 5 * * *"   # daily, off the top-of-hour congestion
   workflow_dispatch:
+    inputs:
+      url:
+        description: "Override the tested site URL (empty = the live site)"
+        required: false
   workflow_run:
     workflows: ["Deploy site", "Release"]   # both end in a Pages deployment
     types: [completed]
@@ -21,6 +29,7 @@ on:
 permissions:
   contents: read
   actions: write   # keep-alive: the last step re-enables this workflow's own schedule
+  issues: write    # failure reports: open/comment/close the canary issue
 
 concurrency:
   group: player-canary
@@ -64,8 +73,51 @@ jobs:
           # test is a proprietary codec Chromium doesn't ship.
           npx playwright install --with-deps chrome
 
+      # tee'd so the failure report can quote the output; pipefail, because the default
+      # bash -e does NOT propagate the left side's exit code through a pipe (the step
+      # would go green on tee's 0 while every test failed).
       - name: Run the canary against the live site
-        run: npx playwright test
+        env:
+          PLAYER_URL: ${{ inputs.url }}   # empty on schedule/workflow_run -> live site
+        run: |
+          set -o pipefail
+          npx playwright test 2>&1 | tee result.log
+
+      # GitHub's failure email is a fixed template - the REASON can't ride along. An
+      # issue's notification email carries its body, so the failure report goes there:
+      # first failure opens the issue, repeats comment on it (one thread, one mail per
+      # run), and the next green run closes it - which is also the recovery signal.
+      - name: Report the failure as an issue (its email carries the reason)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create canary --description "Automated player-canary failure reports" --color d93f0b 2>/dev/null || true
+          {
+            echo "The player canary failed against \`${PLAYER_URL:-the live site}\`. Test output (tail):"
+            echo '```'
+            tail -c 6000 result.log 2>/dev/null || echo "(no test output - the run failed before the tests started)"
+            echo '```'
+            echo "Full log: $RUN_URL"
+          } > report.md
+          OPEN=$(gh issue list --label canary --state open --json number --jq '.[0].number')
+          if [ -n "$OPEN" ]; then
+            gh issue comment "$OPEN" --body-file report.md
+          else
+            gh issue create --title "🔴 Player canary failing" --label canary --body-file report.md
+          fi
+
+      - name: Close the failure issue on recovery
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          OPEN=$(gh issue list --label canary --state open --json number --jq '.[0].number')
+          if [ -n "$OPEN" ]; then
+            gh issue close "$OPEN" --comment "The canary is green again: $RUN_URL"
+          fi
 
       # GitHub disables cron workflows on public repos after ~60 days without repo
       # activity. Re-enabling our own workflow is the documented-by-practice way to
