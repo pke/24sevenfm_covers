@@ -1,0 +1,49 @@
+# Player canary: is the DEPLOYED web player still working, right now?
+#
+# The page is static and cannot rot by itself - what breaks overnight are the external
+# contracts it stands on (the station's CORS grant, the JSON shape, the HTTPS /live
+# streams, the cover URLs), none of which this project controls. So this runs daily
+# against the live site, plus right after every deploy, plus on demand. A failed
+# scheduled run emails the workflow's author - that IS the alert channel.
+#
+# NOTE: GitHub disables cron workflows on public repos after ~60 days without commits;
+# the Actions tab shows a re-enable banner if that ever happens.
+name: Player canary
+
+on:
+  schedule:
+    - cron: "17 5 * * *"   # daily, off the top-of-hour congestion
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Deploy site", "Release"]   # both end in a Pages deployment
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: player-canary
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    # For workflow_run triggers, only test what actually deployed.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site/tests
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Playwright
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Run the canary against the live site
+        run: npx playwright test

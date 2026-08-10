@@ -14,6 +14,8 @@ substitution.
 ├─ css/player.css  player-page styles (stage, layouts, transitions, controls)
 ├─ js/player.js    the player engine — the ONE page that needs JavaScript
 ├─ img/            logo/favicon/social artwork + screenshots
+├─ tests/          Playwright canary for the DEPLOYED player (daily + after each
+│                  deploy via .github/workflows/player-canary.yml; not shipped)
 └─ shoot.ps1       sets up demo mode + launches the players for hand screenshots
 ```
 

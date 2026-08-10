@@ -33,5 +33,10 @@ foobar2000/sdk/**/*.dll
 # build_artifacts.ps1 (local preview) or the release workflow
 /www/
 
+# Web-player canary (Playwright): installed per CI run, reports are throwaway
+/site/tests/node_modules/
+/site/tests/test-results/
+/site/tests/playwright-report/
+
 # Windows Explorer thumbnail cache
 Thumbs.db

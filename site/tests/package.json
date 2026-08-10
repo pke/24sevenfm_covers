@@ -1,0 +1,8 @@
+{
+  "name": "player-canary",
+  "private": true,
+  "description": "Playwright functional tests for the deployed web player (see player.spec.js)",
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}
