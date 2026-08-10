@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: write   # keep-alive: the last step re-enables this workflow's own schedule
 
 concurrency:
   group: player-canary
@@ -65,3 +66,16 @@ jobs:
 
       - name: Run the canary against the live site
         run: npx playwright test
+
+      # GitHub disables cron workflows on public repos after ~60 days without repo
+      # activity. Re-enabling our own workflow is the documented-by-practice way to
+      # re-arm that timer (idempotent when already enabled), and running it daily
+      # means the deadline never approaches. always(): a failing canary must keep
+      # its schedule alive too - a red canary is information, a dead one is silence.
+      # Residual risk: once actually disabled, nothing here runs to self-revive; for
+      # that case GitHub emails the workflow author, and any commit also resets it.
+      - name: Keep the schedule alive
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable player-canary.yml -R ${{ github.repository }}
