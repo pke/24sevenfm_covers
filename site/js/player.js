@@ -327,6 +327,18 @@ function setOptionsOverlay(open) {
 }
 optsBtn.addEventListener("click", function () { setOptionsOverlay(!optionsOpen); });
 
+// Light dismiss: pressing anywhere outside the panel closes it, like a native
+// popover. pointerdown, not click - a slider drag that starts inside the panel and
+// ends outside must not dismiss, and pointerdown judges by where the press BEGAN.
+// The ⋯ button is excluded: its own handler is the toggle, and handling the same
+// press twice would reopen what was just closed. (Esc needs nothing here - it exits
+// fullscreen, and the fullscreenchange handler already closes the panel.)
+stage.addEventListener("pointerdown", function (e) {
+    if (!optionsOpen) return;
+    if (e.target.closest(".fs-options, .stage-opts")) return;
+    setOptionsOverlay(false);
+});
+
 // In fullscreen the chrome (⛶, ⋯, and the cursor) fades out after 2s without pointer
 // movement and comes back on the next move - :hover can't express "idle" when the
 // stage covers the whole screen. pointermove covers mouse, pen and touch alike.
