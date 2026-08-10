@@ -91,6 +91,7 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
+          PLAYER_URL: ${{ inputs.url }}   # also here, or the report names the wrong target
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh label create canary --description "Automated player-canary failure reports" --color d93f0b 2>/dev/null || true
