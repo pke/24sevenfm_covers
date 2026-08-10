@@ -63,7 +63,8 @@
 
     <section>
         <h2>This website</h2>
-        <p class="lead">Static pages, no scripts beyond a two-line theme toggle.</p>
+        <p class="lead">Static pages — the only scripts are the theme toggle and the
+        <a href="player.html">web player</a>, both served from this site and nowhere else.</p>
         <div class="grid">
             <div class="card">
                 <h3>No cookies, no analytics</h3>
@@ -72,11 +73,21 @@
                 measured or profiled.</p>
             </div>
             <div class="card">
-                <h3>One local preference</h3>
-                <p>If you use the dark/light toggle, your browser stores a single value
-                (<code>theme</code> = <code>dark</code> or <code>light</code>) in local storage. It
-                is not a cookie, never leaves your device, and is never sent anywhere. Clearing this
-                site’s data removes it.</p>
+                <h3>Local preferences</h3>
+                <p>The dark/light toggle stores one value (<code>theme</code>), and the web player
+                stores your player options (station, layout, transition, countdown, volume) under
+                <code>24sevenfm-covers.player</code> — both in local storage. They are not cookies,
+                never leave your device, and are never sent anywhere. Clearing this site’s data
+                removes them.</p>
+            </div>
+            <div class="card">
+                <h3>The web player</h3>
+                <p>The <a href="player.html">player page</a> connects <em>directly</em> to the
+                24seven.fm station you pick: it fetches the “now playing” information and cover
+                images, and — only if you press play — the audio stream. Those servers can see your
+                IP address, exactly as they would if you listened in any other player or visited
+                the station’s website. Nothing is routed through this project, and nothing about
+                what you listen to is recorded by it.</p>
             </div>
             <div class="card">
                 <h3>Hosting</h3>
