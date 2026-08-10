@@ -106,7 +106,12 @@ jobs:
           if [ -n "$OPEN" ]; then
             gh issue comment "$OPEN" --body-file report.md
           else
-            gh issue create --title "🔴 Player canary failing" --label canary --body-file report.md
+            # Assign the owner: the issue's author is github-actions[bot], and GitHub
+            # only emails watchers or PARTICIPANTS - an unassigned bot issue can sail
+            # by without notifying anyone. Assignment makes the owner a participant,
+            # so open/comment/close all notify regardless of watch settings.
+            gh issue create --title "🔴 Player canary failing" --label canary \
+              --assignee "$GITHUB_REPOSITORY_OWNER" --body-file report.md
           fi
 
       - name: Close the failure issue on recovery
