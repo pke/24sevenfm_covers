@@ -10,23 +10,15 @@
 // station, and the other half pin the raw contracts - so a failure names the broken
 // layer instead of just "the player looks wrong".
 const { test, expect } = require("@playwright/test");
-const https = require("https");
 
-// Fetch only the response HEADERS of an endless audio stream, then hang up. Sends a
-// browser UA: node's default (none at all) is the easiest thing for a WAF to reject.
-function streamHeaders(host) {
-    return new Promise((resolve, reject) => {
-        const req = https.get({
-            host: host, path: "/live", timeout: 15000,
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" },
-        }, (res) => {
-            resolve({ status: res.statusCode, type: res.headers["content-type"] || "" });
-            req.destroy(); // it never ends - the headers are all we want
-        });
-        req.on("timeout", () => req.destroy(new Error("timeout waiting for " + host)));
-        req.on("error", reject);
-    });
-}
+// Everything here runs INSIDE the browser, from the player page's own origin. Not a
+// style choice: the station's WAF 403s non-browser clients (curl, node's https,
+// Playwright's request fixture) from datacenter IPs - runs 1 and 2 proved it, same
+// URLs, 403 outside the browser and 200 inside it. The browser is the only vantage
+// point GitHub's runners have - and conveniently the only one that matters, because
+// browsers are the only thing the player runs in.
+const JSON_URL =
+    "https://streamingsoundtracks.com/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=";
 
 test.describe("the deployed player page", () => {
     test("loads, polls the station, and renders a real cover", async ({ page }) => {
@@ -90,38 +82,46 @@ test.describe("the deployed player page", () => {
     });
 });
 
-test.describe("station contracts the player stands on", () => {
-    test("now-playing JSON still answers over HTTPS and still grants CORS", async ({ request }) => {
-        const res = await request.get(
-            "https://streamingsoundtracks.com/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now(),
-            { headers: { Origin: "https://24sevenfm-covers.dudesoft.app" } }
-        );
-        expect(res.status()).toBe(200);
-        // Without this one header the whole player is dead in every browser.
-        expect(res.headers()["access-control-allow-origin"]).toBe("*");
-        const j = await res.json();
+test.describe("station contracts, exercised like a real listener", () => {
+    test("now-playing JSON: cross-origin fetch succeeds (= CORS grant) with the right shape", async ({ page }) => {
+        await page.goto("/player.html");
+        // Merely resolving proves the CORS contract: without Access-Control-Allow-Origin
+        // the browser throws before any data is readable.
+        const j = await page.evaluate((url) => fetch(url + Date.now()).then((r) => r.json()), JSON_URL);
         expect(j.CoverLink, "feed shape: CoverLink").toMatch(/^https?:\/\//);
         expect(j.Length, "feed shape: Length").toBeDefined();
         expect(j.SystemTime, "feed shape: SystemTime").toBeDefined();
     });
 
-    test("the sized cover variant (/cover/500/) still exists", async ({ request }) => {
-        const res = await request.get(
-            "https://streamingsoundtracks.com/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now()
-        );
-        const cover = (await res.json()).CoverLink.replace("/cover/", "/cover/500/");
-        const img = await request.get(cover);
-        expect(img.status(), cover).toBe(200);
-        expect(img.headers()["content-type"]).toMatch(/^image\//);
+    test("the sized cover variant (/cover/500/) still decodes to pixels", async ({ page }) => {
+        await page.goto("/player.html");
+        const width = await page.evaluate((url) =>
+            fetch(url + Date.now())
+                .then((r) => r.json())
+                .then((j) => new Promise((resolve, reject) => {
+                    const img = new Image(); // images need no CORS - same path the player uses
+                    img.onload = () => resolve(img.naturalWidth);
+                    img.onerror = () => reject(new Error("cover failed to load: " + img.src));
+                    img.src = j.CoverLink.replace("/cover/", "/cover/500/");
+                })), JSON_URL);
+        expect(width).toBeGreaterThan(0);
     });
 
     // Two hosts, not all five: enough to catch "the /live proxy is gone" without
-    // quintupling the flake surface of a notoriously moody server.
+    // quintupling the flake surface of a notoriously moody server. canplay from a
+    // real <audio> element is the actual user experience, not a proxy for it.
     for (const host of ["streamingsoundtracks.com", "death.fm"]) {
-        test(`HTTPS audio stream still answers on ${host}/live`, async () => {
-            const h = await streamHeaders(host);
-            expect(h.status, host).toBe(200);
-            expect(h.type, host).toMatch(/^audio\//);
+        test(`HTTPS audio stream reaches canplay on ${host}/live`, async ({ page }) => {
+            await page.goto("/player.html");
+            const result = await page.evaluate((h) => new Promise((resolve) => {
+                const a = new Audio("https://" + h + "/live");
+                a.addEventListener("canplay", () => resolve("canplay"), { once: true });
+                a.addEventListener("error", () =>
+                    resolve("error code " + (a.error ? a.error.code : "?")), { once: true });
+                setTimeout(() => resolve("timeout after 25s"), 25000);
+                a.load(); // buffering needs no user gesture; only play() does
+            }), host);
+            expect(result, host).toBe("canplay");
         });
     }
 });

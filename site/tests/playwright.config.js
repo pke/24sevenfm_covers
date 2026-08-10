@@ -9,6 +9,11 @@ module.exports = defineConfig({
     reporter: [["list"]],
     use: {
         baseURL: process.env.PLAYER_URL || "https://24sevenfm-covers.dudesoft.app",
+        // Branded Chrome, not Playwright's Chromium: the audio contract test needs the
+        // AAC decoder (proprietary - Chromium doesn't ship it, so canplay would fail on
+        // a perfectly healthy audio/aacp stream), and the station's WAF is friendliest
+        // to the most genuine browser fingerprint.
+        channel: "chrome",
         headless: true,
         viewport: { width: 1280, height: 800 },
         // A regular Chrome UA, not "HeadlessChrome": the station WAF answers 403 to

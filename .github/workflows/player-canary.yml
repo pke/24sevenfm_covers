@@ -40,11 +40,12 @@ jobs:
         with:
           node-version: 22
 
-      # What does the station serve THIS runner's (datacenter) IP? The first run showed
-      # /live answering 403 to GitHub runners while answering 200 to residential IPs -
-      # so when the canary fails, this output says whether the station is gating the
-      # runner or the player is actually broken for real users.
-      - name: Probe the station from the runner
+      # What does the station serve THIS runner's (datacenter) IP? Expect 403s here:
+      # the WAF rejects non-browser clients (curl/node) from datacenter IPs while
+      # letting genuine browser traffic through - which is why every actual test runs
+      # inside Chrome. This output exists for failure archaeology: if the BROWSER tests
+      # fail while these curls suddenly return 200, the WAF changed its rules again.
+      - name: Probe the station from the runner (403s here are NORMAL)
         run: |
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
           for url in \
@@ -55,10 +56,12 @@ jobs:
             printf "browser-UA   : %s -> %s\n" "$url" "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" -H 'Origin: https://24sevenfm-covers.dudesoft.app' --max-time 15 -r 0-64 "$url" || echo ERR)"
           done
 
-      - name: Install Playwright
+      - name: Install Playwright + Chrome
         run: |
           npm install
-          npx playwright install --with-deps chromium
+          # Branded Chrome, not Chromium: the AAC decoder for the audio/aacp stream
+          # test is a proprietary codec Chromium doesn't ship.
+          npx playwright install --with-deps chrome
 
       - name: Run the canary against the live site
         run: npx playwright test
