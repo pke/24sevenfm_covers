@@ -1,0 +1,219 @@
+/* player.css - the web player page. Builds on style.css's theme tokens, so it follows
+   the dark/light toggle and the crossfade for free. The stage mimics the desktop
+   viewer's two layouts: fill (cover aspect-fit on black) and poster (blurred backdrop,
+   centered rounded cover, info box). */
+
+/* --- stage -------------------------------------------------------------------- */
+/* Flex-centered, so both layouts and fullscreen all scale from the same rule: the
+   cover's size is a percentage of the stage, and the stage can be the embedded box
+   or the whole screen without any per-mode positioning. */
+.stage {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: min(70vh, 640px);
+    border-radius: .9rem;
+    border: 1px solid var(--line);
+    background: #000;             /* both layouts sit on black, like the apps */
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    user-select: none;
+}
+.stage.layout-poster { flex-direction: column; gap: 3.5%; }
+.stage:fullscreen { border-radius: 0; border: 0; height: 100%; }
+
+/* Blurred backdrop - poster layout only. The blur radius is set by JS relative to the
+   stage size (mirroring the D2D pass, which blurs at a ~240px working resolution and
+   upscales - a fixed pixel blur reads far too mild on a large stage). */
+.backdrop {
+    position: absolute; inset: 0;
+    z-index: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scale(1.3);         /* hide the blur's soft edges off-canvas */
+    filter: blur(var(--poster-blur, 96px)) brightness(.55);
+    display: none;
+}
+.layout-poster .backdrop { display: block; }
+
+/* --- cover + transitions ------------------------------------------------------- */
+/* The covers are square (ASIN art). sizeStage() sets the box's pixel size to the
+   largest square that fits the stage (with room for the info box in poster layout) -
+   CSS alone can't express "square, capped by BOTH stage dimensions" without breaking
+   the aspect ratio on portrait screens. */
+.coverbox {
+    position: relative;
+    z-index: 1;
+    aspect-ratio: 1 / 1;   /* pre-JS fallback; JS sets explicit width+height */
+    perspective: 1200px;
+}
+.coverbox img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    backface-visibility: hidden;
+}
+.layout-poster .coverbox img { border-radius: var(--cover-radius, 0); }
+.coverbox img.front { opacity: 1; }
+
+/* Crossfade: the incoming image fades in over the outgoing one. */
+.fx-fade img { transition: opacity var(--fade-ms, 1000ms) ease; }
+/* Flips: both images stay opaque - the rotation hides them (edge-on at 90° with the
+   backface culled), so the outgoing rotates away while the incoming arrives. */
+.fx-fliph img, .fx-flipv img { opacity: 1; transition: transform var(--fade-ms, 1000ms) ease; }
+.fx-fliph img:not(.front) { transform: rotateY( 90deg); }
+.fx-fliph img.front       { transform: rotateY(0); }
+.fx-flipv img:not(.front) { transform: rotateX(-90deg); }
+.fx-flipv img.front       { transform: rotateX(0); }
+
+/* --- info box (poster only) ------------------------------------------------------ */
+/* A flex sibling sitting below the cover, holding title, artist and the countdown as
+   its last row. Fill mode shows no info at all - the cover speaks for itself, like
+   the apps' fill layout. The hairline border keeps the box readable when the artwork
+   behind it is as dark as the box. */
+.info {
+    position: relative;
+    z-index: 2;
+    max-width: 86%;
+    padding: .8rem 1.2rem;
+    border: 1px solid rgba(255, 255, 255, .14);
+    border-radius: var(--cover-radius, .6rem);
+    background: rgba(10, 12, 18, .55);
+    backdrop-filter: blur(6px);
+    color: #fff;
+    text-align: center;
+}
+.layout-fill .info { display: none; }
+.info .t { font-weight: 600; font-size: var(--title-size, 1.15rem); line-height: 1.25; }
+.info .a { opacity: .8; font-size: var(--artist-size, .95rem); }
+
+/* --- countdown ------------------------------------------------------------------ */
+/* applyLayout() moves the element between its two homes: the info box's last row in
+   poster, a corner overlay on the cover in fill - exactly where the apps put it. */
+.countdown {
+    font-size: var(--cd-size, 18px);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    color: #fff;
+    opacity: .85;               /* a status row, quieter than the title above it */
+    text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    display: flex;
+    justify-content: center;
+    margin-top: .4rem;
+}
+.coverbox .countdown { position: absolute; right: 4%; bottom: 4%; z-index: 2; margin-top: 0; }
+.countdown.hidden { display: none !important; }
+.cd-cell { position: relative; display: inline-block; overflow: hidden; height: 1.2em; line-height: 1.2em; }
+.cd-cur { display: block; }
+.cd-ghost { position: absolute; inset: 0; } /* the outgoing digit during a roll */
+
+/* --- stage chrome: fullscreen toggle + fullscreen options ------------------------ */
+.stage-fs, .stage-opts {
+    position: absolute;
+    right: .7rem;
+    z-index: 3;
+    width: 2.4rem; height: 2.4rem;
+    border: 0; border-radius: .6rem;
+    background: rgba(0, 0, 0, .45);
+    color: #fff;
+    font-size: 1.2rem;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .35s ease;
+}
+.stage-fs { top: .7rem; }
+.stage-opts { bottom: .7rem; display: none; } /* fullscreen only - embedded, the panel is right below */
+.stage:fullscreen .stage-opts { display: block; }
+.stage:hover .stage-fs, .stage:hover .stage-opts,
+.stage-fs:focus-visible, .stage-opts:focus-visible { opacity: 1; }
+@media (hover: none) { .stage-fs, .stage-opts { opacity: .6; } } /* touch: no hover, keep visible */
+
+/* In fullscreen the stage IS the screen, so :hover is permanently true and useless as
+   an idle signal. JS sets .idle after 2s without pointer movement: the chrome fades
+   out (these rules out-specify the :hover ones) and the cursor goes with it - a cursor
+   parked on the artwork is the same clutter. Any movement lifts .idle again. */
+.stage:fullscreen.idle .stage-fs, .stage:fullscreen.idle .stage-opts { opacity: 0; }
+.stage:fullscreen.idle { cursor: none; }
+
+/* The options overlay: hosts the REAL .controls panel while open in fullscreen. */
+.fs-options {
+    position: absolute;
+    right: 1rem; bottom: 3.6rem;
+    z-index: 4;
+    width: min(440px, calc(100% - 2rem));
+    max-height: calc(100% - 5.5rem);
+    overflow: auto;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    background: var(--bg);
+    box-shadow: var(--shadow);
+}
+
+/* --- status line ---------------------------------------------------------------- */
+.status { color: var(--text-dim); font-size: .85rem; min-height: 1.2em; margin-top: .3rem; }
+
+/* --- controls ------------------------------------------------------------------- */
+.controls { display: grid; gap: 1rem; margin-top: 1.5rem; }
+.controls fieldset {
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    background: var(--bg-card);
+    padding: .9rem 1.1rem 1.1rem;
+    margin: 0;
+}
+.controls legend { padding: 0 .4rem; font-size: .85rem; color: var(--text-dim); }
+.seg-group { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+/* Radio groups presented as segmented pills - real inputs underneath, so keyboard
+   and screen readers see an ordinary radio group. */
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span {
+    display: inline-block;
+    padding: .4rem .85rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg-raised);
+    font-size: .9rem;
+    cursor: pointer;
+}
+.seg input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.row { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+.row label { font-size: .9rem; }
+input[type="range"] { accent-color: var(--accent); flex: 1; min-width: 120px; max-width: 260px; }
+input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.05rem; }
+
+.btn-player {
+    padding: .55rem 1.1rem;
+    border-radius: .7rem;
+    border: 1px solid var(--line);
+    background: var(--bg-raised);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.btn-player[aria-pressed="true"] { background: var(--accent-grad); border: 0; color: #fff; }
+
+/* --- noscript ------------------------------------------------------------------- */
+.noscript-player p { margin: .5rem 0; }
+.noscript-player audio { width: 100%; max-width: 420px; display: block; margin-top: .25rem; }
+
+/* --- wider screens --------------------------------------------------------------- */
+@media (min-width: 760px) {
+    .controls { grid-template-columns: 1fr 1fr; }
+    .controls fieldset.wide { grid-column: 1 / -1; }
+}
+/* Inside the fullscreen overlay the panel is ~440px, whatever the viewport says -
+   AFTER the media query so equal specificity resolves by source order. */
+.fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+    .coverbox img, .stage-fs { transition: none !important; }
+    /* digit rolling is skipped in JS when reduced motion is set */
+}

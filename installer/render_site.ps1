@@ -96,8 +96,11 @@ $tokens = @{
 
 # --- render ------------------------------------------------------------------------------
 New-Item -ItemType Directory -Force $www | Out-Null
-Copy-Item (Join-Path $siteSrc 'css') $www -Recurse -Force
-Copy-Item (Join-Path $siteSrc 'img') $www -Recurse -Force
+# css + img + js (js: the web player; the theme toggle stays inline in each page)
+foreach ($dir in @('css', 'img', 'js')) {
+    $src = Join-Path $siteSrc $dir
+    if (Test-Path $src) { Copy-Item $src $www -Recurse -Force }
+}
 
 $utf8  = New-Object System.Text.UTF8Encoding($false)   # 5.1's default would mangle the emoji
 $stamp = if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }

@@ -8,8 +8,11 @@ substitution.
 
 ```
 ├─ index.html      landing page with {{TOKEN}} placeholders (see below)
+├─ player.html     web player: live covers + optional audio, all in the browser
 ├─ privacy.html    privacy policy (linked from every footer)
 ├─ css/style.css   mobile-first; dark by default, light via OS preference
+├─ css/player.css  player-page styles (stage, layouts, transitions, controls)
+├─ js/player.js    the player engine — the ONE page that needs JavaScript
 ├─ img/            logo/favicon/social artwork + screenshots
 └─ shoot.ps1       sets up demo mode + launches the players for hand screenshots
 ```

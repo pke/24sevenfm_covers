@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player — 24seven.fm Covers</title>
+<meta name="description" content="Listen to the 24seven.fm radio stations and watch the cover art change with every track — right in your browser, nothing to install.">
+<link rel="icon" href="img/favicon.ico">
+<link rel="canonical" href="{{SITE_URL}}player.html">
+<meta name="robots" content="index, follow">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{SITE_URL}}player.html">
+<meta property="og:title" content="24seven.fm Covers — web player">
+<meta property="og:description" content="Hear the music. See the covers. In your browser.">
+<meta property="og:image" content="{{SITE_URL}}img/social.jpg">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/player.css">
+</head>
+<body>
+
+<!-- No-JS theme toggle: the ◐ label flips this checkbox; CSS flips the palette.
+     The script below is optional sugar - it only persists the choice. -->
+<input type="checkbox" id="themeswitch" class="visually-hidden" role="switch"
+       aria-label="Switch between dark and light theme">
+<script>
+// Progressive enhancement: remember the resolved theme across visits. The checkbox
+// flips relative to the OS scheme, so restore checked = saved XOR os-preference.
+(function () {
+    var box = document.getElementById("themeswitch");
+    var osDark = matchMedia("(prefers-color-scheme: dark)").matches;
+    var saved = localStorage.getItem("theme");
+    if (saved === "dark" || saved === "light") box.checked = (saved === "dark") !== osDark;
+    box.addEventListener("change", function () {
+        localStorage.setItem("theme", (osDark !== box.checked) ? "dark" : "light");
+    });
+})();
+</script>
+<div class="page">
+
+<header>
+    <nav class="nav">
+        <a class="brand" href="index.html"><img src="img/logo.png" alt="" width="28" height="28">24seven.fm Covers</a>
+        <span class="spacer"></span>
+        <a class="link" href="index.html#desktop">Desktop</a>
+        <a class="link" href="index.html#plugins">Plugins</a>
+        <label for="themeswitch" class="theme-toggle" title="Toggle dark / light" aria-hidden="true">◐</label>
+    </nav>
+</header>
+
+<main class="wrap">
+
+    <section style="border-top: 0;">
+        <h2>Player</h2>
+        <p class="lead">The desktop viewer, in your browser: covers change with every track, and
+        you can stream the station's audio too — or keep it silent and just watch the artwork.
+        Everything talks directly to the station; nothing runs through this site.</p>
+
+        <div class="stage layout-fill" id="stage">
+            <img class="backdrop" id="backdrop" alt="" aria-hidden="true">
+            <div class="coverbox" id="coverbox">
+                <img id="coverA" alt="">
+                <img id="coverB" alt="Current album cover">
+            </div>
+            <div class="info">
+                <div class="t" id="info-title">Loading…</div>
+                <div class="a" id="info-artist"></div>
+                <div class="countdown hidden" id="countdown" aria-hidden="true"></div>
+            </div>
+            <button class="stage-fs" id="fullscreen" title="Fullscreen" aria-label="Toggle fullscreen">⛶</button>
+            <button class="stage-opts" id="stage-options" title="Options" aria-label="Options"
+                    aria-pressed="false">⋯</button>
+            <div class="fs-options" id="fs-options" hidden><!-- the real .controls panel is
+                 MOVED here while open in fullscreen (only descendants of the fullscreen
+                 element are visible), and moved back on close/exit --></div>
+
+            <noscript>
+                <div class="noscript-player" style="position:absolute; inset:0; overflow:auto; padding:1.2rem; background:var(--bg-card); color:var(--text);">
+                    <p><strong>The live cover display needs JavaScript</strong> — it polls the
+                    station for the current track. The audio needs none at all: these are the
+                    stations' own streams, playable right here.</p>
+                    <p>StreamingSoundtracks <audio controls preload="none" src="https://streamingsoundtracks.com/live"></audio></p>
+                    <p>1980s.FM <audio controls preload="none" src="https://1980s.fm/live"></audio></p>
+                    <p>Adagio.FM <audio controls preload="none" src="https://adagio.fm/live"></audio></p>
+                    <p>Death.FM <audio controls preload="none" src="https://death.fm/live"></audio></p>
+                    <p>Entranced.FM <audio controls preload="none" src="https://entranced.fm/live"></audio></p>
+                </div>
+            </noscript>
+        </div>
+        <p class="status" id="status" aria-live="polite"></p>
+
+        <div class="controls">
+            <fieldset class="wide">
+                <legend>Station</legend>
+                <div class="seg-group" id="stations"><!-- built from the station table by player.js --></div>
+            </fieldset>
+
+            <fieldset>
+                <legend>Audio</legend>
+                <div class="row">
+                    <button class="btn-player" id="audio-toggle" aria-pressed="false">▶ Play audio</button>
+                    <label for="volume">Volume</label>
+                    <input type="range" id="volume" min="0" max="1" step="0.05" value="0.8">
+                </div>
+                <p class="note">Audio is optional — leave it off to use the page as a silent
+                cover display next to your own player. Streams are AAC; if your browser can't
+                play them, use the <a href="https://streamingsoundtracks.com/listen.pls">playlist
+                files</a> in a media player instead.</p>
+                <audio id="audio" preload="none"></audio>
+            </fieldset>
+
+            <fieldset>
+                <legend>Layout</legend>
+                <div class="seg-group">
+                    <label class="seg"><input type="radio" name="layout" value="0"><span>Fill</span></label>
+                    <label class="seg"><input type="radio" name="layout" value="1"><span>Poster</span></label>
+                </div>
+                <p class="note">Fullscreen: the ⛶ button on the cover, or double-click it — like
+                the apps.</p>
+            </fieldset>
+
+            <fieldset>
+                <legend>Transition</legend>
+                <div class="seg-group">
+                    <label class="seg"><input type="radio" name="transition" value="0"><span>None</span></label>
+                    <label class="seg"><input type="radio" name="transition" value="1"><span>Crossfade</span></label>
+                    <label class="seg"><input type="radio" name="transition" value="2"><span>Flip horizontal</span></label>
+                    <label class="seg"><input type="radio" name="transition" value="3"><span>Flip vertical</span></label>
+                </div>
+                <div class="row" style="margin-top:.8rem">
+                    <label for="fade">Duration</label>
+                    <input type="range" id="fade" min="500" max="2000" step="100">
+                    <span id="fade-val"></span>
+                </div>
+            </fieldset>
+
+            <fieldset class="wide">
+                <legend>Remaining time</legend>
+                <div class="row">
+                    <label><input type="checkbox" id="show-remaining"> Show countdown</label>
+                    <label><input type="checkbox" id="roll"> Rolling digits</label>
+                    <span class="seg-group">
+                        <label class="seg"><input type="radio" name="cdsize" value="0"><span>Small</span></label>
+                        <label class="seg"><input type="radio" name="cdsize" value="1"><span>Medium</span></label>
+                        <label class="seg"><input type="radio" name="cdsize" value="2"><span>Large</span></label>
+                    </span>
+                </div>
+            </fieldset>
+        </div>
+
+        <p class="note">Options are saved in your browser (local storage, this site only — see the
+        <a href="privacy.html">privacy policy</a>). Prefer it on the desktop? The
+        <a href="index.html#plugins">apps and plugins</a> do all of this natively.</p>
+    </section>
+
+</main>
+
+<footer>
+    <p>© 2026 <a href="https://dudesoft.app">DudeSoft</a> · Open source on <a href="https://github.com/pke/24sevenfm_covers">GitHub</a> · <a href="privacy.html">Privacy</a> · <a href="index.html">Home</a><br>
+    Not affiliated with 24seven.fm — a fan-made companion for its stations.</p>
+    <p class="updated">Last updated {{UPDATED}} · {{RELEASE_TAG}}</p>
+</footer>
+
+</div><!-- /.page -->
+
+<script src="js/player.js"></script>
+</body>
+</html>

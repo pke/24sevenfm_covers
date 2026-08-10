@@ -340,6 +340,8 @@ footer a { color: var(--text-dim); text-decoration: underline; }
     /* Plugin cards go two-column, image and text alternating sides */
     .plugin { grid-template-columns: 1fr 1fr; align-items: center; padding: 1.5rem; }
     .plugin:nth-of-type(even) .shot { order: 2; }
+    /* The web-player card has no screenshot, so it spans the full width */
+    .plugin--web { grid-template-columns: 1fr; }
 }
 
 @media (min-width: 900px) {

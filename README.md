@@ -8,7 +8,9 @@
 
 Cover-art for the **24seven.fm** family of internet radio stations — Streaming Soundtracks,
 1980s.FM, Adagio.FM, Death.FM, and Entranced.FM. A shared, host-agnostic C++ engine drives
-three Windows front-ends plus a cross-platform core library:
+three Windows front-ends plus a cross-platform core library — and a
+[web player](https://24sevenfm-covers.dudesoft.app/player.html) (`site/player.html`) that brings
+the viewer's feature set to the browser, with optional audio streamed straight from the station:
 
 | Component | Directory | Output | Build system |
 |-----------|-----------|--------|--------------|
@@ -227,6 +229,9 @@ taste, not everyday options. Edit them in the INI (`[options]` section) while th
 |-----|---------|-------|--------|
 | `posterBlur` | `24` | 0–200 | Gaussian blur strength of the poster background (the enlarged cover behind the artwork). `0` = a sharp, unblurred backdrop. |
 | `borderRadius` | `45` | 0–500 | Corner radius of the poster cover **and its info box**, in **thousandths of the cover's side**, so it scales with the window. `45` = 4.5% (the default look), `0` = square corners, `500` = a circle. |
+
+The web player honours the same two as URL parameters
+(`player.html?posterBlur=0&borderRadius=500`), hidden from its UI for the same reason.
 
 The INI lives next to the viewer's `.exe` (or `%APPDATA%\24seven.fm Covers\` when that folder
 isn't writable), and in Winamp's settings folder for the plugin. Neither key applies to the
