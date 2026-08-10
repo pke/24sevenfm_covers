@@ -40,6 +40,21 @@ jobs:
         with:
           node-version: 22
 
+      # What does the station serve THIS runner's (datacenter) IP? The first run showed
+      # /live answering 403 to GitHub runners while answering 200 to residential IPs -
+      # so when the canary fails, this output says whether the station is gating the
+      # runner or the player is actually broken for real users.
+      - name: Probe the station from the runner
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+          for url in \
+            "https://streamingsoundtracks.com/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=1" \
+            "https://streamingsoundtracks.com/live" \
+            "https://death.fm/live"; do
+            printf "curl-default : %s -> %s\n" "$url" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -r 0-64 "$url" || echo ERR)"
+            printf "browser-UA   : %s -> %s\n" "$url" "$(curl -s -o /dev/null -w '%{http_code}' -A "$UA" -H 'Origin: https://24sevenfm-covers.dudesoft.app' --max-time 15 -r 0-64 "$url" || echo ERR)"
+          done
+
       - name: Install Playwright
         run: |
           npm install

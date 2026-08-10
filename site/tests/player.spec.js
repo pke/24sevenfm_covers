@@ -12,10 +12,14 @@
 const { test, expect } = require("@playwright/test");
 const https = require("https");
 
-// Fetch only the response HEADERS of an endless audio stream, then hang up.
+// Fetch only the response HEADERS of an endless audio stream, then hang up. Sends a
+// browser UA: node's default (none at all) is the easiest thing for a WAF to reject.
 function streamHeaders(host) {
     return new Promise((resolve, reject) => {
-        const req = https.get({ host: host, path: "/live", timeout: 15000 }, (res) => {
+        const req = https.get({
+            host: host, path: "/live", timeout: 15000,
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" },
+        }, (res) => {
             resolve({ status: res.statusCode, type: res.headers["content-type"] || "" });
             req.destroy(); // it never ends - the headers are all we want
         });
@@ -27,12 +31,27 @@ function streamHeaders(host) {
 test.describe("the deployed player page", () => {
     test("loads, polls the station, and renders a real cover", async ({ page }) => {
         const errors = [];
+        const netlog = []; // every station response/failure the PAGE itself saw
         page.on("pageerror", (e) => errors.push(String(e)));
+        page.on("response", (r) => {
+            if (/FM24sevenJSON|\/images\/cover\//.test(r.url()))
+                netlog.push(r.status() + " " + r.url().slice(0, 100));
+        });
+        page.on("requestfailed", (r) =>
+            netlog.push("FAILED " + ((r.failure() || {}).errorText || "?") + " " + r.url().slice(0, 100)));
         await page.goto("/player.html");
 
         // A cover URL must arrive via the CORS fetch and actually decode to pixels.
         const front = page.locator(".coverbox img.front");
-        await expect(front).toHaveAttribute("src", /\/images\/cover\//, { timeout: 60000 });
+        try {
+            await expect(front).toHaveAttribute("src", /\/images\/cover\//, { timeout: 60000 });
+        } catch (e) {
+            // The generic timeout says nothing - what the page's own station requests
+            // returned is the actual diagnosis (403s = WAF gating the runner's IP).
+            throw new Error("cover never arrived. Station traffic as seen by the page:\n"
+                + (netlog.join("\n") || "(no station requests at all - JS broken?)")
+                + "\n\noriginal: " + e.message);
+        }
         await expect
             .poll(() => front.evaluate((img) => img.naturalWidth), { timeout: 30000 })
             .toBeGreaterThan(0);

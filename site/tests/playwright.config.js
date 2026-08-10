@@ -11,5 +11,9 @@ module.exports = defineConfig({
         baseURL: process.env.PLAYER_URL || "https://24sevenfm-covers.dudesoft.app",
         headless: true,
         viewport: { width: 1280, height: 800 },
+        // A regular Chrome UA, not "HeadlessChrome": the station WAF answers 403 to
+        // some datacenter-IP requests, and headless fingerprints only invite more of
+        // that. Costs nothing, removes one variable from every failure analysis.
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     },
 });
