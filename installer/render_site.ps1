@@ -92,6 +92,14 @@ $tokens = @{
     '{{SITE_URL}}'              = $SiteUrl
     '{{UPDATED}}'               = (Get-Date -Format 'yyyy-MM-dd')
     '{{RELEASE_TAG}}'           = $(if ($ReleaseTag) { $ReleaseTag } else { 'local preview' })
+    # Cache-buster for css/js links (?v=...). GitHub Pages serves everything with a fixed
+    # max-age=600 and no way to set headers, so unversioned asset URLs can pair a fresh
+    # HTML with a stale script (or vice versa) for up to 10 minutes after a deploy - a JS
+    # that addresses an element the cached HTML doesn't have yet crashes the player.
+    # Stamping per render pins each HTML to exactly the assets it shipped with. A
+    # timestamp, not the release tag: site-only deploys reuse the newest release's tag,
+    # which would defeat the busting precisely when it's needed.
+    '{{ASSET_V}}'               = (Get-Date -Format 'yyyyMMddHHmmss')
 }
 
 # --- render ------------------------------------------------------------------------------
