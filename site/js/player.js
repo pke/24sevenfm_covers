@@ -13,13 +13,16 @@
 "use strict";
 (function () {
 
-// Mirrors shared/stations.h: same ids (used as persistence keys), same hosts.
+// Mirrors shared/stations.h: same ids (used as persistence keys), same hosts. The logo
+// filenames are wildly inconsistent per station and NOT guessable - each URL below was
+// verified live (the "500x500" variants the stations' own og:image tags reference are
+// 404 across the board, so only the 200x200 set is real).
 var STATIONS = [
-    { id: "sst",       name: "StreamingSoundtracks", host: "streamingsoundtracks.com", desc: "Movie scores, TV themes, anime & game music" },
-    { id: "1980s",     name: "1980s.FM",             host: "1980s.fm",                 desc: "1980s pop, rock & new wave" },
-    { id: "adagio",    name: "Adagio.FM",            host: "adagio.fm",                desc: "Classical & ambient" },
-    { id: "death",     name: "Death.FM",             host: "death.fm",                 desc: "Extreme & underground metal" },
-    { id: "entranced", name: "Entranced.FM",         host: "entranced.fm",             desc: "Trance, ambient & electronic" }
+    { id: "sst",       name: "StreamingSoundtracks", host: "streamingsoundtracks.com", desc: "Movie scores, TV themes, anime & game music", logo: "https://streamingsoundtracks.com/images/logos/logo-sst-v200x200.png" },
+    { id: "1980s",     name: "1980s.FM",             host: "1980s.fm",                 desc: "1980s pop, rock & new wave",                  logo: "https://1980s.fm/images/logos/1980s_logo-200x200.png" },
+    { id: "adagio",    name: "Adagio.FM",            host: "adagio.fm",                desc: "Classical & ambient",                         logo: "https://adagio.fm/images/logos/logo-afm-200x200.png" },
+    { id: "death",     name: "Death.FM",             host: "death.fm",                 desc: "Extreme & underground metal",                 logo: "https://death.fm/images/logos/logo-dfm-200x200.png" },
+    { id: "entranced", name: "Entranced.FM",         host: "entranced.fm",             desc: "Trance, ambient & electronic",                logo: "https://entranced.fm/images/logos/logo-efm-g200x200.png" }
 ];
 
 // --- options -----------------------------------------------------------------
@@ -136,7 +139,10 @@ function poll() {
                 title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
             setInfo(title || "—", htmlDecode(j.Artist));
 
-            var cover = (j.CoverLink || "").replace("/cover/", "/cover/500/");
+            // No CoverLink means a station ID or an unregistered track - show the
+            // station's logo, exactly what the station's own web player does (its
+            // reference logic: ASIN -> sized cover, CoverLink -> as-is, else logo).
+            var cover = (j.CoverLink || "").replace("/cover/", "/cover/500/") || station().logo;
             if (cover && cover !== shownUrl) { shownUrl = cover; showCover(cover); }
             setStatus("");
             // Re-poll when the track should end (clamped), +1s for the server to roll over.
