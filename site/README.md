@@ -16,6 +16,7 @@ substitution.
 ├─ img/            logo/favicon/social artwork + screenshots
 ├─ tests/          Playwright canary for the DEPLOYED player (daily + after each
 │                  deploy via .github/workflows/player-canary.yml; not shipped)
+├─ humans.txt      credits (humanstxt.org convention; token-stamped like robots.txt)
 └─ shoot.ps1       sets up demo mode + launches the players for hand screenshots
 ```
 

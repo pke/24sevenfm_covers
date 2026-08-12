@@ -117,7 +117,7 @@ $stamp = if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }
 # site\, which would publish README.md and shoot.ps1 too. They carry {{SITE_URL}}, so they
 # must go through the token pass, not a plain copy.
 $publish = Get-ChildItem $siteSrc -File |
-           Where-Object { $_.Extension -eq '.html' -or $_.Name -in @('robots.txt', 'sitemap.xml') }
+           Where-Object { $_.Extension -eq '.html' -or $_.Name -in @('robots.txt', 'sitemap.xml', 'humans.txt') }
 foreach ($page in $publish) {
     $text = [System.IO.File]::ReadAllText($page.FullName, $utf8)
     foreach ($t in $tokens.Keys) { $text = $text.Replace($t, [string]$tokens[$t]) }

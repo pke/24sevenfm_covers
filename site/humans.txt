@@ -1,0 +1,23 @@
+/* TEAM */
+    Maker: Philipp Kursawe (pke)
+    Contact: github.com/pke/24sevenfm_covers/issues
+    GitHub: @pke
+
+/* THANKS */
+    The 24seven.fm stations - StreamingSoundtracks, 1980s.FM, Adagio.FM,
+    Death.FM, Entranced.FM - for over two decades of hand-curated radio,
+    and for a now-playing endpoint the whole project stands on.
+
+    Peter Pawlowski - foobar2000 and its SDK, which the foobar component
+    is built on.
+
+    Nullsoft - Winamp. It really whips the llama's ass.
+
+/* SITE */
+    Last update: {{UPDATED}}
+    Language: English
+    Doctype: HTML5
+    Components: none - no frameworks, no trackers, no cookies
+    Software: C++ / Direct2D (the apps), vanilla JS (the web player),
+              GitHub Pages + Actions (this site)
+    Source: github.com/pke/24sevenfm_covers (MIT)
