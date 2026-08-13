@@ -175,18 +175,25 @@ function sizedCoverUrl(raw) {
 var $ = function (id) { return document.getElementById(id); };
 var stage = $("stage"), coverBox = $("coverbox");
 
+// Cover and movie work use the same generation mechanism, but separate channels:
+// changing backdrop options must not cancel a still-valid cover load (and vice versa).
+var renderGenerations = { cover: 0, backdrop: 0 };
+function nextRenderGeneration(channel) { return ++renderGenerations[channel]; }
+function renderIsCurrent(channel, generation) { return renderGenerations[channel] === generation; }
+
 // A double-buffered image layer: two stacked <img>s, the incoming URL preloads into
 // the hidden one and opacity-crossfades over the visible one (CSS .show). Used for
 // both backdrop layers - a bare src swap would hard-cut, and backgrounds deserve the
 // same crossfade the cover gets.
-function makeLayer(a, b) {
+function makeLayer(a, b, channel) {
     var front = null;
     return {
-        show: function (url, onShown) {
+        show: function (url, generation, onShown) {
             if (front && front.src === url && front.classList.contains("show")) return;
             var back = (front === a) ? b : a;
             var pre = new Image();
             pre.onload = function () {
+                if (!renderIsCurrent(channel, generation)) return;
                 back.src = url;
                 back.classList.add("show");
                 if (front) front.classList.remove("show");
@@ -202,7 +209,7 @@ function makeLayer(a, b) {
         }
     };
 }
-var blurLayer = makeLayer($("backdropA"), $("backdropB"));
+var blurLayer = makeLayer($("backdropA"), $("backdropB"), "cover");
 var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), audioEl = $("audio");
 
@@ -320,11 +327,13 @@ async function prefetchNext(ctl) {
 // rotation from the box, so JS never touches the imgs beyond loading their src -
 // and before the first cover there simply is no data-front, so both stay hidden.
 function showCover(url) {
+    var generation = nextRenderGeneration("cover");
     var back = (coverBox.dataset.front === "a") ? imgB : imgA;
     var pre = new Image();
     pre.onload = function () {
+        if (!renderIsCurrent("cover", generation)) return;
         back.src = url;
-        blurLayer.show(url); // poster backdrop, crossfaded (CSS blurs it; idle in fill layout)
+        blurLayer.show(url, generation); // poster backdrop, crossfaded in poster layout
         var effect = reducedMotion ? 0 : opts.transition;
         stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
         var fx = ["none", "fade", "fliph", "flipv"][effect];
@@ -354,7 +363,7 @@ function showCover(url) {
 // per-title cache (negative results too) keeps it to one request per movie, and every
 // failure path falls back silently to the blurred cover - experimental means the
 // player must never be worse off for having it enabled.
-var movieLayer = makeLayer($("movieA"), $("movieB"));
+var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a movie backdrop is currently visible (drives hide-cover)
 var tmdbCache = {};   // cleaned title -> backdrop URL ("" = searched, no match)
 
@@ -453,23 +462,25 @@ async function artFromProviders(hit) {
     return "";
 }
 
-function setMovieBackdrop(url) {
+function setMovieBackdrop(url, generation) {
+    if (!renderIsCurrent("backdrop", generation)) return;
     if (!url) {
         movieLayer.hide();
         movieShown = false;
         updateCoverVisibility();
         return;
     }
-    movieLayer.show(url, function () { movieShown = true; updateCoverVisibility(); });
+    movieLayer.show(url, generation, function () { movieShown = true; updateCoverVisibility(); });
 }
 
 function updateBackdrop() {
+    const generation = nextRenderGeneration("backdrop");
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
-    if (stationIdActive || !opts.tmdbBackdrops) { setMovieBackdrop(""); return; }
+    if (stationIdActive || !opts.tmdbBackdrops) { setMovieBackdrop("", generation); return; }
     const resolver = station().backdrop;
-    if (!resolver) { setMovieBackdrop(""); return; } // this station has no art source
-    resolver();
+    if (!resolver) { setMovieBackdrop("", generation); return; } // no art source
+    resolver(generation);
 }
 
 // Resolve an album title to movie art (search TMDB, then the provider priority
@@ -479,7 +490,8 @@ function updateBackdrop() {
 async function movieArtFor(album) {
     const q = cleanMovieTitle(album);
     if (!q || !opts.tmdbKey) return "";
-    if (q in tmdbCache) return tmdbCache[q];
+    const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
+    if (q in cache) return cache[q];
     // TMDB accepts either credential; the shape tells them apart. A v3 API key is 32
     // hex chars and rides the query string; a v4 Read Access Token is a JWT (eyJ...,
     // with dots) and goes in an Authorization: Bearer header - which triggers a CORS
@@ -494,21 +506,25 @@ async function movieArtFor(album) {
     const j = await r.json();
     const hit = pickMovie(j.results || [], q);
     const url = hit ? await artFromProviders(hit) : "";
-    tmdbCache[q] = url;
+    cache[q] = url;
     return url;
 }
 
-async function resolveMovieBackdrop() {
+async function resolveMovieBackdrop(generation) {
+    if (!renderIsCurrent("backdrop", generation)) return;
     if (!opts.tmdbKey) {
-        setMovieBackdrop("");
+        setMovieBackdrop("", generation);
         setStatus("Movie backdrops need a TMDB API key - see the Experimental options.");
         return;
     }
     try {
-        setMovieBackdrop(await movieArtFor(currentAlbum));
+        const url = await movieArtFor(currentAlbum);
+        if (!renderIsCurrent("backdrop", generation)) return;
+        setMovieBackdrop(url, generation);
     } catch (e) {
+        if (!renderIsCurrent("backdrop", generation)) return;
         if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.");
-        setMovieBackdrop(""); // any failure: quietly back to the blurred cover
+        setMovieBackdrop("", generation); // any failure: quietly back to the blurred cover
     }
 }
 
@@ -736,6 +752,8 @@ function bindRadios(name, current, apply) {
 })();
 bindRadios("station", opts.station, function (v) {
     opts.station = v;
+    nextRenderGeneration("cover"); // invalidate image loads before the new poll returns
+    setMovieBackdrop("", nextRenderGeneration("backdrop"));
     shownUrl = ""; remAnchor = -1;
     currentAlbum = ""; // the resolver is per-station now - always re-evaluate after a
                        // switch, even if the new station plays an identically named album

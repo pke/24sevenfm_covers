@@ -70,6 +70,79 @@ test.describe("the deployed player page", () => {
         expect(redirectRequested).toBe(false);
     });
 
+    test("ignores a cover that finishes after a station switch", async ({ page }) => {
+        const slowCover = "https://streamingsoundtracks.com/images/cover/slow.svg";
+        const slowSized = "https://streamingsoundtracks.com/images/cover/500/slow.svg";
+        const fastCover = "https://death.fm/images/cover/fast.svg";
+        const fastSized = "https://death.fm/images/cover/500/fast.svg";
+        let slowRoute = null;
+        await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/soap\/FM24sevenJSON\.php\?/, (route) => {
+            const url = new URL(route.request().url());
+            if (url.searchParams.get("action") === "GetQueue") return route.fulfill({ json: [] });
+            const isDeath = url.hostname === "death.fm";
+            return route.fulfill({ json: {
+                Album: isDeath ? "Fast" : "Slow", Track: "", Artist: "24seven.fm",
+                CoverLink: isDeath ? fastCover : slowCover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(slowSized, (route) => { slowRoute = route; });
+        await page.route(fastSized, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => !!slowRoute).toBe(true);
+        await page.locator("label.seg", { hasText: "Death.FM" }).click();
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+        await expect(front).toHaveAttribute("src", fastSized);
+
+        await slowRoute.fulfill({ status: 200, contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+        await page.waitForTimeout(100);
+        await expect(front).toHaveAttribute("src", fastSized);
+    });
+
+    test("ignores a TMDB result after movie backdrops are disabled", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/race.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/race.svg";
+        let tmdbRoute = null, backdropRequested = false;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "race-test-key",
+                fanartBackdrops: 0, tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Slow Movie", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
+            tmdbRoute = route;
+        });
+        await page.route("https://image.tmdb.org/t/p/w1280/slow.jpg", (route) => {
+            backdropRequested = true;
+            return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => !!tmdbRoute).toBe(true);
+        await page.locator("label:has(#tmdb-on)").click();
+        await tmdbRoute.fulfill({ json: { results: [
+            { id: 1, title: "Slow Movie", original_title: "Slow Movie", backdrop_path: "/slow.jpg" },
+        ] } });
+        await page.waitForTimeout(100);
+        expect(backdropRequested).toBe(false);
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
+    });
+
     test("loads, polls the station, and renders a real cover", async ({ page }) => {
         const errors = [];
         const netlog = []; // every station response/failure the PAGE itself saw
