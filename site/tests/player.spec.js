@@ -122,7 +122,7 @@ test.describe("the deployed player page", () => {
         await expect(front).toHaveAttribute("src", sizedCover);
         await expect.poll(() => front.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
     });
-    test("times out a stalled cover preload and retries", async ({ page }) => {
+    test("retries a stalled cover before a long track ends", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/stalled.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/stalled.svg";
         let coverRequests = 0;
@@ -132,7 +132,7 @@ test.describe("the deployed player page", () => {
             if (action === "GetQueue") return route.fulfill({ json: [] });
             return route.fulfill({ json: {
                 Album: "Stalled Cover", Track: "", Artist: "24seven.fm",
-                CoverLink: cover, Length: 0,
+                CoverLink: cover, Length: 300000,
                 PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
             } });
         });
@@ -145,7 +145,7 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => coverRequests).toBe(1);
-        await page.clock.fastForward(26002);
+        await page.clock.fastForward(25002);
         await expect.poll(() => coverRequests).toBe(2);
         const front = page.locator(
             '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');

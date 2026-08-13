@@ -183,7 +183,7 @@ var stage = $("stage"), coverBox = $("coverbox");
 var renderGenerations = { cover: 0, backdrop: 0 };
 function nextRenderGeneration(channel) { return ++renderGenerations[channel]; }
 function renderIsCurrent(channel, generation) { return renderGenerations[channel] === generation; }
-var IMAGE_TIMEOUT = 20000;
+var IMAGE_TIMEOUT = 20000, COVER_RETRY_DELAY = 5000;
 
 function preloadImage(url, onLoad, onError) {
     var image = new Image(), settled = false;
@@ -400,7 +400,12 @@ function showCover(url) {
         coverBox.dataset.front = (back === imgA) ? "a" : "b";
     }, function () {
         if (!renderIsCurrent("cover", generation)) return;
-        loadingCoverUrl = ""; // let the next station poll retry this URL
+        loadingCoverUrl = "";
+        setTimeout(function () {
+            if (renderIsCurrent("cover", generation)
+                    && !loadingCoverUrl && shownUrl !== url) showCover(url);
+        }, COVER_RETRY_DELAY);
+
     });
 }
 
