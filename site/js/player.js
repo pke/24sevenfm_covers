@@ -502,7 +502,12 @@ $("fullscreen").addEventListener("click", toggleFullscreen);
 // below the stage is unreachable there. The ⋯ button MOVES the real panel into an
 // overlay inside the stage - moving (not copying) keeps every binding and value,
 // and there is exactly one panel to keep in sync.
-var controlsEl = document.querySelector(".controls");
+// Two panels move: the station picker (above the stage) and the main options panel
+// (below it). The overlay shows them stacked, station first - same order as embedded.
+var stationBox = document.querySelector(".controls-top");
+var stationHome = stationBox.parentNode;
+var stationNext = stationBox.nextElementSibling; // where it goes back (the stage)
+var controlsEl = document.querySelector(".controls:not(.controls-top)");
 var controlsHome = controlsEl.parentNode;
 var controlsNext = controlsEl.nextElementSibling; // where it goes back
 var fsOptsHost = $("fs-options"), optsBtn = $("stage-options");
@@ -511,8 +516,13 @@ function setOptionsOverlay(open) {
     optionsOpen = open;
     optsBtn.setAttribute("aria-pressed", open ? "true" : "false");
     fsOptsHost.hidden = !open;
-    if (open) fsOptsHost.appendChild(controlsEl);
-    else if (controlsEl.parentNode === fsOptsHost) controlsHome.insertBefore(controlsEl, controlsNext);
+    if (open) {
+        fsOptsHost.appendChild(stationBox);
+        fsOptsHost.appendChild(controlsEl);
+    } else if (controlsEl.parentNode === fsOptsHost) {
+        stationHome.insertBefore(stationBox, stationNext);
+        controlsHome.insertBefore(controlsEl, controlsNext);
+    }
 }
 optsBtn.addEventListener("click", function () { setOptionsOverlay(!optionsOpen); });
 

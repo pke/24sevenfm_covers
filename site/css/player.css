@@ -181,6 +181,8 @@
 
 /* --- controls ------------------------------------------------------------------- */
 .controls { display: grid; gap: 1rem; margin-top: 1.5rem; }
+/* The station picker block sits ABOVE the stage: its gap belongs below it. */
+.controls-top { margin: 0 0 1rem; }
 .controls fieldset {
     border: 1px solid var(--line);
     border-radius: .9rem;

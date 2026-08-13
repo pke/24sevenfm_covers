@@ -56,6 +56,16 @@
         you can stream the station's audio too — or keep it silent and just watch the artwork.
         Everything talks directly to the station; nothing runs through this site.</p>
 
+        <!-- Station picker above the stage: choose first, watch below. Lives in its own
+             .controls block so the fullscreen overlay can move it (with the main panel)
+             into the stage - outside .controls it would be unreachable in fullscreen. -->
+        <div class="controls controls-top">
+            <fieldset class="wide">
+                <legend>Station</legend>
+                <div class="seg-group" id="stations"><!-- built from the station table by player.js --></div>
+            </fieldset>
+        </div>
+
         <div class="stage layout-poster" id="stage"><!-- pre-JS class matches the default
              layout, so the first paint doesn't flicker from fill to poster -->
             <!-- Each backdrop layer is double-buffered (two stacked imgs, like the cover):
@@ -97,11 +107,6 @@
         <p class="status" id="status" aria-live="polite"></p>
 
         <div class="controls">
-            <fieldset class="wide">
-                <legend>Station</legend>
-                <div class="seg-group" id="stations"><!-- built from the station table by player.js --></div>
-            </fieldset>
-
             <fieldset>
                 <legend>Audio</legend>
                 <div class="row">
