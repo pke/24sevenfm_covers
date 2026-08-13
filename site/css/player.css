@@ -140,7 +140,11 @@
 }
 .coverbox .countdown { position: absolute; right: 4%; bottom: 4%; z-index: 2; margin-top: 0; }
 .countdown.hidden { display: none !important; }
-.cd-cell { position: relative; display: inline-block; overflow: hidden; height: 1.2em; line-height: 1.2em; }
+/* contain: the once-a-second digit swap (and the roll ghosts) invalidate layout
+   INSIDE the cell only - tabular-nums keeps every digit the same width, so the
+   cell's own size never changes and the update can never leak a reflow into the
+   info box or stage. paint scopes the ghost clipping the same way. */
+.cd-cell { position: relative; display: inline-block; overflow: hidden; height: 1.2em; line-height: 1.2em; contain: layout paint; }
 .cd-cur { display: block; }
 .cd-ghost { position: absolute; inset: 0; } /* the outgoing digit during a roll */
 
