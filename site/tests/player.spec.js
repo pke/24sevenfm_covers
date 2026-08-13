@@ -221,6 +221,41 @@ test.describe("the deployed player page", () => {
         expect(fanartRequested).toBe(false);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
     });
+    test("treats inherited object names as normal movie cache keys", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/constructor.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/constructor.svg";
+        let tmdbRequests = 0;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "cache-test-key",
+                fanartBackdrops: 0, tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "constructor", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
+            tmdbRequests++;
+            return route.fulfill({ json: { results: [
+                { id: 13, title: "constructor", original_title: "constructor",
+                    backdrop_path: "/constructor.jpg" },
+            ] } });
+        });
+        await page.route("https://image.tmdb.org/t/p/w1280/constructor.jpg", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => tmdbRequests).toBe(1);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /constructor\.jpg/);
+    });
     test("clears stale movie art when the replacement image fails", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/movie-failure.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/movie-failure.svg";

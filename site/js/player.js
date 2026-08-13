@@ -400,7 +400,8 @@ function showCover(url) {
 // player must never be worse off for having it enabled.
 var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a movie backdrop is currently visible (drives hide-cover)
-var tmdbCache = {};   // cleaned title -> backdrop URL ("" = searched, no match)
+function newMovieCache() { return Object.create(null); }
+var tmdbCache = newMovieCache(); // cleaned title -> backdrop URL ("" = searched, no match)
 var backdropRequest = null;
 
 function cancelBackdropRequest() {
@@ -569,7 +570,7 @@ async function movieArtFor(album, generation, reportStatus, signal) {
     const q = cleanMovieTitle(album);
     if (!renderIsCurrent("backdrop", generation) || !q || !opts.tmdbKey) return "";
     const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
-    if (q in cache) return cache[q];
+    if (Object.prototype.hasOwnProperty.call(cache, q)) return cache[q];
     // TMDB accepts either credential; the shape tells them apart. A v3 API key is 32
     // hex chars and rides the query string; a v4 Read Access Token is a JWT (eyJ...,
     // with dots) and goes in an Authorization: Bearer header - which triggers a CORS
@@ -882,7 +883,7 @@ tmdbOnEl.addEventListener("change", function () {
 });
 tmdbKeyEl.addEventListener("change", function () {
     opts.tmdbKey = tmdbKeyEl.value.trim();
-    tmdbCache = {}; // a new key deserves a fresh try, including negative caches
+    tmdbCache = newMovieCache(); // a new key deserves a fresh try, including negative caches
     saveOpts();
     setStatus("");
     updateBackdrop();
@@ -891,7 +892,7 @@ var fanartKeyEl = $("fanart-key");
 fanartKeyEl.value = opts.fanartKey;
 fanartKeyEl.addEventListener("change", function () {
     opts.fanartKey = fanartKeyEl.value.trim();
-    tmdbCache = {}; // cached art may now be upgradable (or was fanart-based)
+    tmdbCache = newMovieCache(); // cached art may now be upgradable (or was fanart-based)
     saveOpts();
     setStatus("");
     updateBackdrop();
@@ -930,7 +931,7 @@ function commitProviderOrder(moved) {
     opts.providerOrder = Array.prototype.map.call(providersEl.children, function (li) {
         return li.dataset.provider;
     });
-    tmdbCache = {}; // priority decides which source's URL gets cached
+    tmdbCache = newMovieCache(); // priority decides which source's URL gets cached
     saveOpts();
     updateBackdrop();
     syncProviderHandles(moved);
@@ -945,7 +946,7 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
     box.checked = p.enabled;
     box.addEventListener("change", function () {
         p.enabled = box.checked;
-        tmdbCache = {}; // every cached URL may be the other source's now
+        tmdbCache = newMovieCache(); // every cached URL may be the other source's now
         saveOpts();
         setStatus("");
         updateBackdrop();
