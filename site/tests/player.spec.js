@@ -143,6 +143,51 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
     });
 
+    for (const status of [429, 500]) {
+        test(`retries TMDB after a transient HTTP ${status}`, async ({ page }) => {
+            const cover = "https://streamingsoundtracks.com/images/cover/retry.svg";
+            const sizedCover = "https://streamingsoundtracks.com/images/cover/500/retry.svg";
+            let tmdbRequests = 0;
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "retry-test-key",
+                    fanartBackdrops: 0, tmdbArt: 1 })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: "Retry Movie", Track: "", Artist: "24seven.fm",
+                    CoverLink: cover, Length: 0,
+                    PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+                } });
+            });
+            await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
+                tmdbRequests++;
+                if (tmdbRequests === 1)
+                    return route.fulfill({ status, json: { status_message: "temporary failure" } });
+                return route.fulfill({ json: { results: [
+                    { id: 1, title: "Retry Movie", original_title: "Retry Movie",
+                        backdrop_path: "/retry.jpg" },
+                ] } });
+            });
+            await page.route("https://image.tmdb.org/t/p/w1280/retry.jpg", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect.poll(() => tmdbRequests).toBe(1);
+            await page.waitForTimeout(100); // let the failed lookup settle without caching
+            const toggle = page.locator("label:has(#tmdb-on)");
+            await toggle.click();
+            await toggle.click();
+
+            await expect.poll(() => tmdbRequests).toBe(2);
+            await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(1);
+        });
+    }
+
     test("loads, polls the station, and renders a real cover", async ({ page }) => {
         const errors = [];
         const netlog = []; // every station response/failure the PAGE itself saw

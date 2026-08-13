@@ -503,6 +503,7 @@ async function movieArtFor(album) {
           + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
           isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined);
     if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
+    if (r.status !== 200) throw new Error("TMDB HTTP " + r.status);
     const j = await r.json();
     const hit = pickMovie(j.results || [], q);
     const url = hit ? await artFromProviders(hit) : "";
