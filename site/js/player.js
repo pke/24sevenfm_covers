@@ -711,12 +711,15 @@ if (window.ResizeObserver) new ResizeObserver(sizeStage).observe(stage);
 
 // --- audio -------------------------------------------------------------------
 var audioBtn = $("audio-toggle"), volEl = $("volume");
+var audioGeneration = 0;
 function audioUrl() { return "https://" + station().host + "/live"; }
 function setAudio(on) {
+    const generation = ++audioGeneration;
     if (on) {
         audioEl.src = audioUrl();
         audioEl.volume = opts.volume;
         audioEl.play().catch(function () {
+            if (generation !== audioGeneration) return;
             setStatus("Your browser refused to play the stream – use the playlist links below.");
             setAudio(false);
         });

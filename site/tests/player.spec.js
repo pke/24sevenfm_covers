@@ -523,6 +523,39 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
     });
 
+    test("ignores a stale audio rejection after a station switch", async ({ page }) => {
+        await page.addInitScript(() => {
+            window.__plays = [];
+            HTMLMediaElement.prototype.play = function () {
+                const src = this.src;
+                return new Promise((resolve, reject) => window.__plays.push({ src, resolve, reject }));
+            };
+            HTMLMediaElement.prototype.pause = function () {};
+            HTMLMediaElement.prototype.load = function () {};
+        });
+        await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/soap\/FM24sevenJSON\.php\?/, (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "", Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/images\/logos\//, (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await page.locator("#audio-toggle").click();
+        await expect.poll(() => page.evaluate(() => window.__plays.length)).toBe(1);
+        await page.locator("label.seg", { hasText: "Death.FM" }).click();
+        await expect.poll(() => page.evaluate(() => window.__plays.length)).toBe(2);
+        await page.evaluate(() => window.__plays[0].reject(new DOMException("superseded", "AbortError")));
+        await page.waitForTimeout(100);
+        await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
+        await expect(page.locator("#audio")).toHaveAttribute("src", "https://death.fm/live");
+        await page.evaluate(() => window.__plays[1].resolve());
+    });
     test("reorders and persists backdrop providers with the keyboard", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
