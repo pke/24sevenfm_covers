@@ -183,6 +183,23 @@ var stage = $("stage"), coverBox = $("coverbox");
 var renderGenerations = { cover: 0, backdrop: 0 };
 function nextRenderGeneration(channel) { return ++renderGenerations[channel]; }
 function renderIsCurrent(channel, generation) { return renderGenerations[channel] === generation; }
+var IMAGE_TIMEOUT = 20000;
+
+function preloadImage(url, onLoad, onError) {
+    var image = new Image(), settled = false;
+    var kill = setTimeout(function () { settle(onError, true); }, IMAGE_TIMEOUT);
+    function settle(callback, abort) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(kill);
+        image.onload = image.onerror = null;
+        if (abort) image.removeAttribute("src");
+        if (callback) callback();
+    }
+    image.onload = function () { settle(onLoad, false); };
+    image.onerror = function () { settle(onError, false); };
+    image.src = url;
+}
 
 // A double-buffered image layer: two stacked <img>s, the incoming URL preloads into
 // the hidden one and opacity-crossfades over the visible one (CSS .show). Used for
@@ -194,19 +211,16 @@ function makeLayer(a, b, channel) {
         show: function (url, generation, onShown, onError) {
             if (front && front.src === url && front.classList.contains("show")) return;
             var back = (front === a) ? b : a;
-            var pre = new Image();
-            pre.onload = function () {
+            preloadImage(url, function () {
                 if (!renderIsCurrent(channel, generation)) return;
                 back.src = url;
                 back.classList.add("show");
                 if (front) front.classList.remove("show");
                 front = back;
                 if (onShown) onShown();
-            };
-            pre.onerror = function () {
+            }, function () {
                 if (renderIsCurrent(channel, generation) && onError) onError();
-            };
-            pre.src = url;
+            });
         },
         hide: function () {
             a.classList.remove("show");
@@ -347,8 +361,7 @@ function showCover(url) {
     var generation = nextRenderGeneration("cover");
     loadingCoverUrl = url;
     var back = (coverBox.dataset.front === "a") ? imgB : imgA;
-    var pre = new Image();
-    pre.onload = function () {
+    preloadImage(url, function () {
         if (!renderIsCurrent("cover", generation)) return;
         loadingCoverUrl = "";
         shownUrl = url;
@@ -372,12 +385,10 @@ function showCover(url) {
         // property change under an active transition, not on one applied after it.
         void coverBox.offsetWidth;
         coverBox.dataset.front = (back === imgA) ? "a" : "b";
-    };
-    pre.onerror = function () {
+    }, function () {
         if (!renderIsCurrent("cover", generation)) return;
         loadingCoverUrl = ""; // let the next station poll retry this URL
-    };
-    pre.src = url;
+    });
 }
 
 // --- experimental: TMDB movie backdrops --------------------------------------

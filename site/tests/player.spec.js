@@ -97,6 +97,35 @@ test.describe("the deployed player page", () => {
         await expect(front).toHaveAttribute("src", sizedCover);
         await expect.poll(() => front.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
     });
+    test("times out a stalled cover preload and retries", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/stalled.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/stalled.svg";
+        let coverRequests = 0;
+        await page.clock.install();
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Stalled Cover", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => {
+            coverRequests++;
+            if (coverRequests === 1) return;
+            return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => coverRequests).toBe(1);
+        await page.clock.fastForward(26002);
+        await expect.poll(() => coverRequests).toBe(2);
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+        await expect(front).toHaveAttribute("src", sizedCover);
+    });
     test("ignores a cover that finishes after a station switch", async ({ page }) => {
         const slowCover = "https://streamingsoundtracks.com/images/cover/slow.svg";
         const slowSized = "https://streamingsoundtracks.com/images/cover/500/slow.svg";
