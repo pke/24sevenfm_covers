@@ -195,6 +195,46 @@ test.describe("the deployed player page", () => {
         });
     }
 
+    test("keeps next-track fanart prefetch failures out of the current status", async ({ page }) => {
+        const nextCover = "https://streamingsoundtracks.com/images/cover/next.svg";
+        const nextSized = "https://streamingsoundtracks.com/images/cover/500/next.svg";
+        let fanartRequests = 0;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "prefetch-test-key",
+                fanartBackdrops: 1, fanartKey: "bad-fanart-key", tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [{
+                Album: "Next Movie", CoverLink: nextCover,
+            }] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "", Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(nextSized, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
+            route.fulfill({ json: { results: [
+                { id: 7, title: "Next Movie", original_title: "Next Movie",
+                    backdrop_path: "/next.jpg" },
+            ] } }));
+        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) => {
+            fanartRequests++;
+            return route.fulfill({ status: 401, json: { error: "bad key" } });
+        });
+        await page.route("https://image.tmdb.org/t/p/w1280/next.jpg", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => fanartRequests).toBe(1);
+        await expect(page.locator("#status")).toHaveText("");
+    });
     async function mockProviderTestFeed(page) {
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");

@@ -407,12 +407,15 @@ function pickMovie(results, q) {
 // toggle (key stays saved while unticked); any failure here degrades to TMDB's own
 // backdrop, never to nothing.
 
-async function fanartBackdrop(movieId) {
+async function fanartBackdrop(movieId, reportStatus) {
     if (!opts.fanartKey) return ""; // keyless = a plain miss, no request
     try {
         const r = await fetch("https://webservice.fanart.tv/v3/movies/" + movieId
                               + "?api_key=" + encodeURIComponent(opts.fanartKey));
-        if (r.status === 401) { setStatus("fanart.tv rejected its key - using TMDB art only."); return ""; }
+        if (r.status === 401) {
+            if (reportStatus) reportStatus("fanart.tv rejected its key - using TMDB art only.");
+            return "";
+        }
         if (!r.ok) return "";
         const list = ((await r.json()) || {}).moviebackground || [];
         if (!list.length) return "";
@@ -422,7 +425,7 @@ async function fanartBackdrop(movieId) {
         })[0];
         return best.url;
     } catch (e) {
-        setStatus("fanart.tv's API currently not working - using TMDB art.");
+        if (reportStatus) reportStatus("fanart.tv's API currently not working - using TMDB art.");
         return "";
     }
 }
@@ -437,7 +440,7 @@ var MOVIE_ART_PROVIDERS = {
     fanart: {
         get enabled() { return !!opts.fanartBackdrops; },
         set enabled(on) { opts.fanartBackdrops = on ? 1 : 0; },
-        art: function (hit) { return fanartBackdrop(hit.id); }
+        art: function (hit, reportStatus) { return fanartBackdrop(hit.id, reportStatus); }
     },
     tmdb: {
         get enabled() { return !!opts.tmdbArt; },
@@ -452,12 +455,12 @@ var MOVIE_ART_PROVIDERS = {
 // First enabled provider (in priority order) that delivers art wins. Sequential on
 // purpose: asking the next provider only AFTER the preferred one came up empty is
 // the whole point of a priority order. (Array.find can't do this - it cannot await.)
-async function artFromProviders(hit, generation) {
+async function artFromProviders(hit, generation, reportStatus) {
     for (const id of opts.providerOrder) {
         if (!renderIsCurrent("backdrop", generation)) return "";
         const p = MOVIE_ART_PROVIDERS[id];
         if (!p || !p.enabled) continue;
-        const url = await p.art(hit);
+        const url = await p.art(hit, reportStatus);
         if (!renderIsCurrent("backdrop", generation)) return "";
         if (url) return url;
     }
@@ -486,10 +489,10 @@ function updateBackdrop() {
 }
 
 // Resolve an album title to movie art (search TMDB, then the provider priority
-// list), through the per-title cache. A pure lookup - no status text, no display -
-// so the prefetcher can use it for the NEXT track as well as the display path for
-// the current one. Throws "badkey" so the display path can tell the user.
-async function movieArtFor(album, generation) {
+// list), through the per-title cache. It has no direct UI effects: the current-track
+// display path may inject a generation-checked status reporter, while the prefetcher
+// stays silent. Throws "badkey" so the display path can tell the user.
+async function movieArtFor(album, generation, reportStatus) {
     const q = cleanMovieTitle(album);
     if (!renderIsCurrent("backdrop", generation) || !q || !opts.tmdbKey) return "";
     const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
@@ -509,7 +512,7 @@ async function movieArtFor(album, generation) {
     if (r.status !== 200) throw new Error("TMDB HTTP " + r.status);
     const j = await r.json();
     const hit = pickMovie(j.results || [], q);
-    const url = hit ? await artFromProviders(hit, generation) : "";
+    const url = hit ? await artFromProviders(hit, generation, reportStatus) : "";
     if (!renderIsCurrent("backdrop", generation)) return "";
     cache[q] = url;
     return url;
@@ -523,7 +526,9 @@ async function resolveMovieBackdrop(generation) {
         return;
     }
     try {
-        const url = await movieArtFor(currentAlbum, generation);
+        const url = await movieArtFor(currentAlbum, generation, function (text) {
+            if (renderIsCurrent("backdrop", generation)) setStatus(text);
+        });
         if (!renderIsCurrent("backdrop", generation)) return;
         setMovieBackdrop(url, generation);
     } catch (e) {
