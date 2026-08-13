@@ -72,6 +72,9 @@
     aspect-ratio: 1 / 1;   /* pre-JS fallback; JS sets explicit width+height */
     perspective: 1200px;
 }
+/* The rigid card holding both buffers: the flip effects rotate THIS, fade/none
+   leave it untransformed. preserve-3d keeps the faces glued to it. */
+.coverbox .card { position: absolute; inset: 0; transform-style: preserve-3d; }
 .coverbox img {
     position: absolute; inset: 0;
     width: 100%; height: 100%;
@@ -81,7 +84,7 @@
 }
 .layout-poster .coverbox img { border-radius: var(--cover-radius, 0); }
 
-/* The box's data attributes drive both imgs - the children are addressed purely
+/* The box's data attributes drive everything - the children are addressed purely
    positionally, never touched by JS: data-front names the visible buffer, data-fx
    the transition. No data-front (before the first cover) = both hidden. */
 .coverbox[data-front="a"] img:first-of-type,
@@ -90,18 +93,24 @@
 /* Crossfade: the incoming image fades in over the outgoing one. */
 .coverbox[data-fx="fade"] img { transition: opacity var(--fade-ms, 1000ms) ease; }
 
-/* Flips: both images stay opaque - the rotation hides them (edge-on at 90° with the
-   backface culled). The base rule is the parked pose; the data-front match is more
-   specific and rotates the visible buffer into view, so the outgoing rotates away
-   while the incoming arrives. */
+/* data-warp: one transition-less beat, set by JS while it COMMITS a new effect's
+   parked poses - an effect change must teleport into position, not animate there
+   (an animating park makes the very next flip a visually static no-op). */
+.coverbox[data-warp] img,
+.coverbox[data-warp] .card { transition: none !important; }
+
+/* Flips: a real card turn. Buffer "a" is the card's face, buffer "b" is glued to
+   its BACK (a fixed 180° pose - the incoming cover literally sticks behind the
+   current one), and data-front turns the whole card: front="a" shows the face,
+   front="b" the back. Both imgs stay opaque - backface culling does the hiding. */
 .coverbox[data-fx="fliph"] img,
-.coverbox[data-fx="flipv"] img { opacity: 1; transition: transform var(--fade-ms, 1000ms) ease; }
-.coverbox[data-fx="fliph"] img { transform: rotateY( 90deg); }
-.coverbox[data-fx="flipv"] img { transform: rotateX(-90deg); }
-.coverbox[data-fx="fliph"][data-front="a"] img:first-of-type,
-.coverbox[data-fx="fliph"][data-front="b"] img:last-of-type { transform: rotateY(0); }
-.coverbox[data-fx="flipv"][data-front="a"] img:first-of-type,
-.coverbox[data-fx="flipv"][data-front="b"] img:last-of-type { transform: rotateX(0); }
+.coverbox[data-fx="flipv"] img { opacity: 1; }
+.coverbox[data-fx="fliph"] .card,
+.coverbox[data-fx="flipv"] .card { transition: transform var(--fade-ms, 1000ms) ease; }
+.coverbox[data-fx="fliph"] img:last-of-type { transform: rotateY(180deg); }
+.coverbox[data-fx="flipv"] img:last-of-type { transform: rotateX(180deg); }
+.coverbox[data-fx="fliph"][data-front="b"] .card { transform: rotateY(180deg); }
+.coverbox[data-fx="flipv"][data-front="b"] .card { transform: rotateX(180deg); }
 
 /* --- info box (poster only) ------------------------------------------------------ */
 /* A flex sibling sitting below the cover, holding title, artist and the countdown as
@@ -288,6 +297,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 .fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-    .coverbox img, .coverbox, .stage-fs, .backdrop { transition: none !important; }
+    .coverbox img, .coverbox .card, .coverbox, .stage-fs, .backdrop { transition: none !important; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }

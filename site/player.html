@@ -76,8 +76,12 @@
             <img class="backdrop backdrop-movie" id="movieA" alt="" aria-hidden="true">
             <img class="backdrop backdrop-movie" id="movieB" alt="" aria-hidden="true">
             <div class="coverbox" id="coverbox">
-                <img id="coverA" alt="">
-                <img id="coverB" alt="Current album cover">
+                <div class="card"><!-- one rigid card: in the flip effects the two
+                     buffers are its front and back FACES and the card turns over;
+                     fade/none leave the card untransformed and crossfade the imgs -->
+                    <img id="coverA" alt="">
+                    <img id="coverB" alt="Current album cover">
+                </div>
             </div>
             <div class="info">
                 <div class="t" id="info-title">Loading…</div>

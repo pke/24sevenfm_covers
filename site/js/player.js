@@ -273,10 +273,21 @@ function showCover(url) {
         blurLayer.show(url); // poster backdrop, crossfaded (CSS blurs it; idle in fill layout)
         var effect = reducedMotion ? 0 : opts.transition;
         stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
-        // The effect must be in place BEFORE the buffer flip: transitions fire on a
+        var fx = ["none", "fade", "fliph", "flipv"][effect];
+        if (coverBox.dataset.fx !== fx) {
+            // A CHANGE of effect must teleport into the new parked poses, never
+            // animate: with the flip freshly active, the back buffer would still be
+            // ANIMATING toward its 90° park when the front flip retargets it to 0° -
+            // a 0°→0° no-op, and the new cover just pops in statically. One
+            // transition-less flush (data-warp) commits the poses instantly.
+            coverBox.dataset.warp = "";
+            coverBox.dataset.fx = fx;
+            void coverBox.offsetWidth; // commit the parked poses without transitions
+            delete coverBox.dataset.warp;
+        }
+        // The effect must be committed BEFORE the buffer flip: transitions fire on a
         // property change under an active transition, not on one applied after it.
-        coverBox.dataset.fx = ["none", "fade", "fliph", "flipv"][effect];
-        void coverBox.offsetWidth; // commit the fx change first
+        void coverBox.offsetWidth;
         coverBox.dataset.front = (back === imgA) ? "a" : "b";
     };
     pre.src = url;
