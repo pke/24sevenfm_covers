@@ -21,6 +21,31 @@ const JSON_URL =
     "https://streamingsoundtracks.com/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=";
 
 test.describe("the deployed player page", () => {
+    test("enforces a restrictive player resource policy", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        let escaped = false;
+        page.on("request", (request) => {
+            if (request.url() === "https://example.com/exfil") escaped = true;
+        });
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const policy = await page.locator('meta[http-equiv="Content-Security-Policy"]')
+            .getAttribute("content");
+        expect(policy).toContain("default-src 'self'");
+        expect(policy).toContain("script-src 'self' 'sha256-");
+        expect(policy).toContain("connect-src 'self'");
+        expect(policy).toContain("media-src https://streamingsoundtracks.com");
+        expect(policy).toContain("object-src 'none'");
+
+        await page.locator("#themeswitch").evaluate((box) => {
+            box.checked = !box.checked;
+            box.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        expect(await page.evaluate(() => localStorage.getItem("theme"))).toMatch(/^(dark|light)$/);
+        const blocked = await page.evaluate(() => fetch("https://example.com/exfil")
+            .then(() => false, () => true));
+        expect(blocked).toBe(true);
+        expect(escaped).toBe(false);
+    });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
         const hostile = "https://example.invalid/private-cover.jpg";
         let hostileRequested = false;
