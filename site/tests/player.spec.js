@@ -281,6 +281,31 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /constructor\.jpg/);
     });
+    test("preserves the missing-key warning across successful polls", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/no-key.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-key.svg";
+        await page.clock.install();
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "" })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "No Key Movie", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const warning = "Movie backdrops need a TMDB API key - see the Experimental options.";
+        await expect(page.locator("#status")).toHaveText(warning);
+        await page.clock.fastForward(12002);
+        await expect(page.locator("#status")).toHaveText(warning);
+    });
     test("clears stale movie art when the replacement image fails", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/movie-failure.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/movie-failure.svg";

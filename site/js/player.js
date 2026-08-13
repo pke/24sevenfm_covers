@@ -297,13 +297,13 @@ async function poll() {
 
         const cover = isStationId ? station().logo : trustedCover;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
-        setStatus("");
+        clearStatus("station");
         // Re-poll when the track should end (clamped), +1s for the server to roll over.
         schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
         prefetchNext(ctl, renderGenerations.backdrop); // fire-and-forget: warm the NEXT track's art meanwhile
     } catch (e) {
         if (ctl !== inflight) return;
-        setStatus("Station not responding – retrying…");
+        setStatus("Station not responding – retrying…", "station");
         schedulePoll(errBackoff);
         errBackoff = Math.min(ERR_CAP, errBackoff * 2); // exponential backoff, like the lib
     } finally {
@@ -311,7 +311,20 @@ async function poll() {
     }
 }
 
-function setStatus(text) { statusEl.textContent = text; }
+var statusMessages = { station: "", audio: "", backdrop: "", general: "" };
+function renderStatus() {
+    statusEl.textContent = statusMessages.station || statusMessages.audio
+        || statusMessages.backdrop || statusMessages.general;
+}
+function setStatus(text, source) {
+    if (source) statusMessages[source] = text;
+    else {
+        for (var key in statusMessages) statusMessages[key] = "";
+        statusMessages.general = text;
+    }
+    renderStatus();
+}
+function clearStatus(source) { setStatus("", source); }
 
 // Prefetch the NEXT track from the station's queue (action=GetQueue, same CORS
 // grant as the now-playing feed; [0] is up next): warm its sized cover into the
@@ -544,6 +557,7 @@ function setMovieBackdrop(url, generation) {
 function updateBackdrop() {
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
+    clearStatus("backdrop");
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
     if (stationIdActive || !opts.tmdbBackdrops) { setMovieBackdrop("", generation); return; }
@@ -599,18 +613,18 @@ async function resolveMovieBackdrop(generation, signal) {
     if (!renderIsCurrent("backdrop", generation)) return;
     if (!opts.tmdbKey) {
         setMovieBackdrop("", generation);
-        setStatus("Movie backdrops need a TMDB API key - see the Experimental options.");
+        setStatus("Movie backdrops need a TMDB API key - see the Experimental options.", "backdrop");
         return;
     }
     try {
         const url = await movieArtFor(currentAlbum, generation, function (text) {
-            if (renderIsCurrent("backdrop", generation)) setStatus(text);
+            if (renderIsCurrent("backdrop", generation)) setStatus(text, "backdrop");
         }, signal);
         if (!renderIsCurrent("backdrop", generation)) return;
         setMovieBackdrop(url, generation);
     } catch (e) {
         if (!renderIsCurrent("backdrop", generation)) return;
-        if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.");
+        if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.", "backdrop");
         setMovieBackdrop("", generation); // any failure: quietly back to the blurred cover
     }
 }
@@ -717,11 +731,12 @@ function audioUrl() { return "https://" + station().host + "/live"; }
 function setAudio(on) {
     const generation = ++audioGeneration;
     if (on) {
+        clearStatus("audio");
         audioEl.src = audioUrl();
         audioEl.volume = opts.volume;
         audioEl.play().catch(function () {
             if (generation !== audioGeneration) return;
-            setStatus("Your browser refused to play the stream – use the playlist links below.");
+            setStatus("Your browser refused to play the stream – use the playlist links below.", "audio");
             setAudio(false);
         });
     } else {
