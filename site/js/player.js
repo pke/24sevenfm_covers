@@ -167,7 +167,17 @@ function poll() {
             remAnchorAt = Date.now();
 
             var album = htmlDecode(j.Album), track = htmlDecode(j.Track);
-            if (album !== currentAlbum) { currentAlbum = album; updateMovieBackdrop(); }
+            // ONE determination drives everything downstream: no CoverLink means a
+            // station ID or unregistered track (the station's own player.php rule).
+            // The same flag that swaps the cover for the station logo below also
+            // vetoes the TMDB/fanart lookup - never a movie, so its jingle name must
+            // not leak to a third party as a search. One source of truth, so the
+            // logo and the veto can never disagree.
+            var isStationId = !(j.CoverLink || "");
+            if (album !== currentAlbum || isStationId !== stationIdActive) {
+                currentAlbum = album; stationIdActive = isStationId;
+                updateMovieBackdrop();
+            }
             var title = album;
             if (album && track) title = album + " - " + track;
             else if (track) title = track;
@@ -175,10 +185,8 @@ function poll() {
                 title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
             setInfo(title || "—", htmlDecode(j.Artist));
 
-            // No CoverLink means a station ID or an unregistered track - show the
-            // station's logo, exactly what the station's own web player does (its
-            // reference logic: ASIN -> sized cover, CoverLink -> as-is, else logo).
-            var cover = (j.CoverLink || "").replace("/cover/", "/cover/500/") || station().logo;
+            var cover = isStationId ? station().logo
+                                    : j.CoverLink.replace("/cover/", "/cover/500/");
             if (cover && cover !== shownUrl) { shownUrl = cover; showCover(cover); }
             setStatus("");
             // Re-poll when the track should end (clamped), +1s for the server to roll over.
@@ -233,7 +241,7 @@ var tmdbCache = {};   // cleaned title -> backdrop URL ("" = searched, no match)
 function updateCoverVisibility() {
     stage.classList.toggle("no-cover", !!(opts.hideCover && movieShown));
 }
-var currentAlbum = "";
+var currentAlbum = "", stationIdActive = false;
 
 function cleanMovieTitle(album) {
     return (album || "")
@@ -312,6 +320,9 @@ function setMovieBackdrop(url) {
 
 function updateMovieBackdrop() {
     if (!opts.tmdbBackdrops) { setMovieBackdrop(""); return; }
+    // The station-ID flag set by poll() (the one that also picks the logo): never a
+    // movie, so no API call - and no leftover backdrop behind the station logo.
+    if (stationIdActive) { setMovieBackdrop(""); return; }
     if (!opts.tmdbKey) {
         setMovieBackdrop("");
         setStatus("Movie backdrops need a TMDB API key - see the Experimental options.");
