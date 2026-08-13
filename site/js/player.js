@@ -807,21 +807,45 @@ fanartKeyEl.addEventListener("change", function () {
     updateBackdrop();
 });
 
-// --- provider priority: drag & drop -------------------------------------------
+// --- provider priority: pointer + keyboard ------------------------------------
 // Pointer-based, NOT native HTML5 DnD: the native API renders a translucent
 // snapshot beside a text-drag cursor and the real row stays put - it cannot make
 // the row itself ride the pointer. Here the actual row goes position:fixed and
 // follows the pointer (visibly lifted out of the list), a dashed placeholder
 // keeps its gap, and elementFromPoint moves the gap - possible because the
 // floating row is pointer-events:none, so hit testing sees through it. The <li>
-// order stays the single source of truth, read back on release. Pointer events
-// also make this work on touch (the grip's touch-action:none stops scrolling).
-// The ⠿ grip is the only handle: the row also holds a key input, and a drag must
-// not fight text selection there.
+// order stays the single source of truth, read back on release. Pointer events also
+// make this work on touch (the grip's touch-action:none stops scrolling). The same
+// button supports arrow/Home/End moves with its position announced to assistive tech.
+// The ⠿ grip is the only handle: the row also holds a key input, and a drag must not
+// fight text selection there.
 var providersEl = $("providers");
 opts.providerOrder.forEach(function (id) {
     providersEl.appendChild(providersEl.querySelector('[data-provider="' + id + '"]'));
 });
+var providerStatusEl = $("provider-status");
+var PROVIDER_NAMES = { fanart: "fanart.tv", tmdb: "TMDB" };
+function providerName(li) { return PROVIDER_NAMES[li.dataset.provider] || li.dataset.provider; }
+function syncProviderHandles(moved) {
+    var rows = Array.prototype.slice.call(providersEl.querySelectorAll(".provider"));
+    rows.forEach(function (li, i) {
+        li.querySelector(".grip").setAttribute("aria-label", "Reorder " + providerName(li)
+            + ", position " + (i + 1) + " of " + rows.length
+            + ". Use Arrow Up, Arrow Down, Home, or End.");
+    });
+    if (moved) providerStatusEl.textContent = providerName(moved) + " moved to position "
+        + (rows.indexOf(moved) + 1) + " of " + rows.length + ".";
+}
+function commitProviderOrder(moved) {
+    opts.providerOrder = Array.prototype.map.call(providersEl.children, function (li) {
+        return li.dataset.provider;
+    });
+    tmdbCache = {}; // priority decides which source's URL gets cached
+    saveOpts();
+    updateBackdrop();
+    syncProviderHandles(moved);
+}
+syncProviderHandles();
 // One generic wiring for every provider row: the checkbox IS the provider's
 // enabled property (getter/setter over its backing option) - a new provider row
 // needs no handler code of its own.
@@ -836,6 +860,24 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
         setStatus("");
         updateBackdrop();
     });
+});
+providersEl.addEventListener("keydown", function (e) {
+    var grip = e.target.closest(".grip");
+    if (!grip) return;
+    var row = grip.closest(".provider"), moved = false;
+    if (e.key === "ArrowUp" && row.previousElementSibling) {
+        providersEl.insertBefore(row, row.previousElementSibling); moved = true;
+    } else if (e.key === "ArrowDown" && row.nextElementSibling) {
+        providersEl.insertBefore(row.nextElementSibling, row); moved = true;
+    } else if (e.key === "Home" && row.previousElementSibling) {
+        providersEl.insertBefore(row, providersEl.firstElementChild); moved = true;
+    } else if (e.key === "End" && row.nextElementSibling) {
+        providersEl.appendChild(row); moved = true;
+    } else if (e.key !== "ArrowUp" && e.key !== "ArrowDown"
+            && e.key !== "Home" && e.key !== "End") return;
+    e.preventDefault();
+    if (moved) commitProviderOrder(row);
+    grip.focus();
 });
 (function () {
     var row = null, placeholder = null, grabX = 0, grabY = 0;
@@ -856,6 +898,7 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
     }
     function endDrag() {
         if (!row) return; // a stray pointercancel after release
+        var moved = row;
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", endDrag);
         window.removeEventListener("pointercancel", endDrag);
@@ -867,12 +910,7 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
         row.style.width = "";
         row = null;
         document.body.classList.remove("row-dragging");
-        opts.providerOrder = Array.prototype.map.call(providersEl.children, function (li) {
-            return li.dataset.provider;
-        });
-        tmdbCache = {}; // priority decides which source's URL got cached
-        saveOpts();
-        updateBackdrop();
+        commitProviderOrder(moved);
     }
     providersEl.addEventListener("pointerdown", function (e) {
         if (!e.target.closest(".grip") || row) return;

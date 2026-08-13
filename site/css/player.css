@@ -242,7 +242,14 @@
     background: var(--bg-raised);
 }
 /* touch-action none: a touch on the grip starts a drag, never a page scroll */
-.provider .grip { cursor: grab; user-select: none; touch-action: none; color: var(--text-dim); }
+.provider .grip {
+    display: grid; place-items: center; flex: 0 0 1.75rem;
+    width: 1.75rem; height: 1.75rem; padding: 0; border: 0; border-radius: .35rem;
+    background: transparent; color: var(--text-dim); font: inherit; line-height: 1;
+    cursor: grab; user-select: none; touch-action: none;
+}
+.provider .grip:hover { background: var(--bg-card); color: var(--text); }
+.provider .grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* The dragged row is lifted out of the flow and rides the pointer: fixed at 0/0,
    positioned purely via the inline translate. pointer-events none lets

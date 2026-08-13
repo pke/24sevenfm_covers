@@ -163,22 +163,25 @@
                     <input type="password" id="tmdb-key" autocomplete="off" spellcheck="false"
                            placeholder="API key or Read Access Token" style="flex:1; min-width:160px; max-width:300px;">
                 </div>
-                <!-- Art providers by priority: drag ⠿ to reorder (player.js sorts these
-                     to the saved order on load). The topmost ENABLED provider that has
+                <!-- Art providers by priority: drag ⠿ or focus it and use arrow keys;
+                     player.js sorts these to the saved order. The topmost ENABLED provider that has
                      art for the movie wins; the others are fallback. TMDB always does
                      the movie lookup itself - fanart.tv has no text search. -->
                 <ul class="providers" id="providers" aria-label="Backdrop providers, in priority order">
                     <li class="provider" data-provider="fanart">
-                        <span class="grip" title="Drag to change priority">⠿</span>
+                        <button type="button" class="grip" title="Drag or use arrow keys to change priority"
+                                aria-label="Reorder fanart.tv provider">⠿</button>
                         <label><input type="checkbox" id="fanart-on"> fanart.tv</label>
                         <input type="password" id="fanart-key" autocomplete="off" spellcheck="false"
                                aria-label="fanart.tv API key" placeholder="optional API key">
                     </li>
                     <li class="provider" data-provider="tmdb">
-                        <span class="grip" title="Drag to change priority">⠿</span>
+                        <button type="button" class="grip" title="Drag or use arrow keys to change priority"
+                                aria-label="Reorder TMDB provider">⠿</button>
                         <label><input type="checkbox" id="tmdbart-on"> TMDB backdrops</label>
                     </li>
                 </ul>
+                <p id="provider-status" class="visually-hidden" role="status"></p>
                 <div class="row" style="margin-top:.6rem">
                     <label><input type="checkbox" id="hide-cover"> Hide the cover while a movie
                     backdrop is shown</label>

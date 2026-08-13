@@ -188,6 +188,62 @@ test.describe("the deployed player page", () => {
         });
     }
 
+    async function mockProviderTestFeed(page) {
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "", Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+    }
+
+    test("reorders and persists backdrop providers with the keyboard", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const order = () => page.locator("#providers > .provider")
+            .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
+        const fanartGrip = page.locator('.provider[data-provider="fanart"] .grip');
+
+        await fanartGrip.focus();
+        await fanartGrip.press("ArrowDown");
+        expect(await order()).toEqual(["tmdb", "fanart"]);
+        await expect(fanartGrip).toBeFocused();
+        await expect(fanartGrip).toHaveAttribute("aria-label", /position 2 of 2/);
+        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 2.");
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        expect(await order()).toEqual(["tmdb", "fanart"]);
+        await fanartGrip.focus();
+        await fanartGrip.press("ArrowUp");
+        expect(await order()).toEqual(["fanart", "tmdb"]);
+    });
+
+    test("keeps backdrop providers pointer-draggable", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const grip = page.locator('.provider[data-provider="fanart"] .grip');
+        const target = page.locator('.provider[data-provider="tmdb"]');
+        await grip.scrollIntoViewIfNeeded();
+        const from = await grip.boundingBox(), to = await target.boundingBox();
+        expect(from).not.toBeNull();
+        expect(to).not.toBeNull();
+
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(to.x + to.width / 2, to.y + to.height * .75, { steps: 5 });
+        await page.mouse.up();
+
+        const order = await page.locator("#providers > .provider")
+            .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
+        expect(order).toEqual(["tmdb", "fanart"]);
+        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 2.");
+    });
+
     test("loads, polls the station, and renders a real cover", async ({ page }) => {
         const errors = [];
         const netlog = []; // every station response/failure the PAGE itself saw
