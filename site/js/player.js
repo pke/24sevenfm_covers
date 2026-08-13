@@ -40,7 +40,7 @@ var DEFAULTS = {
     // Experimental TMDB movie backdrops: OFF by default and bring-your-own-key, both
     // deliberately - enabling it sends the current album title to a third party, which
     // the privacy policy discloses, and a key shipped in public JS would be everyone's.
-    tmdbBackdrops: 0, tmdbKey: ""
+    tmdbBackdrops: 0, tmdbKey: "", fanartKey: ""
 };
 var opts = loadOpts();
 
@@ -201,7 +201,49 @@ function cleanMovieTitle(album) {
         .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
         .replace(/\b(original motion picture soundtrack|music from the motion picture|original motion picture score|motion picture soundtrack|original soundtracks?|original scores?|the original scores?|soundtrack|ost)\b/gi, " ")
         .replace(/[:\-–]\s*$/, "")
-        .replace(/\s{2,}/g, " ").trim();
+        .replace(/\s{2,}/g, " ").trim()
+        // The feed stores rotated articles - "Mummy Returns, The", "Bourne Identity,
+        // The" (seen live) - but TMDB knows "The Mummy Returns". Un-rotate them.
+        .replace(/^(.+),\s*(The|A|An)$/i, "$2 $1");
+}
+
+// Prefer the result whose title matches the query exactly (ignoring case and
+// punctuation), then the first with a backdrop, then the first at all - TMDB's own
+// ranking is decent, but "Glass" should mean the movie called Glass, not whatever
+// popular film merely contains the word.
+function pickMovie(results, q) {
+    function norm(s) { return (s || "").toLowerCase().replace(/[^a-z0-9]+/g, ""); }
+    var nq = norm(q), exact = null, withArt = null;
+    for (var i = 0; i < results.length; i++) {
+        var m = results[i];
+        if (!exact && (norm(m.title) === nq || norm(m.original_title) === nq)) exact = m;
+        if (!withArt && m.backdrop_path) withArt = m;
+    }
+    return exact || withArt || results[0] || null;
+}
+
+// fanart.tv carries curated, usually TEXTLESS backdrops - nicer behind a cover than
+// TMDB's, which often bake in the film's logo. It has no text search, only lookup by
+// TMDB id, which is why TMDB always goes first. Optional second key; any failure
+// here degrades to TMDB's own backdrop, never to nothing.
+function fanartBackdrop(movieId) {
+    if (!opts.fanartKey) return Promise.resolve("");
+    return fetch("https://webservice.fanart.tv/v3/movies/" + movieId
+                 + "?api_key=" + encodeURIComponent(opts.fanartKey))
+        .then(function (r) {
+            if (r.status === 401) { setStatus("fanart.tv rejected its key - using TMDB art only."); return null; }
+            return r.ok ? r.json() : null;
+        })
+        .then(function (j) {
+            var list = (j && j.moviebackground) || [];
+            if (!list.length) return "";
+            list = list.slice().sort(function (a, b) {   // textless first, then most-liked
+                return (a.lang === "" ? 0 : 1) - (b.lang === "" ? 0 : 1)
+                    || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0);
+            });
+            return list[0].url;
+        })
+        .catch(function () { return ""; });
 }
 
 function setMovieBackdrop(url) {
@@ -228,7 +270,7 @@ function updateMovieBackdrop() {
     // preflight that TMDB explicitly allows (Access-Control-Allow-Headers includes
     // Authorization; verified live).
     var isToken = opts.tmdbKey.indexOf(".") >= 0 || /^eyJ/.test(opts.tmdbKey);
-    fetch("https://api.themoviedb.org/3/search/movie?query=" + encodeURIComponent(q)
+    fetch("https://api.themoviedb.org/3/search/movie?include_adult=false&query=" + encodeURIComponent(q)
           + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
           isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined)
         .then(function (r) {
@@ -236,10 +278,14 @@ function updateMovieBackdrop() {
             return r.json();
         })
         .then(function (j) {
-            var hit = (j.results || []).filter(function (m) { return m.backdrop_path; })[0];
-            var url = hit ? "https://image.tmdb.org/t/p/w1280" + hit.backdrop_path : "";
-            tmdbCache[q] = url;
-            setMovieBackdrop(url);
+            var hit = pickMovie(j.results || [], q);
+            if (!hit) { tmdbCache[q] = ""; setMovieBackdrop(""); return; }
+            fanartBackdrop(hit.id).then(function (fanartUrl) {
+                var url = fanartUrl
+                    || (hit.backdrop_path ? "https://image.tmdb.org/t/p/w1280" + hit.backdrop_path : "");
+                tmdbCache[q] = url;
+                setMovieBackdrop(url);
+            });
         })
         .catch(function (e) {
             if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.");
@@ -497,6 +543,15 @@ tmdbOnEl.addEventListener("change", function () {
 tmdbKeyEl.addEventListener("change", function () {
     opts.tmdbKey = tmdbKeyEl.value.trim();
     tmdbCache = {}; // a new key deserves a fresh try, including negative caches
+    saveOpts();
+    setStatus("");
+    updateMovieBackdrop();
+});
+var fanartKeyEl = $("fanart-key");
+fanartKeyEl.value = opts.fanartKey;
+fanartKeyEl.addEventListener("change", function () {
+    opts.fanartKey = fanartKeyEl.value.trim();
+    tmdbCache = {}; // cached art may now be upgradable (or was fanart-based)
     saveOpts();
     setStatus("");
     updateMovieBackdrop();
