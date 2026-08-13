@@ -75,10 +75,44 @@ test.describe("the deployed player page", () => {
     });
 
     test("switching station repolls and shows that station's cover", async ({ page }) => {
+        const netlog = []; // death.fm traffic as the page saw it - the diagnosis on failure
+        page.on("response", (r) => {
+            if (/death\.fm/.test(r.url())) netlog.push(r.status() + " " + r.url().slice(0, 100));
+        });
+        page.on("requestfailed", (r) => {
+            if (/death\.fm/.test(r.url()))
+                netlog.push("FAILED " + ((r.failure() || {}).errorText || "?") + " " + r.url().slice(0, 100));
+        });
         await page.goto("/player.html");
         await page.locator("label.seg", { hasText: "Death.FM" }).click();
-        await expect(page.locator(".coverbox img.front"))
-            .toHaveAttribute("src", /death\.fm\/images\/cover/, { timeout: 60000 });
+
+        // A healthy switch shows a death.fm cover - but the station may legitimately
+        // have none right now (station ID, unregistered track, or a feed outage like
+        // 2026-08-13's "Could not connect to DB server"), and then the player's logo
+        // fallback IS the correct behaviour. So: accept cover or logo first, and only
+        // fail hard when neither ever appears (= the switch itself is broken).
+        const front = page.locator(".coverbox img.front");
+        try {
+            await expect(front)
+                .toHaveAttribute("src", /death\.fm\/images\/(cover|logos)/, { timeout: 60000 });
+        } catch (e) {
+            throw new Error("switching to death.fm produced neither a cover nor the logo "
+                + "fallback. death.fm traffic as seen by the page:\n"
+                + (netlog.join("\n") || "(no death.fm requests at all - switch broken?)")
+                + "\n\noriginal: " + e.message);
+        }
+        if (/logos/.test(await front.getAttribute("src"))) {
+            // Logo shown: verify the feed really offers no cover - mirroring the
+            // countdown test, station-side absence is a skip, not a player failure.
+            const feed = await page.evaluate(() =>
+                fetch("https://death.fm/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now())
+                    .then((r) => r.json()).catch((e) => ({ error: String(e) })));
+            test.skip(!feed.CoverLink, "death.fm reports no cover right now ("
+                + (feed.error || "station ID / unregistered track") + ") - logo fallback is correct");
+            // The feed HAS a cover yet the player kept the logo: that is a player bug.
+            await expect(front)
+                .toHaveAttribute("src", /death\.fm\/images\/cover/, { timeout: 60000 });
+        }
     });
 });
 
