@@ -309,6 +309,53 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => fanartRequests).toBe(1);
         await expect(page.locator("#status")).toHaveText("");
     });
+    test("retries fanart.tv after a transient provider failure", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/fanart-retry.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/fanart-retry.svg";
+        let fanartRequests = 0;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "fanart-retry-key",
+                fanartBackdrops: 1, fanartKey: "fanart-key", tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Fanart Retry", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
+            route.fulfill({ json: { results: [
+                { id: 9, title: "Fanart Retry", original_title: "Fanart Retry",
+                    backdrop_path: "/tmdb-fallback.jpg" },
+            ] } }));
+        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) => {
+            fanartRequests++;
+            if (fanartRequests === 1) return route.fulfill({ status: 500 });
+            return route.fulfill({ json: { moviebackground: [
+                { url: "https://fanart.tv/fanart-retry.jpg", lang: "", likes: "1" },
+            ] } });
+        });
+        await page.route("https://image.tmdb.org/t/p/w1280/tmdb-fallback.jpg", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route("https://fanart.tv/fanart-retry.jpg", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => fanartRequests).toBe(1);
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /tmdb-fallback/);
+        const toggle = page.locator("label:has(#tmdb-on)");
+        await toggle.click();
+        await toggle.click();
+        await expect.poll(() => fanartRequests).toBe(2);
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /fanart-retry/);
+    });
 
     test("times out a stalled queue prefetch independently", async ({ page }) => {
         await page.clock.install();

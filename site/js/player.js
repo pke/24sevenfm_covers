@@ -427,6 +427,7 @@ function pickMovie(results, q) {
 // toggle (key stays saved while unticked); any failure here degrades to TMDB's own
 // backdrop, never to nothing.
 
+var TRANSIENT_ART_FAILURE = {};
 async function fanartBackdrop(movieId, reportStatus) {
     if (!opts.fanartKey) return ""; // keyless = a plain miss, no request
     try {
@@ -436,6 +437,7 @@ async function fanartBackdrop(movieId, reportStatus) {
             if (reportStatus) reportStatus("fanart.tv rejected its key - using TMDB art only.");
             return "";
         }
+        if (r.status === 429 || r.status >= 500) throw TRANSIENT_ART_FAILURE;
         if (!r.ok) return "";
         const list = ((await r.json()) || {}).moviebackground || [];
         if (!list.length) return "";
@@ -446,7 +448,7 @@ async function fanartBackdrop(movieId, reportStatus) {
         return best.url;
     } catch (e) {
         if (reportStatus) reportStatus("fanart.tv's API currently not working - using TMDB art.");
-        return "";
+        throw TRANSIENT_ART_FAILURE;
     }
 }
 
@@ -475,12 +477,18 @@ var MOVIE_ART_PROVIDERS = {
 // First enabled provider (in priority order) that delivers art wins. Sequential on
 // purpose: asking the next provider only AFTER the preferred one came up empty is
 // the whole point of a priority order. (Array.find can't do this - it cannot await.)
-async function artFromProviders(hit, generation, reportStatus) {
+async function artFromProviders(hit, generation, reportStatus, cacheState) {
     for (const id of opts.providerOrder) {
         if (!renderIsCurrent("backdrop", generation)) return "";
         const p = MOVIE_ART_PROVIDERS[id];
         if (!p || !p.enabled) continue;
-        const url = await p.art(hit, reportStatus);
+        var url;
+        try { url = await p.art(hit, reportStatus); }
+        catch (e) {
+            if (e !== TRANSIENT_ART_FAILURE) throw e;
+            cacheState.cacheable = false;
+            continue;
+        }
         if (!renderIsCurrent("backdrop", generation)) return "";
         if (url) return url;
     }
@@ -538,9 +546,10 @@ async function movieArtFor(album, generation, reportStatus) {
     if (r.status !== 200) throw new Error("TMDB HTTP " + r.status);
     const j = await r.json();
     const hit = pickMovie(j.results || [], q);
-    const url = hit ? await artFromProviders(hit, generation, reportStatus) : "";
+    const cacheState = { cacheable: true };
+    const url = hit ? await artFromProviders(hit, generation, reportStatus, cacheState) : "";
     if (!renderIsCurrent("backdrop", generation)) return "";
-    cache[q] = url;
+    if (cacheState.cacheable) cache[q] = url;
     return url;
 }
 
