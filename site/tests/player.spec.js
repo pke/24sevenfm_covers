@@ -608,6 +608,36 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
     });
 
+    test("keeps string zero boolean options disabled", async ({ page }) => {
+        let tmdbRequests = 0;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: "0", tmdbKey: "privacy-test-key",
+                showRemaining: "0", roll: "0", hideCover: "0" })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Privacy Movie", Track: "", Artist: "24seven.fm",
+                CoverLink: "https://streamingsoundtracks.com/images/cover/privacy.svg", Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/cover/500/privacy.svg", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\//, (route) => {
+            tmdbRequests++;
+            return route.abort();
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#tmdb-on")).not.toBeChecked();
+        await expect(page.locator("#show-remaining")).not.toBeChecked();
+        await expect(page.locator("#roll")).not.toBeChecked();
+        await expect(page.locator("#hide-cover")).not.toBeChecked();
+        await page.waitForTimeout(100);
+        expect(tmdbRequests).toBe(0);
+    });
     test("ignores a stale audio rejection after a station switch", async ({ page }) => {
         await page.addInitScript(() => {
             window.__plays = [];

@@ -114,6 +114,12 @@ function loadOpts() {
     o.volume = parseFloat(o.volume);
     if (!isFinite(o.volume)) o.volume = DEFAULTS.volume;
     o.volume = Math.min(1, Math.max(0, o.volume));
+    ["showRemaining", "roll", "tmdbBackdrops", "fanartBackdrops", "tmdbArt",
+        "hideCover"].forEach(function (key) {
+        var value = o[key];
+        o[key] = (value === true || value === 1 || value === "1") ? 1 : 0;
+    });
+
     // providerOrder must be a permutation of the known providers - anything else
     // (older saves, hand-edited storage) falls back to the default order. Always a
     // fresh array: the drag list mutates it, and DEFAULTS must never change.
