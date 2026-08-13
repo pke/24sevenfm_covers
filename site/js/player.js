@@ -188,7 +188,7 @@ function renderIsCurrent(channel, generation) { return renderGenerations[channel
 function makeLayer(a, b, channel) {
     var front = null;
     return {
-        show: function (url, generation, onShown) {
+        show: function (url, generation, onShown, onError) {
             if (front && front.src === url && front.classList.contains("show")) return;
             var back = (front === a) ? b : a;
             var pre = new Image();
@@ -200,7 +200,10 @@ function makeLayer(a, b, channel) {
                 front = back;
                 if (onShown) onShown();
             };
-            pre.src = url; // preload failure: keep whatever is showing
+            pre.onerror = function () {
+                if (renderIsCurrent(channel, generation) && onError) onError();
+            };
+            pre.src = url;
         },
         hide: function () {
             a.classList.remove("show");
@@ -492,7 +495,13 @@ function setMovieBackdrop(url, generation) {
         updateCoverVisibility();
         return;
     }
-    movieLayer.show(url, generation, function () { movieShown = true; updateCoverVisibility(); });
+    movieLayer.show(url, generation,
+        function () { movieShown = true; updateCoverVisibility(); },
+        function () {
+            movieLayer.hide();
+            movieShown = false;
+            updateCoverVisibility();
+        });
 }
 
 function updateBackdrop() {
