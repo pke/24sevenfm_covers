@@ -36,7 +36,11 @@ var DEFAULTS = {
     // player around to provide them. Saved options always win over defaults.
     station: "sst", layout: 1, transition: 1, fadeMs: 1000,
     showRemaining: 0, remainingSize: 0, roll: 0,
-    posterBlur: 24, borderRadius: 45, volume: 0.8
+    posterBlur: 24, borderRadius: 45, volume: 0.8,
+    // Experimental TMDB movie backdrops: OFF by default and bring-your-own-key, both
+    // deliberately - enabling it sends the current album title to a third party, which
+    // the privacy policy discloses, and a key shipped in public JS would be everyone's.
+    tmdbBackdrops: 0, tmdbKey: ""
 };
 var opts = loadOpts();
 
@@ -132,6 +136,7 @@ function poll() {
             remAnchorAt = Date.now();
 
             var album = htmlDecode(j.Album), track = htmlDecode(j.Track);
+            if (album !== currentAlbum) { currentAlbum = album; updateMovieBackdrop(); }
             var title = album;
             if (album && track) title = album + " - " + track;
             else if (track) title = track;
@@ -178,6 +183,61 @@ function showCover(url) {
         stage.classList.add("have-cover");
     };
     pre.src = url;
+}
+
+// --- experimental: TMDB movie backdrops --------------------------------------
+// Poster mode only: the movie's real backdrop, sharp and dimmed, replaces the blurred
+// cover behind the artwork. The album title IS the movie title on a soundtrack station
+// (after stripping soundtrack-release noise), so a TMDB search usually lands it. A
+// per-title cache (negative results too) keeps it to one request per movie, and every
+// failure path falls back silently to the blurred cover - experimental means the
+// player must never be worse off for having it enabled.
+var movieEl = $("backdrop-movie");
+var tmdbCache = {};   // cleaned title -> backdrop URL ("" = searched, no match)
+var currentAlbum = "";
+
+function cleanMovieTitle(album) {
+    return (album || "")
+        .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
+        .replace(/\b(original motion picture soundtrack|music from the motion picture|original motion picture score|motion picture soundtrack|original soundtracks?|original scores?|the original scores?|soundtrack|ost)\b/gi, " ")
+        .replace(/[:\-–]\s*$/, "")
+        .replace(/\s{2,}/g, " ").trim();
+}
+
+function setMovieBackdrop(url) {
+    if (!url) { movieEl.classList.remove("on"); return; }
+    var pre = new Image();
+    pre.onload = function () { movieEl.src = url; movieEl.classList.add("on"); };
+    pre.onerror = function () { movieEl.classList.remove("on"); };
+    pre.src = url;
+}
+
+function updateMovieBackdrop() {
+    if (!opts.tmdbBackdrops) { setMovieBackdrop(""); return; }
+    if (!opts.tmdbKey) {
+        setMovieBackdrop("");
+        setStatus("Movie backdrops need a TMDB API key - see the Experimental options.");
+        return;
+    }
+    var q = cleanMovieTitle(currentAlbum);
+    if (!q) { setMovieBackdrop(""); return; }
+    if (q in tmdbCache) { setMovieBackdrop(tmdbCache[q]); return; }
+    fetch("https://api.themoviedb.org/3/search/movie?api_key=" + encodeURIComponent(opts.tmdbKey)
+          + "&query=" + encodeURIComponent(q))
+        .then(function (r) {
+            if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
+            return r.json();
+        })
+        .then(function (j) {
+            var hit = (j.results || []).filter(function (m) { return m.backdrop_path; })[0];
+            var url = hit ? "https://image.tmdb.org/t/p/w1280" + hit.backdrop_path : "";
+            tmdbCache[q] = url;
+            setMovieBackdrop(url);
+        })
+        .catch(function (e) {
+            if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.");
+            setMovieBackdrop(""); // any failure: quietly back to the blurred cover
+        });
 }
 
 // --- countdown ---------------------------------------------------------------
@@ -417,6 +477,23 @@ showEl.checked = !!opts.showRemaining;
 rollEl.checked = !!opts.roll;
 showEl.addEventListener("change", function () { opts.showRemaining = showEl.checked ? 1 : 0; saveOpts(); renderCountdown(); });
 rollEl.addEventListener("change", function () { opts.roll = rollEl.checked ? 1 : 0; saveOpts(); });
+
+var tmdbOnEl = $("tmdb-on"), tmdbKeyEl = $("tmdb-key");
+tmdbOnEl.checked = !!opts.tmdbBackdrops;
+tmdbKeyEl.value = opts.tmdbKey;
+tmdbOnEl.addEventListener("change", function () {
+    opts.tmdbBackdrops = tmdbOnEl.checked ? 1 : 0;
+    saveOpts();
+    setStatus("");
+    updateMovieBackdrop();
+});
+tmdbKeyEl.addEventListener("change", function () {
+    opts.tmdbKey = tmdbKeyEl.value.trim();
+    tmdbCache = {}; // a new key deserves a fresh try, including negative caches
+    saveOpts();
+    setStatus("");
+    updateMovieBackdrop();
+});
 
 // --- go ----------------------------------------------------------------------
 applyLayout();

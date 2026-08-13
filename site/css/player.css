@@ -38,6 +38,18 @@
 }
 .layout-poster .backdrop { display: block; }
 
+/* Experimental TMDB movie backdrop: sits on top of the blurred cover (later in the
+   DOM), sharp but dimmed so the cover and info box stay the subject. Fades in when a
+   match arrives and out when the next album has none - the blurred cover underneath
+   is the ever-present fallback. */
+.backdrop-movie {
+    transform: none;              /* no oversize: its edges are meant to be seen */
+    filter: brightness(.45);
+    opacity: 0;
+    transition: opacity 1.2s ease;
+}
+.backdrop-movie.on { opacity: 1; }
+
 /* --- cover + transitions ------------------------------------------------------- */
 /* The covers are square (ASIN art). sizeStage() sets the box's pixel size to the
    largest square that fits the stage (with room for the info box in poster layout) -
@@ -214,6 +226,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 .fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-    .coverbox img, .stage-fs { transition: none !important; }
+    .coverbox img, .stage-fs, .backdrop-movie { transition: none !important; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }
