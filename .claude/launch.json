@@ -5,7 +5,7 @@
       "name": "site",
       "runtimeExecutable": "powershell",
       "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "installer\\serve_site.ps1"],
-      "port": 8123
+      "port": 8099
     }
   ]
 }

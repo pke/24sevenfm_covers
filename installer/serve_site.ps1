@@ -3,16 +3,17 @@
 # then serve www\ on localhost. One command turns an uncommitted site\ edit into a
 # browsable page - so changes get eyes on them BEFORE a push spends a deploy + canary run.
 #
-#   installer\serve_site.ps1              render + serve on http://localhost:8123/
+#   installer\serve_site.ps1              render + serve on http://localhost:8099/
 #   installer\serve_site.ps1 -NoRender    serve whatever www\ already holds
 #
 # Ctrl+C stops it. Everything is served with Cache-Control: no-store - a local preview
 # must always show the file on disk, never a cached yesterday.
-# (8123, not something rounder: Windows carves exclusion ranges out of the ephemeral
-# port space - 8099 for example is OS-reserved here. netsh int ipv4 show
-# excludedportrange protocol=tcp lists the no-go zones.)
+# If binding fails with "port reserved": an HttpListener holds its port via the
+# http.sys kernel driver, so a still-running previous instance shows up as System/
+# PID 4 in netstat AND as an excluded range in netsh - find it via
+# netsh http show servicestate view=requestq verbose=yes (lists the owning PID).
 param(
-    [int]$Port = 8123,
+    [int]$Port = 8099,
     [switch]$NoRender,
     [string]$Repo = 'pke/24sevenfm_covers'
 )
