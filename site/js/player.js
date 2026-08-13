@@ -40,7 +40,9 @@ var DEFAULTS = {
     // Experimental TMDB movie backdrops: OFF by default and bring-your-own-key, both
     // deliberately - enabling it sends the current album title to a third party, which
     // the privacy policy discloses, and a key shipped in public JS would be everyone's.
-    tmdbBackdrops: 0, tmdbKey: "", fanartKey: "", hideCover: 0
+    // fanartBackdrops defaults ON: entering a fanart key was the opt-in before the
+    // toggle existed, so a saved key keeps behaving exactly as it always has.
+    tmdbBackdrops: 0, tmdbKey: "", fanartKey: "", fanartBackdrops: 1, hideCover: 0
 };
 var opts = loadOpts();
 
@@ -261,8 +263,9 @@ function pickMovie(results, q) {
 
 // fanart.tv carries curated, usually TEXTLESS backdrops - nicer behind a cover than
 // TMDB's, which often bake in the film's logo. It has no text search, only lookup by
-// TMDB id, which is why TMDB always goes first. Optional second key; any failure
-// here degrades to TMDB's own backdrop, never to nothing.
+// TMDB id, which is why TMDB always goes first. Optional second key AND its own
+// toggle (key stays saved while unticked); any failure here degrades to TMDB's own
+// backdrop, never to nothing.
 // KNOWN UPSTREAM BUG (2026-08): webservice.fanart.tv answers with a DUPLICATED
 // Access-Control-Allow-Origin header ('*, *'), which the CORS spec forbids - so every
 // browser rejects every response, even with a valid key. curl doesn't care, which is
@@ -273,7 +276,7 @@ function pickMovie(results, q) {
 var fanartDead = false;
 
 function fanartBackdrop(movieId) {
-    if (!opts.fanartKey || fanartDead) return Promise.resolve("");
+    if (!opts.fanartBackdrops || !opts.fanartKey || fanartDead) return Promise.resolve("");
     return fetch("https://webservice.fanart.tv/v3/movies/" + movieId
                  + "?api_key=" + encodeURIComponent(opts.fanartKey))
         .then(function (r) {
@@ -600,11 +603,19 @@ tmdbKeyEl.addEventListener("change", function () {
     setStatus("");
     updateMovieBackdrop();
 });
-var fanartKeyEl = $("fanart-key");
+var fanartKeyEl = $("fanart-key"), fanartOnEl = $("fanart-on");
 fanartKeyEl.value = opts.fanartKey;
+fanartOnEl.checked = !!opts.fanartBackdrops;
 fanartKeyEl.addEventListener("change", function () {
     opts.fanartKey = fanartKeyEl.value.trim();
     tmdbCache = {}; // cached art may now be upgradable (or was fanart-based)
+    saveOpts();
+    setStatus("");
+    updateMovieBackdrop();
+});
+fanartOnEl.addEventListener("change", function () {
+    opts.fanartBackdrops = fanartOnEl.checked ? 1 : 0;
+    tmdbCache = {}; // every cached URL is the other source's now
     saveOpts();
     setStatus("");
     updateMovieBackdrop();

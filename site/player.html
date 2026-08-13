@@ -148,8 +148,9 @@
                     <label for="tmdb-key">TMDB</label>
                     <input type="password" id="tmdb-key" autocomplete="off" spellcheck="false"
                            placeholder="API key or Read Access Token" style="flex:1; min-width:160px; max-width:300px;">
-                    <label for="fanart-key">fanart.tv</label>
+                    <label><input type="checkbox" id="fanart-on"> fanart.tv</label>
                     <input type="password" id="fanart-key" autocomplete="off" spellcheck="false"
+                           aria-label="fanart.tv API key"
                            placeholder="optional API key" style="flex:1; min-width:140px; max-width:240px;">
                 </div>
                 <div class="row" style="margin-top:.6rem">
@@ -161,7 +162,8 @@
                 credential from <a href="https://www.themoviedb.org/settings/api">themoviedb.org</a>
                 (API key or Read Access Token — the player tells them apart). Add a free
                 <a href="https://fanart.tv/get-an-api-key/">fanart.tv</a> key and its curated,
-                usually textless backdrops are preferred, with TMDB's as the fallback. Both keys
+                usually textless backdrops are preferred, with TMDB's as the fallback — untick
+                fanart.tv to stay on TMDB's art while keeping the key. Both keys
                 stay in your browser. When enabled, the album title goes to TMDB and the matched
                 movie's id to fanart.tv — see the <a href="privacy.html">privacy policy</a>.
                 This product uses the TMDB API but is not endorsed or certified by TMDB;
