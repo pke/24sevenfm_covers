@@ -225,7 +225,7 @@ var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matche
 // --- poll engine (ported from lib/coverfetch.cpp) ----------------------------
 var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 512, REQ_TIMEOUT = 20000;
 var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
-var shownUrl = "", remAnchor = -1, remAnchorAt = 0;
+var shownUrl = "", loadingCoverUrl = "", remAnchor = -1, remAnchorAt = 0;
 
 function schedulePoll(seconds) {
     clearTimeout(pollTimer);
@@ -276,7 +276,7 @@ async function poll() {
         setInfo(title || "—", htmlDecode(j.Artist));
 
         const cover = isStationId ? station().logo : trustedCover;
-        if (cover && cover !== shownUrl) { shownUrl = cover; showCover(cover); }
+        if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
         setStatus("");
         // Re-poll when the track should end (clamped), +1s for the server to roll over.
         schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
@@ -328,10 +328,13 @@ async function prefetchNext(ctl, generation) {
 // and before the first cover there simply is no data-front, so both stay hidden.
 function showCover(url) {
     var generation = nextRenderGeneration("cover");
+    loadingCoverUrl = url;
     var back = (coverBox.dataset.front === "a") ? imgB : imgA;
     var pre = new Image();
     pre.onload = function () {
         if (!renderIsCurrent("cover", generation)) return;
+        loadingCoverUrl = "";
+        shownUrl = url;
         back.src = url;
         blurLayer.show(url, generation); // poster backdrop, crossfaded in poster layout
         var effect = reducedMotion ? 0 : opts.transition;
@@ -352,6 +355,10 @@ function showCover(url) {
         // property change under an active transition, not on one applied after it.
         void coverBox.offsetWidth;
         coverBox.dataset.front = (back === imgA) ? "a" : "b";
+    };
+    pre.onerror = function () {
+        if (!renderIsCurrent("cover", generation)) return;
+        loadingCoverUrl = ""; // let the next station poll retry this URL
     };
     pre.src = url;
 }
@@ -764,7 +771,7 @@ bindRadios("station", opts.station, function (v) {
     opts.station = v;
     nextRenderGeneration("cover"); // invalidate image loads before the new poll returns
     setMovieBackdrop("", nextRenderGeneration("backdrop"));
-    shownUrl = ""; remAnchor = -1;
+    shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
     currentAlbum = ""; // the resolver is per-station now - always re-evaluate after a
                        // switch, even if the new station plays an identically named album
     setInfo("Loading…", "");

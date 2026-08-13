@@ -70,6 +70,33 @@ test.describe("the deployed player page", () => {
         expect(redirectRequested).toBe(false);
     });
 
+    test("retries a cover after a transient image load failure", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/retry-cover.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/retry-cover.svg";
+        let coverRequests = 0;
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Retry Cover", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => {
+            coverRequests++;
+            if (coverRequests === 1) return route.abort();
+            return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => coverRequests, { timeout: 10000 }).toBe(2);
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+        await expect(front).toHaveAttribute("src", sizedCover);
+        await expect.poll(() => front.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
+    });
     test("ignores a cover that finishes after a station switch", async ({ page }) => {
         const slowCover = "https://streamingsoundtracks.com/images/cover/slow.svg";
         const slowSized = "https://streamingsoundtracks.com/images/cover/500/slow.svg";
