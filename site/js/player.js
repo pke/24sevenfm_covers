@@ -226,8 +226,17 @@ function pickMovie(results, q) {
 // TMDB's, which often bake in the film's logo. It has no text search, only lookup by
 // TMDB id, which is why TMDB always goes first. Optional second key; any failure
 // here degrades to TMDB's own backdrop, never to nothing.
+// KNOWN UPSTREAM BUG (2026-08): webservice.fanart.tv answers with a DUPLICATED
+// Access-Control-Allow-Origin header ('*, *'), which the CORS spec forbids - so every
+// browser rejects every response, even with a valid key. curl doesn't care, which is
+// how the probe missed it; a real browser proved it. Nothing fixable on our side: the
+// first such failure parks fanart for the session (no repeated doomed requests) and
+// the chain degrades to TMDB's backdrop. If they ever fix that one header, this code
+// starts delivering fanart art again without any change here.
+var fanartDead = false;
+
 function fanartBackdrop(movieId) {
-    if (!opts.fanartKey) return Promise.resolve("");
+    if (!opts.fanartKey || fanartDead) return Promise.resolve("");
     return fetch("https://webservice.fanart.tv/v3/movies/" + movieId
                  + "?api_key=" + encodeURIComponent(opts.fanartKey))
         .then(function (r) {
@@ -243,7 +252,12 @@ function fanartBackdrop(movieId) {
             });
             return list[0].url;
         })
-        .catch(function () { return ""; });
+        .catch(function () {
+            // fetch() rejecting = network/CORS layer, i.e. the duplicated-header bug.
+            fanartDead = true;
+            setStatus("fanart.tv's API currently blocks browsers (broken CORS header) - using TMDB art.");
+            return "";
+        });
 }
 
 function setMovieBackdrop(url) {
