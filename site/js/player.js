@@ -222,8 +222,15 @@ function updateMovieBackdrop() {
     var q = cleanMovieTitle(currentAlbum);
     if (!q) { setMovieBackdrop(""); return; }
     if (q in tmdbCache) { setMovieBackdrop(tmdbCache[q]); return; }
-    fetch("https://api.themoviedb.org/3/search/movie?api_key=" + encodeURIComponent(opts.tmdbKey)
-          + "&query=" + encodeURIComponent(q))
+    // TMDB accepts either credential; the shape tells them apart. A v3 API key is 32
+    // hex chars and rides the query string; a v4 Read Access Token is a JWT (eyJ...,
+    // with dots) and goes in an Authorization: Bearer header - which triggers a CORS
+    // preflight that TMDB explicitly allows (Access-Control-Allow-Headers includes
+    // Authorization; verified live).
+    var isToken = opts.tmdbKey.indexOf(".") >= 0 || /^eyJ/.test(opts.tmdbKey);
+    fetch("https://api.themoviedb.org/3/search/movie?query=" + encodeURIComponent(q)
+          + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
+          isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined)
         .then(function (r) {
             if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
             return r.json();
