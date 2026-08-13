@@ -248,6 +248,7 @@ async function poll() {
         setStatus("");
         // Re-poll when the track should end (clamped), +1s for the server to roll over.
         schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
+        prefetchNext(ctl); // fire-and-forget: warm the NEXT track's art meanwhile
     } catch (e) {
         if (ctl !== inflight) return;
         setStatus("Station not responding – retrying…");
@@ -259,6 +260,33 @@ async function poll() {
 }
 
 function setStatus(text) { statusEl.textContent = text; }
+
+// Prefetch the NEXT track from the station's queue (action=GetQueue, same CORS
+// grant as the now-playing feed; [0] is up next): warm its sized cover into the
+// browser cache, and - when movie backdrops are on and this station resolves them -
+// resolve its movie art into the per-title cache and warm that image too. The
+// track change then lands with zero network waits: showCover's preload and the
+// backdrop lookup all hit caches. Best-effort by design: one attempt per poll, and
+// any failure just means the switch loads the way it always did. Shares the poll's
+// abort controller, so a station switch cancels a stale queue request.
+async function prefetchNext(ctl) {
+    try {
+        const r = await fetch("https://" + station().host
+            + "/soap/FM24sevenJSON.php?action=GetQueue&_t=" + Date.now(),
+            { signal: ctl.signal });
+        if (!r.ok) return;
+        const next = ((await r.json()) || [])[0];
+        // No entry or no CoverLink (a station ID up next): nothing to warm.
+        if (!next || !(next.CoverLink || "")) return;
+        new Image().src = next.CoverLink.replace("/cover/", "/cover/500/");
+        // station().backdrop currently always means the movie resolver; if other
+        // resolver kinds ever appear, prefetching becomes their concern.
+        if (opts.tmdbBackdrops && station().backdrop) {
+            const art = await movieArtFor(htmlDecode(next.Album));
+            if (art) new Image().src = art;
+        }
+    } catch (e) { /* prefetch is best-effort - including a thrown "badkey" */ }
+}
 
 // --- cover display + transitions --------------------------------------------
 // The box's data attributes ARE the display state: data-front names the visible
@@ -418,33 +446,40 @@ function updateBackdrop() {
     resolver();
 }
 
-async function resolveMovieBackdrop() {
-    if (!opts.tmdbKey) {
-        setMovieBackdrop("");
-        setStatus("Movie backdrops need a TMDB API key - see the Experimental options.");
-        return;
-    }
-    const q = cleanMovieTitle(currentAlbum);
-    if (!q) { setMovieBackdrop(""); return; }
-    if (q in tmdbCache) { setMovieBackdrop(tmdbCache[q]); return; }
+// Resolve an album title to movie art (search TMDB, then the provider priority
+// list), through the per-title cache. A pure lookup - no status text, no display -
+// so the prefetcher can use it for the NEXT track as well as the display path for
+// the current one. Throws "badkey" so the display path can tell the user.
+async function movieArtFor(album) {
+    const q = cleanMovieTitle(album);
+    if (!q || !opts.tmdbKey) return "";
+    if (q in tmdbCache) return tmdbCache[q];
     // TMDB accepts either credential; the shape tells them apart. A v3 API key is 32
     // hex chars and rides the query string; a v4 Read Access Token is a JWT (eyJ...,
     // with dots) and goes in an Authorization: Bearer header - which triggers a CORS
     // preflight that TMDB explicitly allows (Access-Control-Allow-Headers includes
     // Authorization; verified live).
     const isToken = opts.tmdbKey.indexOf(".") >= 0 || /^eyJ/.test(opts.tmdbKey);
+    const r = await fetch("https://api.themoviedb.org/3/search/movie?include_adult=false&query="
+          + encodeURIComponent(q)
+          + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
+          isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined);
+    if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
+    const j = await r.json();
+    const hit = pickMovie(j.results || [], q);
+    const url = hit ? await artFromProviders(hit) : "";
+    tmdbCache[q] = url;
+    return url;
+}
+
+async function resolveMovieBackdrop() {
+    if (!opts.tmdbKey) {
+        setMovieBackdrop("");
+        setStatus("Movie backdrops need a TMDB API key - see the Experimental options.");
+        return;
+    }
     try {
-        const r = await fetch("https://api.themoviedb.org/3/search/movie?include_adult=false&query="
-              + encodeURIComponent(q)
-              + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
-              isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined);
-        if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
-        const j = await r.json();
-        const hit = pickMovie(j.results || [], q);
-        if (!hit) { tmdbCache[q] = ""; setMovieBackdrop(""); return; }
-        const url = await artFromProviders(hit);
-        tmdbCache[q] = url;
-        setMovieBackdrop(url);
+        setMovieBackdrop(await movieArtFor(currentAlbum));
     } catch (e) {
         if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.");
         setMovieBackdrop(""); // any failure: quietly back to the blurred cover
