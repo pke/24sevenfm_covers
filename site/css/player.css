@@ -26,7 +26,10 @@
 
 /* Blurred backdrop - poster layout only. The blur radius is set by JS relative to the
    stage size (mirroring the D2D pass, which blurs at a ~240px working resolution and
-   upscales - a fixed pixel blur reads far too mild on a large stage). */
+   upscales - a fixed pixel blur reads far too mild on a large stage).
+   Every backdrop img is one half of a DOUBLE BUFFER: the incoming image preloads into
+   the hidden half and crossfades over the visible one (.show), so a new track never
+   hard-cuts the background the way a bare src swap does. */
 .backdrop {
     position: absolute; inset: 0;
     z-index: 0;
@@ -35,20 +38,28 @@
     transform: scale(1.3);         /* hide the blur's soft edges off-canvas */
     filter: blur(var(--poster-blur, 96px)) brightness(.55);
     display: none;
-}
-.layout-poster .backdrop { display: block; }
-
-/* Experimental TMDB movie backdrop: sits on top of the blurred cover (later in the
-   DOM), sharp but dimmed so the cover and info box stay the subject. Fades in when a
-   match arrives and out when the next album has none - the blurred cover underneath
-   is the ever-present fallback. */
-.backdrop-movie {
-    transform: none;              /* no oversize: its edges are meant to be seen */
-    filter: brightness(.45);
     opacity: 0;
     transition: opacity 1.2s ease;
 }
-.backdrop-movie.on { opacity: 1; }
+.backdrop.show { opacity: 1; }
+.layout-poster .backdrop { display: block; }
+
+/* Experimental TMDB/fanart movie backdrop: the pair sits on top of the blurred pair
+   (later in the DOM), sharp but dimmed so the cover and info box stay the subject.
+   Fades in when a match arrives and out when the next album has none - the blurred
+   cover underneath is the ever-present fallback. */
+.backdrop-movie {
+    transform: none;              /* no oversize: its edges are meant to be seen */
+    filter: brightness(.45);
+    transition: opacity 1.2s ease, filter 1.2s ease;
+}
+
+/* Experimental: hide the cover while a movie backdrop is showing - the backdrop
+   becomes the star, so it earns back some brightness. Opacity, not display: the
+   coverbox keeps its size, so the info box below it doesn't jump. */
+.coverbox { transition: opacity .8s ease; }
+.layout-poster.no-cover .coverbox { opacity: 0; pointer-events: none; }
+.no-cover .backdrop-movie { filter: brightness(.7); }
 
 /* --- cover + transitions ------------------------------------------------------- */
 /* The covers are square (ASIN art). sizeStage() sets the box's pixel size to the
@@ -226,6 +237,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 .fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-    .coverbox img, .stage-fs, .backdrop-movie { transition: none !important; }
+    .coverbox img, .coverbox, .stage-fs, .backdrop { transition: none !important; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }

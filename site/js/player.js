@@ -40,7 +40,7 @@ var DEFAULTS = {
     // Experimental TMDB movie backdrops: OFF by default and bring-your-own-key, both
     // deliberately - enabling it sends the current album title to a third party, which
     // the privacy policy discloses, and a key shipped in public JS would be everyone's.
-    tmdbBackdrops: 0, tmdbKey: "", fanartKey: ""
+    tmdbBackdrops: 0, tmdbKey: "", fanartKey: "", hideCover: 0
 };
 var opts = loadOpts();
 
@@ -89,7 +89,36 @@ function station() { return STATIONS[stationIndex(opts.station)]; }
 
 // --- DOM ---------------------------------------------------------------------
 var $ = function (id) { return document.getElementById(id); };
-var stage = $("stage"), coverBox = $("coverbox"), backdrop = $("backdrop");
+var stage = $("stage"), coverBox = $("coverbox");
+
+// A double-buffered image layer: two stacked <img>s, the incoming URL preloads into
+// the hidden one and opacity-crossfades over the visible one (CSS .show). Used for
+// both backdrop layers - a bare src swap would hard-cut, and backgrounds deserve the
+// same crossfade the cover gets.
+function makeLayer(a, b) {
+    var front = null;
+    return {
+        show: function (url, onShown) {
+            if (front && front.src === url && front.classList.contains("show")) return;
+            var back = (front === a) ? b : a;
+            var pre = new Image();
+            pre.onload = function () {
+                back.src = url;
+                back.classList.add("show");
+                if (front) front.classList.remove("show");
+                front = back;
+                if (onShown) onShown();
+            };
+            pre.src = url; // preload failure: keep whatever is showing
+        },
+        hide: function () {
+            a.classList.remove("show");
+            b.classList.remove("show");
+            front = null;
+        }
+    };
+}
+var blurLayer = makeLayer($("backdropA"), $("backdropB"));
 var imgA = $("coverA"), imgB = $("coverB"), front = imgA;
 var cdEl = $("countdown"), statusEl = $("status"), audioEl = $("audio");
 
@@ -170,7 +199,7 @@ function showCover(url) {
     var pre = new Image();
     pre.onload = function () {
         back.src = url;
-        backdrop.src = url; // poster backdrop (CSS blurs it; ignored in fill layout)
+        blurLayer.show(url); // poster backdrop, crossfaded (CSS blurs it; idle in fill layout)
         var effect = reducedMotion ? 0 : opts.transition;
         stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
         // The effect class must be in place BEFORE the front swap: transitions fire on
@@ -192,8 +221,16 @@ function showCover(url) {
 // per-title cache (negative results too) keeps it to one request per movie, and every
 // failure path falls back silently to the blurred cover - experimental means the
 // player must never be worse off for having it enabled.
-var movieEl = $("backdrop-movie");
+var movieLayer = makeLayer($("movieA"), $("movieB"));
+var movieShown = false; // a movie backdrop is currently visible (drives hide-cover)
 var tmdbCache = {};   // cleaned title -> backdrop URL ("" = searched, no match)
+
+// Experimental: while a movie backdrop is showing, the cover can step aside and let
+// the backdrop be the star. Only ever active when there IS a backdrop - no match, no
+// key, or feature off always brings the cover back.
+function updateCoverVisibility() {
+    stage.classList.toggle("no-cover", !!(opts.hideCover && movieShown));
+}
 var currentAlbum = "";
 
 function cleanMovieTitle(album) {
@@ -261,11 +298,13 @@ function fanartBackdrop(movieId) {
 }
 
 function setMovieBackdrop(url) {
-    if (!url) { movieEl.classList.remove("on"); return; }
-    var pre = new Image();
-    pre.onload = function () { movieEl.src = url; movieEl.classList.add("on"); };
-    pre.onerror = function () { movieEl.classList.remove("on"); };
-    pre.src = url;
+    if (!url) {
+        movieLayer.hide();
+        movieShown = false;
+        updateCoverVisibility();
+        return;
+    }
+    movieLayer.show(url, function () { movieShown = true; updateCoverVisibility(); });
 }
 
 function updateMovieBackdrop() {
@@ -569,6 +608,13 @@ fanartKeyEl.addEventListener("change", function () {
     saveOpts();
     setStatus("");
     updateMovieBackdrop();
+});
+var hideCoverEl = $("hide-cover");
+hideCoverEl.checked = !!opts.hideCover;
+hideCoverEl.addEventListener("change", function () {
+    opts.hideCover = hideCoverEl.checked ? 1 : 0;
+    saveOpts();
+    updateCoverVisibility();
 });
 
 // --- go ----------------------------------------------------------------------
