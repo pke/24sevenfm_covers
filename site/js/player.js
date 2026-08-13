@@ -111,6 +111,9 @@ function loadOpts() {
     o.remainingSize = clampInt(o.remainingSize, 0, 2);
     o.posterBlur    = clampInt(o.posterBlur, 0, 200);
     o.borderRadius  = clampInt(o.borderRadius, 0, 500);
+    o.volume = parseFloat(o.volume);
+    if (!isFinite(o.volume)) o.volume = DEFAULTS.volume;
+    o.volume = Math.min(1, Math.max(0, o.volume));
     // providerOrder must be a permutation of the known providers - anything else
     // (older saves, hand-edited storage) falls back to the default order. Always a
     // fresh array: the drag list mutates it, and DEFAULTS must never change.

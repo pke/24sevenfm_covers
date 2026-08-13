@@ -477,6 +477,23 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
     }
 
+    test("clamps an invalid persisted volume before playback", async ({ page }) => {
+        const errors = [];
+        page.on("pageerror", (error) => errors.push(String(error)));
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({ volume: 2 }));
+            HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+            HTMLMediaElement.prototype.pause = function () {};
+        });
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#volume")).toHaveValue("1");
+        await page.locator("#audio-toggle").click();
+        expect(errors, "invalid storage must not throw from the media volume setter").toEqual([]);
+        expect(await page.locator("#audio").evaluate((audio) => audio.volume)).toBe(1);
+        await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
+    });
+
     test("reorders and persists backdrop providers with the keyboard", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
