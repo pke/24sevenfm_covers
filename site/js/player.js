@@ -17,12 +17,45 @@
 // filenames are wildly inconsistent per station and NOT guessable - each URL below was
 // verified live (the "500x500" variants the stations' own og:image tags reference are
 // 404 across the board, so only the 200x200 set is real).
+// `backdrop` holds the station's backdrop resolver - the function that turns its
+// current track into background art. Only SST resolves movies - it is (and stays)
+// the only soundtrack station; the other stations play regular albums, whose
+// names would only produce false movie matches. A future station plugs in its own
+// resolver function here without touching the engine.
 var STATIONS = [
-    { id: "sst",       name: "StreamingSoundtracks", host: "streamingsoundtracks.com", desc: "Movie scores, TV themes, anime & game music", logo: "https://streamingsoundtracks.com/images/logos/logo-sst-v200x200.png" },
-    { id: "1980s",     name: "1980s.FM",             host: "1980s.fm",                 desc: "1980s pop, rock & new wave",                  logo: "https://1980s.fm/images/logos/1980s_logo-200x200.png" },
-    { id: "adagio",    name: "Adagio.FM",            host: "adagio.fm",                desc: "Classical & ambient",                         logo: "https://adagio.fm/images/logos/logo-afm-200x200.png" },
-    { id: "death",     name: "Death.FM",             host: "death.fm",                 desc: "Extreme & underground metal",                 logo: "https://death.fm/images/logos/logo-dfm-200x200.png" },
-    { id: "entranced", name: "Entranced.FM",         host: "entranced.fm",             desc: "Trance, ambient & electronic",                logo: "https://entranced.fm/images/logos/logo-efm-g200x200.png" }
+    { 
+        id: "sst",       
+        name: "StreamingSoundtracks", 
+        host: "streamingsoundtracks.com", 
+        desc: "Movie scores, TV themes, anime & game music", 
+        backdrop: resolveMovieBackdrop, 
+        logo: "https://streamingsoundtracks.com/images/logos/logo-sst-v200x200.png" 
+    },
+    { 
+        id: "1980s",     
+        name: "1980s.FM",             
+        host: "1980s.fm",                 
+        desc: "1980s pop, rock & new wave",                  
+        logo: "https://1980s.fm/images/logos/1980s_logo-200x200.png" },
+    { 
+        id: "adagio",    
+        name: "Adagio.FM",
+        host: "adagio.fm",                
+        desc: "Classical & ambient",                         
+        logo: "https://adagio.fm/images/logos/logo-afm-200x200.png" },
+    { 
+        id: "death",     
+        name: "Death.FM",             
+        host: "death.fm",                 
+        desc: "Extreme & underground metal",                 
+        logo: "https://death.fm/images/logos/logo-dfm-200x200.png" },
+    { 
+        id: "entranced", 
+        name: "Entranced.FM",         
+        host: "entranced.fm",             
+        desc: "Trance, ambient & electronic",                
+        logo: "https://entranced.fm/images/logos/logo-efm-g200x200.png" 
+    }
 ];
 
 // --- options -----------------------------------------------------------------
@@ -34,15 +67,31 @@ var DEFAULTS = {
     // layout intentionally differs from the apps' default (fill): a first-time web
     // visitor gets the poster - the layout that shows title/artist without any host
     // player around to provide them. Saved options always win over defaults.
-    station: "sst", layout: 1, transition: 1, fadeMs: 1000,
-    showRemaining: 0, remainingSize: 0, roll: 0,
-    posterBlur: 24, borderRadius: 45, volume: 0.8,
+    station: "sst", 
+    layout: 1, 
+    transition: 1, 
+    fadeMs: 1000,
+    showRemaining: 0, 
+    remainingSize: 0, 
+    roll: 0,
+    posterBlur: 24, 
+    borderRadius: 45, 
+    volume: 0.8,
     // Experimental TMDB movie backdrops: OFF by default and bring-your-own-key, both
     // deliberately - enabling it sends the current album title to a third party, which
     // the privacy policy discloses, and a key shipped in public JS would be everyone's.
     // fanartBackdrops defaults ON: entering a fanart key was the opt-in before the
     // toggle existed, so a saved key keeps behaving exactly as it always has.
-    tmdbBackdrops: 0, tmdbKey: "", fanartKey: "", fanartBackdrops: 1, hideCover: 0
+    // providerOrder is the art priority (first enabled provider with art wins);
+    // tmdbArt is TMDB's own checkbox in that list, like fanartBackdrops is fanart's.
+    tmdbBackdrops: 0, 
+    tmdbKey: "", 
+    fanartKey: "", 
+    fanartBackdrops: 1, 
+    tmdbArt: 1,
+    providerOrder: ["fanart", "tmdb"],
+    // Hide the cover when backdrop is available
+    hideCover: 0
 };
 var opts = loadOpts();
 
@@ -62,6 +111,14 @@ function loadOpts() {
     o.remainingSize = clampInt(o.remainingSize, 0, 2);
     o.posterBlur    = clampInt(o.posterBlur, 0, 200);
     o.borderRadius  = clampInt(o.borderRadius, 0, 500);
+    // providerOrder must be a permutation of the known providers - anything else
+    // (older saves, hand-edited storage) falls back to the default order. Always a
+    // fresh array: the drag list mutates it, and DEFAULTS must never change.
+    var known = DEFAULTS.providerOrder;
+    var valid = (o.providerOrder instanceof Array)
+        && o.providerOrder.length === known.length
+        && known.every(function (id) { return o.providerOrder.indexOf(id) >= 0; });
+    o.providerOrder = (valid ? o.providerOrder : known).slice();
     if (stationIndex(o.station) < 0) o.station = "sst";
     // URL parameters override: ?station=death for sharable links, plus the two
     // hidden settings, exactly the set the INI hides from the UI.
@@ -121,7 +178,7 @@ function makeLayer(a, b) {
     };
 }
 var blurLayer = makeLayer($("backdropA"), $("backdropB"));
-var imgA = $("coverA"), imgB = $("coverB"), front = imgA;
+var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), audioEl = $("audio");
 
 // One info box serves both layouts (title, artist, countdown) - overlaid on the
@@ -143,83 +200,84 @@ function schedulePoll(seconds) {
     pollTimer = setTimeout(poll, seconds * 1000);
 }
 
-function poll() {
+async function poll() {
     if (inflight) inflight.abort();
-    var ctl = new AbortController();
+    const ctl = new AbortController();
     inflight = ctl;
-    var kill = setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT);
-    var host = station().host;
-    fetch("https://" + host + "/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now(),
-          { signal: ctl.signal })
-        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(function (j) {
-            clearTimeout(kill);
-            if (ctl !== inflight) return; // superseded by a station switch
-            errBackoff = ERR_RETRY;
-            // remaining = Length(ms)/1000 - |SystemTime - PlayStart|; both stamps come
-            // from the same server clock, so any timezone offset cancels in the diff.
-            var lengthSec = Math.max(0, Math.floor((parseInt(j.Length, 10) || 0) / 1000));
-            var elapsed = 0;
-            var ps = Date.parse(j.PlayStart || ""), st = Date.parse(j.SystemTime || "");
-            if (!isNaN(ps) && !isNaN(st)) elapsed = Math.abs(st - ps) / 1000;
-            var remaining = Math.max(0, Math.floor(lengthSec - elapsed));
-            remAnchor = lengthSec > 0 ? remaining : -1;
-            remAnchorAt = Date.now();
+    const kill = setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT);
+    try {
+        const r = await fetch("https://" + station().host
+            + "/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now(),
+            { signal: ctl.signal });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+        if (ctl !== inflight) return; // superseded by a station switch
+        errBackoff = ERR_RETRY;
+        // remaining = Length(ms)/1000 - |SystemTime - PlayStart|; both stamps come
+        // from the same server clock, so any timezone offset cancels in the diff.
+        const lengthSec = Math.max(0, Math.floor((parseInt(j.Length, 10) || 0) / 1000));
+        let elapsed = 0;
+        const ps = Date.parse(j.PlayStart || ""), st = Date.parse(j.SystemTime || "");
+        if (!isNaN(ps) && !isNaN(st)) elapsed = Math.abs(st - ps) / 1000;
+        const remaining = Math.max(0, Math.floor(lengthSec - elapsed));
+        remAnchor = lengthSec > 0 ? remaining : -1;
+        remAnchorAt = Date.now();
 
-            var album = htmlDecode(j.Album), track = htmlDecode(j.Track);
-            // ONE determination drives everything downstream: no CoverLink means a
-            // station ID or unregistered track (the station's own player.php rule).
-            // The same flag that swaps the cover for the station logo below also
-            // vetoes the TMDB/fanart lookup - never a movie, so its jingle name must
-            // not leak to a third party as a search. One source of truth, so the
-            // logo and the veto can never disagree.
-            var isStationId = !(j.CoverLink || "");
-            if (album !== currentAlbum || isStationId !== stationIdActive) {
-                currentAlbum = album; stationIdActive = isStationId;
-                updateMovieBackdrop();
-            }
-            var title = album;
-            if (album && track) title = album + " - " + track;
-            else if (track) title = track;
-            if (title && lengthSec > 0)
-                title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
-            setInfo(title || "—", htmlDecode(j.Artist));
+        const album = htmlDecode(j.Album), track = htmlDecode(j.Track);
+        // ONE determination drives everything downstream: no CoverLink means a
+        // station ID or unregistered track (the station's own player.php rule).
+        // The same flag that swaps the cover for the station logo below also
+        // vetoes the TMDB/fanart lookup - never a movie, so its jingle name must
+        // not leak to a third party as a search. One source of truth, so the
+        // logo and the veto can never disagree.
+        const isStationId = !(j.CoverLink || "");
+        if (album !== currentAlbum || isStationId !== stationIdActive) {
+            currentAlbum = album; stationIdActive = isStationId;
+            updateBackdrop();
+        }
+        let title = album;
+        if (album && track) title = album + " - " + track;
+        else if (track) title = track;
+        if (title && lengthSec > 0)
+            title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
+        setInfo(title || "—", htmlDecode(j.Artist));
 
-            var cover = isStationId ? station().logo
-                                    : j.CoverLink.replace("/cover/", "/cover/500/");
-            if (cover && cover !== shownUrl) { shownUrl = cover; showCover(cover); }
-            setStatus("");
-            // Re-poll when the track should end (clamped), +1s for the server to roll over.
-            schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
-        })
-        .catch(function (e) {
-            clearTimeout(kill);
-            if (ctl !== inflight) return;
-            setStatus("Station not responding – retrying…");
-            schedulePoll(errBackoff);
-            errBackoff = Math.min(ERR_CAP, errBackoff * 2); // exponential backoff, like the lib
-        });
+        const cover = isStationId ? station().logo
+                                  : j.CoverLink.replace("/cover/", "/cover/500/");
+        if (cover && cover !== shownUrl) { shownUrl = cover; showCover(cover); }
+        setStatus("");
+        // Re-poll when the track should end (clamped), +1s for the server to roll over.
+        schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
+    } catch (e) {
+        if (ctl !== inflight) return;
+        setStatus("Station not responding – retrying…");
+        schedulePoll(errBackoff);
+        errBackoff = Math.min(ERR_CAP, errBackoff * 2); // exponential backoff, like the lib
+    } finally {
+        clearTimeout(kill);
+    }
 }
 
 function setStatus(text) { statusEl.textContent = text; }
 
 // --- cover display + transitions --------------------------------------------
+// The box's data attributes ARE the display state: data-front names the visible
+// buffer ("a" | "b"), data-fx the transition. CSS derives each img's opacity and
+// rotation from the box, so JS never touches the imgs beyond loading their src -
+// and before the first cover there simply is no data-front, so both stay hidden.
 function showCover(url) {
-    var back = (front === imgA) ? imgB : imgA;
+    var back = (coverBox.dataset.front === "a") ? imgB : imgA;
     var pre = new Image();
     pre.onload = function () {
         back.src = url;
         blurLayer.show(url); // poster backdrop, crossfaded (CSS blurs it; idle in fill layout)
         var effect = reducedMotion ? 0 : opts.transition;
         stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
-        // The effect class must be in place BEFORE the front swap: transitions fire on
-        // a property change under an active transition, not on class changes after it.
-        coverBox.className = "coverbox" +
-            (effect === 1 ? " fx-fade" : effect === 2 ? " fx-fliph" : effect === 3 ? " fx-flipv" : "");
-        void coverBox.offsetWidth; // commit the class change first
-        back.classList.add("front"); front.classList.remove("front");
-        front = back;
-        stage.classList.add("have-cover");
+        // The effect must be in place BEFORE the buffer flip: transitions fire on a
+        // property change under an active transition, not on one applied after it.
+        coverBox.dataset.fx = ["none", "fade", "fliph", "flipv"][effect];
+        void coverBox.offsetWidth; // commit the fx change first
+        coverBox.dataset.front = (back === imgA) ? "a" : "b";
     };
     pre.src = url;
 }
@@ -274,38 +332,60 @@ function pickMovie(results, q) {
 // TMDB id, which is why TMDB always goes first. Optional second key AND its own
 // toggle (key stays saved while unticked); any failure here degrades to TMDB's own
 // backdrop, never to nothing.
-// KNOWN UPSTREAM BUG (2026-08): webservice.fanart.tv answers with a DUPLICATED
-// Access-Control-Allow-Origin header ('*, *'), which the CORS spec forbids - so every
-// browser rejects every response, even with a valid key. curl doesn't care, which is
-// how the probe missed it; a real browser proved it. Nothing fixable on our side: the
-// first such failure parks fanart for the session (no repeated doomed requests) and
-// the chain degrades to TMDB's backdrop. If they ever fix that one header, this code
-// starts delivering fanart art again without any change here.
-var fanartDead = false;
 
-function fanartBackdrop(movieId) {
-    if (!opts.fanartBackdrops || !opts.fanartKey || fanartDead) return Promise.resolve("");
-    return fetch("https://webservice.fanart.tv/v3/movies/" + movieId
-                 + "?api_key=" + encodeURIComponent(opts.fanartKey))
-        .then(function (r) {
-            if (r.status === 401) { setStatus("fanart.tv rejected its key - using TMDB art only."); return null; }
-            return r.ok ? r.json() : null;
-        })
-        .then(function (j) {
-            var list = (j && j.moviebackground) || [];
-            if (!list.length) return "";
-            list = list.slice().sort(function (a, b) {   // textless first, then most-liked
-                return (a.lang === "" ? 0 : 1) - (b.lang === "" ? 0 : 1)
-                    || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0);
-            });
-            return list[0].url;
-        })
-        .catch(function () {
-            // fetch() rejecting = network/CORS layer, i.e. the duplicated-header bug.
-            fanartDead = true;
-            setStatus("fanart.tv's API currently blocks browsers (broken CORS header) - using TMDB art.");
-            return "";
-        });
+async function fanartBackdrop(movieId) {
+    if (!opts.fanartKey) return ""; // keyless = a plain miss, no request
+    try {
+        const r = await fetch("https://webservice.fanart.tv/v3/movies/" + movieId
+                              + "?api_key=" + encodeURIComponent(opts.fanartKey));
+        if (r.status === 401) { setStatus("fanart.tv rejected its key - using TMDB art only."); return ""; }
+        if (!r.ok) return "";
+        const list = ((await r.json()) || {}).moviebackground || [];
+        if (!list.length) return "";
+        const best = list.slice().sort(function (a, b) {   // textless first, then most-liked
+            return (a.lang === "" ? 0 : 1) - (b.lang === "" ? 0 : 1)
+                || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0);
+        })[0];
+        return best.url;
+    } catch (e) {
+        setStatus("fanart.tv's API currently not working - using TMDB art.");
+        return "";
+    }
+}
+
+// The art providers, tried in opts.providerOrder: the first enabled one that
+// delivers art wins, the rest are fallback. `enabled` (get/set) is the user's
+// checkbox state over its backing option - the provider rows in the UI bind to it
+// generically, so a new provider needs no handler code. Anything else a provider
+// needs to deliver (fanart: its key) it checks inside art() itself, returning ""
+// like any other miss - "" already means "nothing from me, next in line".
+var MOVIE_ART_PROVIDERS = {
+    fanart: {
+        get enabled() { return !!opts.fanartBackdrops; },
+        set enabled(on) { opts.fanartBackdrops = on ? 1 : 0; },
+        art: function (hit) { return fanartBackdrop(hit.id); }
+    },
+    tmdb: {
+        get enabled() { return !!opts.tmdbArt; },
+        set enabled(on) { opts.tmdbArt = on ? 1 : 0; },
+        art: function (hit) {
+            return Promise.resolve(hit.backdrop_path
+                ? "https://image.tmdb.org/t/p/w1280" + hit.backdrop_path : "");
+        }
+    }
+};
+
+// First enabled provider (in priority order) that delivers art wins. Sequential on
+// purpose: asking the next provider only AFTER the preferred one came up empty is
+// the whole point of a priority order. (Array.find can't do this - it cannot await.)
+async function artFromProviders(hit) {
+    for (const id of opts.providerOrder) {
+        const p = MOVIE_ART_PROVIDERS[id];
+        if (!p || !p.enabled) continue;
+        const url = await p.art(hit);
+        if (url) return url;
+    }
+    return "";
 }
 
 function setMovieBackdrop(url) {
@@ -318,17 +398,22 @@ function setMovieBackdrop(url) {
     movieLayer.show(url, function () { movieShown = true; updateCoverVisibility(); });
 }
 
-function updateMovieBackdrop() {
-    if (!opts.tmdbBackdrops) { setMovieBackdrop(""); return; }
+function updateBackdrop() {
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
-    if (stationIdActive) { setMovieBackdrop(""); return; }
+    if (stationIdActive || !opts.tmdbBackdrops) { setMovieBackdrop(""); return; }
+    const resolver = station().backdrop;
+    if (!resolver) { setMovieBackdrop(""); return; } // this station has no art source
+    resolver();
+}
+
+async function resolveMovieBackdrop() {
     if (!opts.tmdbKey) {
         setMovieBackdrop("");
         setStatus("Movie backdrops need a TMDB API key - see the Experimental options.");
         return;
     }
-    var q = cleanMovieTitle(currentAlbum);
+    const q = cleanMovieTitle(currentAlbum);
     if (!q) { setMovieBackdrop(""); return; }
     if (q in tmdbCache) { setMovieBackdrop(tmdbCache[q]); return; }
     // TMDB accepts either credential; the shape tells them apart. A v3 API key is 32
@@ -336,28 +421,23 @@ function updateMovieBackdrop() {
     // with dots) and goes in an Authorization: Bearer header - which triggers a CORS
     // preflight that TMDB explicitly allows (Access-Control-Allow-Headers includes
     // Authorization; verified live).
-    var isToken = opts.tmdbKey.indexOf(".") >= 0 || /^eyJ/.test(opts.tmdbKey);
-    fetch("https://api.themoviedb.org/3/search/movie?include_adult=false&query=" + encodeURIComponent(q)
-          + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
-          isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined)
-        .then(function (r) {
-            if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
-            return r.json();
-        })
-        .then(function (j) {
-            var hit = pickMovie(j.results || [], q);
-            if (!hit) { tmdbCache[q] = ""; setMovieBackdrop(""); return; }
-            fanartBackdrop(hit.id).then(function (fanartUrl) {
-                var url = fanartUrl
-                    || (hit.backdrop_path ? "https://image.tmdb.org/t/p/w1280" + hit.backdrop_path : "");
-                tmdbCache[q] = url;
-                setMovieBackdrop(url);
-            });
-        })
-        .catch(function (e) {
-            if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.");
-            setMovieBackdrop(""); // any failure: quietly back to the blurred cover
-        });
+    const isToken = opts.tmdbKey.indexOf(".") >= 0 || /^eyJ/.test(opts.tmdbKey);
+    try {
+        const r = await fetch("https://api.themoviedb.org/3/search/movie?include_adult=false&query="
+              + encodeURIComponent(q)
+              + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
+              isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined);
+        if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
+        const j = await r.json();
+        const hit = pickMovie(j.results || [], q);
+        if (!hit) { tmdbCache[q] = ""; setMovieBackdrop(""); return; }
+        const url = await artFromProviders(hit);
+        tmdbCache[q] = url;
+        setMovieBackdrop(url);
+    } catch (e) {
+        if (e === "badkey") setStatus("TMDB rejected the API key - check the Experimental options.");
+        setMovieBackdrop(""); // any failure: quietly back to the blurred cover
+    }
 }
 
 // --- countdown ---------------------------------------------------------------
@@ -585,6 +665,8 @@ function bindRadios(name, current, apply) {
 bindRadios("station", opts.station, function (v) {
     opts.station = v;
     shownUrl = ""; remAnchor = -1;
+    currentAlbum = ""; // the resolver is per-station now - always re-evaluate after a
+                       // switch, even if the new station plays an identically named album
     setInfo("Loading…", "");
     setStatus("");
     if (audioBtn.getAttribute("aria-pressed") === "true") setAudio(true); // retune the stream
@@ -615,32 +697,113 @@ tmdbOnEl.addEventListener("change", function () {
     opts.tmdbBackdrops = tmdbOnEl.checked ? 1 : 0;
     saveOpts();
     setStatus("");
-    updateMovieBackdrop();
+    updateBackdrop();
 });
 tmdbKeyEl.addEventListener("change", function () {
     opts.tmdbKey = tmdbKeyEl.value.trim();
     tmdbCache = {}; // a new key deserves a fresh try, including negative caches
     saveOpts();
     setStatus("");
-    updateMovieBackdrop();
+    updateBackdrop();
 });
-var fanartKeyEl = $("fanart-key"), fanartOnEl = $("fanart-on");
+var fanartKeyEl = $("fanart-key");
 fanartKeyEl.value = opts.fanartKey;
-fanartOnEl.checked = !!opts.fanartBackdrops;
 fanartKeyEl.addEventListener("change", function () {
     opts.fanartKey = fanartKeyEl.value.trim();
     tmdbCache = {}; // cached art may now be upgradable (or was fanart-based)
     saveOpts();
     setStatus("");
-    updateMovieBackdrop();
+    updateBackdrop();
 });
-fanartOnEl.addEventListener("change", function () {
-    opts.fanartBackdrops = fanartOnEl.checked ? 1 : 0;
-    tmdbCache = {}; // every cached URL is the other source's now
-    saveOpts();
-    setStatus("");
-    updateMovieBackdrop();
+
+// --- provider priority: drag & drop -------------------------------------------
+// Pointer-based, NOT native HTML5 DnD: the native API renders a translucent
+// snapshot beside a text-drag cursor and the real row stays put - it cannot make
+// the row itself ride the pointer. Here the actual row goes position:fixed and
+// follows the pointer (visibly lifted out of the list), a dashed placeholder
+// keeps its gap, and elementFromPoint moves the gap - possible because the
+// floating row is pointer-events:none, so hit testing sees through it. The <li>
+// order stays the single source of truth, read back on release. Pointer events
+// also make this work on touch (the grip's touch-action:none stops scrolling).
+// The ⠿ grip is the only handle: the row also holds a key input, and a drag must
+// not fight text selection there.
+var providersEl = $("providers");
+opts.providerOrder.forEach(function (id) {
+    providersEl.appendChild(providersEl.querySelector('[data-provider="' + id + '"]'));
 });
+// One generic wiring for every provider row: the checkbox IS the provider's
+// enabled property (getter/setter over its backing option) - a new provider row
+// needs no handler code of its own.
+Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function (li) {
+    var p = MOVIE_ART_PROVIDERS[li.dataset.provider];
+    var box = li.querySelector('input[type="checkbox"]');
+    box.checked = p.enabled;
+    box.addEventListener("change", function () {
+        p.enabled = box.checked;
+        tmdbCache = {}; // every cached URL may be the other source's now
+        saveOpts();
+        setStatus("");
+        updateBackdrop();
+    });
+});
+(function () {
+    var row = null, placeholder = null, grabX = 0, grabY = 0;
+    function moveTo(e) {
+        // fixed at 0/0, so the translate IS the viewport position; the slight tilt
+        // is what makes it read as "picked up" rather than misrendered
+        row.style.transform = "translate(" + (e.clientX - grabX) + "px, "
+            + (e.clientY - grabY) + "px) rotate(1.5deg)";
+    }
+    function onMove(e) {
+        moveTo(e);
+        var under = document.elementFromPoint(e.clientX, e.clientY);
+        var over = under && under.closest(".provider:not(.dragging):not(.placeholder)");
+        if (!over) return;
+        var r = over.getBoundingClientRect();
+        providersEl.insertBefore(placeholder,
+            e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+    }
+    function endDrag() {
+        if (!row) return; // a stray pointercancel after release
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", endDrag);
+        window.removeEventListener("pointercancel", endDrag);
+        providersEl.insertBefore(row, placeholder);
+        placeholder.remove();
+        placeholder = null;
+        row.classList.remove("dragging");
+        row.style.transform = "";
+        row.style.width = "";
+        row = null;
+        document.body.classList.remove("row-dragging");
+        opts.providerOrder = Array.prototype.map.call(providersEl.children, function (li) {
+            return li.dataset.provider;
+        });
+        tmdbCache = {}; // priority decides which source's URL got cached
+        saveOpts();
+        updateBackdrop();
+    }
+    providersEl.addEventListener("pointerdown", function (e) {
+        if (!e.target.closest(".grip") || row) return;
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        e.preventDefault(); // no text selection during the drag
+        row = e.target.closest(".provider");
+        var r = row.getBoundingClientRect();
+        grabX = e.clientX - r.left;
+        grabY = e.clientY - r.top;
+        placeholder = document.createElement("li");
+        placeholder.className = "provider placeholder";
+        placeholder.style.height = r.height + "px";
+        row.parentNode.insertBefore(placeholder, row);
+        row.style.width = r.width + "px"; // fixed positioning loses the list's width
+        row.classList.add("dragging");
+        document.body.classList.add("row-dragging");
+        moveTo(e);
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", endDrag);
+        window.addEventListener("pointercancel", endDrag);
+    });
+})();
 var hideCoverEl = $("hide-cover");
 hideCoverEl.checked = !!opts.hideCover;
 hideCoverEl.addEventListener("change", function () {

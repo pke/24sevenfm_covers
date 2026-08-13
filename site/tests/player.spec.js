@@ -34,7 +34,9 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html");
 
         // A cover URL must arrive via the CORS fetch and actually decode to pixels.
-        const front = page.locator(".coverbox img.front");
+        // The visible buffer is named by data-front on the box (see player.css).
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
         try {
             await expect(front).toHaveAttribute("src", /\/images\/cover\//, { timeout: 60000 });
         } catch (e) {
@@ -91,7 +93,8 @@ test.describe("the deployed player page", () => {
         // 2026-08-13's "Could not connect to DB server"), and then the player's logo
         // fallback IS the correct behaviour. So: accept cover or logo first, and only
         // fail hard when neither ever appears (= the switch itself is broken).
-        const front = page.locator(".coverbox img.front");
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
         try {
             await expect(front)
                 .toHaveAttribute("src", /death\.fm\/images\/(cover|logos)/, { timeout: 60000 });

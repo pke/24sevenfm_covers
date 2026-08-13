@@ -80,17 +80,28 @@
     backface-visibility: hidden;
 }
 .layout-poster .coverbox img { border-radius: var(--cover-radius, 0); }
-.coverbox img.front { opacity: 1; }
+
+/* The box's data attributes drive both imgs - the children are addressed purely
+   positionally, never touched by JS: data-front names the visible buffer, data-fx
+   the transition. No data-front (before the first cover) = both hidden. */
+.coverbox[data-front="a"] img:first-of-type,
+.coverbox[data-front="b"] img:last-of-type { opacity: 1; }
 
 /* Crossfade: the incoming image fades in over the outgoing one. */
-.fx-fade img { transition: opacity var(--fade-ms, 1000ms) ease; }
+.coverbox[data-fx="fade"] img { transition: opacity var(--fade-ms, 1000ms) ease; }
+
 /* Flips: both images stay opaque - the rotation hides them (edge-on at 90° with the
-   backface culled), so the outgoing rotates away while the incoming arrives. */
-.fx-fliph img, .fx-flipv img { opacity: 1; transition: transform var(--fade-ms, 1000ms) ease; }
-.fx-fliph img:not(.front) { transform: rotateY( 90deg); }
-.fx-fliph img.front       { transform: rotateY(0); }
-.fx-flipv img:not(.front) { transform: rotateX(-90deg); }
-.fx-flipv img.front       { transform: rotateX(0); }
+   backface culled). The base rule is the parked pose; the data-front match is more
+   specific and rotates the visible buffer into view, so the outgoing rotates away
+   while the incoming arrives. */
+.coverbox[data-fx="fliph"] img,
+.coverbox[data-fx="flipv"] img { opacity: 1; transition: transform var(--fade-ms, 1000ms) ease; }
+.coverbox[data-fx="fliph"] img { transform: rotateY( 90deg); }
+.coverbox[data-fx="flipv"] img { transform: rotateX(-90deg); }
+.coverbox[data-fx="fliph"][data-front="a"] img:first-of-type,
+.coverbox[data-fx="fliph"][data-front="b"] img:last-of-type { transform: rotateY(0); }
+.coverbox[data-fx="flipv"][data-front="a"] img:first-of-type,
+.coverbox[data-fx="flipv"][data-front="b"] img:last-of-type { transform: rotateX(0); }
 
 /* --- info box (poster only) ------------------------------------------------------ */
 /* A flex sibling sitting below the cover, holding title, artist and the countdown as
@@ -207,6 +218,40 @@
 }
 .seg input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Backdrop providers: a drag-sortable priority list - topmost wins, rest fallback. */
+.providers { list-style: none; margin: .8rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.provider {
+    display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+    padding: .45rem .6rem;
+    border: 1px solid var(--line);
+    border-radius: .7rem;
+    background: var(--bg-raised);
+}
+/* touch-action none: a touch on the grip starts a drag, never a page scroll */
+.provider .grip { cursor: grab; user-select: none; touch-action: none; color: var(--text-dim); }
+
+/* The dragged row is lifted out of the flow and rides the pointer: fixed at 0/0,
+   positioned purely via the inline translate. pointer-events none lets
+   elementFromPoint see the rows underneath while it floats. */
+.provider.dragging {
+    position: fixed;
+    left: 0; top: 0;
+    z-index: 100;
+    margin: 0;
+    pointer-events: none;
+    background: var(--bg-card);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+}
+/* The gap it left behind, sized by JS to the row's height. */
+.provider.placeholder {
+    box-sizing: border-box;
+    border-style: dashed;
+    background: transparent;
+}
+/* Everything under the floating row keeps its own cursor - override globally. */
+body.row-dragging, body.row-dragging * { cursor: grabbing !important; }
+.provider input[type="password"] { flex: 1; min-width: 140px; max-width: 240px; }
 
 .row { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
 .row label { font-size: .9rem; }

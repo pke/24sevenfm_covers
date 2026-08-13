@@ -153,11 +153,23 @@
                     <label for="tmdb-key">TMDB</label>
                     <input type="password" id="tmdb-key" autocomplete="off" spellcheck="false"
                            placeholder="API key or Read Access Token" style="flex:1; min-width:160px; max-width:300px;">
-                    <label><input type="checkbox" id="fanart-on"> fanart.tv</label>
-                    <input type="password" id="fanart-key" autocomplete="off" spellcheck="false"
-                           aria-label="fanart.tv API key"
-                           placeholder="optional API key" style="flex:1; min-width:140px; max-width:240px;">
                 </div>
+                <!-- Art providers by priority: drag ⠿ to reorder (player.js sorts these
+                     to the saved order on load). The topmost ENABLED provider that has
+                     art for the movie wins; the others are fallback. TMDB always does
+                     the movie lookup itself - fanart.tv has no text search. -->
+                <ul class="providers" id="providers" aria-label="Backdrop providers, in priority order">
+                    <li class="provider" data-provider="fanart">
+                        <span class="grip" title="Drag to change priority">⠿</span>
+                        <label><input type="checkbox" id="fanart-on"> fanart.tv</label>
+                        <input type="password" id="fanart-key" autocomplete="off" spellcheck="false"
+                               aria-label="fanart.tv API key" placeholder="optional API key">
+                    </li>
+                    <li class="provider" data-provider="tmdb">
+                        <span class="grip" title="Drag to change priority">⠿</span>
+                        <label><input type="checkbox" id="tmdbart-on"> TMDB backdrops</label>
+                    </li>
+                </ul>
                 <div class="row" style="margin-top:.6rem">
                     <label><input type="checkbox" id="hide-cover"> Hide the cover while a movie
                     backdrop is shown</label>
@@ -166,9 +178,10 @@
                 cover — matched by album title, so it fits soundtrack stations best. Needs a free
                 credential from <a href="https://www.themoviedb.org/settings/api">themoviedb.org</a>
                 (API key or Read Access Token — the player tells them apart). Add a free
-                <a href="https://fanart.tv/get-an-api-key/">fanart.tv</a> key and its curated,
-                usually textless backdrops are preferred, with TMDB's as the fallback — untick
-                fanart.tv to stay on TMDB's art while keeping the key. Both keys
+                <a href="https://fanart.tv/get-an-api-key/">fanart.tv</a> key for curated, usually
+                textless backdrops. The list above is the priority: drag ⠿ to reorder — the
+                topmost ticked provider that has art for the movie wins, the others are fallback,
+                and unticking one skips it while keeping its key. Both keys
                 stay in your browser. When enabled, the album title goes to TMDB and the matched
                 movie's id to fanart.tv — see the <a href="privacy.html">privacy policy</a>.
                 This product uses the TMDB API but is not endorsed or certified by TMDB;
