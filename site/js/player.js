@@ -324,7 +324,8 @@ async function prefetchNext(ctl, generation) {
         // station().backdrop currently always means the movie resolver; if other
         // resolver kinds ever appear, prefetching becomes their concern.
         if (opts.tmdbBackdrops && station().backdrop) {
-            const art = await movieArtFor(htmlDecode(next.Album), generation);
+            const art = await movieArtFor(htmlDecode(next.Album), generation, null,
+                                          prefetchCtl.signal);
             if (art && renderIsCurrent("backdrop", generation)) new Image().src = art;
         }
     } catch (e) { /* prefetch is best-effort - including a thrown "badkey" */ }
@@ -386,6 +387,15 @@ function showCover(url) {
 var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a movie backdrop is currently visible (drives hide-cover)
 var tmdbCache = {};   // cleaned title -> backdrop URL ("" = searched, no match)
+var backdropRequest = null;
+
+function cancelBackdropRequest() {
+    if (!backdropRequest) return;
+    const request = backdropRequest;
+    backdropRequest = null;
+    clearTimeout(request.kill);
+    request.ctl.abort();
+}
 
 // Experimental: while a movie backdrop is showing, the cover can step aside and let
 // the backdrop be the star. Only ever active when there IS a backdrop - no match, no
@@ -428,11 +438,12 @@ function pickMovie(results, q) {
 // backdrop, never to nothing.
 
 var TRANSIENT_ART_FAILURE = {};
-async function fanartBackdrop(movieId, reportStatus) {
+async function fanartBackdrop(movieId, reportStatus, signal) {
     if (!opts.fanartKey) return ""; // keyless = a plain miss, no request
     try {
         const r = await fetch("https://webservice.fanart.tv/v3/movies/" + movieId
-                              + "?api_key=" + encodeURIComponent(opts.fanartKey));
+                              + "?api_key=" + encodeURIComponent(opts.fanartKey),
+                              signal ? { signal: signal } : undefined);
         if (r.status === 401) {
             if (reportStatus) reportStatus("fanart.tv rejected its key - using TMDB art only.");
             return "";
@@ -447,6 +458,7 @@ async function fanartBackdrop(movieId, reportStatus) {
         })[0];
         return best.url;
     } catch (e) {
+        if (e && e.name === "AbortError") throw e;
         if (reportStatus) reportStatus("fanart.tv's API currently not working - using TMDB art.");
         throw TRANSIENT_ART_FAILURE;
     }
@@ -462,7 +474,9 @@ var MOVIE_ART_PROVIDERS = {
     fanart: {
         get enabled() { return !!opts.fanartBackdrops; },
         set enabled(on) { opts.fanartBackdrops = on ? 1 : 0; },
-        art: function (hit, reportStatus) { return fanartBackdrop(hit.id, reportStatus); }
+        art: function (hit, reportStatus, signal) {
+            return fanartBackdrop(hit.id, reportStatus, signal);
+        }
     },
     tmdb: {
         get enabled() { return !!opts.tmdbArt; },
@@ -477,13 +491,13 @@ var MOVIE_ART_PROVIDERS = {
 // First enabled provider (in priority order) that delivers art wins. Sequential on
 // purpose: asking the next provider only AFTER the preferred one came up empty is
 // the whole point of a priority order. (Array.find can't do this - it cannot await.)
-async function artFromProviders(hit, generation, reportStatus, cacheState) {
+async function artFromProviders(hit, generation, reportStatus, cacheState, signal) {
     for (const id of opts.providerOrder) {
         if (!renderIsCurrent("backdrop", generation)) return "";
         const p = MOVIE_ART_PROVIDERS[id];
         if (!p || !p.enabled) continue;
         var url;
-        try { url = await p.art(hit, reportStatus); }
+        try { url = await p.art(hit, reportStatus, signal); }
         catch (e) {
             if (e !== TRANSIENT_ART_FAILURE) throw e;
             cacheState.cacheable = false;
@@ -514,19 +528,30 @@ function setMovieBackdrop(url, generation) {
 
 function updateBackdrop() {
     const generation = nextRenderGeneration("backdrop");
+    cancelBackdropRequest();
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
     if (stationIdActive || !opts.tmdbBackdrops) { setMovieBackdrop("", generation); return; }
     const resolver = station().backdrop;
     if (!resolver) { setMovieBackdrop("", generation); return; } // no art source
-    resolver(generation);
+    const ctl = new AbortController();
+    const request = {
+        ctl: ctl,
+        kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT)
+    };
+    backdropRequest = request;
+    Promise.resolve(resolver(generation, ctl.signal)).then(settled, settled);
+    function settled() {
+        clearTimeout(request.kill);
+        if (backdropRequest === request) backdropRequest = null;
+    }
 }
 
 // Resolve an album title to movie art (search TMDB, then the provider priority
 // list), through the per-title cache. It has no direct UI effects: the current-track
 // display path may inject a generation-checked status reporter, while the prefetcher
 // stays silent. Throws "badkey" so the display path can tell the user.
-async function movieArtFor(album, generation, reportStatus) {
+async function movieArtFor(album, generation, reportStatus, signal) {
     const q = cleanMovieTitle(album);
     if (!renderIsCurrent("backdrop", generation) || !q || !opts.tmdbKey) return "";
     const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
@@ -537,23 +562,25 @@ async function movieArtFor(album, generation, reportStatus) {
     // preflight that TMDB explicitly allows (Access-Control-Allow-Headers includes
     // Authorization; verified live).
     const isToken = opts.tmdbKey.indexOf(".") >= 0 || /^eyJ/.test(opts.tmdbKey);
+    const request = isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : {};
+    if (signal) request.signal = signal;
     const r = await fetch("https://api.themoviedb.org/3/search/movie?include_adult=false&query="
           + encodeURIComponent(q)
-          + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
-          isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined);
+          + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)), request);
     if (!renderIsCurrent("backdrop", generation)) return "";
     if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
     if (r.status !== 200) throw new Error("TMDB HTTP " + r.status);
     const j = await r.json();
     const hit = pickMovie(j.results || [], q);
     const cacheState = { cacheable: true };
-    const url = hit ? await artFromProviders(hit, generation, reportStatus, cacheState) : "";
+    const url = hit
+        ? await artFromProviders(hit, generation, reportStatus, cacheState, signal) : "";
     if (!renderIsCurrent("backdrop", generation)) return "";
     if (cacheState.cacheable) cache[q] = url;
     return url;
 }
 
-async function resolveMovieBackdrop(generation) {
+async function resolveMovieBackdrop(generation, signal) {
     if (!renderIsCurrent("backdrop", generation)) return;
     if (!opts.tmdbKey) {
         setMovieBackdrop("", generation);
@@ -563,7 +590,7 @@ async function resolveMovieBackdrop(generation) {
     try {
         const url = await movieArtFor(currentAlbum, generation, function (text) {
             if (renderIsCurrent("backdrop", generation)) setStatus(text);
-        });
+        }, signal);
         if (!renderIsCurrent("backdrop", generation)) return;
         setMovieBackdrop(url, generation);
     } catch (e) {
@@ -798,7 +825,9 @@ function bindRadios(name, current, apply) {
 bindRadios("station", opts.station, function (v) {
     opts.station = v;
     nextRenderGeneration("cover"); // invalidate image loads before the new poll returns
-    setMovieBackdrop("", nextRenderGeneration("backdrop"));
+    const backdropGeneration = nextRenderGeneration("backdrop");
+    cancelBackdropRequest();
+    setMovieBackdrop("", backdropGeneration);
     shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
     currentAlbum = ""; // the resolver is per-station now - always re-evaluate after a
                        // switch, even if the new station plays an identically named album

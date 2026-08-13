@@ -134,10 +134,31 @@ test.describe("the deployed player page", () => {
     test("ignores a TMDB result after movie backdrops are disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/race.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/race.svg";
-        let tmdbRoute = null, backdropRequested = false, fanartRequested = false;
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "race-test-key",
-                fanartBackdrops: 1, fanartKey: "fanart-race-key", tmdbArt: 1 })));
+        let backdropRequested = false, fanartRequested = false;
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
+                tmdbBackdrops: 1, tmdbKey: "race-test-key",
+                fanartBackdrops: 1, fanartKey: "fanart-race-key", tmdbArt: 1,
+            }));
+            window.__tmdbStarted = false;
+            window.__tmdbAborted = false;
+            const nativeFetch = window.fetch;
+            window.fetch = function (url, init) {
+                if (String(url).startsWith("https://api.themoviedb.org/3/search/movie?")) {
+                    window.__tmdbStarted = true;
+                    return new Promise((resolve, reject) => {
+                        const abort = () => {
+                            window.__tmdbAborted = true;
+                            reject(new DOMException("Aborted", "AbortError"));
+                        };
+                        const signal = init && init.signal;
+                        if (signal && signal.aborted) abort();
+                        else if (signal) signal.addEventListener("abort", abort, { once: true });
+                    });
+                }
+                return nativeFetch.apply(this, arguments);
+            };
+        });
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -150,9 +171,6 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
-            tmdbRoute = route;
-        });
         await page.route("https://webservice.fanart.tv/v3/movies/**", (route) => {
             fanartRequested = true;
             return route.fulfill({ json: { moviebackground: [
@@ -166,11 +184,9 @@ test.describe("the deployed player page", () => {
         });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => !!tmdbRoute).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.__tmdbStarted)).toBe(true);
         await page.locator("label:has(#tmdb-on)").click();
-        await tmdbRoute.fulfill({ json: { results: [
-            { id: 1, title: "Slow Movie", original_title: "Slow Movie", backdrop_path: "/slow.jpg" },
-        ] } });
+        await expect.poll(() => page.evaluate(() => window.__tmdbAborted)).toBe(true);
         await page.waitForTimeout(100);
         expect(backdropRequested).toBe(false);
         expect(fanartRequested).toBe(false);
@@ -390,6 +406,62 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => page.evaluate(() => window.__queueStarted)).toBe(true);
         await page.clock.fastForward(20001);
         await expect.poll(() => page.evaluate(() => window.__queueAborted)).toBe(true);
+    });
+    test("times out a stalled prefetched fanart lookup", async ({ page }) => {
+        const nextCover = "https://streamingsoundtracks.com/images/cover/art-timeout.svg";
+        const nextSized = "https://streamingsoundtracks.com/images/cover/500/art-timeout.svg";
+        await page.clock.install();
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
+                tmdbBackdrops: 1, tmdbKey: "art-timeout-key",
+                fanartBackdrops: 1, fanartKey: "fanart-timeout-key", tmdbArt: 1,
+            }));
+            window.__fanartStarted = false;
+            window.__fanartAborted = false;
+            const nativeFetch = window.fetch;
+            window.fetch = function (url, init) {
+                if (String(url).startsWith("https://webservice.fanart.tv/v3/movies/")) {
+                    window.__fanartStarted = true;
+                    return new Promise((resolve, reject) => {
+                        const abort = () => {
+                            window.__fanartAborted = true;
+                            reject(new DOMException("Aborted", "AbortError"));
+                        };
+                        const signal = init && init.signal;
+                        if (signal && signal.aborted) abort();
+                        else if (signal) signal.addEventListener("abort", abort, { once: true });
+                    });
+                }
+                return nativeFetch.apply(this, arguments);
+            };
+        });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [{
+                Album: "Next Movie", CoverLink: nextCover,
+            }] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 3600000, PlayStart: "2026-08-13T12:00:00Z",
+                SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(nextSized, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
+            route.fulfill({ json: { results: [
+                { id: 12, title: "Next Movie", original_title: "Next Movie",
+                    backdrop_path: "/next.jpg" },
+            ] } }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => page.evaluate(() => window.__fanartStarted)).toBe(true);
+        await page.clock.fastForward(20001);
+        await expect.poll(() => page.evaluate(() => window.__fanartAborted)).toBe(true);
     });
     async function mockProviderTestFeed(page) {
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
