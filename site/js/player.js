@@ -150,6 +150,27 @@ function htmlDecode(s) {
 }
 function station() { return STATIONS[stationIndex(opts.station)]; }
 
+// CoverLink is controlled by the station feed. Keep image requests on the selected
+// station's HTTPS origin (or a real subdomain), matching the native clients' trust
+// boundary. The page's img-src CSP separately prevents redirects escaping this set.
+function trustedCoverUrl(raw) {
+    if (typeof raw !== "string" || !raw || /[\u0000-\u001F\u007F]/.test(raw)) return "";
+    try {
+        var u = new URL(raw);
+        var trustedHost = station().host.toLowerCase();
+        var urlHost = u.hostname.toLowerCase();
+        if (u.protocol !== "https:" || (u.port && u.port !== "443")
+                || u.username || u.password
+                || (urlHost !== trustedHost && !urlHost.endsWith("." + trustedHost))) return "";
+        return u.href;
+    } catch (e) { return ""; }
+}
+
+function sizedCoverUrl(raw) {
+    var trusted = trustedCoverUrl(raw);
+    return trusted ? trusted.replace("/cover/", "/cover/500/") : "";
+}
+
 // --- DOM ---------------------------------------------------------------------
 var $ = function (id) { return document.getElementById(id); };
 var stage = $("stage"), coverBox = $("coverbox");
@@ -228,13 +249,14 @@ async function poll() {
         remAnchorAt = Date.now();
 
         const album = htmlDecode(j.Album), track = htmlDecode(j.Track);
-        // ONE determination drives everything downstream: no CoverLink means a
-        // station ID or unregistered track (the station's own player.php rule).
+        // ONE determination drives everything downstream: no trusted CoverLink means
+        // a station ID, unregistered track, or rejected off-origin URL.
         // The same flag that swaps the cover for the station logo below also
         // vetoes the TMDB/fanart lookup - never a movie, so its jingle name must
         // not leak to a third party as a search. One source of truth, so the
         // logo and the veto can never disagree.
-        const isStationId = !(j.CoverLink || "");
+        const trustedCover = sizedCoverUrl(j.CoverLink);
+        const isStationId = !trustedCover;
         if (album !== currentAlbum || isStationId !== stationIdActive) {
             currentAlbum = album; stationIdActive = isStationId;
             updateBackdrop();
@@ -246,8 +268,7 @@ async function poll() {
             title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
         setInfo(title || "—", htmlDecode(j.Artist));
 
-        const cover = isStationId ? station().logo
-                                  : j.CoverLink.replace("/cover/", "/cover/500/");
+        const cover = isStationId ? station().logo : trustedCover;
         if (cover && cover !== shownUrl) { shownUrl = cover; showCover(cover); }
         setStatus("");
         // Re-poll when the track should end (clamped), +1s for the server to roll over.
@@ -280,9 +301,10 @@ async function prefetchNext(ctl) {
             { signal: ctl.signal });
         if (!r.ok) return;
         const next = ((await r.json()) || [])[0];
-        // No entry or no CoverLink (a station ID up next): nothing to warm.
-        if (!next || !(next.CoverLink || "")) return;
-        new Image().src = next.CoverLink.replace("/cover/", "/cover/500/");
+        // No entry or no trusted CoverLink (station ID or rejected URL): nothing to warm.
+        const nextCover = next && sizedCoverUrl(next.CoverLink);
+        if (!nextCover) return;
+        new Image().src = nextCover;
         // station().backdrop currently always means the movie resolver; if other
         // resolver kinds ever appear, prefetching becomes their concern.
         if (opts.tmdbBackdrops && station().backdrop) {

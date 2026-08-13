@@ -21,6 +21,55 @@ const JSON_URL =
     "https://streamingsoundtracks.com/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=";
 
 test.describe("the deployed player page", () => {
+    test("rejects a CoverLink outside the selected station", async ({ page }) => {
+        const hostile = "https://example.invalid/private-cover.jpg";
+        let hostileRequested = false;
+        page.on("request", (r) => { if (r.url() === hostile) hostileRequested = true; });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", async (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm",
+                CoverLink: hostile, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html");
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+        await expect(front).toHaveAttribute("src", /streamingsoundtracks\.com\/images\/logos\//);
+        expect(hostileRequested).toBe(false);
+    });
+
+    test("blocks a trusted cover URL from redirecting off the image allowlist", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/redirect.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/redirect.svg";
+        let coverRequested = false, redirectRequested = false;
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) =>
+            route.fulfill({ json: {
+                Album: "Redirect test", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } }));
+        await page.route(sizedCover, (route) => {
+            coverRequested = true;
+            return route.fulfill({ status: 302, headers: { location: "https://example.com/escaped.svg" } });
+        });
+        await page.route("https://example.com/**", (route) => {
+            redirectRequested = true;
+            return route.abort();
+        });
+
+        await page.goto("/player.html");
+        await expect.poll(() => coverRequested).toBe(true);
+        await page.waitForTimeout(100);
+        expect(redirectRequested).toBe(false);
+    });
+
     test("loads, polls the station, and renders a real cover", async ({ page }) => {
         const errors = [];
         const netlog = []; // every station response/failure the PAGE itself saw
