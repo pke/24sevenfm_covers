@@ -107,10 +107,10 @@ test.describe("the deployed player page", () => {
     test("ignores a TMDB result after movie backdrops are disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/race.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/race.svg";
-        let tmdbRoute = null, backdropRequested = false;
+        let tmdbRoute = null, backdropRequested = false, fanartRequested = false;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "race-test-key",
-                fanartBackdrops: 0, tmdbArt: 1 })));
+                fanartBackdrops: 1, fanartKey: "fanart-race-key", tmdbArt: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -126,6 +126,12 @@ test.describe("the deployed player page", () => {
         await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
             tmdbRoute = route;
         });
+        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) => {
+            fanartRequested = true;
+            return route.fulfill({ json: { moviebackground: [
+                { url: "https://fanart.tv/slow.jpg", lang: "", likes: "1" },
+            ] } });
+        });
         await page.route("https://image.tmdb.org/t/p/w1280/slow.jpg", (route) => {
             backdropRequested = true;
             return route.fulfill({ status: 200, contentType: "image/svg+xml",
@@ -140,6 +146,7 @@ test.describe("the deployed player page", () => {
         ] } });
         await page.waitForTimeout(100);
         expect(backdropRequested).toBe(false);
+        expect(fanartRequested).toBe(false);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
     });
 

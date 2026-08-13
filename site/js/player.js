@@ -280,7 +280,7 @@ async function poll() {
         setStatus("");
         // Re-poll when the track should end (clamped), +1s for the server to roll over.
         schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
-        prefetchNext(ctl); // fire-and-forget: warm the NEXT track's art meanwhile
+        prefetchNext(ctl, renderGenerations.backdrop); // fire-and-forget: warm the NEXT track's art meanwhile
     } catch (e) {
         if (ctl !== inflight) return;
         setStatus("Station not responding – retrying…");
@@ -301,7 +301,7 @@ function setStatus(text) { statusEl.textContent = text; }
 // backdrop lookup all hit caches. Best-effort by design: one attempt per poll, and
 // any failure just means the switch loads the way it always did. Shares the poll's
 // abort controller, so a station switch cancels a stale queue request.
-async function prefetchNext(ctl) {
+async function prefetchNext(ctl, generation) {
     try {
         const r = await fetch("https://" + station().host
             + "/soap/FM24sevenJSON.php?action=GetQueue&_t=" + Date.now(),
@@ -315,8 +315,8 @@ async function prefetchNext(ctl) {
         // station().backdrop currently always means the movie resolver; if other
         // resolver kinds ever appear, prefetching becomes their concern.
         if (opts.tmdbBackdrops && station().backdrop) {
-            const art = await movieArtFor(htmlDecode(next.Album));
-            if (art) new Image().src = art;
+            const art = await movieArtFor(htmlDecode(next.Album), generation);
+            if (art && renderIsCurrent("backdrop", generation)) new Image().src = art;
         }
     } catch (e) { /* prefetch is best-effort - including a thrown "badkey" */ }
 }
@@ -452,11 +452,13 @@ var MOVIE_ART_PROVIDERS = {
 // First enabled provider (in priority order) that delivers art wins. Sequential on
 // purpose: asking the next provider only AFTER the preferred one came up empty is
 // the whole point of a priority order. (Array.find can't do this - it cannot await.)
-async function artFromProviders(hit) {
+async function artFromProviders(hit, generation) {
     for (const id of opts.providerOrder) {
+        if (!renderIsCurrent("backdrop", generation)) return "";
         const p = MOVIE_ART_PROVIDERS[id];
         if (!p || !p.enabled) continue;
         const url = await p.art(hit);
+        if (!renderIsCurrent("backdrop", generation)) return "";
         if (url) return url;
     }
     return "";
@@ -487,9 +489,9 @@ function updateBackdrop() {
 // list), through the per-title cache. A pure lookup - no status text, no display -
 // so the prefetcher can use it for the NEXT track as well as the display path for
 // the current one. Throws "badkey" so the display path can tell the user.
-async function movieArtFor(album) {
+async function movieArtFor(album, generation) {
     const q = cleanMovieTitle(album);
-    if (!q || !opts.tmdbKey) return "";
+    if (!renderIsCurrent("backdrop", generation) || !q || !opts.tmdbKey) return "";
     const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
     if (q in cache) return cache[q];
     // TMDB accepts either credential; the shape tells them apart. A v3 API key is 32
@@ -502,11 +504,13 @@ async function movieArtFor(album) {
           + encodeURIComponent(q)
           + (isToken ? "" : "&api_key=" + encodeURIComponent(opts.tmdbKey)),
           isToken ? { headers: { "Authorization": "Bearer " + opts.tmdbKey } } : undefined);
+    if (!renderIsCurrent("backdrop", generation)) return "";
     if (r.status === 401) throw "badkey"; // TMDB status_code 7: invalid key
     if (r.status !== 200) throw new Error("TMDB HTTP " + r.status);
     const j = await r.json();
     const hit = pickMovie(j.results || [], q);
-    const url = hit ? await artFromProviders(hit) : "";
+    const url = hit ? await artFromProviders(hit, generation) : "";
+    if (!renderIsCurrent("backdrop", generation)) return "";
     cache[q] = url;
     return url;
 }
@@ -519,7 +523,7 @@ async function resolveMovieBackdrop(generation) {
         return;
     }
     try {
-        const url = await movieArtFor(currentAlbum);
+        const url = await movieArtFor(currentAlbum, generation);
         if (!renderIsCurrent("backdrop", generation)) return;
         setMovieBackdrop(url, generation);
     } catch (e) {
