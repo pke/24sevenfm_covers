@@ -299,13 +299,19 @@ function setStatus(text) { statusEl.textContent = text; }
 // resolve its movie art into the per-title cache and warm that image too. The
 // track change then lands with zero network waits: showCover's preload and the
 // backdrop lookup all hit caches. Best-effort by design: one attempt per poll, and
-// any failure just means the switch loads the way it always did. Shares the poll's
-// abort controller, so a station switch cancels a stale queue request.
+// any failure just means the switch loads the way it always did. A child controller
+// keeps the request's own timeout alive after poll() clears its timer, while still
+// inheriting the poll abort so a station switch cancels stale queue work immediately.
 async function prefetchNext(ctl, generation) {
+    const prefetchCtl = new AbortController();
+    const abortPrefetch = function () { prefetchCtl.abort(); };
+    if (ctl.signal.aborted) abortPrefetch();
+    else ctl.signal.addEventListener("abort", abortPrefetch, { once: true });
+    const kill = setTimeout(abortPrefetch, REQ_TIMEOUT);
     try {
         const r = await fetch("https://" + station().host
             + "/soap/FM24sevenJSON.php?action=GetQueue&_t=" + Date.now(),
-            { signal: ctl.signal });
+            { signal: prefetchCtl.signal });
         if (!r.ok) return;
         const next = ((await r.json()) || [])[0];
         // No entry or no trusted CoverLink (station ID or rejected URL): nothing to warm.
@@ -319,6 +325,10 @@ async function prefetchNext(ctl, generation) {
             if (art && renderIsCurrent("backdrop", generation)) new Image().src = art;
         }
     } catch (e) { /* prefetch is best-effort - including a thrown "badkey" */ }
+    finally {
+        clearTimeout(kill);
+        ctl.signal.removeEventListener("abort", abortPrefetch);
+    }
 }
 
 // --- cover display + transitions --------------------------------------------

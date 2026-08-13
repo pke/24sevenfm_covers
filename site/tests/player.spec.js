@@ -262,6 +262,41 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => fanartRequests).toBe(1);
         await expect(page.locator("#status")).toHaveText("");
     });
+
+    test("times out a stalled queue prefetch independently", async ({ page }) => {
+        await page.clock.install();
+        await page.addInitScript(() => {
+            window.__queueStarted = false;
+            window.__queueAborted = false;
+            const nativeFetch = window.fetch;
+            window.fetch = function (url, init) {
+                if (String(url).includes("action=GetQueue")) {
+                    window.__queueStarted = true;
+                    return new Promise((resolve, reject) => {
+                        init.signal.addEventListener("abort", () => {
+                            window.__queueAborted = true;
+                            reject(new DOMException("Aborted", "AbortError"));
+                        }, { once: true });
+                    });
+                }
+                return nativeFetch.apply(this, arguments);
+            };
+        });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) =>
+            route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 3600000, PlayStart: "2026-08-13T12:00:00Z",
+                SystemTime: "2026-08-13T12:00:00Z",
+            } }));
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => page.evaluate(() => window.__queueStarted)).toBe(true);
+        await page.clock.fastForward(20001);
+        await expect.poll(() => page.evaluate(() => window.__queueAborted)).toBe(true);
+    });
     async function mockProviderTestFeed(page) {
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
