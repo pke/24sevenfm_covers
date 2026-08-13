@@ -142,7 +142,11 @@ function stationIndex(id) {
 var entityDoc = new DOMParser();
 function htmlDecode(s) {
     if (!s || s.indexOf("&") < 0) return s || "";
-    return entityDoc.parseFromString(s, "text/html").documentElement.textContent;
+    // Keep raw markup as text: DOMParser-created documents may still fetch resources
+    // referenced by elements such as <img> and <iframe>. Character references decoded
+    // by the parser are emitted as text tokens and are not parsed a second time.
+    s = s.replace(/</g, "&lt;");
+    return entityDoc.parseFromString(s, "text/html").body.textContent;
 }
 function station() { return STATIONS[stationIndex(opts.station)]; }
 
