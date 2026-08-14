@@ -175,6 +175,36 @@ test.describe("the deployed player page", () => {
             '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
         await expect(front).toHaveAttribute("src", sizedCover);
     });
+    test("bounds retries for a permanently missing cover", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/missing.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/missing.svg";
+        let coverRequests = 0;
+        await page.clock.install();
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Missing Cover", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 3600000,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => {
+            coverRequests++;
+            return route.abort();
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => coverRequests).toBe(1);
+
+        for (const [index, delay] of [5001, 10001, 20001].entries()) {
+            await page.clock.fastForward(delay);
+            await expect.poll(() => coverRequests).toBe(index + 2);
+        }
+
+        await page.clock.fastForward(60001);
+        await expect.poll(() => coverRequests).toBe(4);
+    });
     test("ignores a cover that finishes after a station switch", async ({ page }) => {
         const slowCover = "https://streamingsoundtracks.com/images/cover/slow.svg";
         const slowSized = "https://streamingsoundtracks.com/images/cover/500/slow.svg";

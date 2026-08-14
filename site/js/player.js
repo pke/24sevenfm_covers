@@ -189,7 +189,7 @@ var stage = $("stage"), coverBox = $("coverbox");
 var renderGenerations = { cover: 0, backdrop: 0 };
 function nextRenderGeneration(channel) { return ++renderGenerations[channel]; }
 function renderIsCurrent(channel, generation) { return renderGenerations[channel] === generation; }
-var IMAGE_TIMEOUT = 20000, COVER_RETRY_DELAY = 5000;
+var IMAGE_TIMEOUT = 20000, COVER_RETRY_DELAY = 5000, COVER_RETRY_LIMIT = 3;
 
 function preloadImage(url, onLoad, onError) {
     var image = new Image(), settled = false;
@@ -376,7 +376,8 @@ async function prefetchNext(ctl, generation) {
 // buffer ("a" | "b"), data-fx the transition. CSS derives each img's opacity and
 // rotation from the box, so JS never touches the imgs beyond loading their src -
 // and before the first cover there simply is no data-front, so both stay hidden.
-function showCover(url) {
+function showCover(url, retryAttempt) {
+    retryAttempt = retryAttempt || 0;
     var generation = nextRenderGeneration("cover");
     loadingCoverUrl = url;
     var back = (coverBox.dataset.front === "a") ? imgB : imgA;
@@ -407,10 +408,12 @@ function showCover(url) {
     }, function () {
         if (!renderIsCurrent("cover", generation)) return;
         loadingCoverUrl = "";
+        if (retryAttempt >= COVER_RETRY_LIMIT) return;
+        var delay = COVER_RETRY_DELAY * Math.pow(2, retryAttempt);
         setTimeout(function () {
             if (renderIsCurrent("cover", generation)
-                    && !loadingCoverUrl && shownUrl !== url) showCover(url);
-        }, COVER_RETRY_DELAY);
+                    && !loadingCoverUrl && shownUrl !== url) showCover(url, retryAttempt + 1);
+        }, delay);
 
     });
 }
