@@ -18,19 +18,64 @@ on:
       - 'installer/render_site.ps1'
       - '.github/workflows/deploy-site.yml'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'installer/render_site.ps1'
+      - '.github/workflows/deploy-site.yml'
 
 permissions:
   contents: read
-  pages: write      # deploy the site
-  id-token: write   # Pages OIDC
-
-# Never let two site deploys race; let a newer push win, but don't kill a run mid-deploy.
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
+  test:
+    name: Test site locally
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site/tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/tests/package-lock.json
+      - name: Install Playwright and Chrome
+        run: |
+          npm ci
+          npx playwright install --with-deps chrome
+      - name: Run deterministic player tests
+        shell: bash
+        run: |
+          python3 -m http.server 4173 --directory .. > "$RUNNER_TEMP/player-http.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4173/player.html >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              cat "$RUNNER_TEMP/player-http.log"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          PLAYER_URL=http://127.0.0.1:4173 PLAYER_LOCAL=1 npx playwright test --retries=0
+
   deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: windows-latest
     environment:
       name: github-pages

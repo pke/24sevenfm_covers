@@ -10,6 +10,7 @@
 // station, and the other half pin the raw contracts - so a failure names the broken
 // layer instead of just "the player looks wrong".
 const { test, expect } = require("@playwright/test");
+const localMode = process.env.PLAYER_LOCAL === "1";
 
 // Everything here runs INSIDE the browser, from the player page's own origin. Not a
 // style choice: the station's WAF 403s non-browser clients (curl, node's https,
@@ -963,6 +964,7 @@ test.describe("the deployed player page", () => {
     });
 
     test("loads, polls the station, and renders a real cover", async ({ page }) => {
+        test.skip(localMode, "requires the deployed site and live station contracts");
         const errors = [];
         const netlog = []; // every station response/failure the PAGE itself saw
         page.on("pageerror", (e) => errors.push(String(e)));
@@ -996,6 +998,7 @@ test.describe("the deployed player page", () => {
     });
 
     test("poster layout shows the info box, and options survive a reload", async ({ page }) => {
+        test.skip(localMode, "requires the deployed site and live station contracts");
         await page.goto("/player.html");
         await page.locator("label.seg", { hasText: "Poster" }).click();
         await expect(page.locator(".info")).toBeVisible();
@@ -1006,6 +1009,7 @@ test.describe("the deployed player page", () => {
     });
 
     test("countdown appears when enabled", async ({ page }) => {
+        test.skip(localMode, "requires the deployed site and live station contracts");
         await page.goto("/player.html");
         await page.locator("label:has(#show-remaining)").click();
         await expect(page.locator("#info-title")).not.toHaveText(/Loading/, { timeout: 60000 });
@@ -1018,6 +1022,7 @@ test.describe("the deployed player page", () => {
     });
 
     test("switching station repolls and shows that station's cover", async ({ page }) => {
+        test.skip(localMode, "requires the deployed site and live station contracts");
         const netlog = []; // death.fm traffic as the page saw it - the diagnosis on failure
         page.on("response", (r) => {
             if (/death\.fm/.test(r.url())) netlog.push(r.status() + " " + r.url().slice(0, 100));
@@ -1061,6 +1066,7 @@ test.describe("the deployed player page", () => {
 });
 
 test.describe("station contracts, exercised like a real listener", () => {
+    test.skip(localMode, "requires the deployed site and live station contracts");
     test("now-playing JSON: cross-origin fetch succeeds (= CORS grant) with the right shape", async ({ page }) => {
         await page.goto("/player.html");
         // Merely resolving proves the CORS contract: without Access-Control-Allow-Origin
