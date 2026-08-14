@@ -415,6 +415,36 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(12002);
         await expect(page.locator("#status")).toHaveText(warning);
     });
+    test("rejects non-string persisted API keys", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/invalid-key.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/invalid-key.svg";
+        let tmdbRequests = 0;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: 12345, fanartKey: { key: "bad" } })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Invalid Key Movie", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\//, (route) => {
+            tmdbRequests++;
+            return route.abort();
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#tmdb-key")).toHaveValue("");
+        await expect(page.locator("#fanart-key")).toHaveValue("");
+        await expect(page.locator("#status")).toHaveText(
+            "Movie backdrops need a TMDB API key - see the Experimental options.");
+        expect(tmdbRequests).toBe(0);
+    });
     test("preserves audio errors across backdrop option changes", async ({ page }) => {
         await page.addInitScript(() => {
             localStorage.setItem("24sevenfm-covers.player",

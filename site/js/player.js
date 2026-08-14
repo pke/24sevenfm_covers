@@ -119,6 +119,9 @@ function loadOpts() {
         var value = o[key];
         o[key] = (value === true || value === 1 || value === "1") ? 1 : 0;
     });
+    ["tmdbKey", "fanartKey"].forEach(function (key) {
+        o[key] = (typeof o[key] === "string") ? o[key].trim() : "";
+    });
 
     // providerOrder must be a permutation of the known providers - anything else
     // (older saves, hand-edited storage) falls back to the default order. Always a
