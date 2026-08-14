@@ -31,7 +31,7 @@ test.describe("the deployed player page", () => {
         const policy = await page.locator('meta[http-equiv="Content-Security-Policy"]')
             .getAttribute("content");
         expect(policy).toContain("default-src 'self'");
-        await expect(page.locator("#anti-frame")).toHaveCount(0);
+        await expect(page.locator("html")).not.toHaveAttribute("data-framed", "");
         expect(policy).toContain("script-src 'self' 'sha256-");
         expect(policy).toContain("connect-src 'self'");
         expect(policy).toContain("media-src https://streamingsoundtracks.com");
@@ -52,7 +52,7 @@ test.describe("the deployed player page", () => {
         const playerUrl = page.url();
         await page.route("https://attacker.invalid/**", (route) => route.fulfill({
             contentType: "text/html",
-            body: `<!doctype html><iframe sandbox src="${playerUrl}"></iframe>`,
+            body: `<!doctype html><iframe sandbox="allow-scripts" src="${playerUrl}"></iframe>`,
         }));
 
         await page.goto("https://attacker.invalid/", { waitUntil: "domcontentloaded" });
@@ -60,6 +60,15 @@ test.describe("the deployed player page", () => {
         const playerFrame = page.frames().find((frame) => frame.url() === playerUrl);
         expect(await playerFrame.evaluate(() => getComputedStyle(document.documentElement).display))
             .toBe("none");
+    });
+    test("keeps the no-JavaScript audio fallback visible at top level", async ({ browser }) => {
+        const context = await browser.newContext({ javaScriptEnabled: false });
+        const page = await context.newPage();
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator(".noscript-player")).toBeVisible();
+        await expect(page.locator(".noscript-player audio")).toHaveCount(5);
+        await context.close();
     });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
         const hostile = "https://example.invalid/private-cover.jpg";
