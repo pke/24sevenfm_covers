@@ -255,6 +255,14 @@ var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matche
 var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 512, REQ_TIMEOUT = 20000;
 var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
 var shownUrl = "", loadingCoverUrl = "", remAnchor = -1, remAnchorAt = 0;
+var coverRetryUrl = "", coverRetryFailures = 0, coverRetryTimer = null;
+
+function resetCoverRetry(url) {
+    clearTimeout(coverRetryTimer);
+    coverRetryTimer = null;
+    coverRetryUrl = url || "";
+    coverRetryFailures = 0;
+}
 
 function schedulePoll(seconds) {
     clearTimeout(pollTimer);
@@ -379,14 +387,16 @@ async function prefetchNext(ctl, generation) {
 // buffer ("a" | "b"), data-fx the transition. CSS derives each img's opacity and
 // rotation from the box, so JS never touches the imgs beyond loading their src -
 // and before the first cover there simply is no data-front, so both stay hidden.
-function showCover(url, retryAttempt) {
-    retryAttempt = retryAttempt || 0;
+function showCover(url) {
+    if (coverRetryUrl !== url) resetCoverRetry(url);
+    if (coverRetryTimer || coverRetryFailures > COVER_RETRY_LIMIT) return;
     var generation = nextRenderGeneration("cover");
     loadingCoverUrl = url;
     var back = (coverBox.dataset.front === "a") ? imgB : imgA;
     preloadImage(url, function () {
         if (!renderIsCurrent("cover", generation)) return;
         loadingCoverUrl = "";
+        resetCoverRetry(url);
         shownUrl = url;
         back.src = url;
         blurLayer.show(url, generation); // poster backdrop, crossfaded in poster layout
@@ -411,11 +421,13 @@ function showCover(url, retryAttempt) {
     }, function () {
         if (!renderIsCurrent("cover", generation)) return;
         loadingCoverUrl = "";
-        if (retryAttempt >= COVER_RETRY_LIMIT) return;
-        var delay = COVER_RETRY_DELAY * Math.pow(2, retryAttempt);
-        setTimeout(function () {
+        coverRetryFailures++;
+        if (coverRetryFailures > COVER_RETRY_LIMIT) return;
+        var delay = COVER_RETRY_DELAY * Math.pow(2, coverRetryFailures - 1);
+        coverRetryTimer = setTimeout(function () {
+            coverRetryTimer = null;
             if (renderIsCurrent("cover", generation)
-                    && !loadingCoverUrl && shownUrl !== url) showCover(url, retryAttempt + 1);
+                    && !loadingCoverUrl && shownUrl !== url) showCover(url);
         }, delay);
 
     });
@@ -879,6 +891,7 @@ bindRadios("station", opts.station, function (v) {
     cancelBackdropRequest();
     setMovieBackdrop("", backdropGeneration);
     shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
+    resetCoverRetry("");
     currentAlbum = ""; // the resolver is per-station now - always re-evaluate after a
                        // switch, even if the new station plays an identically named album
     setInfo("Loading…", "");
