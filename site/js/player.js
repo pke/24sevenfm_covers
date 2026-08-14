@@ -253,7 +253,7 @@ function setInfo(title, artist) {
     $("info-artist").textContent = artist;
 }
 
-var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 // --- poll engine (ported from lib/coverfetch.cpp) ----------------------------
 var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 512, REQ_TIMEOUT = 20000;
@@ -404,7 +404,7 @@ function showCover(url) {
         shownUrl = url;
         back.src = url;
         blurLayer.show(url, generation); // poster backdrop, crossfaded in poster layout
-        var effect = reducedMotion ? 0 : opts.transition;
+        var effect = reducedMotion.matches ? 0 : opts.transition;
         stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
         var fx = ["none", "fade", "fliph", "flipv"][effect];
         if (coverBox.dataset.fx !== fx) {
@@ -698,7 +698,7 @@ function renderCountdown() {
         var c = cells[k], ch = text[k];
         if (c.ch === ch) continue;
         c.ch = ch;
-        if (!opts.roll || reducedMotion || !c.cur.animate) { c.cur.textContent = ch; continue; }
+        if (!opts.roll || reducedMotion.matches || !c.cur.animate) { c.cur.textContent = ch; continue; }
         // Rolling digit via the Web Animations API: a ghost of the OLD digit slides up
         // and out while the real cell, already holding the NEW digit, slides in from
         // below. Animations can't leave residual styles behind, which is what broke the

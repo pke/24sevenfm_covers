@@ -336,6 +336,38 @@ test.describe("the deployed player page", () => {
         }
         await expect.poll(() => coverRequests).toBe(4);
     });
+    test("honors reduced-motion changes before the next cover", async ({ page }) => {
+        const sstCover = "https://streamingsoundtracks.com/images/cover/motion-sst.svg";
+        const deathCover = "https://death.fm/images/cover/motion-death.svg";
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+
+        async function mockStation(host, album, cover) {
+            await page.route(`https://${host}/soap/FM24sevenJSON.php?*`, (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: album, Track: "", Artist: "24seven.fm",
+                    CoverLink: cover, Length: 3600000,
+                    PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+                } });
+            });
+        }
+
+        await mockStation("streamingsoundtracks.com", "SST motion", sstCover);
+        await mockStation("death.fm", "Death motion", deathCover);
+        await page.route(/^https:\/\/(?:streamingsoundtracks\.com|death\.fm)\/images\/cover\/500\/motion-.*\.svg$/,
+            (route) => route.fulfill({ contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const coverBox = page.locator("#coverbox");
+        await expect(coverBox).toHaveAttribute("data-fx", "fade");
+
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.locator("label.seg", { hasText: "Death.FM" }).click();
+        await expect(page.locator("#info-title")).toContainText("Death motion");
+        await expect(coverBox).toHaveAttribute("data-fx", "none");
+    });
     test("ignores a cover that finishes after a station switch", async ({ page }) => {
         const slowCover = "https://streamingsoundtracks.com/images/cover/slow.svg";
         const slowSized = "https://streamingsoundtracks.com/images/cover/500/slow.svg";
