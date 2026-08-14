@@ -72,6 +72,23 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#info-title")).not.toHaveText(/Loading/);
         expect(errors).toEqual([]);
     });
+    test("keeps a saved theme when the OS color scheme changes", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.emulateMedia({ colorScheme: "light" });
+        await page.addInitScript(() => {
+            localStorage.setItem("theme", "dark");
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const box = page.locator("#themeswitch");
+        const root = page.locator(".page");
+        await expect(box).toBeChecked();
+        await expect(root).toHaveCSS("color-scheme", "dark");
+
+        await page.emulateMedia({ colorScheme: "dark" });
+        await expect(box).not.toBeChecked();
+        await expect(root).toHaveCSS("color-scheme", "dark");
+    });
     test("keeps the player hidden in a sandboxed third-party frame", async ({ page }) => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const playerUrl = page.url();

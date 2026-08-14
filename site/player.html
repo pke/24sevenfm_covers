@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self';
-      script-src 'self' 'sha256-UG6/94jJ8tb2ZPWxs280GeLrOQobVa9wRItxvnpL5UQ=' 'sha256-I+RCugy2pFoFysTL6J710l8GL76tAVWJwBx69KKBX6A=';
+      script-src 'self' 'sha256-UG6/94jJ8tb2ZPWxs280GeLrOQobVa9wRItxvnpL5UQ=' 'sha256-1vR3D2nVu6IHPkcwBo8OKAwLN26nCn6dL6rOCHtrrxI=';
       style-src 'self' 'unsafe-inline';
       img-src 'self'
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
@@ -55,14 +55,21 @@
 // flips relative to the OS scheme, so restore checked = saved XOR os-preference.
 (function () {
     var box = document.getElementById("themeswitch");
-    var osDark = matchMedia("(prefers-color-scheme: dark)").matches;
+    var scheme = matchMedia("(prefers-color-scheme: dark)");
     var saved = "";
     try { saved = localStorage.getItem("theme"); } catch (e) { /* unavailable: keep OS preference */ }
-    if (saved === "dark" || saved === "light") box.checked = (saved === "dark") !== osDark;
+    function syncTheme() {
+        if (saved === "dark" || saved === "light")
+            box.checked = (saved === "dark") !== scheme.matches;
+    }
+    syncTheme();
     box.addEventListener("change", function () {
-        try { localStorage.setItem("theme", (osDark !== box.checked) ? "dark" : "light"); }
-        catch (e) { /* unavailable: the CSS-only toggle still works for this page */ }
+        saved = (scheme.matches !== box.checked) ? "dark" : "light";
+        try { localStorage.setItem("theme", saved); }
+        catch (e) { /* unavailable: keep the choice for this page only */ }
     });
+    if (scheme.addEventListener) scheme.addEventListener("change", syncTheme);
+    else if (scheme.addListener) scheme.addListener(syncTheme);
 })();
 </script>
 <div class="page">
