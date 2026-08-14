@@ -103,7 +103,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::warning::/releases/latest unavailable - falling back to the releases list"
             # Preserve /latest semantics: never render against a draft or prerelease.
-            $json = gh api "repos/${{ github.repository }}/releases" --jq 'map(select(.draft == false and .prerelease == false))[0]'
+            $json = @(gh api --paginate "repos/${{ github.repository }}/releases?per_page=100" --jq '.[]|select(.draft==false and .prerelease==false)|@json')[0]
             if ($LASTEXITCODE -ne 0) { throw "Could not read any release from the API." }
           }
           $rel = $json | ConvertFrom-Json
