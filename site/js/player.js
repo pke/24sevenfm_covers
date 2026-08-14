@@ -490,7 +490,7 @@ async function fanartBackdrop(movieId, reportStatus, signal) {
                               + "?api_key=" + encodeURIComponent(opts.fanartKey),
                               signal ? { signal: signal } : undefined);
         if (r.status === 401) {
-            if (reportStatus) reportStatus("fanart.tv rejected its key - using TMDB art only.");
+            if (reportStatus) reportStatus("fanart.tv rejected its API key.");
             return "";
         }
         if (r.status === 429 || r.status >= 500) throw TRANSIENT_ART_FAILURE;
@@ -504,7 +504,7 @@ async function fanartBackdrop(movieId, reportStatus, signal) {
         return best.url;
     } catch (e) {
         if (e && e.name === "AbortError") throw e;
-        if (reportStatus) reportStatus("fanart.tv's API currently not working - using TMDB art.");
+        if (reportStatus) reportStatus("fanart.tv's API is currently unavailable.");
         throw TRANSIENT_ART_FAILURE;
     }
 }

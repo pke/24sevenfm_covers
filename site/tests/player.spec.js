@@ -538,6 +538,38 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => fanartRequests).toBe(1);
         await expect(page.locator("#status")).toHaveText("");
     });
+    test("does not promise TMDB art when that provider is disabled", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/no-fallback.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-fallback.svg";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "search-key",
+                fanartBackdrops: 1, fanartKey: "fanart-key", tmdbArt: 0 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "No Fallback", Track: "", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
+            route.fulfill({ json: { results: [
+                { id: 21, title: "No Fallback", original_title: "No Fallback",
+                    backdrop_path: "/unused.jpg" },
+            ] } }));
+        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) =>
+            route.fulfill({ status: 500 }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#status"))
+            .toHaveText("fanart.tv's API is currently unavailable.");
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
+        await expect(page.locator('.provider[data-provider="tmdb"] input')).not.toBeChecked();
+    });
     test("retries fanart.tv after a transient provider failure", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/fanart-retry.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/fanart-retry.svg";
