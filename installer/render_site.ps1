@@ -67,7 +67,15 @@ if ($ReleaseTag -and -not $SiteUrl) {
     throw "render_site: -SiteUrl is required with -ReleaseTag; sitemap/canonical URLs must be absolute."
 }
 
-$base = if ($ReleaseTag) { "https://github.com/$Repo/releases/download/$ReleaseTag/" } else { 'downloads/' }
+# Only releases created by release.yml are valid deployment inputs. Git ref names permit
+# HTML-significant characters such as '<' and '>', so accepting an arbitrary tag here would
+# turn release metadata into markup when {{RELEASE_TAG}} is written into each page footer.
+if ($ReleaseTag -and $ReleaseTag -notmatch '^v\d{4}\.\d{2}\.\d{2}-\d+$') {
+    throw "render_site: invalid -ReleaseTag '$ReleaseTag'; expected vYYYY.MM.DD-<run>."
+}
+
+$releaseTagUrl = if ($ReleaseTag) { [uri]::EscapeDataString($ReleaseTag) } else { '' }
+$base = if ($ReleaseTag) { "https://github.com/$Repo/releases/download/$releaseTagUrl/" } else { 'downloads/' }
 function Url([string]$key)  { $base + $found[$key].name }
 function Size([string]$key) { '{0} KB' -f [math]::Round($found[$key].size / 1KB) }
 
@@ -91,7 +99,9 @@ $tokens = @{
     '{{SIZE_VIEWER_ZIP}}'       = Size 'VIEWER_ZIP'
     '{{SITE_URL}}'              = $SiteUrl
     '{{UPDATED}}'               = (Get-Date -Format 'yyyy-MM-dd')
-    '{{RELEASE_TAG}}'           = $(if ($ReleaseTag) { $ReleaseTag } else { 'local preview' })
+    '{{RELEASE_TAG}}'           = $(if ($ReleaseTag) {
+        [System.Net.WebUtility]::HtmlEncode($ReleaseTag)
+    } else { 'local preview' })
     # Cache-buster for css/js links (?v=...). GitHub Pages serves everything with a fixed
     # max-age=600 and no way to set headers, so unversioned asset URLs can pair a fresh
     # HTML with a stale script (or vice versa) for up to 10 minutes after a deploy - a JS
