@@ -196,6 +196,7 @@ var renderGenerations = { cover: 0, backdrop: 0 };
 function nextRenderGeneration(channel) { return ++renderGenerations[channel]; }
 function renderIsCurrent(channel, generation) { return renderGenerations[channel] === generation; }
 var IMAGE_TIMEOUT = 20000, COVER_RETRY_DELAY = 5000, COVER_RETRY_LIMIT = 3;
+var COVER_RETRY_COOLDOWN = 300000;
 
 function preloadImage(url, onLoad, onError) {
     var image = new Image(), settled = false;
@@ -392,7 +393,7 @@ async function prefetchNext(ctl, generation) {
 // and before the first cover there simply is no data-front, so both stay hidden.
 function showCover(url) {
     if (coverRetryUrl !== url) resetCoverRetry(url);
-    if (coverRetryTimer || coverRetryFailures > COVER_RETRY_LIMIT) return;
+    if (coverRetryTimer) return;
     var generation = nextRenderGeneration("cover");
     loadingCoverUrl = url;
     var back = (coverBox.dataset.front === "a") ? imgB : imgA;
@@ -425,8 +426,11 @@ function showCover(url) {
         if (!renderIsCurrent("cover", generation)) return;
         loadingCoverUrl = "";
         coverRetryFailures++;
-        if (coverRetryFailures > COVER_RETRY_LIMIT) return;
-        var delay = COVER_RETRY_DELAY * Math.pow(2, coverRetryFailures - 1);
+        // After the bounded exponential burst, keep one sparse recovery probe alive.
+        // This avoids hammering a broken endpoint without blacklisting a cover forever.
+        var delay = coverRetryFailures > COVER_RETRY_LIMIT
+            ? COVER_RETRY_COOLDOWN
+            : COVER_RETRY_DELAY * Math.pow(2, coverRetryFailures - 1);
         coverRetryTimer = setTimeout(function () {
             coverRetryTimer = null;
             if (renderIsCurrent("cover", generation)
