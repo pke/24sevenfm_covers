@@ -102,7 +102,8 @@ jobs:
             echo '```'
             echo "Full log: $RUN_URL"
           } > report.md
-          OPEN=$(gh issue list --label canary --state open --json number --jq '.[0].number')
+          OPEN=$(gh issue list --label canary --app github-actions --state open \
+            --json number,title --jq 'map(select(.title | endswith("Player canary failing")))[0].number')
           if [ -n "$OPEN" ]; then
             gh issue comment "$OPEN" --body-file report.md
           else
@@ -120,7 +121,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          OPEN=$(gh issue list --label canary --state open --json number --jq '.[0].number')
+          OPEN=$(gh issue list --label canary --app github-actions --state open \
+            --json number,title --jq 'map(select(.title | endswith("Player canary failing")))[0].number')
           if [ -n "$OPEN" ]; then
             gh issue close "$OPEN" --comment "The canary is green again: $RUN_URL"
           fi
