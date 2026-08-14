@@ -40,7 +40,7 @@ jobs:
     steps:
       # Full history + tags: the release notes are built from the commits since the
       # previous tag, and the default shallow clone has neither.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -54,11 +54,11 @@ jobs:
 
       - name: Configure Pages
         id: pages
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
 
       # Runners do not have MSBuild on PATH; build_artifacts.ps1 locates it via Get-Command.
       - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v3
+        uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
 
       # The image no longer preinstalls NSIS; without it the script would skip
       # the three installers. Verify the install really happened - a choco
@@ -153,9 +153,9 @@ jobs:
         run: Remove-Item www/downloads -Recurse -Force
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: www
 
       - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
