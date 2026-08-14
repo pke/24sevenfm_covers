@@ -31,6 +31,7 @@ test.describe("the deployed player page", () => {
         const policy = await page.locator('meta[http-equiv="Content-Security-Policy"]')
             .getAttribute("content");
         expect(policy).toContain("default-src 'self'");
+        await expect(page.locator("#anti-frame")).toHaveCount(0);
         expect(policy).toContain("script-src 'self' 'sha256-");
         expect(policy).toContain("connect-src 'self'");
         expect(policy).toContain("media-src https://streamingsoundtracks.com");
@@ -45,6 +46,20 @@ test.describe("the deployed player page", () => {
             .then(() => false, () => true));
         expect(blocked).toBe(true);
         expect(escaped).toBe(false);
+    });
+    test("keeps the player hidden in a sandboxed third-party frame", async ({ page }) => {
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const playerUrl = page.url();
+        await page.route("https://attacker.invalid/**", (route) => route.fulfill({
+            contentType: "text/html",
+            body: `<!doctype html><iframe sandbox src="${playerUrl}"></iframe>`,
+        }));
+
+        await page.goto("https://attacker.invalid/", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => page.frames().some((frame) => frame.url() === playerUrl)).toBe(true);
+        const playerFrame = page.frames().find((frame) => frame.url() === playerUrl);
+        expect(await playerFrame.evaluate(() => getComputedStyle(document.documentElement).display))
+            .toBe("none");
     });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
         const hostile = "https://example.invalid/private-cover.jpg";

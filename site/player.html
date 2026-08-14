@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self';
-      script-src 'self' 'sha256-kooNbB5umXsnsDfdSM3wLLaSmuuRX6Tml1K566qf+/k=';
+      script-src 'self' 'sha256-67228DHzZvNI/e8ZZurhtLbsTvAOzLH5rDERrEC1E40=' 'sha256-kooNbB5umXsnsDfdSM3wLLaSmuuRX6Tml1K566qf+/k=';
       style-src 'self' 'unsafe-inline';
       img-src 'self'
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
@@ -20,6 +20,15 @@
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
         https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm;
       object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';">
+<style id="anti-frame">html { display: none !important; }</style>
+<script>
+// GitHub Pages cannot send frame-ancestors or X-Frame-Options. Fail closed instead:
+// only a top-level document removes this rule; sandboxed frames without JS stay hidden.
+(function () {
+    if (self === top) document.getElementById("anti-frame").remove();
+    else try { top.location = self.location.href; } catch (e) { /* remain hidden */ }
+})();
+</script>
 <title>Player — 24seven.fm Covers</title>
 <meta name="description" content="Listen to the 24seven.fm radio stations and watch the cover art change with every track — right in your browser, nothing to install.">
 <link rel="icon" href="img/favicon.ico">
