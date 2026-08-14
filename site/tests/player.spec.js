@@ -306,6 +306,26 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(12002);
         await expect(page.locator("#status")).toHaveText(warning);
     });
+    test("preserves audio errors across backdrop option changes", async ({ page }) => {
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "" }));
+            HTMLMediaElement.prototype.play = function () { return Promise.reject(new Error("denied")); };
+            HTMLMediaElement.prototype.pause = function () {};
+            HTMLMediaElement.prototype.load = function () {};
+        });
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await page.locator("#audio-toggle").click();
+        const audioError = "Your browser refused to play the stream ? use the playlist links below.";
+        await expect(page.locator("#status")).toHaveText(audioError);
+
+        await page.locator("#fanart-key").evaluate((input) => {
+            input.value = "changed";
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await expect(page.locator("#status")).toHaveText(audioError);
+    });
     test("clears stale movie art when the replacement image fails", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/movie-failure.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/movie-failure.svg";

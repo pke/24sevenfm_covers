@@ -904,14 +904,12 @@ tmdbKeyEl.value = opts.tmdbKey;
 tmdbOnEl.addEventListener("change", function () {
     opts.tmdbBackdrops = tmdbOnEl.checked ? 1 : 0;
     saveOpts();
-    setStatus("");
     updateBackdrop();
 });
 tmdbKeyEl.addEventListener("change", function () {
     opts.tmdbKey = tmdbKeyEl.value.trim();
     tmdbCache = newMovieCache(); // a new key deserves a fresh try, including negative caches
     saveOpts();
-    setStatus("");
     updateBackdrop();
 });
 var fanartKeyEl = $("fanart-key");
@@ -920,7 +918,6 @@ fanartKeyEl.addEventListener("change", function () {
     opts.fanartKey = fanartKeyEl.value.trim();
     tmdbCache = newMovieCache(); // cached art may now be upgradable (or was fanart-based)
     saveOpts();
-    setStatus("");
     updateBackdrop();
 });
 
@@ -974,7 +971,6 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
         p.enabled = box.checked;
         tmdbCache = newMovieCache(); // every cached URL may be the other source's now
         saveOpts();
-        setStatus("");
         updateBackdrop();
     });
 });
