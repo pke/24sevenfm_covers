@@ -68,7 +68,7 @@ jobs:
 
       - name: Install Playwright + Chrome
         run: |
-          npm install
+          npm ci
           # Branded Chrome, not Chromium: the AAC decoder for the audio/aacp stream
           # test is a proprietary codec Chromium doesn't ship.
           npx playwright install --with-deps chrome
