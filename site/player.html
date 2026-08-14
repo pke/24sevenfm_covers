@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self';
-      script-src 'self' 'sha256-UG6/94jJ8tb2ZPWxs280GeLrOQobVa9wRItxvnpL5UQ=' 'sha256-kooNbB5umXsnsDfdSM3wLLaSmuuRX6Tml1K566qf+/k=';
+      script-src 'self' 'sha256-UG6/94jJ8tb2ZPWxs280GeLrOQobVa9wRItxvnpL5UQ=' 'sha256-I+RCugy2pFoFysTL6J710l8GL76tAVWJwBx69KKBX6A=';
       style-src 'self' 'unsafe-inline';
       img-src 'self'
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
@@ -56,10 +56,12 @@
 (function () {
     var box = document.getElementById("themeswitch");
     var osDark = matchMedia("(prefers-color-scheme: dark)").matches;
-    var saved = localStorage.getItem("theme");
+    var saved = "";
+    try { saved = localStorage.getItem("theme"); } catch (e) { /* unavailable: keep OS preference */ }
     if (saved === "dark" || saved === "light") box.checked = (saved === "dark") !== osDark;
     box.addEventListener("change", function () {
-        localStorage.setItem("theme", (osDark !== box.checked) ? "dark" : "light");
+        try { localStorage.setItem("theme", (osDark !== box.checked) ? "dark" : "light"); }
+        catch (e) { /* unavailable: the CSS-only toggle still works for this page */ }
     });
 })();
 </script>

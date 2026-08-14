@@ -47,6 +47,30 @@ test.describe("the deployed player page", () => {
         expect(blocked).toBe(true);
         expect(escaped).toBe(false);
     });
+    test("keeps the theme toggle working when storage is unavailable", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        const errors = [];
+        page.on("pageerror", (error) => errors.push(String(error)));
+        await page.addInitScript(() => {
+            Storage.prototype.getItem = function () {
+                throw new DOMException("storage denied", "SecurityError");
+            };
+            Storage.prototype.setItem = function () {
+                throw new DOMException("storage denied", "SecurityError");
+            };
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const box = page.locator("#themeswitch");
+        const before = await box.isChecked();
+        await box.evaluate((input) => {
+            input.checked = !input.checked;
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await expect(box).toBeChecked({ checked: !before });
+        await expect(page.locator("#info-title")).not.toHaveText(/Loading/);
+        expect(errors).toEqual([]);
+    });
     test("keeps the player hidden in a sandboxed third-party frame", async ({ page }) => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const playerUrl = page.url();
