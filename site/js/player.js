@@ -149,8 +149,11 @@ function stationIndex(id) {
 // display, like lib/coverfetch.cpp's htmlDecode. DOMParser never executes anything,
 // so feeding it untrusted feed text is safe (unlike innerHTML).
 var entityDoc = new DOMParser();
-function htmlDecode(s) {
-    if (!s || s.indexOf("&") < 0) return s || "";
+function htmlDecode(value) {
+    var type = typeof value;
+    if (value === null || value === undefined
+            || (type !== "string" && type !== "number" && type !== "boolean")) return "";
+    var s = String(value);
     // Keep raw markup as text: DOMParser-created documents may still fetch resources
     // referenced by elements such as <img> and <iframe>. Character references decoded
     // by the parser are emitted as text tokens and are not parsed a second time.

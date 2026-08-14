@@ -118,6 +118,31 @@ test.describe("the deployed player page", () => {
         await page.waitForTimeout(100);
         expect(redirectRequested).toBe(false);
     });
+    test("normalizes primitive text fields from the station feed", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/primitive-text.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/primitive-text.svg";
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: 2026, Track: false, Artist: 24,
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({
+            status: 200, contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+        }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#info-title")).toHaveText("2026 - false");
+        await expect(page.locator("#info-artist")).toHaveText("24");
+        await expect(page.locator("#status")).toHaveText("");
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+        await expect(front).toHaveAttribute("src", sizedCover);
+    });
 
     test("retries a cover after a transient image load failure", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/retry-cover.svg";
