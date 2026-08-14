@@ -57,7 +57,8 @@ jobs:
           $json = gh api "repos/${{ github.repository }}/releases/latest" 2>$null
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::warning::/releases/latest unavailable - falling back to the releases list"
-            $json = gh api "repos/${{ github.repository }}/releases" --jq '.[0]'
+            # Preserve /latest semantics: never render against a draft or prerelease.
+            $json = gh api "repos/${{ github.repository }}/releases" --jq 'map(select(.draft == false and .prerelease == false))[0]'
             if ($LASTEXITCODE -ne 0) { throw "Could not read any release from the API." }
           }
           $rel = $json | ConvertFrom-Json
