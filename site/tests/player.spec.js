@@ -985,6 +985,252 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
     }
 
+    async function mockLayoutTestFeed(page) {
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Layout Test", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 600000, PlayStart: "2026-08-13T12:00:00Z",
+                SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+    }
+
+    async function posterMetrics(page) {
+        return page.locator("#stage").evaluate((stage) => {
+            const cover = stage.querySelector("#coverbox");
+            const info = stage.querySelector(".info");
+            const countdown = stage.querySelector("#countdown");
+            const stageRect = stage.getBoundingClientRect();
+            const coverRect = cover.getBoundingClientRect();
+            const infoRect = info.getBoundingClientRect();
+            const coverShift = parseFloat(getComputedStyle(stage)
+                .getPropertyValue("--cover-shift")) || 0;
+            return {
+                stageTop: stageRect.top,
+                stageHeight: stageRect.height,
+                coverTop: coverRect.top,
+                coverBottom: coverRect.bottom,
+                coverWidth: coverRect.width,
+                coverHeight: coverRect.height,
+                infoTop: infoRect.top,
+                infoHeight: infoRect.height,
+                infoCenter: infoRect.top + infoRect.height / 2,
+                expectedInfoCenter: stageRect.top + stageRect.height * .86,
+                topGap: coverRect.top - stageRect.top,
+                lowerGap: infoRect.top - coverRect.bottom,
+                coverShift,
+                expectedCoverShift: stageRect.height * .07 - infoRect.height * .25,
+                countdownMaxHeight: parseFloat(getComputedStyle(countdown).maxHeight) || 0,
+                countdownVisibility: getComputedStyle(countdown).visibility,
+            };
+        });
+    }
+
+    async function expectBalancedPoster(page) {
+        await expect.poll(async () => {
+            const metrics = await posterMetrics(page);
+            return Math.abs(metrics.topGap - metrics.lowerGap);
+        }, { timeout: 3000 }).toBeLessThan(2.5);
+        return posterMetrics(page);
+    }
+
+    test("animates poster info height around a fixed center and keeps the cover balanced",
+        async ({ page }) => {
+            await page.emulateMedia({ reducedMotion: "no-preference" });
+            await mockLayoutTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator("#info-title")).toContainText("Layout Test");
+
+            const timeline = await page.evaluate(async () => {
+                const stage = document.querySelector("#stage");
+                const cover = document.querySelector("#coverbox");
+                const info = document.querySelector(".info");
+                const countdown = document.querySelector("#countdown");
+                const checkbox = document.querySelector("#show-remaining");
+                const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                const twoFrames = () => new Promise((resolve) =>
+                    requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const sample = () => {
+                    const stageRect = stage.getBoundingClientRect();
+                    const coverRect = cover.getBoundingClientRect();
+                    const infoRect = info.getBoundingClientRect();
+                    const coverShift = parseFloat(getComputedStyle(stage)
+                        .getPropertyValue("--cover-shift")) || 0;
+                    return {
+                        infoHeight: infoRect.height,
+                        infoCenter: infoRect.top + infoRect.height / 2,
+                        coverTop: coverRect.top,
+                        coverWidth: coverRect.width,
+                        coverHeight: coverRect.height,
+                        topGap: coverRect.top - stageRect.top,
+                        lowerGap: infoRect.top - coverRect.bottom,
+                        coverShift,
+                        expectedCoverShift: stageRect.height * .07 - infoRect.height * .25,
+                        countdownVisibility: getComputedStyle(countdown).visibility,
+                    };
+                };
+                const transitionNames = () => countdown.getAnimations()
+                    .map((animation) => animation.transitionProperty)
+                    .filter(Boolean);
+
+                const collapsed = sample();
+                checkbox.checked = true;
+                checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+                await twoFrames();
+                const expandingTransitions = transitionNames();
+                await wait(120);
+                const expanding = sample();
+                await wait(420);
+                const expanded = sample();
+                await wait(550);
+                const expandedSettled = sample();
+
+                checkbox.checked = false;
+                checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+                await twoFrames();
+                const collapsingTransitions = transitionNames();
+                await wait(120);
+                const collapsing = sample();
+                await wait(420);
+                const collapsedEnd = sample();
+                await wait(550);
+                const collapsedSettled = sample();
+
+                return {
+                    collapsed, expandingTransitions, expanding, expanded, expandedSettled,
+                    collapsingTransitions, collapsing, collapsedEnd, collapsedSettled,
+                };
+            });
+
+            expect(timeline.expandingTransitions).toEqual(expect.arrayContaining(
+                ["max-height", "margin-top", "opacity"]));
+            expect(timeline.collapsingTransitions).toEqual(expect.arrayContaining(
+                ["max-height", "margin-top", "opacity"]));
+            expect(timeline.expanding.infoHeight).toBeGreaterThan(timeline.collapsed.infoHeight + 2);
+            expect(timeline.expanding.infoHeight).toBeLessThan(timeline.expanded.infoHeight - 2);
+            expect(timeline.collapsing.infoHeight).toBeLessThan(timeline.expanded.infoHeight - 2);
+            expect(timeline.collapsing.infoHeight)
+                .toBeGreaterThan(timeline.collapsedEnd.infoHeight + 2);
+            expect(timeline.expanded.infoHeight)
+                .toBeGreaterThan(timeline.collapsed.infoHeight + 15);
+            expect(Math.abs(timeline.collapsedEnd.infoHeight - timeline.collapsed.infoHeight))
+                .toBeLessThan(1);
+            [
+                timeline.expanding, timeline.expanded, timeline.expandedSettled,
+                timeline.collapsing, timeline.collapsedEnd, timeline.collapsedSettled,
+            ].forEach((metrics) => {
+                expect(Math.abs(metrics.infoCenter - timeline.collapsed.infoCenter))
+                    .toBeLessThan(1);
+                expect(Math.abs(metrics.coverWidth - timeline.collapsed.coverWidth))
+                    .toBeLessThan(.5);
+                expect(Math.abs(metrics.coverHeight - timeline.collapsed.coverHeight))
+                    .toBeLessThan(.5);
+            });
+            expect(timeline.expanded.countdownVisibility).toBe("visible");
+            expect(timeline.collapsedEnd.countdownVisibility).toBe("hidden");
+            expect(timeline.expandedSettled.coverTop)
+                .toBeLessThan(timeline.collapsed.coverTop - 2);
+            expect(Math.abs(timeline.expandedSettled.topGap
+                - timeline.expandedSettled.lowerGap)).toBeLessThan(2.5);
+            expect(Math.abs(timeline.collapsedSettled.topGap
+                - timeline.collapsedSettled.lowerGap)).toBeLessThan(2.5);
+            expect(Math.abs(timeline.expandedSettled.coverShift
+                - timeline.expandedSettled.expectedCoverShift)).toBeLessThan(.1);
+            expect(Math.abs(timeline.collapsedSettled.coverShift
+                - timeline.collapsedSettled.expectedCoverShift)).toBeLessThan(.1);
+        });
+
+    test("rebalances the poster cover after resizing and in fullscreen", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await mockLayoutTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#info-title")).toContainText("Layout Test");
+        await page.locator("#show-remaining").check();
+
+        const embedded = await expectBalancedPoster(page);
+        expect(Math.abs(embedded.coverWidth - embedded.coverHeight)).toBeLessThan(.5);
+        expect(Math.abs(embedded.infoCenter - embedded.expectedInfoCenter)).toBeLessThan(1);
+        expect(Math.abs(embedded.coverShift - embedded.expectedCoverShift)).toBeLessThan(.1);
+
+        await page.setViewportSize({ width: 800, height: 600 });
+        const resized = await expectBalancedPoster(page);
+        expect(Math.abs(resized.coverWidth - resized.coverHeight)).toBeLessThan(.5);
+        expect(Math.abs(resized.infoCenter - resized.expectedInfoCenter)).toBeLessThan(1);
+        expect(Math.abs(resized.coverShift - resized.expectedCoverShift)).toBeLessThan(.1);
+        expect(Math.abs(resized.stageHeight - embedded.stageHeight)).toBeGreaterThan(50);
+
+        await page.locator("#fullscreen").click();
+        await expect.poll(() => page.evaluate(() =>
+            document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+        const fullscreen = await expectBalancedPoster(page);
+        expect(Math.abs(fullscreen.stageTop)).toBeLessThan(1);
+        expect(Math.abs(fullscreen.stageHeight - 600)).toBeLessThan(1);
+        expect(Math.abs(fullscreen.coverWidth - fullscreen.coverHeight)).toBeLessThan(.5);
+        expect(Math.abs(fullscreen.infoCenter - fullscreen.expectedInfoCenter)).toBeLessThan(1);
+        expect(Math.abs(fullscreen.coverShift - fullscreen.expectedCoverShift)).toBeLessThan(.1);
+        await page.evaluate(() => document.exitFullscreen());
+    });
+
+    test("makes poster height and cover-position changes instant for reduced motion",
+        async ({ page }) => {
+            await page.emulateMedia({ reducedMotion: "reduce" });
+            await mockLayoutTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator("#info-title")).toContainText("Layout Test");
+
+            const result = await page.evaluate(async () => {
+                const cover = document.querySelector("#coverbox");
+                const info = document.querySelector(".info");
+                const countdown = document.querySelector("#countdown");
+                const checkbox = document.querySelector("#show-remaining");
+                const twoFrames = () => new Promise((resolve) =>
+                    requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const infoHeight = () => info.getBoundingClientRect().height;
+
+                const collapsedHeight = infoHeight();
+                checkbox.checked = true;
+                checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+                await twoFrames();
+                const expandedHeight = infoHeight();
+                const expandedAnimations = {
+                    countdown: countdown.getAnimations().length,
+                    cover: cover.getAnimations().length,
+                };
+                checkbox.checked = false;
+                checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+                await twoFrames();
+
+                return {
+                    reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+                    collapsedHeight,
+                    expandedHeight,
+                    collapsedAgainHeight: infoHeight(),
+                    countdownDuration: getComputedStyle(countdown).transitionDuration,
+                    coverDuration: getComputedStyle(cover).transitionDuration,
+                    expandedAnimations,
+                    collapsedAnimations: {
+                        countdown: countdown.getAnimations().length,
+                        cover: cover.getAnimations().length,
+                    },
+                };
+            });
+
+            expect(result.reducedMotion).toBe(true);
+            expect(result.expandedHeight).toBeGreaterThan(result.collapsedHeight + 15);
+            expect(Math.abs(result.collapsedAgainHeight - result.collapsedHeight)).toBeLessThan(1);
+            expect(result.countdownDuration.split(",").every((duration) =>
+                duration.trim() === "0s")).toBe(true);
+            expect(result.coverDuration.split(",").every((duration) =>
+                duration.trim() === "0s")).toBe(true);
+            expect(result.expandedAnimations).toEqual({ countdown: 0, cover: 0 });
+            expect(result.collapsedAnimations).toEqual({ countdown: 0, cover: 0 });
+            await expectBalancedPoster(page);
+        });
     test("clamps an invalid persisted volume before playback", async ({ page }) => {
         const errors = [];
         page.on("pageerror", (error) => errors.push(String(error)));
