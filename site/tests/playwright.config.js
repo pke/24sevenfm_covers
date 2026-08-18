@@ -2,6 +2,7 @@
 // the point of the daily run is "is the live page still working", not "does the code
 // pass" - and can be overridden with PLAYER_URL for a local build.
 const { defineConfig } = require("@playwright/test");
+const localMode = process.env.PLAYER_LOCAL === "1";
 
 module.exports = defineConfig({
     timeout: 120000,   // the station server is slow and drops connections under load
@@ -9,11 +10,11 @@ module.exports = defineConfig({
     reporter: [["list"]],
     use: {
         baseURL: process.env.PLAYER_URL || "https://24sevenfm-covers.dudesoft.app",
-        // Branded Chrome, not Playwright's Chromium: the audio contract test needs the
-        // AAC decoder (proprietary - Chromium doesn't ship it, so canplay would fail on
-        // a perfectly healthy audio/aacp stream), and the station's WAF is friendliest
-        // to the most genuine browser fingerprint.
-        channel: "chrome",
+        // The deployed canary uses branded Chrome: the audio contract test needs its
+        // proprietary AAC decoder, and the station WAF prefers its genuine fingerprint.
+        // Local tests are mocked and need neither; bundled Chromium also avoids branded
+        // Chrome's unreliable Windows teardown.
+        channel: localMode ? undefined : "chrome",
         headless: true,
         viewport: { width: 1280, height: 800 },
         // A regular Chrome UA, not "HeadlessChrome": the station WAF answers 403 to

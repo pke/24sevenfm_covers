@@ -168,9 +168,21 @@
     display: flex;
     justify-content: center;
     margin-top: .4rem;
+    height: 1.2em;
+    max-height: 1.2em;
+    overflow: hidden;
+    visibility: visible;
+    transition: max-height .45s ease, margin-top .45s ease, opacity .3s ease;
 }
 .coverbox .countdown { position: absolute; right: 4%; bottom: 4%; z-index: 2; margin-top: 0; }
-.countdown.hidden { display: none !important; }
+.countdown.hidden {
+    max-height: 0;
+    margin-top: 0;
+    opacity: 0;
+    visibility: hidden;
+    transition: max-height .45s ease, margin-top .45s ease, opacity .2s ease,
+                visibility 0s linear .45s;
+}
 /* contain: the once-a-second digit swap (and the roll ghosts) invalidate layout
    INSIDE the cell only - tabular-nums keeps every digit the same width, so the
    cell's own size never changes and the update can never leak a reflow into the
@@ -349,6 +361,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 .fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-    .coverbox img, .coverbox .card, .coverbox, .stage-fs, .backdrop { transition: none !important; }
+    .coverbox img, .coverbox .card, .coverbox, .countdown, .stage-fs, .backdrop { transition: none !important; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }
