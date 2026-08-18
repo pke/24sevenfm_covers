@@ -810,12 +810,22 @@ function sizeStage() {
     stage.style.setProperty("--artist-size", Math.max(13, side * 0.058) + "px");
     var cdFrac = [0.048, 0.062, 0.08][opts.remainingSize];
     stage.style.setProperty("--cd-size", Math.max(12, side * cdFrac) + "px");
+    // The grid fixes the info box's center. Re-center the cover in the space above
+    // the box's visible top edge; when the box grows, CSS animates this small shift.
+    // With 72/28 rows the simplified offset is 7% of stage height - 25% of box height.
+    var infoHeight = document.querySelector(".info").getBoundingClientRect().height;
+    var coverShift = opts.layout === 1 ? r.height * 0.07 - infoHeight * 0.25 : 0;
+    stage.style.setProperty("--cover-shift", coverShift + "px");
     // The D2D pass blurs at a ~240px working resolution and upscales, so its strength
     // is relative to size. A fixed CSS pixel blur reads far too mild on a big stage -
     // scale it the same way: posterBlur px at 240, proportionally more at stage width.
     stage.style.setProperty("--poster-blur", (opts.posterBlur * r.width / 240) + "px");
 }
-if (window.ResizeObserver) new ResizeObserver(sizeStage).observe(stage);
+if (window.ResizeObserver) {
+    var layoutObserver = new ResizeObserver(sizeStage);
+    layoutObserver.observe(stage);
+    layoutObserver.observe(document.querySelector(".info"));
+}
 
 // --- audio -------------------------------------------------------------------
 var audioBtn = $("audio-toggle"), volEl = $("volume");
