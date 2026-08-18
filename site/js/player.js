@@ -829,27 +829,134 @@ if (window.ResizeObserver) {
 
 // --- audio -------------------------------------------------------------------
 var audioBtn = $("audio-toggle"), volEl = $("volume");
-var audioGeneration = 0;
+var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
+var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
+var audioRetryAttempt = 0, audioLastProgressTime = 0;
+var AUDIO_RETRY_DELAYS = [1000, 2000, 5000, 10000, 30000];
+var AUDIO_STALL_MS = 12000, AUDIO_STARTUP_STALL_MS = 30000;
 function audioUrl() { return "https://" + station().host + "/live"; }
+function clearAudioTimers() {
+    clearTimeout(audioRetryTimer);
+    clearTimeout(audioStallTimer);
+    clearTimeout(audioWatchdogTimer);
+    audioRetryTimer = audioStallTimer = audioWatchdogTimer = null;
+}
+function dropAudioConnection() {
+    audioEl.pause();
+    audioEl.removeAttribute("src");
+    audioEl.load(); // actually drop the connection, don't keep buffering
+}
+function scheduleAudioReconnect() {
+    if (!audioWanted || audioRetryTimer !== null) return;
+    clearTimeout(audioStallTimer);
+    clearTimeout(audioWatchdogTimer);
+    audioStallTimer = audioWatchdogTimer = null;
+    var delay = AUDIO_RETRY_DELAYS[Math.min(audioRetryAttempt, AUDIO_RETRY_DELAYS.length - 1)];
+    audioRetryAttempt++;
+    var generation = audioGeneration;
+    setStatus("Audio interrupted – reconnecting…", "audio");
+    audioRetryTimer = setTimeout(function () {
+        audioRetryTimer = null;
+        if (!audioWanted || generation !== audioGeneration) return;
+        startAudio(false);
+    }, delay);
+}
+function armAudioStallTimer() {
+    if (!audioWanted || audioStallTimer !== null) return;
+    var generation = audioGeneration;
+    var delay = audioHasPlayed ? AUDIO_STALL_MS : AUDIO_STARTUP_STALL_MS;
+    audioStallTimer = setTimeout(function () {
+        audioStallTimer = null;
+        if (!audioWanted || generation !== audioGeneration) return;
+        scheduleAudioReconnect();
+    }, delay);
+}
+// Media events are not reliable for every broken network path. Sample currentTime as
+// a second line of defence: if the decoder clock stops for a full startup window,
+// replace the request even when the browser never emits stalled/error/ended.
+function armAudioWatchdog() {
+    clearTimeout(audioWatchdogTimer);
+    if (!audioWanted) return;
+    var generation = audioGeneration;
+    var sampledTime = Number(audioEl.currentTime);
+    audioWatchdogTimer = setTimeout(function () {
+        audioWatchdogTimer = null;
+        if (!audioWanted || generation !== audioGeneration) return;
+        var currentTime = Number(audioEl.currentTime);
+        if (!audioEl.paused && Number.isFinite(sampledTime) && Number.isFinite(currentTime)
+                && currentTime > sampledTime + 0.25) {
+            armAudioWatchdog();
+            return;
+        }
+        scheduleAudioReconnect();
+    }, AUDIO_STARTUP_STALL_MS);
+}
+function startAudio(stopOnPlayFailure) {
+    clearAudioTimers();
+    var generation = ++audioGeneration;
+    dropAudioConnection();
+    audioLastProgressTime = Number(audioEl.currentTime);
+    if (!Number.isFinite(audioLastProgressTime)) audioLastProgressTime = 0;
+    audioEl.src = audioUrl();
+    audioEl.volume = opts.volume;
+    armAudioWatchdog();
+    var playResult = audioEl.play();
+    if (!playResult || typeof playResult.catch !== "function") return;
+    playResult.catch(function () {
+        if (!audioWanted || generation !== audioGeneration) return;
+        if (!stopOnPlayFailure) {
+            scheduleAudioReconnect();
+            return;
+        }
+        setStatus("Your browser refused to play the stream – use the playlist links below.", "audio");
+        setAudio(false);
+    });
+}
 function setAudio(on) {
-    const generation = ++audioGeneration;
+    var wasWanted = audioWanted;
+    audioWanted = on;
     if (on) {
         clearStatus("audio");
-        audioEl.src = audioUrl();
-        audioEl.volume = opts.volume;
-        audioEl.play().catch(function () {
-            if (generation !== audioGeneration) return;
-            setStatus("Your browser refused to play the stream – use the playlist links below.", "audio");
-            setAudio(false);
-        });
+        audioHasPlayed = false;
+        audioRetryAttempt = 0;
+        startAudio(!wasWanted);
     } else {
-        audioEl.pause();
-        audioEl.removeAttribute("src");
-        audioEl.load(); // actually drop the connection, don't keep buffering
+        ++audioGeneration; // invalidate play promises and reconnect callbacks
+        clearAudioTimers();
+        dropAudioConnection();
     }
     audioBtn.setAttribute("aria-pressed", on ? "true" : "false");
     audioBtn.textContent = on ? "⏸ Stop audio" : "▶ Play audio";
 }
+audioEl.addEventListener("playing", function () {
+    if (!audioWanted) return;
+    audioHasPlayed = true;
+    audioRetryAttempt = 0;
+    audioLastProgressTime = Number(audioEl.currentTime);
+    if (!Number.isFinite(audioLastProgressTime)) audioLastProgressTime = 0;
+    clearTimeout(audioRetryTimer);
+    clearTimeout(audioStallTimer);
+    audioRetryTimer = audioStallTimer = null;
+    clearStatus("audio");
+    armAudioWatchdog();
+});
+audioEl.addEventListener("timeupdate", function () {
+    if (!audioWanted) return;
+    var currentTime = Number(audioEl.currentTime);
+    if (!Number.isFinite(currentTime) || currentTime <= audioLastProgressTime + 0.05) return;
+    audioLastProgressTime = currentTime;
+    clearTimeout(audioStallTimer);
+    audioStallTimer = null;
+});
+audioEl.addEventListener("waiting", armAudioStallTimer);
+audioEl.addEventListener("stalled", armAudioStallTimer);
+audioEl.addEventListener("error", scheduleAudioReconnect);
+audioEl.addEventListener("ended", scheduleAudioReconnect);
+window.addEventListener("online", function () {
+    if (!audioWanted || (audioRetryTimer === null && audioStallTimer === null)) return;
+    setStatus("Audio interrupted – reconnecting…", "audio");
+    startAudio(false);
+});
 audioBtn.addEventListener("click", function () {
     setAudio(audioBtn.getAttribute("aria-pressed") !== "true");
 });

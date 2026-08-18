@@ -1065,6 +1065,35 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#audio")).toHaveAttribute("src", "https://death.fm/live");
         await page.evaluate(() => window.__plays[1].resolve());
     });
+    test("reconnects audio when a playing stream remains stalled", async ({ page }) => {
+        await page.addInitScript(() => {
+            window.__plays = [];
+            const nativeSetTimeout = window.setTimeout.bind(window);
+            window.setTimeout = (callback, delay, ...args) =>
+                nativeSetTimeout(callback, delay === 12000 ? 10 : delay, ...args);
+            HTMLMediaElement.prototype.play = function () {
+                window.__plays.push(this.src);
+                return Promise.resolve();
+            };
+            HTMLMediaElement.prototype.pause = function () {};
+            HTMLMediaElement.prototype.load = function () {};
+        });
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await page.locator("#audio-toggle").click();
+        await expect.poll(() => page.evaluate(() => window.__plays.length)).toBe(1);
+
+        await page.locator("#audio").dispatchEvent("playing");
+        await page.locator("#audio").dispatchEvent("waiting");
+        await expect(page.locator("#status")).toHaveText("Audio interrupted – reconnecting…");
+        expect(await page.evaluate(() => window.__plays.length)).toBe(1);
+
+        await expect.poll(() => page.evaluate(() => window.__plays.length)).toBe(2);
+        await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
+        await page.locator("#audio").dispatchEvent("playing");
+        await expect(page.locator("#status")).toHaveText("");
+        await page.locator("#audio-toggle").click();
+    });
     test("reorders and persists backdrop providers with the keyboard", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
