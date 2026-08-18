@@ -511,6 +511,52 @@ test.describe("the deployed player page", () => {
         expect(fanartRequested).toBe(false);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
     });
+    test("normalizes the live rotated conjunction title for display, TMDB, and fanart.tv", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/history-title.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/history-title.svg";
+        let tmdbQuery = "", fanartRequests = 0;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "history-test-key",
+                fanartBackdrops: 1, fanartKey: "fanart-history-key", tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Good, The Bad &amp; The Ugly, The", Track: "The Trio (Main Title)",
+                Artist: "Ennio Morricone", CoverLink: cover, Length: 301723,
+                PlayStart: "2026-08-18T12:00:00Z", SystemTime: "2026-08-18T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
+            tmdbQuery = new URL(route.request().url()).searchParams.get("query");
+            return route.fulfill({ json: { results: [
+                { id: 429, title: "The Good, the Bad and the Ugly",
+                    original_title: "Il buono, il brutto, il cattivo",
+                    backdrop_path: "/good-bad-ugly.jpg" },
+            ] } });
+        });
+        await page.route("https://webservice.fanart.tv/v3/movies/429?*", (route) => {
+            fanartRequests++;
+            return route.fulfill({ json: { moviebackground: [
+                { url: "https://fanart.tv/good-bad-ugly.jpg", lang: "", likes: "10" },
+            ] } });
+        });
+        await page.route("https://fanart.tv/good-bad-ugly.jpg", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#info-title"))
+            .toContainText("The Good, The Bad & The Ugly - The Trio (Main Title)");
+        await expect.poll(() => tmdbQuery).toBe("The Good, The Bad and The Ugly");
+        await expect.poll(() => fanartRequests).toBe(1);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /good-bad-ugly\.jpg/);
+    });
     test("treats inherited object names as normal movie cache keys", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/constructor.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/constructor.svg";

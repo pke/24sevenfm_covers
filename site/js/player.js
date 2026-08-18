@@ -167,6 +167,10 @@ function htmlDecode(value) {
     s = s.replace(/</g, "&lt;");
     return entityDoc.parseFromString(s, "text/html").body.textContent;
 }
+function unrotateTitleArticle(title) {
+    return (title || "").replace(/^(.+),\s*(The|A|An)$/i, "$2 $1");
+}
+
 function station() { return STATIONS[stationIndex(opts.station)]; }
 
 // CoverLink is controlled by the station feed. Keep image requests on the selected
@@ -336,7 +340,8 @@ async function poll() {
         remAnchor = lengthSec > 0 ? remaining : -1;
         remAnchorAt = Date.now();
 
-        const album = htmlDecode(j.Album), track = htmlDecode(j.Track);
+        const album = htmlDecode(j.Album), displayAlbum = unrotateTitleArticle(album);
+        const track = htmlDecode(j.Track);
         // ONE determination drives everything downstream: no trusted CoverLink means
         // a station ID, unregistered track, or rejected off-origin URL.
         // The same flag that swaps the cover for the station logo below also
@@ -349,8 +354,8 @@ async function poll() {
             currentAlbum = album; stationIdActive = isStationId;
             updateBackdrop();
         }
-        let title = album;
-        if (album && track) title = album + " - " + track;
+        let title = displayAlbum;
+        if (displayAlbum && track) title = displayAlbum + " - " + track;
         else if (track) title = track;
         if (title && lengthSec > 0)
             title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
@@ -518,14 +523,18 @@ function updateCoverVisibility() {
 var currentAlbum = "", stationIdActive = false;
 
 function cleanMovieTitle(album) {
-    return (album || "")
+    var cleaned = (album || "")
         .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
         .replace(/\b(original motion picture soundtrack|music from the motion picture|original motion picture score|motion picture soundtrack|original soundtracks?|original scores?|the original scores?|soundtrack|ost)\b/gi, " ")
         .replace(/[:\-–]\s*$/, "")
-        .replace(/\s{2,}/g, " ").trim()
-        // The feed stores rotated articles - "Mummy Returns, The", "Bourne Identity,
-        // The" (seen live) - but TMDB knows "The Mummy Returns". Un-rotate them.
-        .replace(/^(.+),\s*(The|A|An)$/i, "$2 $1");
+        .replace(/\s{2,}/g, " ").trim();
+    // The feed stores rotated articles - "Mummy Returns, The", "Bourne Identity,
+    // The", and "Good, The Bad & The Ugly, The" (seen live). Un-rotate them for
+    // TMDB, then spell out '&' to match canonical titles such as "The Good, the Bad
+    // and the Ugly". A TMDB miss also prevents fanart.tv receiving the movie ID.
+    return unrotateTitleArticle(cleaned)
+        .replace(/\s*&\s*/g, " and ")
+        .replace(/\s{2,}/g, " ").trim();
 }
 
 // Prefer the result whose title matches the query exactly (ignoring case and
