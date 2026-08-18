@@ -94,6 +94,10 @@ var DEFAULTS = {
     hideCover: 0
 };
 var opts = loadOpts();
+// Local visual QA can force the retry state even while the real station is healthy.
+// The hostname guard makes the switch inert on every deployed origin.
+var simulateStationFailure = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
+    && new URLSearchParams(location.search).has("simulateStationFailure");
 
 function clampInt(v, lo, hi) { v = parseInt(v, 10); return isNaN(v) ? lo : Math.min(hi, Math.max(lo, v)); }
 
@@ -186,6 +190,17 @@ function sizedCoverUrl(raw) {
     return trusted ? trusted.replace("/cover/", "/cover/500/") : "";
 }
 
+// The station sometimes reports backend failures as an HTTP 200 JSON object such
+// as {"error":"Could not connect to DB server."}. Treat that exactly like a
+// failed request: an error object must never erase a valid cover/title or masquerade
+// as a station ID merely because all now-playing fields are absent.
+function validNowPlaying(j) {
+    if (!j || typeof j !== "object" || j instanceof Array || j.error) return false;
+    return ["Album", "Track", "Artist", "CoverLink"].every(function (key) {
+        return Object.prototype.hasOwnProperty.call(j, key);
+    });
+}
+
 // --- DOM ---------------------------------------------------------------------
 var $ = function (id) { return document.getElementById(id); };
 var stage = $("stage"), coverBox = $("coverbox");
@@ -244,7 +259,8 @@ function makeLayer(a, b, channel) {
 }
 var blurLayer = makeLayer($("backdropA"), $("backdropB"), "cover");
 var imgA = $("coverA"), imgB = $("coverB");
-var cdEl = $("countdown"), statusEl = $("status"), audioEl = $("audio");
+var cdEl = $("countdown"), statusEl = $("status"), stageStatusEl = $("stage-status");
+var audioEl = $("audio");
 
 // One info box serves both layouts (title, artist, countdown) - overlaid on the
 // stage in fill, sitting below the cover in poster.
@@ -256,8 +272,9 @@ function setInfo(title, artist) {
 var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 // --- poll engine (ported from lib/coverfetch.cpp) ----------------------------
-var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 512, REQ_TIMEOUT = 20000;
+var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 60, REQ_TIMEOUT = 20000;
 var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
+var retryAt = 0;
 var shownUrl = "", loadingCoverUrl = "", remAnchor = -1, remAnchorAt = 0;
 var coverRetryUrl = "", coverRetryFailures = 0, coverRetryTimer = null;
 
@@ -272,20 +289,43 @@ function schedulePoll(seconds) {
     clearTimeout(pollTimer);
     pollTimer = setTimeout(poll, seconds * 1000);
 }
+function humanDelay(seconds) {
+    if (seconds >= 60) return "1 minute";
+    return seconds + " second" + (seconds === 1 ? "" : "s");
+}
+function renderRetryStatus() {
+    if (retryAt <= 0) return;
+    var seconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+    setStatus("Station not responding\nRetrying in " + humanDelay(seconds) + "…", "station");
+}
+function scheduleRetry(seconds) {
+    retryAt = Date.now() + seconds * 1000;
+    renderRetryStatus();
+    schedulePoll(seconds);
+}
+
 
 async function poll() {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+    var wasRetry = retryAt > 0;
+    retryAt = 0;
+    if (wasRetry) setStatus("Contacting station…", "station");
     if (inflight) inflight.abort();
     const ctl = new AbortController();
     inflight = ctl;
     const kill = setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT);
     try {
+        if (simulateStationFailure) throw new Error("Simulated station failure");
         const r = await fetch("https://" + station().host
             + "/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now(),
             { signal: ctl.signal });
         if (!r.ok) throw new Error("HTTP " + r.status);
         const j = await r.json();
         if (ctl !== inflight) return; // superseded by a station switch
+        if (!validNowPlaying(j)) throw new Error("Invalid now-playing response");
         errBackoff = ERR_RETRY;
+        coverBox.classList.remove("station-outage");
         // remaining = Length(ms)/1000 - |SystemTime - PlayStart|; both stamps come
         // from the same server clock, so any timezone offset cancels in the diff.
         const lengthSec = Math.max(0, Math.floor((parseInt(j.Length, 10) || 0) / 1000));
@@ -324,9 +364,14 @@ async function poll() {
         prefetchNext(ctl, renderGenerations.backdrop); // fire-and-forget: warm the NEXT track's art meanwhile
     } catch (e) {
         if (ctl !== inflight) return;
-        setStatus("Station not responding – retrying…", "station");
-        schedulePoll(errBackoff);
-        errBackoff = Math.min(ERR_CAP, errBackoff * 2); // exponential backoff, like the lib
+        coverBox.classList.add("station-outage");
+        var outageCover = station().logo;
+        if (outageCover && outageCover !== shownUrl && outageCover !== loadingCoverUrl)
+            showCover(outageCover);
+        scheduleRetry(errBackoff);
+        // After the one-minute attempt, restart the short retry cycle.
+        // Sequence: 8, 16, 32, 60 seconds, then 8 again.
+        errBackoff = errBackoff >= ERR_CAP ? ERR_RETRY : Math.min(ERR_CAP, errBackoff * 2);
     } finally {
         clearTimeout(kill);
     }
@@ -334,8 +379,11 @@ async function poll() {
 
 var statusMessages = { station: "", audio: "", backdrop: "", general: "" };
 function renderStatus() {
-    statusEl.textContent = statusMessages.station || statusMessages.audio
+    var text = statusMessages.station || statusMessages.audio
         || statusMessages.backdrop || statusMessages.general;
+    statusEl.textContent = text;
+    stageStatusEl.textContent = statusMessages.station;
+    stageStatusEl.classList.toggle("show", !!statusMessages.station);
 }
 function setStatus(text, source) {
     if (source) statusMessages[source] = text;
@@ -1083,7 +1131,10 @@ hideCoverEl.addEventListener("change", function () {
 // --- go ----------------------------------------------------------------------
 applyLayout();
 setInfo("Loading…", "");
-tickTimer = setInterval(renderCountdown, 1000);
+tickTimer = setInterval(function () {
+    renderCountdown();
+    renderRetryStatus();
+}, 1000);
 poll();
 
 })();

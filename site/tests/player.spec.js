@@ -21,6 +21,9 @@ const localMode = process.env.PLAYER_LOCAL === "1";
 const JSON_URL =
     "https://streamingsoundtracks.com/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=";
 
+// Playwright's virtual clock prevents browser teardown on Windows; CI runs on Ubuntu.
+const virtualClockTest = process.platform === "win32" ? test.skip : test;
+
 test.describe("the deployed player page", () => {
     test("enforces a restrictive player resource policy", async ({ page }) => {
         await mockProviderTestFeed(page);
@@ -92,12 +95,19 @@ test.describe("the deployed player page", () => {
     test("keeps the player hidden in a sandboxed third-party frame", async ({ page }) => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const playerUrl = page.url();
-        await page.route("https://attacker.invalid/**", (route) => route.fulfill({
-            contentType: "text/html",
-            body: `<!doctype html><iframe sandbox="allow-scripts" src="${playerUrl}"></iframe>`,
-        }));
+        const attackerUrl = localMode ? "http://localhost:4173/" : "https://attacker.invalid/";
+        const attackerBody =
+            `<!doctype html><iframe sandbox="allow-scripts" src="${playerUrl}"></iframe>`;
 
-        await page.goto("https://attacker.invalid/", { waitUntil: "domcontentloaded" });
+        if (localMode) {
+            await page.goto(attackerUrl, { waitUntil: "domcontentloaded" });
+            await page.setContent(attackerBody, { waitUntil: "domcontentloaded" });
+        } else {
+            await page.route(attackerUrl, (route) => route.fulfill({
+                contentType: "text/html", body: attackerBody,
+            }));
+            await page.goto(attackerUrl, { waitUntil: "domcontentloaded" });
+        }
         await expect.poll(() => page.frames().some((frame) => frame.url() === playerUrl)).toBe(true);
         const playerFrame = page.frames().find((frame) => frame.url() === playerUrl);
         expect(await playerFrame.evaluate(() => getComputedStyle(document.documentElement).display))
@@ -111,6 +121,42 @@ test.describe("the deployed player page", () => {
         await expect(page.locator(".noscript-player")).toBeVisible();
         await expect(page.locator(".noscript-player audio")).toHaveCount(5);
         await context.close();
+    });
+    test("shows a grayscale station image without treating a backend error as a station ID", async ({ page }) => {
+        let logoRequested = false, pollRequests = 0;
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            pollRequests++;
+            return route.fulfill({ json: { error: "Could not connect to DB server." } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) => {
+            logoRequested = true;
+            return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="red"/></svg>' });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const retryPattern = /Station not responding\s+Retrying in (?:\d+ seconds?|1 minute)…/;
+        await expect(page.locator("#status")).toHaveText(retryPattern);
+        const coverStatus = page.locator("#stage-status");
+        await expect(coverStatus).toBeVisible();
+        await expect(coverStatus).toHaveText(retryPattern);
+        expect(await coverStatus.evaluate((el) => el.parentElement.id)).toBe("coverbox");
+        await page.locator("#fullscreen").click();
+        await expect.poll(() => page.evaluate(() =>
+            document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+        await expect(coverStatus).toBeVisible();
+        await expect(coverStatus).toHaveText(retryPattern);
+        const coverBox = page.locator("#coverbox");
+        await expect(coverBox).toHaveClass(/station-outage/);
+        await expect(coverBox).toHaveAttribute("data-front", /[ab]/);
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+        await expect(front).toHaveAttribute("src", /streamingsoundtracks\.com\/images\/logos\//);
+        expect(await front.evaluate((img) => getComputedStyle(img).filter)).toContain("grayscale(1)");
+        await expect.poll(() => pollRequests, { timeout: 10000 }).toBe(2);
+        await expect(page.locator("#info-title")).toHaveText("Loading…");
+        expect(logoRequested).toBe(true);
     });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
         const hostile = "https://example.invalid/private-cover.jpg";
@@ -213,7 +259,7 @@ test.describe("the deployed player page", () => {
         await expect(front).toHaveAttribute("src", sizedCover);
         await expect.poll(() => front.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0);
     });
-    test("retries a stalled cover before a long track ends", async ({ page }) => {
+    virtualClockTest("retries a stalled cover before a long track ends", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/stalled.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/stalled.svg";
         let coverRequests = 0;
@@ -236,13 +282,15 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => coverRequests).toBe(1);
-        await page.clock.fastForward(25002);
+        await page.clock.fastForward(20001);
+        await expect.poll(() => coverRequests).toBe(1);
+        await page.clock.fastForward(5001);
         await expect.poll(() => coverRequests).toBe(2);
         const front = page.locator(
             '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
         await expect(front).toHaveAttribute("src", sizedCover);
     });
-    test("bounds retries for a permanently missing cover", async ({ page }) => {
+    virtualClockTest("bounds retries for a permanently missing cover", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/missing.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/missing.svg";
         let coverRequests = 0;
@@ -272,7 +320,7 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(60001);
         await expect.poll(() => coverRequests).toBe(4);
     });
-    test("probes an exhausted cover again after a recovery cooldown", async ({ page }) => {
+    virtualClockTest("probes an exhausted cover again after a recovery cooldown", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/recovering.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/recovering.svg";
         let coverRequests = 0;
@@ -306,7 +354,7 @@ test.describe("the deployed player page", () => {
             '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
         await expect(front).toHaveAttribute("src", sizedCover);
     });
-    test("keeps the cover retry budget across short polls", async ({ page }) => {
+    virtualClockTest("keeps the cover retry budget across short polls", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/short-poll.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/short-poll.svg";
         let coverRequests = 0, pollRequests = 0;
@@ -498,7 +546,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /constructor\.jpg/);
     });
-    test("preserves the missing-key warning across successful polls", async ({ page }) => {
+    virtualClockTest("preserves the missing-key warning across successful polls", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/no-key.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-key.svg";
         await page.clock.install();
@@ -564,7 +612,8 @@ test.describe("the deployed player page", () => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await page.locator("#audio-toggle").click();
-        const audioError = "Your browser refused to play the stream ? use the playlist links below.";
+        const audioError = "Your browser refused to play the stream "
+            + String.fromCharCode(0x2013) + " use the playlist links below.";
         await expect(page.locator("#status")).toHaveText(audioError);
 
         await page.locator("#fanart-key").evaluate((input) => {
@@ -786,7 +835,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /fanart-retry/);
     });
 
-    test("times out a stalled queue prefetch independently", async ({ page }) => {
+    virtualClockTest("times out a stalled queue prefetch independently", async ({ page }) => {
         await page.clock.install();
         await page.addInitScript(() => {
             window.__queueStarted = false;
@@ -820,7 +869,7 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(20001);
         await expect.poll(() => page.evaluate(() => window.__queueAborted)).toBe(true);
     });
-    test("times out a stalled prefetched fanart lookup", async ({ page }) => {
+    virtualClockTest("times out a stalled prefetched fanart lookup", async ({ page }) => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/art-timeout.svg";
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/art-timeout.svg";
         await page.clock.install();

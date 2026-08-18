@@ -81,8 +81,12 @@
     object-fit: cover;
     opacity: 0;
     backface-visibility: hidden;
+    transition: filter .5s ease;
 }
 .layout-poster .coverbox img { border-radius: var(--cover-radius, 0); }
+.coverbox.station-outage img {
+    filter: grayscale(1) saturate(0) brightness(.68);
+}
 
 /* The box's data attributes drive everything - the children are addressed purely
    positionally, never touched by JS: data-front names the visible buffer, data-fx
@@ -91,7 +95,9 @@
 .coverbox[data-front="b"] img:last-of-type { opacity: 1; }
 
 /* Crossfade: the incoming image fades in over the outgoing one. */
-.coverbox[data-fx="fade"] img { transition: opacity var(--fade-ms, 1000ms) ease; }
+.coverbox[data-fx="fade"] img {
+    transition: opacity var(--fade-ms, 1000ms) ease, filter .5s ease;
+}
 
 /* data-warp: one transition-less beat, set by JS while it COMMITS a new effect's
    parked poses - an effect change must teleport into position, not animate there
@@ -157,6 +163,32 @@
 .cd-cur { display: block; }
 .cd-ghost { position: absolute; inset: 0; } /* the outgoing digit during a roll */
 
+/* Station progress belongs to the cover itself, including in browser fullscreen.
+   The regular status line remains the single accessibility announcement source. */
+.stage-status {
+    display: none;
+    position: absolute;
+    bottom: 4%;
+    left: 50%;
+    z-index: 2;
+    width: max-content;
+    max-width: 92%;
+    margin: 0;
+    padding: .5rem .85rem;
+    transform: translateX(-50%);
+    border: 1px solid rgba(255, 255, 255, .16);
+    border-radius: .65rem;
+    background: rgba(0, 0, 0, .58);
+    color: #fff;
+    font-size: clamp(.8rem, 2vw, 1.15rem);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, .8);
+    white-space: pre-line;
+    pointer-events: none;
+}
+.stage-status.show { display: block; }
+
 /* --- stage chrome: fullscreen toggle + fullscreen options ------------------------ */
 .stage-fs, .stage-opts {
     position: absolute;
@@ -199,9 +231,6 @@
     background: var(--bg);
     box-shadow: var(--shadow);
 }
-
-/* --- status line ---------------------------------------------------------------- */
-.status { color: var(--text-dim); font-size: .85rem; min-height: 1.2em; margin-top: .3rem; }
 
 /* --- controls ------------------------------------------------------------------- */
 .controls { display: grid; gap: 1rem; margin-top: 1.5rem; }
