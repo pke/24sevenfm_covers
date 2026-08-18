@@ -21,7 +21,11 @@
     box-shadow: var(--shadow);
     user-select: none;
 }
-.stage.layout-poster { flex-direction: column; gap: 3.5%; }
+.stage.layout-poster {
+    display: grid;
+    grid-template-columns: 100%;
+    grid-template-rows: 72% 28%;
+}
 .stage:fullscreen { border-radius: 0; border: 0; height: 100%; }
 
 /* Blurred backdrop - poster layout only. The blur radius is set by JS relative to the
@@ -119,10 +123,10 @@
 .coverbox[data-fx="flipv"][data-front="b"] .card { transform: rotateX(180deg); }
 
 /* --- info box (poster only) ------------------------------------------------------ */
-/* A flex sibling sitting below the cover, holding title, artist and the countdown as
-   its last row. Fill mode shows no info at all - the cover speaks for itself, like
-   the apps' fill layout. The hairline border keeps the box readable when the artwork
-   behind it is as dark as the box. */
+/* The lower grid row holds title, artist and countdown. Its center never moves, so the
+   box grows equally upward and downward when the countdown appears while the cover's
+   row stays unchanged. Fill mode shows no info at all; the hairline border keeps the
+   box readable on dark artwork. */
 .info {
     position: relative;
     z-index: 2;
@@ -134,6 +138,18 @@
     backdrop-filter: blur(6px);
     color: #fff;
     text-align: center;
+}
+.layout-poster .coverbox {
+    grid-column: 1;
+    grid-row: 1;
+    place-self: center;
+    transform: translateY(var(--cover-shift, 0px));
+    transition: opacity .8s ease, transform .45s ease;
+}
+.layout-poster .info {
+    grid-column: 1;
+    grid-row: 2;
+    place-self: center;
 }
 .layout-fill .info { display: none; }
 .info .t { font-weight: 600; font-size: var(--title-size, 1.15rem); line-height: 1.25; }
