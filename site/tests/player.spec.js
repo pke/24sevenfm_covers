@@ -1133,8 +1133,8 @@ test.describe("the deployed player page", () => {
             });
             expect(timeline.expanded.countdownVisibility).toBe("visible");
             expect(timeline.collapsedEnd.countdownVisibility).toBe("hidden");
-            expect(timeline.expandedSettled.coverTop)
-                .toBeLessThan(timeline.collapsed.coverTop - 2);
+            expect(timeline.expandedSettled.topGap)
+                .toBeLessThan(timeline.collapsed.topGap - 2);
             expect(Math.abs(timeline.expandedSettled.topGap
                 - timeline.expandedSettled.lowerGap)).toBeLessThan(2.5);
             expect(Math.abs(timeline.collapsedSettled.topGap
