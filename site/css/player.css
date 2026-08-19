@@ -237,15 +237,16 @@
     left: .7rem;
     top: .7rem;
     z-index: 3;
-    width: clamp(7rem, 22vw, 13rem);
-    height: clamp(1.5rem, 6vh, 2.4rem);
+    width: clamp(8.5rem, 26vw, 15rem);
+    height: clamp(2rem, 7.5vh, 3rem);
     border: 0;
     border-radius: 0;
     background: transparent;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity .25s ease, visibility 0s linear .25s;
+    transition: opacity .4s ease, visibility 0s linear .4s,
+                width .4s ease, height .4s ease;
 }
 .stage-spectrum.active {
     opacity: .92;

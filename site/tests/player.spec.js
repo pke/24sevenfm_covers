@@ -184,10 +184,10 @@ test.describe("the deployed player page", () => {
         const bars = page.locator("#spectrum-bars");
         const enabled = page.locator("#spectrum-enabled");
         await expect(enabled).not.toBeChecked();
-        await expect(bars).toHaveValue("32");
+        await expect(bars).toHaveValue("24");
         await expect(bars).toHaveAttribute("step", "8");
         await expect(bars).toBeDisabled();
-        await expect(page.locator("#spectrum-bars-val")).toHaveText("32");
+        await expect(page.locator("#spectrum-bars-val")).toHaveText("24");
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
 
         await enabled.check();
@@ -243,18 +243,39 @@ test.describe("the deployed player page", () => {
             await expect(spectrum).not.toHaveAttribute("tabindex", /.+/);
             await expect(spectrum).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
             await expect(spectrum).toHaveCSS("border-top-width", "0px");
+            const transitions = await spectrum.evaluate((canvas) =>
+                getComputedStyle(canvas).transitionProperty.split(", "));
+            expect(transitions).toEqual(expect.arrayContaining(["opacity", "width", "height"]));
             await spectrumEnabled.check();
             await page.locator("#stage").hover();
+            await page.evaluate(() => {
+                window.__spectrumAttackSamples = [];
+                const canvas = document.querySelector("#stage-spectrum");
+                const sample = () => {
+                    const data = canvas.getContext("2d")
+                        .getImageData(0, 0, canvas.width, canvas.height).data;
+                    window.__spectrumAttackSamples.push(
+                        data.filter((value, index) => index % 4 === 3 && value).length);
+                    if (window.__spectrumAttackSamples.length < 40) requestAnimationFrame(sample);
+                };
+                requestAnimationFrame(sample);
+            });
             await page.locator("#stage-audio").click();
             await audio.dispatchEvent("playing");
             await expect(spectrum).toHaveClass(/active/);
+            const filledPixels = () => spectrum.evaluate((canvas) => {
+                const data = canvas.getContext("2d")
+                    .getImageData(0, 0, canvas.width, canvas.height).data;
+                return data.filter((value, index) => index % 4 === 3 && value).length;
+            });
             await expect.poll(() => page.evaluate(() => window.__analyserReads))
                 .toBeGreaterThan(0);
             await expect.poll(() => spectrum.evaluate((canvas) =>
                 canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height)
                     .data.some(Boolean))).toBe(true);
             const rendered = await spectrum.evaluate((canvas) => {
-                const pixels = canvas.getContext("2d")
+                const context = canvas.getContext("2d");
+                const pixels = context
                     .getImageData(0, canvas.height - 1, canvas.width, 1).data;
                 let runs = 0, inside = false, first = null;
                 for (let x = 0; x < canvas.width; x++) {
@@ -269,7 +290,7 @@ test.describe("the deployed player page", () => {
             });
             const infoTint = await page.locator(".info").evaluate((info) =>
                 getComputedStyle(info).color.match(/[\d.]+/g).slice(0, 3).map(Number));
-            expect(rendered.runs).toBe(32);
+            expect(rendered.runs).toBe(24);
             expect(rendered.first).toEqual(infoTint);
             const expectSpectrumClearOfInfo = async () => {
                 const boxes = await page.evaluate(() => {
@@ -328,6 +349,37 @@ test.describe("the deployed player page", () => {
             await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
             await expect(spectrumOptions).toBeHidden();
             await expect(page.locator(".controls > #spectrum-settings")).toHaveCount(1);
+
+            await expect(spectrum).toHaveCSS("opacity", "0.92");
+            const fullFilled = await filledPixels();
+            expect(await page.evaluate((fullCount) =>
+                window.__spectrumAttackSamples.some((count) =>
+                    count > 0 && count < fullCount), fullFilled)).toBe(true);
+            await page.evaluate(() => {
+                window.__spectrumReleaseSamples = [];
+                const canvas = document.querySelector("#stage-spectrum");
+                const sample = () => {
+                    const data = canvas.getContext("2d")
+                        .getImageData(0, 0, canvas.width, canvas.height).data;
+                    window.__spectrumReleaseSamples.push(
+                        data.filter((value, index) => index % 4 === 3 && value).length);
+                    if (window.__spectrumReleaseSamples.length < 40) requestAnimationFrame(sample);
+                };
+                requestAnimationFrame(sample);
+            });
+            await page.locator("#stage-audio").click();
+            await expect(spectrum).toHaveClass(/active/);
+            await expect(spectrum).toHaveCSS("opacity", "0.92");
+            await expect.poll(() => spectrum.evaluate((canvas) =>
+                canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height)
+                    .data.some(Boolean)), { timeout: 1000 }).toBe(false);
+            expect(await page.evaluate((fullCount) =>
+                window.__spectrumReleaseSamples.some((count) =>
+                    count > 0 && count < fullCount), fullFilled)).toBe(true);
+            await expect(spectrum).not.toHaveClass(/active/);
+            await page.locator("#stage-audio").click();
+            await audio.dispatchEvent("playing");
+            await expect(spectrum).toHaveClass(/active/);
 
             await page.emulateMedia({ reducedMotion: "reduce" });
             await expect(spectrum).not.toHaveClass(/active/);

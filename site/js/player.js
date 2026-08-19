@@ -78,7 +78,7 @@ var DEFAULTS = {
     borderRadius: 45, 
     volume: 0.8,
     spectrumEnabled: 0,
-    spectrumBars: 32,
+    spectrumBars: 24,
     spectrumMode: "tinted",
     // Experimental TMDB movie backdrops: OFF by default and bring-your-own-key, both
     // deliberately - enabling it sends the current album title to a third party, which
@@ -850,6 +850,9 @@ var AUDIO_STALL_MS = 12000, AUDIO_STARTUP_STALL_MS = 30000;
 var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
 var spectrumAudioContext = null, spectrumSource = null, spectrumAnalyser = null;
 var spectrumData = null, spectrumFrame = null, spectrumLastFrame = 0, spectrumPeaks = [];
+var spectrumEnvelope = 0, spectrumEnvelopeFrom = 0, spectrumEnvelopeTarget = 0;
+var spectrumEnvelopeStarted = 0;
+var SPECTRUM_ENVELOPE_MS = 400;
 
 // A compact Winamp-style spectrum. The media element stays the one source of truth:
 // Web Audio only observes its decoded samples, then forwards them to the speakers.
@@ -870,6 +873,22 @@ function clearSpectrum() {
     spectrumLastFrame = 0;
     if (spectrumCtx) spectrumCtx.clearRect(0, 0, spectrumEl.width, spectrumEl.height);
 }
+function updateSpectrumEnvelope(timestamp) {
+    var progress = Math.min(1,
+        Math.max(0, (timestamp - spectrumEnvelopeStarted) / SPECTRUM_ENVELOPE_MS));
+    var eased = progress * progress * (3 - 2 * progress);
+    spectrumEnvelope = spectrumEnvelopeFrom
+        + (spectrumEnvelopeTarget - spectrumEnvelopeFrom) * eased;
+    return progress >= 1;
+}
+function targetSpectrumEnvelope(target) {
+    if (spectrumEnvelopeTarget === target) return;
+    var now = performance.now();
+    updateSpectrumEnvelope(now);
+    spectrumEnvelopeFrom = spectrumEnvelope;
+    spectrumEnvelopeTarget = target;
+    spectrumEnvelopeStarted = now;
+}
 function playerTintRgb() {
     var channels = getComputedStyle(document.querySelector(".info")).color.match(/[\d.]+/g);
     return channels && channels.length >= 3
@@ -880,11 +899,24 @@ function rgba(rgb, alpha) {
     return "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + alpha + ")";
 }
 function drawSpectrum(timestamp) {
-    spectrumFrame = requestAnimationFrame(drawSpectrum);
-    if (timestamp - spectrumLastFrame < 33) return; // cap at ~30fps
+    spectrumFrame = null;
+    if (timestamp - spectrumLastFrame < 33) {
+        spectrumFrame = requestAnimationFrame(drawSpectrum);
+        return;
+    }
     spectrumLastFrame = timestamp;
+    var envelopeDone = updateSpectrumEnvelope(timestamp);
+    if (spectrumEnvelopeTarget === 0 && envelopeDone) {
+        spectrumEnvelope = spectrumEnvelopeFrom = 0;
+        clearSpectrum();
+        spectrumEl.classList.remove("active");
+        return;
+    }
     resizeSpectrum();
-    spectrumAnalyser.getByteFrequencyData(spectrumData);
+    // During release the buffer intentionally keeps the last live frame, so every
+    // bar falls from its own height instead of snapping to the analyser's new zeroes.
+    if (spectrumEnvelopeTarget === 1)
+        spectrumAnalyser.getByteFrequencyData(spectrumData);
 
     var width = spectrumEl.width, height = spectrumEl.height;
     var bars = Math.min(opts.spectrumBars, spectrumData.length);
@@ -915,14 +947,17 @@ function drawSpectrum(timestamp) {
         var position = bars === 1 ? 0 : i / (bars - 1);
         var bin = Math.min(spectrumData.length - 1,
             Math.floor(Math.pow(position, 1.65) * (spectrumData.length - 1)));
-        var barHeight = Math.floor((spectrumData[bin] / 255) * usableHeight);
+        var barHeight = Math.floor((spectrumData[bin] / 255)
+            * usableHeight * spectrumEnvelope);
         var segment = blockGap * 3;
         barHeight = Math.floor(barHeight / segment) * segment;
         var x = plotLeft + Math.round(i * (barWidth + gap));
         spectrumCtx.fillRect(x, height - barHeight, barWidth, barHeight);
         var peak = spectrumPeaks[i] || 0;
-        spectrumPeaks[i] = barHeight >= peak
-            ? barHeight : Math.max(0, peak - Math.max(1, height * .025));
+        spectrumPeaks[i] = spectrumEnvelopeTarget === 0
+            ? Math.min(peak || barHeight, barHeight)
+            : barHeight >= peak
+                ? barHeight : Math.max(0, peak - Math.max(1, height * .025));
     }
 
     // Cut horizontal gaps into the gradient bars for the blocky Winamp look.
@@ -939,20 +974,32 @@ function drawSpectrum(timestamp) {
         spectrumCtx.fillRect(plotLeft + Math.round(p * (barWidth + gap)),
             Math.max(0, height - peakHeight - blockGap), barWidth, blockGap);
     }
+    spectrumFrame = requestAnimationFrame(drawSpectrum);
 }
 function syncSpectrum() {
     var active = !!(opts.spectrumEnabled && audioWanted && audioHasPlayed
         && spectrumCtx && spectrumAnalyser
         && !reducedMotion.matches);
-    spectrumEl.classList.toggle("active", active);
-    if (active && !document.hidden) {
-        resizeSpectrum();
+    if (active) {
+        if (!document.hidden) {
+            spectrumEl.classList.add("active");
+            targetSpectrumEnvelope(1);
+            resizeSpectrum();
+            if (spectrumFrame === null) spectrumFrame = requestAnimationFrame(drawSpectrum);
+        }
+        return;
+    }
+    if (!document.hidden && !reducedMotion.matches
+            && spectrumEl.classList.contains("active") && spectrumEnvelope > 0) {
+        targetSpectrumEnvelope(0);
         if (spectrumFrame === null) spectrumFrame = requestAnimationFrame(drawSpectrum);
         return;
     }
     if (spectrumFrame !== null) cancelAnimationFrame(spectrumFrame);
     spectrumFrame = null;
-    if (!active) clearSpectrum();
+    spectrumEnvelope = spectrumEnvelopeFrom = spectrumEnvelopeTarget = 0;
+    spectrumEl.classList.remove("active");
+    clearSpectrum();
 }
 function prepareSpectrum() {
     if (!opts.spectrumEnabled || !spectrumCtx || !AudioContextCtor
