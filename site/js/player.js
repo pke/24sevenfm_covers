@@ -77,6 +77,9 @@ var DEFAULTS = {
     posterBlur: 24, 
     borderRadius: 45, 
     volume: 0.8,
+    spectrumEnabled: 0,
+    spectrumBars: 32,
+    spectrumMode: "tinted",
     // Experimental TMDB movie backdrops: OFF by default and bring-your-own-key, both
     // deliberately - enabling it sends the current album title to a third party, which
     // the privacy policy discloses, and a key shipped in public JS would be everyone's.
@@ -115,11 +118,13 @@ function loadOpts() {
     o.remainingSize = clampInt(o.remainingSize, 0, 2);
     o.posterBlur    = clampInt(o.posterBlur, 0, 200);
     o.borderRadius  = clampInt(o.borderRadius, 0, 500);
+    o.spectrumBars  = clampInt(o.spectrumBars, 8, 64);
+    o.spectrumMode  = o.spectrumMode === "legacy" ? "legacy" : "tinted";
     o.volume = parseFloat(o.volume);
     if (!isFinite(o.volume)) o.volume = DEFAULTS.volume;
     o.volume = Math.min(1, Math.max(0, o.volume));
     ["showRemaining", "roll", "tmdbBackdrops", "fanartBackdrops", "tmdbArt",
-        "hideCover"].forEach(function (key) {
+        "hideCover", "spectrumEnabled"].forEach(function (key) {
         var value = o[key];
         o[key] = (value === true || value === 1 || value === "1") ? 1 : 0;
     });
@@ -813,13 +818,20 @@ function sizeStage() {
     // The grid fixes the info box's center. Re-center the cover in the space above
     // the box's visible top edge; when the box grows, CSS animates this small shift.
     // With 72/28 rows the simplified offset is 7% of stage height - 25% of box height.
-    var infoHeight = document.querySelector(".info").getBoundingClientRect().height;
+    var infoRect = document.querySelector(".info").getBoundingClientRect();
+    var infoHeight = infoRect.height;
     var coverShift = opts.layout === 1 ? r.height * 0.07 - infoHeight * 0.25 : 0;
     stage.style.setProperty("--cover-shift", coverShift + "px");
+    if (opts.layout === 1) {
+        var coverBottom = r.height * 0.36 + coverShift + side * 0.5;
+        var infoTop = infoRect.top - r.top;
+        stage.style.setProperty("--spectrum-top", ((coverBottom + infoTop) * 0.5) + "px");
+    }
     // The D2D pass blurs at a ~240px working resolution and upscales, so its strength
     // is relative to size. A fixed CSS pixel blur reads far too mild on a big stage -
     // scale it the same way: posterBlur px at 240, proportionally more at stage width.
     stage.style.setProperty("--poster-blur", (opts.posterBlur * r.width / 240) + "px");
+    positionSpectrumOptions();
 }
 if (window.ResizeObserver) {
     var layoutObserver = new ResizeObserver(sizeStage);
@@ -828,12 +840,144 @@ if (window.ResizeObserver) {
 }
 
 // --- audio -------------------------------------------------------------------
-var audioBtn = $("audio-toggle"), volEl = $("volume");
+var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio"), volEl = $("volume");
+var spectrumEl = $("stage-spectrum"), spectrumCtx = spectrumEl.getContext("2d");
 var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
 var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
 var audioRetryAttempt = 0, audioLastProgressTime = 0;
 var AUDIO_RETRY_DELAYS = [1000, 2000, 5000, 10000, 30000];
 var AUDIO_STALL_MS = 12000, AUDIO_STARTUP_STALL_MS = 30000;
+var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+var spectrumAudioContext = null, spectrumSource = null, spectrumAnalyser = null;
+var spectrumData = null, spectrumFrame = null, spectrumLastFrame = 0, spectrumPeaks = [];
+
+// A compact Winamp-style spectrum. The media element stays the one source of truth:
+// Web Audio only observes its decoded samples, then forwards them to the speakers.
+// If the API is unavailable, normal <audio> playback continues without visualization.
+function resizeSpectrum() {
+    var r = spectrumEl.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    var scale = Math.min(2, window.devicePixelRatio || 1);
+    var width = Math.max(1, Math.round(r.width * scale));
+    var height = Math.max(1, Math.round(r.height * scale));
+    if (spectrumEl.width === width && spectrumEl.height === height) return;
+    spectrumEl.width = width;
+    spectrumEl.height = height;
+    spectrumPeaks = [];
+}
+function clearSpectrum() {
+    spectrumPeaks = [];
+    spectrumLastFrame = 0;
+    if (spectrumCtx) spectrumCtx.clearRect(0, 0, spectrumEl.width, spectrumEl.height);
+}
+function playerTintRgb() {
+    var channels = getComputedStyle(document.querySelector(".info")).color.match(/[\d.]+/g);
+    return channels && channels.length >= 3
+        ? channels.slice(0, 3).map(function (value) { return Math.round(Number(value)); })
+        : [255, 255, 255];
+}
+function rgba(rgb, alpha) {
+    return "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + alpha + ")";
+}
+function drawSpectrum(timestamp) {
+    spectrumFrame = requestAnimationFrame(drawSpectrum);
+    if (timestamp - spectrumLastFrame < 33) return; // cap at ~30fps
+    spectrumLastFrame = timestamp;
+    resizeSpectrum();
+    spectrumAnalyser.getByteFrequencyData(spectrumData);
+
+    var width = spectrumEl.width, height = spectrumEl.height;
+    var bars = Math.min(opts.spectrumBars, spectrumData.length);
+    var blockGap = Math.max(1, Math.round(width / 220));
+    var gap = width >= bars * 2 + blockGap * (bars - 1) ? blockGap : 0;
+    var barWidth = Math.max(1, Math.floor((width - gap * (bars - 1)) / bars));
+    var plotWidth = barWidth * bars + gap * (bars - 1);
+    var plotLeft = Math.max(0, Math.floor((width - plotWidth) * 0.5));
+    var usableHeight = height - Math.max(3, Math.round(height * .08));
+    var gradient = spectrumCtx.createLinearGradient(0, height, 0, 0);
+    var tint = null;
+    if (opts.spectrumMode === "tinted") {
+        tint = playerTintRgb();
+        gradient.addColorStop(0, rgba(tint, .24));
+        gradient.addColorStop(.58, rgba(tint, .48));
+        gradient.addColorStop(.8, rgba(tint, .72));
+        gradient.addColorStop(1, rgba(tint, 1));
+    } else {
+        gradient.addColorStop(0, "#36ed64");
+        gradient.addColorStop(.58, "#6df052");
+        gradient.addColorStop(.8, "#ffd43b");
+        gradient.addColorStop(1, "#ff4b55");
+    }
+    spectrumCtx.clearRect(0, 0, width, height);
+    spectrumCtx.fillStyle = gradient;
+
+    for (var i = 0; i < bars; i++) {
+        var position = bars === 1 ? 0 : i / (bars - 1);
+        var bin = Math.min(spectrumData.length - 1,
+            Math.floor(Math.pow(position, 1.65) * (spectrumData.length - 1)));
+        var barHeight = Math.floor((spectrumData[bin] / 255) * usableHeight);
+        var segment = blockGap * 3;
+        barHeight = Math.floor(barHeight / segment) * segment;
+        var x = plotLeft + Math.round(i * (barWidth + gap));
+        spectrumCtx.fillRect(x, height - barHeight, barWidth, barHeight);
+        var peak = spectrumPeaks[i] || 0;
+        spectrumPeaks[i] = barHeight >= peak
+            ? barHeight : Math.max(0, peak - Math.max(1, height * .025));
+    }
+
+    // Cut horizontal gaps into the gradient bars for the blocky Winamp look.
+    for (var y = height - blockGap * 2; y > 0; y -= blockGap * 3) {
+        spectrumCtx.clearRect(0, y, width, blockGap);
+    }
+    for (var p = 0; p < bars; p++) {
+        var peakHeight = spectrumPeaks[p];
+        if (peakHeight <= 0) continue;
+        var ratio = peakHeight / usableHeight;
+        spectrumCtx.fillStyle = tint
+            ? rgba(tint, Math.min(1, .45 + ratio * .55))
+            : ratio > .8 ? "#ff6269" : ratio > .58 ? "#ffe163" : "#8aff79";
+        spectrumCtx.fillRect(plotLeft + Math.round(p * (barWidth + gap)),
+            Math.max(0, height - peakHeight - blockGap), barWidth, blockGap);
+    }
+}
+function syncSpectrum() {
+    var active = !!(opts.spectrumEnabled && audioWanted && audioHasPlayed
+        && spectrumCtx && spectrumAnalyser
+        && !reducedMotion.matches);
+    spectrumEl.classList.toggle("active", active);
+    if (active && !document.hidden) {
+        resizeSpectrum();
+        if (spectrumFrame === null) spectrumFrame = requestAnimationFrame(drawSpectrum);
+        return;
+    }
+    if (spectrumFrame !== null) cancelAnimationFrame(spectrumFrame);
+    spectrumFrame = null;
+    if (!active) clearSpectrum();
+}
+function prepareSpectrum() {
+    if (!opts.spectrumEnabled || !spectrumCtx || !AudioContextCtor
+            || reducedMotion.matches) return false;
+    if (!spectrumAnalyser) {
+        try {
+            spectrumAudioContext = new AudioContextCtor();
+            spectrumAnalyser = spectrumAudioContext.createAnalyser();
+            spectrumAnalyser.fftSize = 128;
+            spectrumAnalyser.smoothingTimeConstant = .78;
+            spectrumSource = spectrumAudioContext.createMediaElementSource(audioEl);
+            spectrumSource.connect(spectrumAnalyser);
+            spectrumAnalyser.connect(spectrumAudioContext.destination);
+            spectrumData = new Uint8Array(spectrumAnalyser.frequencyBinCount);
+        } catch (e) {
+            spectrumAudioContext = spectrumSource = spectrumAnalyser = spectrumData = null;
+            return false;
+        }
+    }
+    if (spectrumAudioContext.state === "suspended") {
+        var resumed = spectrumAudioContext.resume();
+        if (resumed && typeof resumed.catch === "function") resumed.catch(function () {});
+    }
+    return true;
+}
 function audioUrl() { return "https://" + station().host + "/live"; }
 function clearAudioTimers() {
     clearTimeout(audioRetryTimer);
@@ -848,6 +992,8 @@ function dropAudioConnection() {
 }
 function scheduleAudioReconnect() {
     if (!audioWanted || audioRetryTimer !== null) return;
+    audioHasPlayed = false;
+    syncSpectrum();
     clearTimeout(audioStallTimer);
     clearTimeout(audioWatchdogTimer);
     audioStallTimer = audioWatchdogTimer = null;
@@ -919,14 +1065,24 @@ function setAudio(on) {
         clearStatus("audio");
         audioHasPlayed = false;
         audioRetryAttempt = 0;
+        prepareSpectrum(); // user-gesture call path unlocks AudioContext
+        syncSpectrum();
         startAudio(!wasWanted);
     } else {
+        audioHasPlayed = false;
+        syncSpectrum();
         ++audioGeneration; // invalidate play promises and reconnect callbacks
         clearAudioTimers();
         dropAudioConnection();
     }
-    audioBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    var pressed = on ? "true" : "false";
+    var action = on ? "Stop audio" : "Play audio";
+    audioBtn.setAttribute("aria-pressed", pressed);
     audioBtn.textContent = on ? "⏸ Stop audio" : "▶ Play audio";
+    stageAudioBtn.setAttribute("aria-pressed", pressed);
+    stageAudioBtn.setAttribute("aria-label", action);
+    stageAudioBtn.title = action;
+    stageAudioBtn.textContent = on ? "⏸" : "▶";
 }
 audioEl.addEventListener("playing", function () {
     if (!audioWanted) return;
@@ -939,6 +1095,7 @@ audioEl.addEventListener("playing", function () {
     audioRetryTimer = audioStallTimer = null;
     clearStatus("audio");
     armAudioWatchdog();
+    syncSpectrum();
 });
 audioEl.addEventListener("timeupdate", function () {
     if (!audioWanted) return;
@@ -950,15 +1107,35 @@ audioEl.addEventListener("timeupdate", function () {
 });
 audioEl.addEventListener("waiting", armAudioStallTimer);
 audioEl.addEventListener("stalled", armAudioStallTimer);
+audioEl.addEventListener("pause", function () {
+    audioHasPlayed = false;
+    syncSpectrum();
+});
 audioEl.addEventListener("error", scheduleAudioReconnect);
 audioEl.addEventListener("ended", scheduleAudioReconnect);
+document.addEventListener("visibilitychange", syncSpectrum);
+if (reducedMotion.addEventListener) reducedMotion.addEventListener("change", syncSpectrum);
+else if (reducedMotion.addListener) reducedMotion.addListener(syncSpectrum);
+if (window.ResizeObserver) {
+    var spectrumObserver = new ResizeObserver(resizeSpectrum);
+    spectrumObserver.observe(spectrumEl);
+} else {
+    window.addEventListener("resize", resizeSpectrum);
+}
 window.addEventListener("online", function () {
     if (!audioWanted || (audioRetryTimer === null && audioStallTimer === null)) return;
     setStatus("Audio interrupted – reconnecting…", "audio");
     startAudio(false);
 });
 audioBtn.addEventListener("click", function () {
-    setAudio(audioBtn.getAttribute("aria-pressed") !== "true");
+    setAudio(!audioWanted);
+});
+stageAudioBtn.addEventListener("click", function () { setAudio(!audioWanted); });
+document.addEventListener("keydown", function (e) {
+    if (e.key !== " " || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.target.closest("a, button, input, select, textarea, [contenteditable]")) return;
+    e.preventDefault();
+    setAudio(!audioWanted);
 });
 volEl.value = opts.volume;
 volEl.addEventListener("input", function () {
@@ -975,7 +1152,7 @@ function toggleFullscreen() {
 stage.addEventListener("dblclick", function (e) {
     // Double-clicks inside the options overlay (a slider, a fast toggle) or on the
     // chrome buttons must not yank the user out of fullscreen.
-    if (e.target.closest(".fs-options, .stage-fs, .stage-opts")) return;
+    if (e.target.closest(".fs-options, .spectrum-options, .stage-audio, .stage-spectrum, .stage-fs, .stage-opts")) return;
     toggleFullscreen();
 });
 $("fullscreen").addEventListener("click", toggleFullscreen);
@@ -1007,7 +1184,47 @@ function setOptionsOverlay(open) {
         controlsHome.insertBefore(controlsEl, controlsNext);
     }
 }
-optsBtn.addEventListener("click", function () { setOptionsOverlay(!optionsOpen); });
+optsBtn.addEventListener("click", function () {
+    setSpectrumOptions(false);
+    setOptionsOverlay(!optionsOpen);
+});
+
+var spectrumSettingsEl = $("spectrum-settings");
+var spectrumSettingsHome = spectrumSettingsEl.parentNode;
+var spectrumSettingsNext = spectrumSettingsEl.nextElementSibling;
+var spectrumOptionsHost = $("spectrum-options"), spectrumOptionsOpen = false;
+function positionSpectrumOptions() {
+    if (!spectrumOptionsOpen) return;
+    var stageRect = stage.getBoundingClientRect();
+    var spectrumRect = spectrumEl.getBoundingClientRect();
+    var edge = 8, gap = 10;
+    var available = stageRect.right - spectrumRect.right - gap - edge;
+    spectrumOptionsHost.style.left = (spectrumRect.right - stageRect.left + gap) + "px";
+    spectrumOptionsHost.style.width = Math.max(100, Math.min(304, available)) + "px";
+    var center = (spectrumRect.top + spectrumRect.bottom) * 0.5 - stageRect.top;
+    var halfHeight = spectrumOptionsHost.getBoundingClientRect().height * 0.5;
+    spectrumOptionsHost.style.top = Math.max(edge + halfHeight,
+        Math.min(stageRect.height - edge - halfHeight, center)) + "px";
+}
+function setSpectrumOptions(open) {
+    spectrumOptionsOpen = open;
+    spectrumOptionsHost.hidden = !open;
+    if (open) {
+        setOptionsOverlay(false);
+        spectrumOptionsHost.appendChild(spectrumSettingsEl);
+        positionSpectrumOptions();
+    } else if (spectrumSettingsEl.parentNode === spectrumOptionsHost) {
+        spectrumSettingsHome.insertBefore(spectrumSettingsEl, spectrumSettingsNext);
+    }
+}
+spectrumEl.addEventListener("click", function () {
+    setSpectrumOptions(!spectrumOptionsOpen);
+});
+document.addEventListener("pointerdown", function (e) {
+    if (!spectrumOptionsOpen
+            || e.target.closest(".spectrum-options, .stage-spectrum")) return;
+    setSpectrumOptions(false);
+});
 
 // Light dismiss: pressing anywhere outside the panel closes it, like a native
 // popover. pointerdown, not click - a slider drag that starts inside the panel and
@@ -1021,7 +1238,7 @@ stage.addEventListener("pointerdown", function (e) {
     setOptionsOverlay(false);
 });
 
-// In fullscreen the chrome (⛶, ⋯, and the cursor) fades out after 2s without pointer
+// In fullscreen the chrome (▶/⏸, ⛶, ⋯, and the cursor) fades out after 2s without pointer
 // movement and comes back on the next move - :hover can't express "idle" when the
 // stage covers the whole screen. pointermove covers mouse, pen and touch alike.
 var idleTimer = null;
@@ -1038,6 +1255,7 @@ document.addEventListener("fullscreenchange", function () {
     stage.classList.remove("idle");
     clearTimeout(idleTimer);
     setOptionsOverlay(false); // entering or leaving: start with the panel in its home
+    setSpectrumOptions(false);
     if (document.fullscreenElement) chromeWake(); // shown briefly on entry, then idles out
     sizeStage(); // the stage rect just changed drastically; don't wait for the observer
 });
@@ -1083,6 +1301,35 @@ bindRadios("station", opts.station, function (v) {
 bindRadios("layout", opts.layout, function (v) { opts.layout = clampInt(v, 0, 1); applyLayout(); });
 bindRadios("transition", opts.transition, function (v) { opts.transition = clampInt(v, 0, 3); });
 bindRadios("cdsize", opts.remainingSize, function (v) { opts.remainingSize = clampInt(v, 0, 2); sizeStage(); });
+bindRadios("spectrum-mode", opts.spectrumMode, function (v) {
+    opts.spectrumMode = v === "legacy" ? "legacy" : "tinted";
+    clearSpectrum();
+});
+
+var spectrumEnabledEl = $("spectrum-enabled");
+var spectrumBarsEl = $("spectrum-bars"), spectrumBarsVal = $("spectrum-bars-val");
+var spectrumModeEls = document.querySelectorAll('input[name="spectrum-mode"]');
+spectrumEnabledEl.checked = !!opts.spectrumEnabled;
+spectrumBarsEl.value = opts.spectrumBars;
+spectrumBarsVal.textContent = opts.spectrumBars;
+function syncSpectrumSettingControls() {
+    spectrumBarsEl.disabled = !opts.spectrumEnabled;
+    spectrumModeEls.forEach(function (input) { input.disabled = !opts.spectrumEnabled; });
+}
+syncSpectrumSettingControls();
+spectrumEnabledEl.addEventListener("change", function () {
+    opts.spectrumEnabled = spectrumEnabledEl.checked ? 1 : 0;
+    syncSpectrumSettingControls();
+    if (opts.spectrumEnabled && audioWanted) prepareSpectrum();
+    syncSpectrum();
+    saveOpts();
+});
+spectrumBarsEl.addEventListener("input", function () {
+    opts.spectrumBars = clampInt(spectrumBarsEl.value, 8, 64);
+    spectrumBarsVal.textContent = opts.spectrumBars;
+    spectrumPeaks = [];
+    saveOpts();
+});
 
 var fadeEl = $("fade"), fadeVal = $("fade-val");
 fadeEl.value = opts.fadeMs;
