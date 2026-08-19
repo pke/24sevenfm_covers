@@ -122,6 +122,218 @@ test.describe("the deployed player page", () => {
         await expect(page.locator(".noscript-player audio")).toHaveCount(5);
         await context.close();
     });
+    test("reveals the canvas audio control and keeps both audio buttons in sync",
+        async ({ page }) => {
+            await page.addInitScript(() => {
+                window.__playCalls = 0;
+                HTMLMediaElement.prototype.play = function () {
+                    window.__playCalls++;
+                    return Promise.resolve();
+                };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await mockProviderTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+            const stage = page.locator("#stage");
+            const stageAudio = page.locator("#stage-audio");
+            const panelAudio = page.locator("#audio-toggle");
+            await expect(stageAudio).toHaveCSS("opacity", "0");
+            await stage.hover();
+            await expect(stageAudio).toHaveCSS("opacity", "1");
+
+            const canvasBackground = await stageAudio
+                .evaluate((button) => getComputedStyle(button).backgroundColor);
+            await stageAudio.click();
+            await expect.poll(() => page.evaluate(() => window.__playCalls)).toBe(1);
+            await expect(stageAudio).toHaveAttribute("aria-pressed", "true");
+            await expect(stageAudio).toHaveCSS("background-color", canvasBackground);
+            await expect(stageAudio).toHaveAttribute("aria-label", "Stop audio");
+            await expect(panelAudio).toHaveAttribute("aria-pressed", "true");
+            await expect(panelAudio).toHaveText("⏸ Stop audio");
+
+            await panelAudio.click();
+            await expect(stageAudio).toHaveAttribute("aria-pressed", "false");
+            await expect(stageAudio).toHaveAttribute("aria-label", "Play audio");
+            await expect(panelAudio).toHaveAttribute("aria-pressed", "false");
+
+            await page.locator("#coverbox").click();
+            await page.keyboard.press("Space");
+            await expect(stageAudio).toHaveAttribute("aria-pressed", "true");
+            await page.keyboard.press("Space");
+            await expect(stageAudio).toHaveAttribute("aria-pressed", "false");
+
+            await page.locator("#fullscreen").click();
+            await expect.poll(() => page.evaluate(() =>
+                document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+            await expect(stageAudio).toHaveCSS("opacity", "1");
+            await expect(stage).toHaveClass(/idle/);
+            await expect(stageAudio).toHaveCSS("opacity", "0");
+            const fullscreenBox = await stage.boundingBox();
+            await page.mouse.move(fullscreenBox.x + fullscreenBox.width / 2,
+                fullscreenBox.y + fullscreenBox.height / 2);
+            await expect(stage).not.toHaveClass(/idle/);
+            await expect(stageAudio).toHaveCSS("opacity", "1");
+            await page.evaluate(() => document.exitFullscreen());
+        });
+    test("defaults the tinted analyzer off and persists analyzer settings", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const bars = page.locator("#spectrum-bars");
+        const enabled = page.locator("#spectrum-enabled");
+        await expect(enabled).not.toBeChecked();
+        await expect(bars).toHaveValue("32");
+        await expect(bars).toHaveAttribute("step", "8");
+        await expect(bars).toBeDisabled();
+        await expect(page.locator("#spectrum-bars-val")).toHaveText("32");
+        await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
+
+        await enabled.check();
+        await expect(bars).toBeEnabled();
+        await bars.evaluate((input) => {
+            input.value = "48";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await page.locator("label.seg", { hasText: "Legacy" }).click();
+        await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(enabled).toBeChecked();
+        await expect(bars).toHaveValue("48");
+        await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
+        await expect(page.locator('input[name="spectrum-mode"][value="legacy"]')).toBeChecked();
+    });
+    test("renders a real spectrum while audio plays and respects reduced motion",
+        async ({ page }) => {
+            await page.addInitScript(() => {
+                window.__analyserReads = 0;
+                class FakeAudioNode { connect() {} }
+                class FakeAnalyser extends FakeAudioNode {
+                    constructor() {
+                        super();
+                        this.frequencyBinCount = 64;
+                    }
+                    getByteFrequencyData(data) {
+                        window.__analyserReads++;
+                        data.fill(176);
+                    }
+                }
+                window.AudioContext = class {
+                    constructor() {
+                        this.destination = {};
+                        this.state = "running";
+                    }
+                    createAnalyser() { return new FakeAnalyser(); }
+                    createMediaElementSource() { return new FakeAudioNode(); }
+                    resume() { return Promise.resolve(); }
+                };
+                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await mockProviderTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+            const audio = page.locator("#audio");
+            const spectrum = page.locator("#stage-spectrum");
+            const spectrumEnabled = page.locator("#spectrum-enabled");
+            await expect(audio).toHaveAttribute("crossorigin", "anonymous");
+            await expect(spectrum).not.toHaveAttribute("tabindex", /.+/);
+            await expect(spectrum).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+            await expect(spectrum).toHaveCSS("border-top-width", "0px");
+            await spectrumEnabled.check();
+            await page.locator("#stage").hover();
+            await page.locator("#stage-audio").click();
+            await audio.dispatchEvent("playing");
+            await expect(spectrum).toHaveClass(/active/);
+            await expect.poll(() => page.evaluate(() => window.__analyserReads))
+                .toBeGreaterThan(0);
+            await expect.poll(() => spectrum.evaluate((canvas) =>
+                canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height)
+                    .data.some(Boolean))).toBe(true);
+            const rendered = await spectrum.evaluate((canvas) => {
+                const pixels = canvas.getContext("2d")
+                    .getImageData(0, canvas.height - 1, canvas.width, 1).data;
+                let runs = 0, inside = false, first = null;
+                for (let x = 0; x < canvas.width; x++) {
+                    const offset = x * 4, filled = pixels[offset + 3] > 0;
+                    if (filled && !inside) {
+                        runs++;
+                        if (!first) first = Array.from(pixels.slice(offset, offset + 3));
+                    }
+                    inside = filled;
+                }
+                return { runs, first };
+            });
+            const infoTint = await page.locator(".info").evaluate((info) =>
+                getComputedStyle(info).color.match(/[\d.]+/g).slice(0, 3).map(Number));
+            expect(rendered.runs).toBe(32);
+            expect(rendered.first).toEqual(infoTint);
+            const expectSpectrumClearOfInfo = async () => {
+                const boxes = await page.evaluate(() => {
+                    const rect = (selector) =>
+                        document.querySelector(selector).getBoundingClientRect().toJSON();
+                    return { stage: rect("#stage"), spectrum: rect("#stage-spectrum"),
+                        cover: rect("#coverbox"), info: rect(".info") };
+                });
+                expect(boxes.spectrum.left).toBeGreaterThanOrEqual(boxes.stage.left);
+                expect(boxes.spectrum.top).toBeGreaterThanOrEqual(boxes.stage.top);
+                expect(boxes.spectrum.right).toBeLessThanOrEqual(boxes.stage.right);
+                expect(boxes.spectrum.bottom).toBeLessThanOrEqual(boxes.stage.bottom);
+                const overlapsInfo = !(boxes.spectrum.right <= boxes.info.left
+                    || boxes.spectrum.left >= boxes.info.right
+                    || boxes.spectrum.bottom <= boxes.info.top
+                    || boxes.spectrum.top >= boxes.info.bottom);
+                expect(overlapsInfo).toBe(false);
+                expect(boxes.spectrum.top).toBeGreaterThanOrEqual(boxes.cover.bottom - 1);
+                expect(boxes.spectrum.bottom).toBeLessThanOrEqual(boxes.info.top + 1);
+                const spectrumCenter = (boxes.spectrum.left + boxes.spectrum.right) * 0.5;
+                const coverCenter = (boxes.cover.left + boxes.cover.right) * 0.5;
+                const infoCenter = (boxes.info.left + boxes.info.right) * 0.5;
+                expect(Math.abs(spectrumCenter - coverCenter)).toBeLessThanOrEqual(1);
+                expect(Math.abs(spectrumCenter - infoCenter)).toBeLessThanOrEqual(1);
+            };
+            await expectSpectrumClearOfInfo();
+            await spectrum.click();
+            const spectrumOptions = page.locator("#spectrum-options");
+            await expect(spectrumOptions).toBeVisible();
+            await expect(page.locator("#spectrum-options > #spectrum-settings")).toHaveCount(1);
+            await expect(page.locator("#fs-options")).toBeHidden();
+            const placement = await page.evaluate(() => {
+                const spectrumBox = document.querySelector("#stage-spectrum").getBoundingClientRect();
+                const optionsBox = document.querySelector("#spectrum-options").getBoundingClientRect();
+                const fieldsetBox = document.querySelector("#spectrum-settings").getBoundingClientRect();
+                const legendBox = document.querySelector("#spectrum-settings legend").getBoundingClientRect();
+                const stageBox = document.querySelector("#stage").getBoundingClientRect();
+                return { gap: optionsBox.left - spectrumBox.right,
+                    inside: optionsBox.right <= stageBox.right + 1,
+                    legendInside: legendBox.top >= fieldsetBox.top
+                        && legendBox.bottom <= fieldsetBox.bottom };
+            });
+            expect(placement.gap).toBeGreaterThanOrEqual(0);
+            expect(placement.gap).toBeLessThanOrEqual(16);
+            expect(placement.inside).toBe(true);
+            expect(placement.legendInside).toBe(true);
+            await page.locator("#fullscreen").click();
+            await expect.poll(() => page.evaluate(() =>
+                document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+            await expectSpectrumClearOfInfo();
+            await spectrum.click();
+            await expect(spectrumOptions).toBeVisible();
+            await expect(page.locator("#spectrum-options > #spectrum-settings")).toHaveCount(1);
+            await expect(page.locator("#fs-options")).toBeHidden();
+            await page.evaluate(() => document.exitFullscreen());
+            await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+            await expect(spectrumOptions).toBeHidden();
+            await expect(page.locator(".controls > #spectrum-settings")).toHaveCount(1);
+
+            await page.emulateMedia({ reducedMotion: "reduce" });
+            await expect(spectrum).not.toHaveClass(/active/);
+            await expect(spectrum).toHaveCSS("display", "none");
+            await page.locator("#audio-toggle").click();
+        });
     test("shows a grayscale station image without treating a backend error as a station ID", async ({ page }) => {
         let logoRequested = false, pollRequests = 0;
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {

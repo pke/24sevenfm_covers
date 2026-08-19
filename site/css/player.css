@@ -8,6 +8,7 @@
    cover's size is a percentage of the stage, and the stage can be the embedded box
    or the whole screen without any per-mode positioning. */
 .stage {
+    --player-tint: #fff;
     position: relative;
     display: flex;
     align-items: center;
@@ -136,7 +137,7 @@
     border-radius: var(--cover-radius, .6rem);
     background: rgba(10, 12, 18, .55);
     backdrop-filter: blur(6px);
-    color: #fff;
+    color: var(--player-tint);
     text-align: center;
 }
 .layout-poster .coverbox {
@@ -162,7 +163,7 @@
     font-size: var(--cd-size, 18px);
     font-variant-numeric: tabular-nums;
     font-weight: 500;
-    color: #fff;
+    color: var(--player-tint);
     opacity: .85;               /* a status row, quieter than the title above it */
     text-shadow: 0 1px 8px rgba(0,0,0,.8);
     display: flex;
@@ -217,10 +218,9 @@
 }
 .stage-status.show { display: block; }
 
-/* --- stage chrome: fullscreen toggle + fullscreen options ------------------------ */
-.stage-fs, .stage-opts {
+/* --- stage chrome: audio, fullscreen toggle + fullscreen options ----------------- */
+.stage-audio, .stage-fs, .stage-opts {
     position: absolute;
-    right: .7rem;
     z-index: 3;
     width: 2.4rem; height: 2.4rem;
     border: 0; border-radius: .6rem;
@@ -231,19 +231,79 @@
     opacity: 0;
     transition: opacity .35s ease;
 }
-.stage-audio { left: .7rem; bottom: .7rem; padding: 0; line-height: 1.0; }
-.stage-fs { top: .7rem; }
-.stage-opts { bottom: .7rem; display: none; } /* fullscreen only - embedded, the panel is right below */
+.stage-audio { left: .7rem; bottom: .7rem; }
+.stage-spectrum {
+    position: absolute;
+    left: .7rem;
+    top: .7rem;
+    z-index: 3;
+    width: clamp(7rem, 22vw, 13rem);
+    height: clamp(1.5rem, 6vh, 2.4rem);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .25s ease, visibility 0s linear .25s;
+}
+.stage-spectrum.active {
+    opacity: .92;
+    visibility: visible;
+    pointer-events: auto;
+    cursor: pointer;
+    transition-delay: 0s;
+}
+.layout-poster .stage-spectrum {
+    left: 50%;
+    top: var(--spectrum-top, 72%);
+    transform: translate(-50%, -50%);
+}
+.spectrum-options {
+    position: absolute;
+    z-index: 4;
+    max-height: calc(100% - 1rem);
+    overflow: auto;
+    transform: translateY(-50%);
+    color: var(--text);
+    text-align: left;
+    user-select: auto;
+}
+.spectrum-options[hidden] { display: none; }
+.spectrum-options fieldset {
+    margin: 0;
+    padding: .9rem 1rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    background: var(--bg);
+    box-shadow: var(--shadow);
+}
+.spectrum-options legend {
+    float: left;
+    width: 100%;
+    margin: 0 0 .75rem;
+    padding: 0;
+    color: var(--text-dim);
+    font-size: .85rem;
+}
+.spectrum-options legend + * { clear: both; }
+.spectrum-options .row + .row { margin-top: .65rem; }
+.spectrum-options input[type="range"] { min-width: 0; max-width: none; }
+.spectrum-options .note { margin-bottom: 0; }
+.stage-fs { top: .7rem; right: .7rem; }
+.stage-opts { right: .7rem; bottom: .7rem; display: none; } /* fullscreen only - embedded, the panel is right below */
 .stage:fullscreen .stage-opts { display: block; }
-.stage:hover .stage-fs, .stage:hover .stage-opts,
-.stage-fs:focus-visible, .stage-opts:focus-visible { opacity: 1; }
-@media (hover: none) { .stage-fs, .stage-opts { opacity: .6; } } /* touch: no hover, keep visible */
+.stage:hover .stage-audio, .stage:hover .stage-fs, .stage:hover .stage-opts,
+.stage-audio:focus-visible, .stage-fs:focus-visible, .stage-opts:focus-visible { opacity: 1; }
+@media (hover: none) { .stage-audio, .stage-fs, .stage-opts { opacity: .6; } } /* touch: no hover, keep visible */
 
 /* In fullscreen the stage IS the screen, so :hover is permanently true and useless as
    an idle signal. JS sets .idle after 2s without pointer movement: the chrome fades
    out (these rules out-specify the :hover ones) and the cursor goes with it - a cursor
    parked on the artwork is the same clutter. Any movement lifts .idle again. */
-.stage:fullscreen.idle .stage-fs, .stage:fullscreen.idle .stage-opts { opacity: 0; }
+.stage:fullscreen.idle .stage-audio,
+.stage:fullscreen.idle .stage-fs,
+.stage:fullscreen.idle .stage-opts { opacity: 0; }
 .stage:fullscreen.idle { cursor: none; }
 
 /* The options overlay: hosts the REAL .controls panel while open in fullscreen. */
@@ -335,6 +395,7 @@ body.row-dragging, body.row-dragging * { cursor: grabbing !important; }
 .row label { font-size: .9rem; }
 input[type="range"] { accent-color: var(--accent); flex: 1; min-width: 120px; max-width: 260px; }
 input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.05rem; }
+#spectrum-bars-val { min-width: 2ch; font-variant-numeric: tabular-nums; }
 
 .btn-player {
     padding: .55rem 1.1rem;
@@ -362,6 +423,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 .fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-    .coverbox img, .coverbox .card, .coverbox, .countdown, .stage-fs, .backdrop { transition: none !important; }
+    .coverbox img, .coverbox .card, .coverbox, .countdown,
+    .stage-audio, .stage-fs, .stage-opts, .stage-spectrum, .backdrop { transition: none !important; }
+    .stage-spectrum { display: none; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }
