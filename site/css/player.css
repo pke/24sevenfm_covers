@@ -231,6 +231,7 @@
     opacity: 0;
     transition: opacity .35s ease;
 }
+.stage-audio { left: .7rem; bottom: .7rem; padding: 0; line-height: 1.0; }
 .stage-fs { top: .7rem; }
 .stage-opts { bottom: .7rem; display: none; } /* fullscreen only - embedded, the panel is right below */
 .stage:fullscreen .stage-opts { display: block; }
