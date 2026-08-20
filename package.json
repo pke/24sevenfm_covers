@@ -1,0 +1,15 @@
+{
+  "name": "24sevenfm-covers-backdrop-resolver",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Vercel serverless backdrop and cover-tint resolver for the 24seven.fm Covers web player",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "test:api": "node --test api/*.test.js"
+  },
+  "dependencies": {
+    "sharp": "0.35.3"
+  }
+}

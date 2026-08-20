@@ -26,6 +26,13 @@ foobar2000/sdk/**/*.dll
 # Local Claude Code settings (holds secrets like API keys - never commit)
 .claude/settings.local.json
 
+# Local Codex/Vercel state and environment secrets
+.codex/
+.vercel/
+.env*
+!.env.example
+node_modules/
+
 # Runtime log written by both plugins
 24seven.fm-covers*.log
 
