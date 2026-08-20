@@ -1960,6 +1960,36 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
     });
 
+    test("normalizes persisted scalar options and an invalid provider order", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({
+                station: "unknown",
+                layout: -7,
+                transition: 99,
+                fadeMs: "not-a-number",
+                remainingSize: 99,
+                spectrumBars: 999,
+                spectrumMode: "unknown",
+                fanartKey: 42,
+                providerOrder: ["unknown", "tmdb"],
+            })));
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator('input[name="station"][value="sst"]')).toBeChecked();
+        await expect(page.locator("#stage")).toHaveClass(/layout-fill/);
+        await expect(page.locator('input[name="transition"][value="3"]')).toBeChecked();
+        await expect(page.locator("#fade")).toHaveValue("500");
+        await expect(page.locator("#fade-val")).toHaveText("0.5 s");
+        await expect(page.locator('input[name="cdsize"][value="2"]')).toBeChecked();
+        await expect(page.locator("#spectrum-bars")).toHaveValue("64");
+        await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
+        await expect(page.locator("#fanart-key")).toHaveValue("");
+        expect(await page.locator("#providers > .provider")
+            .evaluateAll((rows) => rows.map((row) => row.dataset.provider)))
+            .toEqual(["fanart", "tmdb", "steamgriddb"]);
+    });
+
     test("keeps string zero boolean options disabled", async ({ page }) => {
         let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
