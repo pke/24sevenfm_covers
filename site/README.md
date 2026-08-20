@@ -13,7 +13,8 @@ substitution and build-time partial expansion.
 ├─ _partials/      shared HTML inserted by render_site.ps1
 ├─ css/style.css   mobile-first; dark by default, light via OS preference
 ├─ css/player.css  player-page styles (stage, layouts, transitions, controls)
-├─ js/player.js    the player engine — the ONE page that needs JavaScript
+├─ js/theme.js     shared optional persistence for the CSS-first theme toggle
+├─ js/player.js    the web-player engine
 ├─ img/            logo/favicon/social artwork + screenshots
 ├─ tests/          Playwright canary for the DEPLOYED player (daily + after each
 │                  deploy via .github/workflows/player-canary.yml; not shipped)
