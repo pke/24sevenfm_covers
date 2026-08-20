@@ -4,12 +4,13 @@ Source of the project website. This folder is **not** what gets served — the
 release workflow (and `installer\build_artifacts.ps1` locally) renders it into
 `www\` (git-ignored), which is the GitHub Pages root. The page is plain static
 HTML: no JS-driven content, no framework, no build system beyond token
-substitution.
+substitution and build-time partial expansion.
 
 ```
 ├─ index.html      landing page with {{TOKEN}} placeholders (see below)
 ├─ player.html     web player: live covers + optional audio, all in the browser
 ├─ privacy.html    privacy policy (linked from every footer)
+├─ _partials/      shared HTML inserted by render_site.ps1
 ├─ css/style.css   mobile-first; dark by default, light via OS preference
 ├─ css/player.css  player-page styles (stage, layouts, transitions, controls)
 ├─ js/player.js    the player engine — the ONE page that needs JavaScript
@@ -22,6 +23,14 @@ substitution.
 
 Every `*.html` in this folder is rendered to `www\` — adding a page needs no build
 change.
+
+## Partials
+
+Shared markup lives in `_partials\*.html` and is included at render time with
+`{{> name}}`; for example, `{{> theme-toggle}}` reads
+`_partials\theme-toggle.html`. Subdirectories and recursive includes are supported.
+Missing partials, malformed directives, and include cycles fail the render. Partials
+may contain the release tokens documented below and are never published separately.
 
 ## Tokens
 

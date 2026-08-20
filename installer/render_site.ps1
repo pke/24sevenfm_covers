@@ -30,6 +30,7 @@ $here    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root    = Split-Path -Parent $here
 $siteSrc = Join-Path $root 'site'
 $www     = Join-Path $root 'www'
+$partials = Join-Path $siteSrc '_partials'
 
 # --- classify the assets ----------------------------------------------------------------
 # Artifact naming is <module>_24sevenfm_covers-<version>-<builddate>.<ext> (see
@@ -122,6 +123,50 @@ foreach ($dir in @('css', 'img', 'js')) {
 
 $utf8  = New-Object System.Text.UTF8Encoding($false)   # 5.1's default would mangle the emoji
 $stamp = if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }
+
+# Expand build-time HTML partials before replacing release tokens. Includes use
+# {{> name}} and resolve to site\_partials\name.html. Names deliberately allow only
+# simple path segments: partials cannot escape their directory, and a typo fails the
+# render instead of publishing an empty header/footer. Expansion is recursive so a
+# larger shared fragment can be assembled from smaller ones; cycles fail explicitly.
+$partialPattern = '\{\{>\s*([A-Za-z0-9][A-Za-z0-9_-]*(?:/[A-Za-z0-9][A-Za-z0-9_-]*)*)\s*\}\}'
+function Expand-Partials(
+    [string]$Text,
+    [string]$Source,
+    [string[]]$Stack = @()
+) {
+    while ($true) {
+        $match = [regex]::Match($Text, $partialPattern)
+        if (-not $match.Success) { break }
+
+        $name = $match.Groups[1].Value
+        if ($Stack -contains $name) {
+            $chain = @($Stack + $name) -join ' -> '
+            throw "render_site: circular partial include in ${Source}: $chain"
+        }
+
+        $relativePath = ($name -replace '/', [IO.Path]::DirectorySeparatorChar) + '.html'
+        $partialPath = Join-Path $partials $relativePath
+        if (-not (Test-Path -LiteralPath $partialPath -PathType Leaf)) {
+            throw "render_site: partial '$name' included by '$Source' does not exist at '$partialPath'."
+        }
+
+        # The including template owns the line break after its directive. Removing
+        # only trailing newlines avoids adding a blank line on every expansion while
+        # preserving all meaningful whitespace inside the fragment.
+        $partialText = [System.IO.File]::ReadAllText($partialPath, $utf8).TrimEnd("`r", "`n")
+        $expanded = Expand-Partials $partialText $name @($Stack + $name)
+        $Text = $Text.Substring(0, $match.Index) + $expanded +
+                $Text.Substring($match.Index + $match.Length)
+    }
+
+    # A malformed directive should not slip past the normal uppercase-token check.
+    if ($Text -match '\{\{>') {
+        throw "render_site: invalid partial include syntax in '$Source'. Expected {{> name}}."
+    }
+    return $Text
+}
+
 # Every .html in site\ is a page (index, privacy, ...) - adding one needs no change here.
 # robots.txt/sitemap.xml are named explicitly rather than copying whatever else lives in
 # site\, which would publish README.md and shoot.ps1 too. They carry {{SITE_URL}}, so they
@@ -130,6 +175,7 @@ $publish = Get-ChildItem $siteSrc -File |
            Where-Object { $_.Extension -eq '.html' -or $_.Name -in @('robots.txt', 'sitemap.xml', 'humans.txt') }
 foreach ($page in $publish) {
     $text = [System.IO.File]::ReadAllText($page.FullName, $utf8)
+    $text = Expand-Partials $text $page.Name
     foreach ($t in $tokens.Keys) { $text = $text.Replace($t, [string]$tokens[$t]) }
     if ($text -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\$($page.Name): $($Matches[0])" }
     [System.IO.File]::WriteAllText((Join-Path $www $page.Name), $text, $utf8)
