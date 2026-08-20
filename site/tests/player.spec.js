@@ -164,6 +164,75 @@ test.describe("the deployed player page", () => {
         await expect(page.locator(".noscript-player audio")).toHaveCount(5);
         await context.close();
     });
+    test("loads the audio spectrum module only when audio is first requested",
+        async ({ page }) => {
+            const moduleRequests = [];
+            page.on("request", (request) => {
+                if (new URL(request.url()).pathname.endsWith("/js/audio-spectrum.js"))
+                    moduleRequests.push(request.url());
+            });
+            await page.addInitScript(() => {
+                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await mockProviderTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+            expect(moduleRequests).toEqual([]);
+            await page.locator("#spectrum-enabled").check();
+            expect(moduleRequests).toEqual([]);
+
+            const loaded = page.waitForResponse((response) =>
+                new URL(response.url()).pathname.endsWith("/js/audio-spectrum.js")
+                && response.ok());
+            await page.locator("#audio-toggle").click();
+            await loaded;
+            await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
+            expect(moduleRequests).toHaveLength(1);
+            const playerScript = await page.locator('script[src^="js/player.js?v="]')
+                .getAttribute("src");
+            expect(new URL(moduleRequests[0]).searchParams.get("v"))
+                .toBe(new URL(playerScript, page.url()).searchParams.get("v"));
+
+            await page.locator("#audio-toggle").click();
+            await page.locator("#audio-toggle").click();
+            await page.waitForTimeout(100);
+            expect(moduleRequests).toHaveLength(1);
+        });
+    test("recovers when the lazy audio spectrum module initially fails to load",
+        async ({ page }) => {
+            const moduleUrls = [];
+            const pageErrors = [];
+            page.on("pageerror", (error) => pageErrors.push(String(error)));
+            await page.route("**/js/audio-spectrum.js*", (route) => {
+                moduleUrls.push(route.request().url());
+                if (moduleUrls.length === 1) return route.abort("failed");
+                return route.fulfill({ contentType: "text/javascript",
+                    body: "export function createAudioSpectrumController() { return null; }" });
+            });
+            await page.addInitScript(() => {
+                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await mockProviderTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+            await page.locator("#audio-toggle").click();
+            await expect(page.locator("#status"))
+                .toHaveText("Audio controls failed to load – try again.");
+            await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "false");
+            expect(moduleUrls).toHaveLength(1);
+
+            await page.locator("#audio-toggle").click();
+            await expect.poll(() => moduleUrls.length).toBe(2);
+            await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
+            await expect(page.locator("#status")).toHaveText("");
+            expect(new URL(moduleUrls[0]).searchParams.get("retry")).toBe(null);
+            expect(new URL(moduleUrls[1]).searchParams.get("retry")).toBe("1");
+            expect(pageErrors).toEqual([]);
+        });
     test("reveals the canvas audio control and keeps both audio buttons in sync",
         async ({ page }) => {
             await page.addInitScript(() => {
