@@ -13,6 +13,7 @@
         https://image.tmdb.org https://fanart.tv https://*.fanart.tv
         https://cdn2.steamgriddb.com;
       connect-src 'self'
+        https://24covers-api.vercel.app
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
         https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm;
@@ -32,9 +33,9 @@
 </script>
 <title>Player — 24seven.fm Covers</title>
 <meta name="description" content="Listen to the 24seven.fm radio stations and watch the cover art change with every track — right in your browser, nothing to install.">
-<!-- Keep these relative when the static site and Vercel functions share a domain. -->
-<meta name="backdrop-api" content="/api/backdrop">
-<meta name="tint-api" content="/api/tint">
+<!-- GitHub Pages hosts the player; the API is a separate Vercel project. -->
+<meta name="backdrop-api" content="https://24covers-api.vercel.app/api/backdrop">
+<meta name="tint-api" content="https://24covers-api.vercel.app/api/tint">
 <link rel="icon" href="img/favicon.ico">
 <link rel="author" href="humans.txt">
 <link rel="canonical" href="{{SITE_URL}}player.html">
