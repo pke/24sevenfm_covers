@@ -2143,6 +2143,31 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#status")).toHaveText("");
         await page.locator("#audio-toggle").click();
     });
+    test("keeps artwork-provider controls aligned with their public contract", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const providers = await page.locator("#providers > .provider").evaluateAll((rows) =>
+            rows.map((row) => {
+                const box = row.querySelector('input[type="checkbox"]');
+                return {
+                    id: row.dataset.provider,
+                    label: row.querySelector("label").textContent.trim(),
+                    controlId: box.id,
+                    enabled: box.checked,
+                    reorderLabel: row.querySelector(".grip").getAttribute("aria-label"),
+                };
+            }));
+        expect(providers).toEqual([
+            { id: "fanart", label: "fanart.tv", controlId: "fanart-on", enabled: true,
+                reorderLabel: expect.stringMatching(/^Reorder fanart\.tv, position 1 of 3\./) },
+            { id: "tmdb", label: "TMDB backdrops", controlId: "tmdbart-on", enabled: true,
+                reorderLabel: expect.stringMatching(/^Reorder TMDB, position 2 of 3\./) },
+            { id: "steamgriddb", label: "GameArt by SteamGridDB",
+                controlId: "steamgriddb-on", enabled: true,
+                reorderLabel: expect.stringMatching(/^Reorder GameArt by SteamGridDB, position 3 of 3\./) },
+        ]);
+    });
     test("reorders and persists backdrop providers with the keyboard", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
