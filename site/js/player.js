@@ -369,8 +369,10 @@ async function poll() {
         // The feed's original CoverLink is already a 200 px thumbnail. Keep the
         // /500/ variant for display, but send only the smaller original to /api/tint.
         updateCoverTint(isStationId ? "" : tintCover);
-        if (album !== currentAlbum || isStationId !== stationIdActive) {
-            currentAlbum = album; stationIdActive = isStationId;
+        if (album !== currentAlbum || track !== currentTrack
+                || isStationId !== stationIdActive) {
+            currentAlbum = album; currentTrack = track;
+            stationIdActive = isStationId;
             updateBackdrop();
         }
         let title = displayAlbum;
@@ -448,7 +450,7 @@ async function prefetchNext(ctl, generation) {
         // station().backdrop currently always means the screen-media resolver; if other
         // resolver kinds ever appear, prefetching becomes their concern.
         if (opts.tmdbBackdrops && station().backdrop) {
-            const art = await movieArtFor(htmlDecode(next.Album), generation,
+            const art = await movieArtFor(htmlDecode(next.Album), htmlDecode(next.Track), generation,
                                           prefetchCtl.signal);
             if (art && art.url && renderIsCurrent("backdrop", generation))
                 new Image().src = art.url;
@@ -521,8 +523,8 @@ function showCover(url) {
 
 // --- experimental: movie/TV/game backdrops ------------------------------------
 // Poster mode only: the media work's real backdrop, sharp and dimmed, replaces the
-// blurred cover behind the artwork. The album title usually resembles the movie, TV or
-// game title on a soundtrack station (after stripping release noise), so a catalog can match it. A
+// blurred cover behind the artwork. The normalized soundtrack title usually resembles the movie,
+// TV or game title, so a catalog can match it. A
 // per-title cache (negative results too) keeps it to one request per work, and every
 // failure path falls back silently to the blurred cover - experimental means the
 // player must never be worse off for having it enabled.
@@ -548,39 +550,7 @@ function updateCoverVisibility() {
     stage.classList.toggle("no-cover",
         !!(coverHiddenForStationSwitch || (opts.hideCover && movieShown)));
 }
-var currentAlbum = "", stationIdActive = false;
-
-function cleanMovieTitle(album) {
-    var cleaned = (album || "")
-        .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
-        .replace(/\b(original motion picture soundtrack|music from the motion picture|original motion picture score|motion picture soundtrack|original soundtracks?|original scores?|the original scores?|soundtrack|ost)\b/gi, " ")
-        .replace(/\s*[:\-–]\s*(?:the\s+)?symphonic\s+suite\s*$/i, " ")
-        .replace(/[:\-–]\s*$/, "")
-        .replace(/\s{2,}/g, " ").trim();
-    // The feed stores rotated articles - "Mummy Returns, The", "Bourne Identity,
-    // The", and "Good, The Bad & The Ugly, The" (seen live). Un-rotate them for
-    // TMDB, then spell out '&' to match canonical titles such as "The Good, the Bad
-    // and the Ugly". A TMDB miss also prevents fanart.tv receiving a media ID.
-    cleaned = unrotateTitleArticle(cleaned)
-        .replace(/\s*&\s*/g, " and ")
-        .replace(/\s{2,}/g, " ").trim();
-    // This compilation album's marketing title is not the canonical TV title.
-    // Keep the exception exact: "The Magic of" also starts legitimate film names.
-    if (/^the magic of inspector morse$/i.test(cleaned)) return "Inspector Morse";
-    return cleaned;
-}
-
-function mediaHintForAlbum(album) {
-    var title = album || "";
-    if (/\b(?:original\s+)?video\s+game\s+(?:soundtrack|score)\b/i.test(title)
-            || /\b(?:soundtrack|music|score)\s+(?:from|to)\s+the\s+(?:video\s+)?game\b/i.test(title)
-            || /\boriginal\s+game\s+(?:soundtrack|score)\b/i.test(title)) return "game";
-    if (/\b(?:television|tv\s+(?:series|show))\s+(?:soundtrack|score)\b/i.test(title)
-            || /\b(?:soundtrack|music|score)\s+from\s+the\s+(?:television|tv\s+(?:series|show))\b/i.test(title)) return "tv";
-    if (/\b(?:motion\s+picture|film)\s+(?:soundtrack|score)\b/i.test(title)
-            || /\b(?:soundtrack|music|score)\s+from\s+the\s+(?:motion\s+picture|film)\b/i.test(title)) return "movie";
-    return "auto";
-}
+var currentAlbum = "", currentTrack = "", stationIdActive = false;
 
 // Provider controls are sent to the resolver in priority order. `enabled` (get/set)
 // is the user's checkbox state over its backing option; no provider metadata API is
@@ -708,14 +678,14 @@ function updateCoverTint(nextUrl) {
     });
 }
 
-async function serverMovieArt(query, providers, mediaHint, signal) {
+async function serverMovieArt(album, track, providers, signal) {
     if (!BACKDROP_API_URL) throw SERVER_ART_UNAVAILABLE;
     var url;
     try {
         url = new URL(BACKDROP_API_URL, location.href);
-        url.searchParams.set("title", query);
+        url.searchParams.set("album", album);
+        if (track) url.searchParams.set("track", track);
         url.searchParams.set("providers", providers.join(","));
-        if (mediaHint && mediaHint !== "auto") url.searchParams.set("media_hint", mediaHint);
         if (opts.fanartKey && providers.indexOf("fanart") >= 0)
             url.searchParams.set("client_key", opts.fanartKey);
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
@@ -791,16 +761,14 @@ function updateBackdrop() {
 
 // Resolve only through the project endpoint. The per-title cache stores misses too;
 // endpoint failures stay uncached so a later poll or option change can retry.
-async function movieArtFor(album, generation, signal) {
-    const q = cleanMovieTitle(album);
-    const mediaHint = mediaHintForAlbum(album);
+async function movieArtFor(album, track, generation, signal) {
     const providers = enabledMovieProviders();
-    if (!renderIsCurrent("backdrop", generation) || !q || !providers.length) return null;
+    if (!renderIsCurrent("backdrop", generation) || !album || !providers.length) return null;
     const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
-    const cacheKey = mediaHint + "\n" + q;
+    const cacheKey = album + "\n" + track;
     if (Object.prototype.hasOwnProperty.call(cache, cacheKey)) return cache[cacheKey];
 
-    const art = await serverMovieArt(q, providers, mediaHint, signal);
+    const art = await serverMovieArt(album, track, providers, signal);
     if (!renderIsCurrent("backdrop", generation)) return null;
     cache[cacheKey] = art;
     return art;
@@ -809,7 +777,7 @@ async function movieArtFor(album, generation, signal) {
 async function resolveMovieBackdrop(generation, signal) {
     if (!renderIsCurrent("backdrop", generation)) return;
     try {
-        const art = await movieArtFor(currentAlbum, generation, signal);
+        const art = await movieArtFor(currentAlbum, currentTrack, generation, signal);
         if (!renderIsCurrent("backdrop", generation)) return;
         setMovieBackdrop(art, generation);
     } catch (e) {
@@ -1436,8 +1404,9 @@ bindRadios("station", opts.station, function (v) {
     setMovieBackdrop(null, backdropGeneration);
     shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
     resetCoverRetry("");
-    currentAlbum = ""; // the resolver is per-station now - always re-evaluate after a
-                       // switch, even if the new station plays an identically named album
+    // The resolver is per-station now - always re-evaluate after a switch, even if
+    // the new station plays an identically named album.
+    currentAlbum = ""; currentTrack = "";
     setInfo("Loading…", "");
     setStatus("");
     if (audioBtn.getAttribute("aria-pressed") === "true") setAudio(true); // retune the stream

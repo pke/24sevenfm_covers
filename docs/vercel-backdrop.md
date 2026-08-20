@@ -41,9 +41,11 @@ redeploy. Do not add the key to `site/js/player.js`, HTML, or a committed file.
 ## Media-type classification
 
 The station's now-playing JSON contains separate `Album` and `Track` strings but no
-movie/TV/game type. The player therefore sends only the normalized album title plus
-a narrow `game`, `movie`, or `tv` hint when the original album explicitly names that
-kind of soundtrack. Otherwise TMDB's matched result supplies `movie` versus `tv`, and
+movie/TV/game type. The player sends both raw fields to this resolver, which owns
+title normalization and infers a narrow `game`, `movie`, or `tv` hint when `Album`
+explicitly names that kind of soundtrack. For the known multi-film compilation
+`The Wings Of A Film`, the resolver uses the movie-name prefix before the first colon
+in `Track`. Otherwise TMDB's matched result supplies `movie` versus `tv`, and
 SteamGridDB supplies `game`.
 
 For an unmarked title, the resolver tries the enabled catalog category that appears

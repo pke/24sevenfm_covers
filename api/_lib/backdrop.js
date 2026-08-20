@@ -45,8 +45,21 @@ function cleanMovieTitle(album) {
     return cleaned;
 }
 
+function backdropTitleFor(album, track) {
+    const normalizedAlbum = cleanMovieTitle(album);
+    if (/^the wings of a film$/i.test(normalizedAlbum)) {
+        const separator = String(track || "").indexOf(":");
+        if (separator > 0) {
+            const workTitle = cleanMovieTitle(String(track).slice(0, separator));
+            if (workTitle) return workTitle;
+        }
+    }
+    return normalizedAlbum;
+}
+
 function mediaHintForAlbum(album) {
     const title = String(album || "");
+    if (/^the wings of a film$/i.test(cleanMovieTitle(title))) return "movie";
     if (/\b(?:original\s+)?video\s+game\s+(?:soundtrack|score)\b/i.test(title)
             || /\b(?:soundtrack|music|score)\s+(?:from|to)\s+the\s+(?:video\s+)?game\b/i.test(title)
             || /\boriginal\s+game\s+(?:soundtrack|score)\b/i.test(title)) return "game";
@@ -720,12 +733,19 @@ function createHandler(options = {}) {
         }
 
         try {
-            const titleValue = queryValue(req.query && req.query.title);
+            const albumValue = queryValue(req.query && req.query.album);
+            const trackValue = queryValue(req.query && req.query.track);
+            const titleValue = typeof albumValue === "string"
+                ? albumValue : queryValue(req.query && req.query.title);
             if (typeof titleValue !== "string" || !titleValue.trim() || titleValue.length > 180
                     || /[\u0000-\u001F\u007F]/.test(titleValue)) {
                 throw new ResolverError("invalid_title", 400, "title is required and must be at most 180 characters");
             }
-            const title = cleanMovieTitle(titleValue);
+            if (trackValue !== undefined && (typeof trackValue !== "string" || trackValue.length > 300
+                    || /[\u0000-\u001F\u007F]/.test(trackValue))) {
+                throw new ResolverError("invalid_title", 400, "track must be at most 300 characters");
+            }
+            const title = backdropTitleFor(titleValue, trackValue);
             if (!title || title.length > 160) {
                 throw new ResolverError("invalid_title", 400, "cleaned title is empty or too long");
             }
@@ -805,6 +825,7 @@ const tintHandler = createTintHandler();
 module.exports = {
     CACHE_SECONDS,
     WHITE_TINT,
+    backdropTitleFor,
     cleanMovieTitle,
     coverTintForUrl,
     createHandler,
