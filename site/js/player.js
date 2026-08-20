@@ -496,6 +496,11 @@ function showCover(url) {
         // property change under an active transition, not on one applied after it.
         void coverBox.offsetWidth;
         coverBox.dataset.front = (back === imgA) ? "a" : "b";
+        // A station switch can begin while SST's cover is hidden behind a media
+        // backdrop. Keep that old cover suppressed until this destination image has
+        // replaced it, then let the coverbox fade back in with the new station's art.
+        coverHiddenForStationSwitch = false;
+        updateCoverVisibility();
     }, function () {
         if (!renderIsCurrent("cover", generation)) return;
         loadingCoverUrl = "";
@@ -523,6 +528,7 @@ function showCover(url) {
 // player must never be worse off for having it enabled.
 var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a screen backdrop is currently visible (drives hide-cover)
+var coverHiddenForStationSwitch = false;
 function newMovieCache() { return Object.create(null); }
 var tmdbCache = newMovieCache(); // cleaned title -> {url,tint} or null (searched, no match)
 var backdropRequest = null;
@@ -539,7 +545,8 @@ function cancelBackdropRequest() {
 // the backdrop be the star. Only ever active when there IS a backdrop - no match, no
 // key, or feature off always brings the cover back.
 function updateCoverVisibility() {
-    stage.classList.toggle("no-cover", !!(opts.hideCover && movieShown));
+    stage.classList.toggle("no-cover",
+        !!(coverHiddenForStationSwitch || (opts.hideCover && movieShown)));
 }
 var currentAlbum = "", stationIdActive = false;
 
@@ -1417,6 +1424,10 @@ function bindRadios(name, current, apply) {
     });
 })();
 bindRadios("station", opts.station, function (v) {
+    // If a media backdrop currently owns the stage, clearing it below must not expose
+    // SST's still-buffered cover. showCover() releases this hold only after the new
+    // station cover (or logo) has loaded and become the front buffer.
+    coverHiddenForStationSwitch = stage.classList.contains("no-cover");
     opts.station = v;
     nextRenderGeneration("cover"); // invalidate image loads before the new poll returns
     updateCoverTint("");
