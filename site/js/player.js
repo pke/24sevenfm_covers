@@ -97,14 +97,20 @@ function orderedIdsOption(known) {
         return order;
     };
 }
+function enabledIdsOption(known) {
+    return value => {
+        if (!Array.isArray(value)) return known.slice();
+        return known.filter(id => value.indexOf(id) >= 0);
+    };
+}
 
 var ART_PROVIDER_DEFS = [
-    { id: "fanart", name: "fanart.tv", option: "fanartBackdrops" },
-    { id: "tmdb", name: "TMDB", option: "tmdbArt" },
-    { id: "steamgriddb", name: "GameArt by SteamGridDB", option: "steamGridDbArt" }
+    { id: "fanart", name: "fanart.tv" },
+    { id: "tmdb", name: "TMDB" },
+    { id: "steamgriddb", name: "GameArt by SteamGridDB" }
 ];
-var PROVIDER_ORDER = ART_PROVIDER_DEFS.map(function (provider) { return provider.id; });
-var ART_PROVIDER_BY_ID = ART_PROVIDER_DEFS.reduce(function (providers, provider) {
+var PROVIDER_ORDER = ART_PROVIDER_DEFS.map(({ id }) => id);
+var ART_PROVIDER_BY_ID = ART_PROVIDER_DEFS.reduce((providers, provider) => {
     providers[provider.id] = provider;
     return providers;
 }, Object.create(null));
@@ -134,15 +140,13 @@ var OPTION_DEFS = {
     // Experimental film/TV/game backdrops stay OFF by default because enabling them sends
     // current/next soundtrack titles through the project resolver. fanart's optional
     // personal client key can unlock fresher art through that same resolver.
-    // providerOrder is the art priority (first enabled provider with art wins);
-    // tmdbArt is TMDB's own checkbox in that list, like fanartBackdrops is fanart's.
+    // providerOrder is the art priority (first enabled provider with art wins), while
+    // enabledProviders contains the IDs whose checkbox is active.
     tmdbBackdrops: { default: 0, coerce: boolOption, effect: updateBackdrop },
     fanartKey: { default: "", coerce: function (value) {
         return (typeof value === "string") ? value.trim() : "";
     } },
-    fanartBackdrops: { default: 1, coerce: boolOption },
-    tmdbArt: { default: 1, coerce: boolOption },
-    steamGridDbArt: { default: 1, coerce: boolOption },
+    enabledProviders: { default: PROVIDER_ORDER, coerce: enabledIdsOption(PROVIDER_ORDER) },
     providerOrder: { default: PROVIDER_ORDER, coerce: orderedIdsOption(PROVIDER_ORDER) },
     // Hide the cover when backdrop is available
     hideCover: { default: 0, coerce: boolOption, effect: updateCoverVisibility }
@@ -167,6 +171,7 @@ function loadOpts() {
     }
     try {
         var saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+        if (!saved || typeof saved !== "object" || saved instanceof Array) saved = {};
         for (var s in saved) if (s in o) o[s] = saved[s];
     } catch (e) { /* corrupt storage -> defaults */ }
     // Coercion is defined beside each default, so storage migration and first-load
@@ -578,10 +583,8 @@ var currentAlbum = "", currentTrack = "", stationIdActive = false;
 var SERVER_ART_UNAVAILABLE = {};
 
 function enabledMovieProviders() {
-    return opts.providerOrder.filter(function (id) {
-        var provider = ART_PROVIDER_BY_ID[id];
-        return provider && !!opts[provider.option];
-    });
+    return opts.providerOrder.filter(id =>
+        ART_PROVIDER_BY_ID[id] && opts.enabledProviders.indexOf(id) >= 0);
 }
 
 function trustedResolvedBackdrop(raw, source) {
@@ -1601,9 +1604,12 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
     var provider = ART_PROVIDER_BY_ID[li.dataset.provider];
     if (!provider) throw new Error("Unknown artwork provider control: " + li.dataset.provider);
     var box = li.querySelector('input[type="checkbox"]');
-    box.checked = !!opts[provider.option];
+    box.checked = opts.enabledProviders.indexOf(provider.id) >= 0;
     box.addEventListener("change", function () {
-        opts[provider.option] = box.checked ? 1 : 0;
+        opts.enabledProviders = PROVIDER_ORDER.filter(id => {
+            return id === provider.id
+                ? box.checked : opts.enabledProviders.indexOf(id) >= 0;
+        });
         tmdbCache = newMovieCache(); // every cached URL may be the other source's now
         saveOpts();
         updateBackdrop();

@@ -864,8 +864,7 @@ test.describe("the deployed player page", () => {
         let deathImageRoute = null;
 
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 0,
-                tmdbArt: 1, steamGridDbArt: 0, hideCover: 1 })));
+            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"], hideCover: 1 })));
         await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/soap\/FM24sevenJSON\.php\?/, (route) => {
             const url = new URL(route.request().url());
             if (url.searchParams.get("action") === "GetQueue") return route.fulfill({ json: [] });
@@ -915,7 +914,8 @@ test.describe("the deployed player page", () => {
         await page.addInitScript(() => {
             localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
                 tmdbBackdrops: 1,
-                fanartBackdrops: 1, fanartKey: "fanart-race-key", tmdbArt: 1,
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+                fanartKey: "fanart-race-key",
             }));
             window.__resolverStarted = false;
             window.__resolverAborted = false;
@@ -1043,7 +1043,7 @@ test.describe("the deployed player page", () => {
         let resolvedAlbum = "", resolvedTrack = "", resolvedProviders = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                fanartBackdrops: 1, tmdbArt: 1 })));
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1095,8 +1095,8 @@ test.describe("the deployed player page", () => {
         const backdrop = "https://cdn2.steamgriddb.com/hero/hades.jpg";
         let album = "", track = "", providers = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 1,
-                tmdbArt: 1, steamGridDbArt: 1 })));
+            JSON.stringify({ tmdbBackdrops: 1,
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1137,7 +1137,8 @@ test.describe("the deployed player page", () => {
         let resolverQuery = "", personalKey = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                fanartBackdrops: 1, fanartKey: "fanart-history-key", tmdbArt: 1 })));
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+                fanartKey: "fanart-history-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1179,7 +1180,8 @@ test.describe("the deployed player page", () => {
         const backdrop = "https://image.tmdb.org/t/p/w1280/princess-mononoke.jpg";
         let resolverQuery = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 0, tmdbArt: 1 })));
+            JSON.stringify({ tmdbBackdrops: 1,
+                enabledProviders: ["tmdb", "steamgriddb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1217,7 +1219,8 @@ test.describe("the deployed player page", () => {
         const backdrop = "https://image.tmdb.org/t/p/w1280/thomas-crown.jpg";
         let resolverQuery = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 0, tmdbArt: 1 })));
+            JSON.stringify({ tmdbBackdrops: 1,
+                enabledProviders: ["tmdb", "steamgriddb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1257,7 +1260,8 @@ test.describe("the deployed player page", () => {
         const backdrop = "https://image.tmdb.org/t/p/w1280/inspector-morse.jpg";
         let resolverQuery = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 1, tmdbArt: 1 })));
+            JSON.stringify({ tmdbBackdrops: 1,
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1295,7 +1299,8 @@ test.describe("the deployed player page", () => {
         const backdrop = "https://image.tmdb.org/t/p/w1280/thin-red-line.jpg";
         let resolverAlbum = "", resolverTrack = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 1, tmdbArt: 1 })));
+            JSON.stringify({ tmdbBackdrops: 1,
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1336,7 +1341,7 @@ test.describe("the deployed player page", () => {
         let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                fanartBackdrops: 0, tmdbArt: 1 })));
+                enabledProviders: ["tmdb", "steamgriddb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1450,7 +1455,7 @@ test.describe("the deployed player page", () => {
         let resolverRequests = 0, failedImages = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                fanartBackdrops: 0, tmdbArt: 1, hideCover: 1 })));
+                enabledProviders: ["tmdb", "steamgriddb"], hideCover: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1505,7 +1510,7 @@ test.describe("the deployed player page", () => {
             let resolverRequests = 0;
             await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
                 JSON.stringify({ tmdbBackdrops: 1,
-                    fanartBackdrops: 0, tmdbArt: 1 })));
+                    enabledProviders: ["tmdb", "steamgriddb"] })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
                 if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1550,7 +1555,8 @@ test.describe("the deployed player page", () => {
         let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                fanartBackdrops: 1, fanartKey: "bad-fanart-key", tmdbArt: 1 })));
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+                fanartKey: "bad-fanart-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [{
@@ -1581,7 +1587,7 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-fallback.svg";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                fanartBackdrops: 1, fanartKey: "fanart-key", tmdbArt: 0 })));
+                enabledProviders: ["fanart", "steamgriddb"], fanartKey: "fanart-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1616,7 +1622,8 @@ test.describe("the deployed player page", () => {
         let resolverRequests = 0, lastPersonalKey = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                fanartBackdrops: 1, fanartKey: "fanart-key", tmdbArt: 1 })));
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+                fanartKey: "fanart-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1701,7 +1708,8 @@ test.describe("the deployed player page", () => {
         await page.addInitScript(() => {
             localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
                 tmdbBackdrops: 1,
-                fanartBackdrops: 1, fanartKey: "fanart-timeout-key", tmdbArt: 1,
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+                fanartKey: "fanart-timeout-key",
             }));
             window.__resolverStarted = false;
             window.__resolverAborted = false;
@@ -2167,6 +2175,21 @@ test.describe("the deployed player page", () => {
                 controlId: "steamgriddb-on", enabled: true,
                 reorderLabel: expect.stringMatching(/^Reorder GameArt by SteamGridDB, position 3 of 3\./) },
         ]);
+    });
+    test("persists provider enablement as an ID list", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ enabledProviders: ["tmdb"] })));
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#fanart-on")).not.toBeChecked();
+        await expect(page.locator("#tmdbart-on")).toBeChecked();
+        await expect(page.locator("#steamgriddb-on")).not.toBeChecked();
+        await page.locator("#fanart-on").check();
+
+        const saved = await page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")));
+        expect(saved.enabledProviders).toEqual(["fanart", "tmdb"]);
     });
     test("reorders and persists backdrop providers with the keyboard", async ({ page }) => {
         await mockProviderTestFeed(page);
