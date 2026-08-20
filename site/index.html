@@ -40,32 +40,7 @@
 </head>
 <body>
 
-<!-- No-JS theme toggle: the ◐ label flips this checkbox; CSS flips the palette.
-     The script below is optional sugar - it only persists the choice. -->
-<input type="checkbox" id="themeswitch" class="visually-hidden" role="switch"
-       aria-label="Switch between dark and light theme">
-<script>
-// Progressive enhancement: remember the resolved theme across visits. The checkbox
-// flips relative to the OS scheme, so restore checked = saved XOR os-preference.
-(function () {
-    var box = document.getElementById("themeswitch");
-    var scheme = matchMedia("(prefers-color-scheme: dark)");
-    var saved = "";
-    try { saved = localStorage.getItem("theme"); } catch (e) { /* unavailable: keep OS preference */ }
-    function syncTheme() {
-        if (saved === "dark" || saved === "light")
-            box.checked = (saved === "dark") !== scheme.matches;
-    }
-    syncTheme();
-    box.addEventListener("change", function () {
-        saved = (scheme.matches !== box.checked) ? "dark" : "light";
-        try { localStorage.setItem("theme", saved); }
-        catch (e) { /* unavailable: keep the choice for this page only */ }
-    });
-    if (scheme.addEventListener) scheme.addEventListener("change", syncTheme);
-    else if (scheme.addListener) scheme.addListener(syncTheme);
-})();
-</script>
+{{> theme-toggle}}
 <div class="page">
 
 <header>
@@ -75,7 +50,7 @@
         <a class="link" href="#desktop">Desktop</a>
         <a class="link" href="#plugins">Plugins</a>
         <a class="link" href="player.html">Player</a>
-        <label for="themeswitch" class="theme-toggle" title="Toggle dark / light" aria-hidden="true">◐</label>
+        {{> theme-toggle-label}}
     </nav>
 </header>
 
@@ -217,7 +192,7 @@
     </p>
     <p>© 2026 <a href="https://dudesoft.app">DudeSoft</a> · Open source on <a href="https://github.com/pke/24sevenfm_covers">GitHub</a> · <a href="privacy.html">Privacy</a><br>
     Not affiliated with 24seven.fm — a fan-made companion for its stations.</p>
-    <p class="updated">Last updated {{UPDATED}} · {{RELEASE_TAG}}</p>
+    {{> footer-updated}}
 </footer>
 
 </div><!-- /.page -->
