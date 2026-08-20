@@ -267,12 +267,23 @@
     z-index: 4;
     max-height: calc(100% - 1rem);
     overflow: auto;
-    transform: translateY(-50%);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(calc(-50% + .4rem));
+    transition: opacity .2s ease, transform .2s ease, visibility 0s linear .2s;
     color: var(--text);
     text-align: left;
     user-select: auto;
 }
-.spectrum-options[hidden] { display: none; }
+.spectrum-options[data-state="open"] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(-50%);
+    transition-delay: 0s;
+}
+.spectrum-options[hidden], .fs-options[hidden] { display: none; }
 .spectrum-options fieldset {
     margin: 0;
     padding: .9rem 1rem 1rem;
@@ -322,6 +333,18 @@
     border-radius: .9rem;
     background: var(--bg);
     box-shadow: var(--shadow);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(.4rem);
+    transition: opacity .2s ease, transform .2s ease, visibility 0s linear .2s;
+}
+.fs-options[data-state="open"] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+    transition-delay: 0s;
 }
 
 /* --- controls ------------------------------------------------------------------- */

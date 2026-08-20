@@ -198,6 +198,56 @@ test.describe("the deployed player page", () => {
             await expect(stageAudio).toHaveCSS("opacity", "1");
             await page.evaluate(() => document.exitFullscreen());
         });
+    test("keeps fullscreen options mounted until their exit fade completes", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await page.locator("#fullscreen").click();
+        await expect.poll(() => page.evaluate(() =>
+            document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+
+        const trigger = page.locator("#stage-options");
+        const panel = page.locator("#fs-options");
+        await trigger.click();
+        await expect(panel).toBeVisible();
+        await expect(panel).toHaveCSS("opacity", "1");
+        await expect(panel.locator(":scope > .controls-top")).toHaveCount(1);
+        await expect(panel.locator(":scope > .controls:not(.controls-top)")).toHaveCount(1);
+
+        const closing = await panel.evaluate((element) => {
+            document.querySelector("#stage-options").click();
+            return {
+                hidden: element.hidden,
+                state: element.dataset.state,
+                controls: element.querySelectorAll(":scope > .controls").length,
+            };
+        });
+        expect(closing).toEqual({ hidden: false, state: "closing", controls: 2 });
+
+        await expect(panel).toBeHidden();
+        await expect(page.locator("main .controls-top")).toHaveCount(1);
+        await expect(page.locator("main.wrap > section > .controls:not(.controls-top)")).toHaveCount(1);
+        await page.evaluate(() => document.exitFullscreen());
+        await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.locator("#fullscreen").click();
+        await expect.poll(() => page.evaluate(() =>
+            document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+        await trigger.click();
+        await expect(panel).toBeVisible();
+        const reducedClose = await panel.evaluate((element) => {
+            document.querySelector("#stage-options").click();
+            return {
+                hidden: element.hidden,
+                state: element.dataset.state,
+                controls: element.querySelectorAll(":scope > .controls").length,
+            };
+        });
+        expect(reducedClose).toEqual({ hidden: true, state: "closed", controls: 0 });
+        await expect(page.locator("main .controls-top")).toHaveCount(1);
+        await page.evaluate(() => document.exitFullscreen());
+    });
     test("defaults the tinted analyzer off and persists analyzer settings", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });

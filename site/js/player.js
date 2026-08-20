@@ -1273,33 +1273,115 @@ $("fullscreen").addEventListener("click", toggleFullscreen);
 // Two panels move: the station picker (above the stage) and the main options panel
 // (below it). The overlay shows them stacked, station first - same order as embedded.
 var stationBox = document.querySelector(".controls-top");
-var stationHome = stationBox.parentNode;
-var stationNext = stationBox.nextElementSibling; // where it goes back (the stage)
 var controlsEl = document.querySelector(".controls:not(.controls-top)");
-var controlsHome = controlsEl.parentNode;
-var controlsNext = controlsEl.nextElementSibling; // where it goes back
 var fsOptsHost = $("fs-options"), optsBtn = $("stage-options");
-var optionsOpen = false;
-function setOptionsOverlay(open) {
-    optionsOpen = open;
-    optsBtn.setAttribute("aria-pressed", open ? "true" : "false");
-    fsOptsHost.hidden = !open;
-    if (open) {
-        fsOptsHost.appendChild(stationBox);
-        fsOptsHost.appendChild(controlsEl);
-    } else if (controlsEl.parentNode === fsOptsHost) {
-        stationHome.insertBefore(stationBox, stationNext);
-        controlsHome.insertBefore(controlsEl, controlsNext);
-    }
+
+// A portal remembers each node's exact home, so an overlay can temporarily host the
+// REAL controls without copying their state or event handlers. createDisclosure keeps
+// that portal mounted through the exit transition; only then does it restore the nodes
+// and apply hidden. Both player overlays use the same lifecycle.
+function createPortal(nodes) {
+    var homes = nodes.map(function (node) {
+        return { node: node, parent: node.parentNode, next: node.nextSibling };
+    });
+    return {
+        mount: function (host) {
+            homes.forEach(function (home) { host.appendChild(home.node); });
+        },
+        restore: function () {
+            homes.forEach(function (home) {
+                var next = home.next && home.next.parentNode === home.parent
+                    ? home.next : null;
+                home.parent.insertBefore(home.node, next);
+            });
+        }
+    };
 }
+function cssTimeMs(value) {
+    value = value.trim();
+    return parseFloat(value) * (value.endsWith("ms") ? 1 : 1000) || 0;
+}
+function transitionTotalMs(element) {
+    var style = getComputedStyle(element);
+    var durations = style.transitionDuration.split(",").map(cssTimeMs);
+    var delays = style.transitionDelay.split(",").map(cssTimeMs);
+    var count = Math.max(durations.length, delays.length), longest = 0;
+    for (var i = 0; i < count; i++) {
+        longest = Math.max(longest,
+            durations[i % durations.length] + delays[i % delays.length]);
+    }
+    return longest;
+}
+function createDisclosure(host, trigger, portal, onOpen, onState) {
+    var state = "closed", closeTimer = null, closeListener = null, generation = 0;
+    host.dataset.state = state;
+    host.setAttribute("aria-hidden", "true");
+
+    function cancelClose() {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+        if (closeListener) host.removeEventListener("transitionend", closeListener);
+        closeListener = null;
+    }
+    function finishClose(currentGeneration) {
+        if (generation !== currentGeneration || state !== "closing") return;
+        cancelClose();
+        portal.restore();
+        host.hidden = true;
+        state = host.dataset.state = "closed";
+    }
+    function set(open) {
+        if (open) {
+            if (state === "open") return;
+            cancelClose();
+            generation++;
+            portal.mount(host);
+            host.hidden = false;
+            host.dataset.state = "closed";
+            host.setAttribute("aria-hidden", "false");
+            if (onState) onState(true);
+            if (onOpen) onOpen();
+            // Commit the closed geometry before changing state so opacity/transform
+            // interpolate even when the panel was display:none one line earlier.
+            void host.offsetWidth;
+            state = host.dataset.state = "open";
+            if (trigger) trigger.setAttribute("aria-pressed", "true");
+            return;
+        }
+        if (state === "closed" || state === "closing") return;
+        cancelClose();
+        var currentGeneration = ++generation;
+        state = host.dataset.state = "closing";
+        host.setAttribute("aria-hidden", "true");
+        if (trigger) trigger.setAttribute("aria-pressed", "false");
+        if (onState) onState(false);
+        var duration = reducedMotion.matches ? 0 : transitionTotalMs(host);
+        if (!duration) {
+            finishClose(currentGeneration);
+            return;
+        }
+        closeListener = function (event) {
+            if (event.target === host) finishClose(currentGeneration);
+        };
+        host.addEventListener("transitionend", closeListener);
+        // A fallback covers interrupted transitions and browsers that suppress the
+        // event when fullscreen state changes during the fade.
+        closeTimer = setTimeout(function () { finishClose(currentGeneration); }, duration + 50);
+    }
+    return { set: set, isOpen: function () { return state === "open"; } };
+}
+
+var optionsOpen = false;
+var optionsDisclosure = createDisclosure(fsOptsHost, optsBtn,
+    createPortal([stationBox, controlsEl]), null,
+    function (open) { optionsOpen = open; });
+function setOptionsOverlay(open) { optionsDisclosure.set(open); }
 optsBtn.addEventListener("click", function () {
     setSpectrumOptions(false);
     setOptionsOverlay(!optionsOpen);
 });
 
 var spectrumSettingsEl = $("spectrum-settings");
-var spectrumSettingsHome = spectrumSettingsEl.parentNode;
-var spectrumSettingsNext = spectrumSettingsEl.nextElementSibling;
 var spectrumOptionsHost = $("spectrum-options"), spectrumOptionsOpen = false;
 function positionSpectrumOptions() {
     if (!spectrumOptionsOpen) return;
@@ -1314,16 +1396,12 @@ function positionSpectrumOptions() {
     spectrumOptionsHost.style.top = Math.max(edge + halfHeight,
         Math.min(stageRect.height - edge - halfHeight, center)) + "px";
 }
+var spectrumDisclosure = createDisclosure(spectrumOptionsHost, null,
+    createPortal([spectrumSettingsEl]), positionSpectrumOptions,
+    function (open) { spectrumOptionsOpen = open; });
 function setSpectrumOptions(open) {
-    spectrumOptionsOpen = open;
-    spectrumOptionsHost.hidden = !open;
-    if (open) {
-        setOptionsOverlay(false);
-        spectrumOptionsHost.appendChild(spectrumSettingsEl);
-        positionSpectrumOptions();
-    } else if (spectrumSettingsEl.parentNode === spectrumOptionsHost) {
-        spectrumSettingsHome.insertBefore(spectrumSettingsEl, spectrumSettingsNext);
-    }
+    if (open) setOptionsOverlay(false);
+    spectrumDisclosure.set(open);
 }
 spectrumEl.addEventListener("click", function () {
     setSpectrumOptions(!spectrumOptionsOpen);
