@@ -64,36 +64,75 @@ var STATIONS = [
 // Persisted in localStorage (documented in the privacy policy); posterBlur and
 // borderRadius stay hidden here too - URL parameters instead of UI, like the INI.
 var STORE_KEY = "24sevenfm-covers.player";
-var DEFAULTS = {
+function clampInt(v, lo, hi) {
+    v = parseInt(v, 10);
+    return isNaN(v) ? lo : Math.min(hi, Math.max(lo, v));
+}
+function intOption(lo, hi) {
+    return function (value) { return clampInt(value, lo, hi); };
+}
+function floatOption(fallback, lo, hi) {
+    return function (value) {
+        value = parseFloat(value);
+        if (!isFinite(value)) value = fallback;
+        return Math.min(hi, Math.max(lo, value));
+    };
+}
+function boolOption(value) {
+    return (value === true || value === 1 || value === "1") ? 1 : 0;
+}
+function enumOption(allowed, fallback) {
+    return function (value) { return allowed.indexOf(value) >= 0 ? value : fallback; };
+}
+function orderedIdsOption(known) {
+    return function (value) {
+        var valid = (value instanceof Array) && value.length > 0
+            && value.every(function (id, index, order) {
+                return known.indexOf(id) >= 0 && order.indexOf(id) === index;
+            });
+        var order = (valid ? value : known).slice();
+        known.forEach(function (id) {
+            if (order.indexOf(id) < 0) order.push(id);
+        });
+        return order;
+    };
+}
+
+var PROVIDER_ORDER = ["fanart", "tmdb", "steamgriddb"];
+var OPTION_DEFS = {
     // layout intentionally differs from the apps' default (fill): a first-time web
     // visitor gets the poster - the layout that shows title/artist without any host
     // player around to provide them. Saved options always win over defaults.
-    station: "sst", 
-    layout: 1, 
-    transition: 1, 
-    fadeMs: 1000,
-    showRemaining: 0, 
-    remainingSize: 0, 
-    roll: 0,
-    posterBlur: 24, 
-    borderRadius: 45, 
-    volume: 0.8,
-    spectrumEnabled: 0,
-    spectrumBars: 24,
-    spectrumMode: "tinted",
+    station: { default: "sst", coerce: function (value) {
+        return stationIndex(value) >= 0 ? value : "sst";
+    } },
+    layout: { default: 1, coerce: intOption(0, 1) },
+    transition: { default: 1, coerce: intOption(0, 3) },
+    fadeMs: { default: 1000, coerce: intOption(500, 2000) },
+    showRemaining: { default: 0, coerce: boolOption },
+    remainingSize: { default: 0, coerce: intOption(0, 2) },
+    roll: { default: 0, coerce: boolOption },
+    posterBlur: { default: 24, coerce: intOption(0, 200) },
+    borderRadius: { default: 45, coerce: intOption(0, 500) },
+    volume: { default: 0.8, coerce: floatOption(0.8, 0, 1) },
+    spectrumEnabled: { default: 0, coerce: boolOption },
+    spectrumBars: { default: 24, coerce: intOption(8, 64) },
+    spectrumMode: { default: "tinted", coerce: enumOption(["legacy", "tinted"], "tinted") },
     // Experimental film/TV/game backdrops stay OFF by default because enabling them sends
     // current/next soundtrack titles through the project resolver. fanart's optional
     // personal client key can unlock fresher art through that same resolver.
     // providerOrder is the art priority (first enabled provider with art wins);
     // tmdbArt is TMDB's own checkbox in that list, like fanartBackdrops is fanart's.
-    tmdbBackdrops: 0, 
-    fanartKey: "", 
-    fanartBackdrops: 1, 
-    tmdbArt: 1,
-    steamGridDbArt: 1,
-    providerOrder: ["fanart", "tmdb", "steamgriddb"],
+    tmdbBackdrops: { default: 0, coerce: boolOption },
+    fanartKey: { default: "", coerce: function (value) {
+        return (typeof value === "string") ? value.trim() : "";
+    } },
+    fanartBackdrops: { default: 1, coerce: boolOption },
+    tmdbArt: { default: 1, coerce: boolOption },
+    steamGridDbArt: { default: 1, coerce: boolOption },
+    providerOrder: { default: PROVIDER_ORDER, coerce: orderedIdsOption(PROVIDER_ORDER) },
     // Hide the cover when backdrop is available
-    hideCover: 0
+    hideCover: { default: 0, coerce: boolOption }
 };
 var opts = loadOpts();
 var backdropApiMeta = document.querySelector('meta[name="backdrop-api"]');
@@ -107,55 +146,26 @@ var TINT_API_URL = (tintApiMeta && tintApiMeta.getAttribute("content")
 var simulateStationFailure = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
     && new URLSearchParams(location.search).has("simulateStationFailure");
 
-function clampInt(v, lo, hi) { v = parseInt(v, 10); return isNaN(v) ? lo : Math.min(hi, Math.max(lo, v)); }
-
 function loadOpts() {
     var o = {};
-    for (var k in DEFAULTS) o[k] = DEFAULTS[k];
+    for (var k in OPTION_DEFS) {
+        var fallback = OPTION_DEFS[k].default;
+        o[k] = fallback instanceof Array ? fallback.slice() : fallback;
+    }
     try {
         var saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
         for (var s in saved) if (s in o) o[s] = saved[s];
     } catch (e) { /* corrupt storage -> defaults */ }
-    // Same clamps as ssccfg::load().
-    o.layout        = clampInt(o.layout, 0, 1);
-    o.transition    = clampInt(o.transition, 0, 3);
-    o.fadeMs        = clampInt(o.fadeMs, 500, 2000);
-    o.remainingSize = clampInt(o.remainingSize, 0, 2);
-    o.posterBlur    = clampInt(o.posterBlur, 0, 200);
-    o.borderRadius  = clampInt(o.borderRadius, 0, 500);
-    o.spectrumBars  = clampInt(o.spectrumBars, 8, 64);
-    o.spectrumMode  = o.spectrumMode === "legacy" ? "legacy" : "tinted";
-    o.volume = parseFloat(o.volume);
-    if (!isFinite(o.volume)) o.volume = DEFAULTS.volume;
-    o.volume = Math.min(1, Math.max(0, o.volume));
-    ["showRemaining", "roll", "tmdbBackdrops", "fanartBackdrops", "tmdbArt", "steamGridDbArt",
-        "hideCover", "spectrumEnabled"].forEach(function (key) {
-        var value = o[key];
-        o[key] = (value === true || value === 1 || value === "1") ? 1 : 0;
-    });
-    ["fanartKey"].forEach(function (key) {
-        o[key] = (typeof o[key] === "string") ? o[key].trim() : "";
-    });
-
-    // Keep an older saved order when a provider is added by appending the newcomer.
-    // Duplicate/unknown entries still fall back to defaults. Always use a fresh array:
-    // the drag list mutates it, and DEFAULTS must never change.
-    var known = DEFAULTS.providerOrder;
-    var valid = (o.providerOrder instanceof Array) && o.providerOrder.length > 0
-        && o.providerOrder.every(function (id, index, order) {
-            return known.indexOf(id) >= 0 && order.indexOf(id) === index;
-        });
-    o.providerOrder = (valid ? o.providerOrder : known).slice();
-    known.forEach(function (id) {
-        if (o.providerOrder.indexOf(id) < 0) o.providerOrder.push(id);
-    });
-    if (stationIndex(o.station) < 0) o.station = "sst";
+    // Coercion is defined beside each default, so storage migration and first-load
+    // behavior cannot drift into separate lists as settings are added.
+    for (var key in OPTION_DEFS) o[key] = OPTION_DEFS[key].coerce(o[key]);
     // URL parameters override: ?station=death for sharable links, plus the two
     // hidden settings, exactly the set the INI hides from the UI.
     var p = new URLSearchParams(location.search);
     if (p.has("station") && stationIndex(p.get("station")) >= 0) o.station = p.get("station");
-    if (p.has("posterBlur"))   o.posterBlur   = clampInt(p.get("posterBlur"), 0, 200);
-    if (p.has("borderRadius")) o.borderRadius = clampInt(p.get("borderRadius"), 0, 500);
+    if (p.has("posterBlur")) o.posterBlur = OPTION_DEFS.posterBlur.coerce(p.get("posterBlur"));
+    if (p.has("borderRadius"))
+        o.borderRadius = OPTION_DEFS.borderRadius.coerce(p.get("borderRadius"));
     return o;
 }
 function saveOpts() {
