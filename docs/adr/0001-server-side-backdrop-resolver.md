@@ -46,16 +46,19 @@ fits the existing URL-plus-tint resolver without adding an image proxy or client
 
 ## Decision
 
-Build two small serverless endpoints (Vercel functions). The first resolves an
-album title to backdrop art and a UI tint, using project-owned keys server-side:
+Build two small serverless endpoints (Vercel functions). The first resolves a
+normalized soundtrack title to backdrop art and a UI tint, using project-owned keys server-side:
 
 ```
-GET /api/backdrop?title=<cleaned album title>[&media_hint=game|screen|movie|tv][&client_key=<fanart personal key>]
+GET /api/backdrop?album=<raw album>&track=<raw track>[&client_key=<fanart personal key>]
 -> { media: { id, title, type: "movie" | "tv" | "game" }, backdrop: "https://...",
      source: "fanart" | "tmdb" | "steamgriddb",
      tint: [r, g, b] }
    Cache-Control: s-maxage=15552000        (6 months - TMDB's caching ceiling)
 ```
+
+The legacy `title` and optional `media_hint` parameters remain accepted for direct
+callers; the player uses `album` and `track` so normalization stays server-side.
 
 The second computes the same tint from a canonical station cover, so the normal
 player can remain cover-colored even when screen backdrops are disabled:

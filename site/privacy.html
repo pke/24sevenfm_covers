@@ -66,8 +66,8 @@
             use no accounts, sign-ups, analytics, tracking scripts, advertising, cookies or
             telemetry. Station data, covers and audio flow directly from the station. To color the
             web player, its canonical cover URL is also sent to this project's Vercel tint
-            resolver. Only if you enable the experimental movie, TV and game-backdrop option are album titles
-            sent through the artwork resolver, as detailed below.</p>
+            resolver. Only if you enable the experimental movie, TV and game-backdrop option are soundtrack
+            album and track fields sent through the artwork resolver, as detailed below.</p>
         </div>
     </section>
 
@@ -106,8 +106,11 @@
                 only three RGB values, and keeps no listening profile or request database. Successful
                 results may be cached for up to six months.</p>
                 <p>The <strong>experimental, off-by-default</strong> “Movie, TV &amp; game backdrops” option adds
-                another request. If you enable it, the player sends the <em>current and next queued album
-                titles</em> to this project's Vercel resolver. Vercel necessarily processes your IP
+                another request. If you enable it, the player sends the <em>current and next queued
+                Album and Track fields</em> to this project's Vercel resolver. The resolver normalizes
+                those fields and sends only the derived work title to the artwork providers; for a
+                recognized multi-film compilation, that title is the movie-name prefix from Track.
+                Vercel necessarily processes your IP
                 address and request metadata; the resolver then sends the title to
                 <a href="https://www.themoviedb.org/">The Movie Database</a> for movie/TV matching,
                 <a href="https://www.steamgriddb.com/">SteamGridDB</a> for game matching, and a matched
@@ -122,7 +125,7 @@
                 <a href="https://www.themoviedb.org/privacy-policy">TMDB</a>,
                 <a href="https://fanart.tv/privacy-policy/">fanart.tv</a>,
                 <a href="https://www.steamgriddb.com/privacy">SteamGridDB</a>). Leave the option off and
-                no album title or backdrop-provider request is made; cover-tint requests still occur.</p>
+                no soundtrack title or backdrop-provider request is made; cover-tint requests still occur.</p>
             </div>
             <div class="card">
                 <h3>Hosting</h3>

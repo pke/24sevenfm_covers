@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
     CACHE_SECONDS,
+    backdropTitleFor,
     cleanMovieTitle,
     createHandler,
     createTintHandler,
@@ -16,6 +17,43 @@ const {
     trustedCoverTintUrl,
     trustedSteamGridDbUrl,
 } = require("./_lib/backdrop");
+
+test("normalizes the live The Wings Of A Film title in the resolver", () => {
+    assert.equal(backdropTitleFor("The Wings Of A Film",
+        "The Thin Red Line: Journey To The Line"), "The Thin Red Line");
+    assert.equal(mediaHintForAlbum("The Wings Of A Film"), "movie");
+    assert.equal(backdropTitleFor("Arrival (Original Motion Picture Soundtrack)",
+        "Another Film: A Cue"), "Arrival");
+});
+
+test("resolves the live The Wings Of A Film album and track contract", async () => {
+    let providerQuery = "";
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQuery = parsed.searchParams.get("query");
+            return response(200, { results: [{
+                id: 8741, title: "The Thin Red Line", backdrop_path: "/thin-red-line.jpg",
+            }] });
+        },
+        tintForImage: async () => [100, 120, 140],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "The Wings Of A Film",
+        track: "The Thin Red Line: Journey To The Line",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(providerQuery, "The Thin Red Line");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 8741, title: "The Thin Red Line", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/thin-red-line.jpg",
+        source: "tmdb",
+        tint: [100, 120, 140],
+    });
+});
 
 function response(status, body) {
     return {

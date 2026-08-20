@@ -929,7 +929,7 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/arrival.svg";
         const backdrop = "https://image.tmdb.org/t/p/w1280/arrival.jpg";
         let resolverRequests = 0, directProviderRequests = 0;
-        let resolvedTitle = "", resolvedProviders = "", resolvedHint = "";
+        let resolvedAlbum = "", resolvedTrack = "", resolvedProviders = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
                 fanartBackdrops: 1, tmdbArt: 1 })));
@@ -950,9 +950,9 @@ test.describe("the deployed player page", () => {
         await page.route(/\/api\/backdrop\?/, (route) => {
             const url = new URL(route.request().url());
             resolverRequests++;
-            resolvedTitle = url.searchParams.get("title");
+            resolvedAlbum = url.searchParams.get("album");
+            resolvedTrack = url.searchParams.get("track");
             resolvedProviders = url.searchParams.get("providers");
-            resolvedHint = url.searchParams.get("media_hint");
             return route.fulfill({ json: {
                 movie: { id: 329865, title: "Arrival" }, backdrop,
                 source: "tmdb", tint: [131, 172, 255],
@@ -968,9 +968,9 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => resolverRequests).toBe(1);
-        expect(resolvedTitle).toBe("Arrival");
+        expect(resolvedAlbum).toBe("Arrival (Original Motion Picture Soundtrack)");
+        expect(resolvedTrack).toBe("Heptapod B");
         expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
-        expect(resolvedHint).toBe("movie");
         expect(directProviderRequests).toBe(0);
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /arrival\.jpg/);
@@ -978,11 +978,11 @@ test.describe("the deployed player page", () => {
             getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
             .toBe("rgb(131, 172, 255)");
     });
-    test("sends an explicit game hint and accepts a SteamGridDB hero", async ({ page }) => {
+    test("sends raw game soundtrack metadata and accepts a SteamGridDB hero", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/hades.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/hades.svg";
         const backdrop = "https://cdn2.steamgriddb.com/hero/hades.jpg";
-        let query = "", hint = "", providers = "";
+        let album = "", track = "", providers = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 1,
                 tmdbArt: 1, steamGridDbArt: 1 })));
@@ -1000,8 +1000,8 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/backdrop\?/, (route) => {
             const url = new URL(route.request().url());
-            query = url.searchParams.get("title");
-            hint = url.searchParams.get("media_hint");
+            album = url.searchParams.get("album");
+            track = url.searchParams.get("track");
             providers = url.searchParams.get("providers");
             return route.fulfill({ json: {
                 media: { id: 5253, title: "Hades", type: "game" }, backdrop,
@@ -1014,8 +1014,8 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect.poll(() => query).toBe("Hades");
-        expect(hint).toBe("game");
+        await expect.poll(() => album).toBe("Hades (Original Video Game Soundtrack)");
+        expect(track).toBe("No Escape");
         expect(providers).toBe("fanart,tmdb,steamgriddb");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /cdn2\.steamgriddb\.com\/hero\/hades\.jpg/);
@@ -1041,7 +1041,7 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/backdrop\?/, (route) => {
             const url = new URL(route.request().url());
-            resolverQuery = url.searchParams.get("title");
+            resolverQuery = url.searchParams.get("album");
             personalKey = url.searchParams.get("client_key");
             return route.fulfill({ json: {
                 movie: { id: 429, title: "The Good, the Bad and the Ugly" },
@@ -1057,7 +1057,7 @@ test.describe("the deployed player page", () => {
 
         await expect(page.locator("#info-title"))
             .toContainText("The Good, The Bad & The Ugly - The Trio (Main Title)");
-        await expect.poll(() => resolverQuery).toBe("The Good, The Bad and The Ugly");
+        await expect.poll(() => resolverQuery).toBe("Good, The Bad & The Ugly, The");
         expect(personalKey).toBe("fanart-history-key");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /good-bad-ugly\.jpg/);
@@ -1082,7 +1082,7 @@ test.describe("the deployed player page", () => {
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/backdrop\?/, (route) => {
-            resolverQuery = new URL(route.request().url()).searchParams.get("title");
+            resolverQuery = new URL(route.request().url()).searchParams.get("album");
             return route.fulfill({ json: {
                 movie: { id: 128, title: "Princess Mononoke" }, backdrop,
                 source: "tmdb", tint: [150, 160, 170],
@@ -1096,7 +1096,7 @@ test.describe("the deployed player page", () => {
 
         await expect(page.locator("#info-title")).toContainText(
             "Princess Mononoke: Symphonic Suite - The Journey To The West (4:51)");
-        await expect.poll(() => resolverQuery).toBe("Princess Mononoke");
+        await expect.poll(() => resolverQuery).toBe("Princess Mononoke: Symphonic Suite");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /princess-mononoke\.jpg/);
     });
@@ -1121,7 +1121,7 @@ test.describe("the deployed player page", () => {
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/backdrop\?/, (route) => {
-            resolverQuery = new URL(route.request().url()).searchParams.get("title");
+            resolverQuery = new URL(route.request().url()).searchParams.get("album");
             return route.fulfill({ json: {
                 movie: { id: 912, title: "The Thomas Crown Affair" }, backdrop,
                 source: "tmdb", tint: [150, 160, 170],
@@ -1136,7 +1136,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#info-title")).toContainText(
             "The Thomas Crown Affair (1968) - Theme From The Thomas Crown Affair "
             + "(The Windmills Of Your Mind) (Perf. By Noel Harrison) (2:18)");
-        await expect.poll(() => resolverQuery).toBe("The Thomas Crown Affair (1968)");
+        await expect.poll(() => resolverQuery).toBe("Thomas Crown Affair, The (1968)");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /thomas-crown\.jpg/);
     });
@@ -1160,7 +1160,7 @@ test.describe("the deployed player page", () => {
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/backdrop\?/, (route) => {
-            resolverQuery = new URL(route.request().url()).searchParams.get("title");
+            resolverQuery = new URL(route.request().url()).searchParams.get("album");
             return route.fulfill({ json: {
                 media: { id: 3476, title: "Inspector Morse", type: "tv" }, backdrop,
                 source: "tmdb", tint: [100, 120, 140],
@@ -1174,9 +1174,50 @@ test.describe("the deployed player page", () => {
 
         await expect(page.locator("#info-title"))
             .toContainText("The Magic Of Inspector Morse - Irish Connection (3:03)");
-        await expect.poll(() => resolverQuery).toBe("Inspector Morse");
+        await expect.poll(() => resolverQuery).toBe("The Magic Of Inspector Morse");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /inspector-morse\.jpg/);
+    });
+    test("uses the movie prefix from a known multi-film compilation track", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/wings-of-a-film.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/wings-of-a-film.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/thin-red-line.jpg";
+        let resolverAlbum = "", resolverTrack = "";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 1, tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "The Wings Of A Film", Track: "The Thin Red Line: Journey To The Line",
+                Artist: "Hans Zimmer", CoverLink: cover, Length: 590000,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            resolverAlbum = url.searchParams.get("album");
+            resolverTrack = url.searchParams.get("track");
+            return route.fulfill({ json: {
+                media: { id: 8741, title: "The Thin Red Line", type: "movie" }, backdrop,
+                source: "tmdb", tint: [100, 120, 140],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#info-title")).toContainText(
+            "The Wings Of A Film - The Thin Red Line: Journey To The Line (9:50)");
+        await expect.poll(() => resolverAlbum).toBe("The Wings Of A Film");
+        expect(resolverTrack).toBe("The Thin Red Line: Journey To The Line");
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /thin-red-line\.jpg/);
     });
     test("treats inherited object names as normal movie cache keys", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/constructor.svg";
