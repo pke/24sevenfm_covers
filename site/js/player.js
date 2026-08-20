@@ -912,191 +912,23 @@ if (window.ResizeObserver) {
 
 // --- audio -------------------------------------------------------------------
 var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio");
-var spectrumEl = $("stage-spectrum"), spectrumCtx = spectrumEl.getContext("2d");
+var spectrumEl = $("stage-spectrum");
 var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
 var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
 var audioRetryAttempt = 0, audioLastProgressTime = 0;
 var AUDIO_RETRY_DELAYS = [1000, 2000, 5000, 10000, 30000];
 var AUDIO_STALL_MS = 12000, AUDIO_STARTUP_STALL_MS = 30000;
-var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-var spectrumAudioContext = null, spectrumSource = null, spectrumAnalyser = null;
-var spectrumData = null, spectrumFrame = null, spectrumLastFrame = 0, spectrumPeaks = [];
-var spectrumEnvelope = 0, spectrumEnvelopeFrom = 0, spectrumEnvelopeTarget = 0;
-var spectrumEnvelopeStarted = 0;
-var SPECTRUM_ENVELOPE_MS = 400;
-var audioSpectrumModule = null, audioSpectrumModulePromise = null;
+var audioSpectrumController = null, audioSpectrumModulePromise = null;
 var audioSpectrumModuleRetry = 0;
 
-// A compact Winamp-style spectrum. The media element stays the one source of truth:
-// Web Audio only observes its decoded samples, then forwards them to the speakers.
-// If the API is unavailable, normal <audio> playback continues without visualization.
-function resizeSpectrum() {
-    var r = spectrumEl.getBoundingClientRect();
-    if (!r.width || !r.height) return;
-    var scale = Math.min(2, window.devicePixelRatio || 1);
-    var width = Math.max(1, Math.round(r.width * scale));
-    var height = Math.max(1, Math.round(r.height * scale));
-    if (spectrumEl.width === width && spectrumEl.height === height) return;
-    spectrumEl.width = width;
-    spectrumEl.height = height;
-    spectrumPeaks = [];
-}
-function clearSpectrum() {
-    spectrumPeaks = [];
-    spectrumLastFrame = 0;
-    if (spectrumCtx) spectrumCtx.clearRect(0, 0, spectrumEl.width, spectrumEl.height);
-}
-function updateSpectrumEnvelope(timestamp) {
-    var progress = Math.min(1,
-        Math.max(0, (timestamp - spectrumEnvelopeStarted) / SPECTRUM_ENVELOPE_MS));
-    var eased = progress * progress * (3 - 2 * progress);
-    spectrumEnvelope = spectrumEnvelopeFrom
-        + (spectrumEnvelopeTarget - spectrumEnvelopeFrom) * eased;
-    return progress >= 1;
-}
-function targetSpectrumEnvelope(target) {
-    if (spectrumEnvelopeTarget === target) return;
-    var now = performance.now();
-    updateSpectrumEnvelope(now);
-    spectrumEnvelopeFrom = spectrumEnvelope;
-    spectrumEnvelopeTarget = target;
-    spectrumEnvelopeStarted = now;
-}
-function playerTintRgb() {
-    var channels = getComputedStyle(document.querySelector(".info")).color.match(/[\d.]+/g);
-    return channels && channels.length >= 3
-        ? channels.slice(0, 3).map(function (value) { return Math.round(Number(value)); })
-        : [255, 255, 255];
-}
-function rgba(rgb, alpha) {
-    return "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + alpha + ")";
-}
-function drawSpectrum(timestamp) {
-    spectrumFrame = null;
-    if (timestamp - spectrumLastFrame < 33) {
-        spectrumFrame = requestAnimationFrame(drawSpectrum);
-        return;
-    }
-    spectrumLastFrame = timestamp;
-    var envelopeDone = updateSpectrumEnvelope(timestamp);
-    if (spectrumEnvelopeTarget === 0 && envelopeDone) {
-        spectrumEnvelope = spectrumEnvelopeFrom = 0;
-        clearSpectrum();
-        spectrumEl.classList.remove("active");
-        return;
-    }
-    resizeSpectrum();
-    // During release the buffer intentionally keeps the last live frame, so every
-    // bar falls from its own height instead of snapping to the analyser's new zeroes.
-    if (spectrumEnvelopeTarget === 1)
-        spectrumAnalyser.getByteFrequencyData(spectrumData);
-
-    var width = spectrumEl.width, height = spectrumEl.height;
-    var bars = Math.min(opts.spectrumBars, spectrumData.length);
-    var blockGap = Math.max(1, Math.round(width / 220));
-    var gap = width >= bars * 2 + blockGap * (bars - 1) ? blockGap : 0;
-    var barWidth = Math.max(1, Math.floor((width - gap * (bars - 1)) / bars));
-    var plotWidth = barWidth * bars + gap * (bars - 1);
-    var plotLeft = Math.max(0, Math.floor((width - plotWidth) * 0.5));
-    var usableHeight = height - Math.max(3, Math.round(height * .08));
-    var gradient = spectrumCtx.createLinearGradient(0, height, 0, 0);
-    var tint = null;
-    if (opts.spectrumMode === "tinted") {
-        tint = playerTintRgb();
-        gradient.addColorStop(0, rgba(tint, .24));
-        gradient.addColorStop(.58, rgba(tint, .48));
-        gradient.addColorStop(.8, rgba(tint, .72));
-        gradient.addColorStop(1, rgba(tint, 1));
-    } else {
-        gradient.addColorStop(0, "#36ed64");
-        gradient.addColorStop(.58, "#6df052");
-        gradient.addColorStop(.8, "#ffd43b");
-        gradient.addColorStop(1, "#ff4b55");
-    }
-    spectrumCtx.clearRect(0, 0, width, height);
-    spectrumCtx.fillStyle = gradient;
-
-    for (var i = 0; i < bars; i++) {
-        var position = bars === 1 ? 0 : i / (bars - 1);
-        var bin = Math.min(spectrumData.length - 1,
-            Math.floor(Math.pow(position, 1.65) * (spectrumData.length - 1)));
-        var barHeight = Math.floor((spectrumData[bin] / 255)
-            * usableHeight * spectrumEnvelope);
-        var segment = blockGap * 3;
-        barHeight = Math.floor(barHeight / segment) * segment;
-        var x = plotLeft + Math.round(i * (barWidth + gap));
-        spectrumCtx.fillRect(x, height - barHeight, barWidth, barHeight);
-        var peak = spectrumPeaks[i] || 0;
-        spectrumPeaks[i] = spectrumEnvelopeTarget === 0
-            ? Math.min(peak || barHeight, barHeight)
-            : barHeight >= peak
-                ? barHeight : Math.max(0, peak - Math.max(1, height * .025));
-    }
-
-    // Cut horizontal gaps into the gradient bars for the blocky Winamp look.
-    for (var y = height - blockGap * 2; y > 0; y -= blockGap * 3) {
-        spectrumCtx.clearRect(0, y, width, blockGap);
-    }
-    for (var p = 0; p < bars; p++) {
-        var peakHeight = spectrumPeaks[p];
-        if (peakHeight <= 0) continue;
-        var ratio = peakHeight / usableHeight;
-        spectrumCtx.fillStyle = tint
-            ? rgba(tint, Math.min(1, .45 + ratio * .55))
-            : ratio > .8 ? "#ff6269" : ratio > .58 ? "#ffe163" : "#8aff79";
-        spectrumCtx.fillRect(plotLeft + Math.round(p * (barWidth + gap)),
-            Math.max(0, height - peakHeight - blockGap), barWidth, blockGap);
-    }
-    spectrumFrame = requestAnimationFrame(drawSpectrum);
-}
 function syncSpectrum() {
-    var active = !!(opts.spectrumEnabled && audioWanted && audioHasPlayed
-        && spectrumCtx && spectrumAnalyser
-        && !reducedMotion.matches);
-    if (active) {
-        if (!document.hidden) {
-            spectrumEl.classList.add("active");
-            targetSpectrumEnvelope(1);
-            resizeSpectrum();
-            if (spectrumFrame === null) spectrumFrame = requestAnimationFrame(drawSpectrum);
-        }
-        return;
-    }
-    if (!document.hidden && !reducedMotion.matches
-            && spectrumEl.classList.contains("active") && spectrumEnvelope > 0) {
-        targetSpectrumEnvelope(0);
-        if (spectrumFrame === null) spectrumFrame = requestAnimationFrame(drawSpectrum);
-        return;
-    }
-    if (spectrumFrame !== null) cancelAnimationFrame(spectrumFrame);
-    spectrumFrame = null;
-    spectrumEnvelope = spectrumEnvelopeFrom = spectrumEnvelopeTarget = 0;
-    spectrumEl.classList.remove("active");
-    clearSpectrum();
+    if (audioSpectrumController) audioSpectrumController.sync();
 }
 function prepareSpectrum() {
-    if (!opts.spectrumEnabled || !spectrumCtx || !AudioContextCtor
-            || reducedMotion.matches) return false;
-    if (!spectrumAnalyser) {
-        try {
-            spectrumAudioContext = new AudioContextCtor();
-            spectrumAnalyser = spectrumAudioContext.createAnalyser();
-            spectrumAnalyser.fftSize = 128;
-            spectrumAnalyser.smoothingTimeConstant = .78;
-            spectrumSource = spectrumAudioContext.createMediaElementSource(audioEl);
-            spectrumSource.connect(spectrumAnalyser);
-            spectrumAnalyser.connect(spectrumAudioContext.destination);
-            spectrumData = new Uint8Array(spectrumAnalyser.frequencyBinCount);
-        } catch (e) {
-            spectrumAudioContext = spectrumSource = spectrumAnalyser = spectrumData = null;
-            return false;
-        }
-    }
-    if (spectrumAudioContext.state === "suspended") {
-        var resumed = spectrumAudioContext.resume();
-        if (resumed && typeof resumed.catch === "function") resumed.catch(function () {});
-    }
-    return true;
+    return audioSpectrumController ? audioSpectrumController.prepare() : false;
+}
+function clearSpectrum() {
+    if (audioSpectrumController) audioSpectrumController.clear();
 }
 function audioUrl() { return "https://" + station().host + "/live"; }
 function clearAudioTimers() {
@@ -1211,14 +1043,29 @@ function audioSpectrumModuleUrl() {
     return url.href;
 }
 function loadAudioSpectrumModule() {
-    if (audioSpectrumModule) return Promise.resolve(audioSpectrumModule);
+    if (audioSpectrumController) return Promise.resolve(audioSpectrumController);
     if (!audioSpectrumModulePromise) {
         audioSpectrumModulePromise = import(audioSpectrumModuleUrl()).then(function (module) {
             if (typeof module.createAudioSpectrumController !== "function")
                 throw new Error("Invalid audio spectrum module");
-            audioSpectrumModule = module;
-            return module;
+            audioSpectrumController = module.createAudioSpectrumController({
+                audioElement: audioEl,
+                spectrumElement: spectrumEl,
+                infoElement: document.querySelector(".info"),
+                getOptions: () => opts,
+                isAudioWanted: () => audioWanted,
+                hasAudioPlayed: () => audioHasPlayed,
+                reducedMotion: reducedMotion
+            });
+            if (!audioSpectrumController
+                    || typeof audioSpectrumController.prepare !== "function"
+                    || typeof audioSpectrumController.sync !== "function")
+                throw new Error("Invalid audio spectrum controller");
+            if (opts.spectrumEnabled && audioWanted) audioSpectrumController.prepare();
+            audioSpectrumController.sync();
+            return audioSpectrumController;
         }).catch(function (error) {
+            audioSpectrumController = null;
             audioSpectrumModulePromise = null;
             audioSpectrumModuleRetry++;
             throw error;
@@ -1267,15 +1114,6 @@ audioEl.addEventListener("pause", function () {
 });
 audioEl.addEventListener("error", scheduleAudioReconnect);
 audioEl.addEventListener("ended", scheduleAudioReconnect);
-document.addEventListener("visibilitychange", syncSpectrum);
-if (reducedMotion.addEventListener) reducedMotion.addEventListener("change", syncSpectrum);
-else if (reducedMotion.addListener) reducedMotion.addListener(syncSpectrum);
-if (window.ResizeObserver) {
-    var spectrumObserver = new ResizeObserver(resizeSpectrum);
-    spectrumObserver.observe(spectrumEl);
-} else {
-    window.addEventListener("resize", resizeSpectrum);
-}
 window.addEventListener("online", function () {
     if (!audioWanted || (audioRetryTimer === null && audioStallTimer === null)) return;
     setStatus("Audio interrupted – reconnecting…", "audio");
@@ -1580,7 +1418,9 @@ function applySpectrumEnabled() {
     if (opts.spectrumEnabled && audioWanted) prepareSpectrum();
     syncSpectrum();
 }
-function resetSpectrumBars() { spectrumPeaks = []; }
+function resetSpectrumBars() {
+    if (audioSpectrumController) audioSpectrumController.resetBars();
+}
 bindOptionControls();
 syncSpectrumSettingControls();
 var fanartKeyEl = $("fanart-key");

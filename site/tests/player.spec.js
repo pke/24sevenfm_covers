@@ -209,7 +209,9 @@ test.describe("the deployed player page", () => {
                 moduleUrls.push(route.request().url());
                 if (moduleUrls.length === 1) return route.abort("failed");
                 return route.fulfill({ contentType: "text/javascript",
-                    body: "export function createAudioSpectrumController() { return null; }" });
+                    body: `export function createAudioSpectrumController() {
+                        return { prepare() {}, sync() {} };
+                    }` });
             });
             await page.addInitScript(() => {
                 HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
