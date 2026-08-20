@@ -38,6 +38,11 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("html")).not.toHaveAttribute("data-framed", "");
         expect(policy).toContain("script-src 'self' 'sha256-");
         expect(policy).toContain("connect-src 'self'");
+        expect(policy).toContain("https://24covers-api.vercel.app");
+        await expect(page.locator('meta[name="backdrop-api"]')).toHaveAttribute(
+            "content", "https://24covers-api.vercel.app/api/backdrop");
+        await expect(page.locator('meta[name="tint-api"]')).toHaveAttribute(
+            "content", "https://24covers-api.vercel.app/api/tint");
         expect(policy).toContain("media-src https://streamingsoundtracks.com");
         expect(policy).toContain("object-src 'none'");
 
