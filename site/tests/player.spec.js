@@ -276,6 +276,46 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
         await expect(page.locator('input[name="spectrum-mode"][value="legacy"]')).toBeChecked();
     });
+    test("persists scalar controls and reapplies their effects", async ({ page }) => {
+        await mockLayoutTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await page.locator('label.seg:has(input[name="layout"][value="0"])').click();
+        await page.locator('label.seg:has(input[name="transition"][value="3"])').click();
+        await page.locator('label.seg:has(input[name="cdsize"][value="2"])').click();
+        await page.locator("#show-remaining").check();
+        await page.locator("#roll").check();
+        await page.locator("#tmdb-on").check();
+        await page.locator("#hide-cover").check();
+        await page.locator("#fade").evaluate((input) => {
+            input.value = "1700";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await page.locator("#volume").evaluate((input) => {
+            input.value = "0.35";
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player"))))
+            .toMatchObject({ layout: 0, transition: 3, remainingSize: 2,
+                showRemaining: 1, roll: 1, tmdbBackdrops: 1, hideCover: 1,
+                fadeMs: 1700, volume: 0.35 });
+        await expect(page.locator("#stage")).toHaveClass(/layout-fill/);
+        await expect(page.locator("#fade-val")).toHaveText("1.7 s");
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator("#stage")).toHaveClass(/layout-fill/);
+        await expect(page.locator('input[name="transition"][value="3"]')).toBeChecked();
+        await expect(page.locator('input[name="cdsize"][value="2"]')).toBeChecked();
+        await expect(page.locator("#show-remaining")).toBeChecked();
+        await expect(page.locator("#roll")).toBeChecked();
+        await expect(page.locator("#tmdb-on")).toBeChecked();
+        await expect(page.locator("#hide-cover")).toBeChecked();
+        await expect(page.locator("#fade")).toHaveValue("1700");
+        await expect(page.locator("#fade-val")).toHaveText("1.7 s");
+        await expect(page.locator("#volume")).toHaveValue("0.35");
+    });
     test("renders a real spectrum while audio plays and respects reduced motion",
         async ({ page }) => {
             await page.addInitScript(() => {
