@@ -98,7 +98,16 @@ function orderedIdsOption(known) {
     };
 }
 
-var PROVIDER_ORDER = ["fanart", "tmdb", "steamgriddb"];
+var ART_PROVIDER_DEFS = [
+    { id: "fanart", name: "fanart.tv", option: "fanartBackdrops" },
+    { id: "tmdb", name: "TMDB", option: "tmdbArt" },
+    { id: "steamgriddb", name: "GameArt by SteamGridDB", option: "steamGridDbArt" }
+];
+var PROVIDER_ORDER = ART_PROVIDER_DEFS.map(function (provider) { return provider.id; });
+var PROVIDER_NAMES = ART_PROVIDER_DEFS.reduce(function (names, provider) {
+    names[provider.id] = provider.name;
+    return names;
+}, Object.create(null));
 var OPTION_DEFS = {
     // layout intentionally differs from the apps' default (fill): a first-time web
     // visitor gets the poster - the layout that shows title/artist without any host
@@ -1577,11 +1586,6 @@ opts.providerOrder.forEach(function (id) {
     providersEl.appendChild(providersEl.querySelector('[data-provider="' + id + '"]'));
 });
 var providerStatusEl = $("provider-status");
-var PROVIDER_NAMES = {
-    fanart: "fanart.tv",
-    tmdb: "TMDB",
-    steamgriddb: "GameArt by SteamGridDB"
-};
 function providerName(li) { return PROVIDER_NAMES[li.dataset.provider] || li.dataset.provider; }
 function syncProviderHandles(moved) {
     var rows = Array.prototype.slice.call(providersEl.querySelectorAll(".provider"));
