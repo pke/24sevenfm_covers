@@ -167,12 +167,20 @@ test.describe("the deployed player page", () => {
     test("loads the audio spectrum module only when audio is first requested",
         async ({ page }) => {
             const moduleRequests = [];
+            let pendingModuleRoute = null;
             page.on("request", (request) => {
                 if (new URL(request.url()).pathname.endsWith("/js/audio-spectrum.js"))
                     moduleRequests.push(request.url());
             });
+            await page.route("**/js/audio-spectrum.js*", (route) => {
+                pendingModuleRoute = route;
+            });
             await page.addInitScript(() => {
-                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                window.__playCalls = 0;
+                HTMLMediaElement.prototype.play = function () {
+                    window.__playCalls++;
+                    return Promise.resolve();
+                };
                 HTMLMediaElement.prototype.pause = function () {};
                 HTMLMediaElement.prototype.load = function () {};
             });
@@ -187,6 +195,9 @@ test.describe("the deployed player page", () => {
                 new URL(response.url()).pathname.endsWith("/js/audio-spectrum.js")
                 && response.ok());
             await page.locator("#audio-toggle").click();
+            await expect.poll(() => !!pendingModuleRoute).toBe(true);
+            expect(await page.evaluate(() => window.__playCalls)).toBe(1);
+            await pendingModuleRoute.continue();
             await loaded;
             await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
             expect(moduleRequests).toHaveLength(1);
