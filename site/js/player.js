@@ -104,9 +104,9 @@ var ART_PROVIDER_DEFS = [
     { id: "steamgriddb", name: "GameArt by SteamGridDB", option: "steamGridDbArt" }
 ];
 var PROVIDER_ORDER = ART_PROVIDER_DEFS.map(function (provider) { return provider.id; });
-var PROVIDER_NAMES = ART_PROVIDER_DEFS.reduce(function (names, provider) {
-    names[provider.id] = provider.name;
-    return names;
+var ART_PROVIDER_BY_ID = ART_PROVIDER_DEFS.reduce(function (providers, provider) {
+    providers[provider.id] = provider;
+    return providers;
 }, Object.create(null));
 var OPTION_DEFS = {
     // layout intentionally differs from the apps' default (fill): a first-time web
@@ -575,30 +575,12 @@ function updateCoverVisibility() {
 }
 var currentAlbum = "", currentTrack = "", stationIdActive = false;
 
-// Provider controls are sent to the resolver in priority order. `enabled` (get/set)
-// is the user's checkbox state over its backing option; no provider metadata API is
-// called from the browser.
-var MOVIE_ART_PROVIDERS = {
-    fanart: {
-        get enabled() { return !!opts.fanartBackdrops; },
-        set enabled(on) { opts.fanartBackdrops = on ? 1 : 0; }
-    },
-    tmdb: {
-        get enabled() { return !!opts.tmdbArt; },
-        set enabled(on) { opts.tmdbArt = on ? 1 : 0; }
-    },
-    steamgriddb: {
-        get enabled() { return !!opts.steamGridDbArt; },
-        set enabled(on) { opts.steamGridDbArt = on ? 1 : 0; }
-    }
-};
-
 var SERVER_ART_UNAVAILABLE = {};
 
 function enabledMovieProviders() {
     return opts.providerOrder.filter(function (id) {
-        var provider = MOVIE_ART_PROVIDERS[id];
-        return provider && provider.enabled;
+        var provider = ART_PROVIDER_BY_ID[id];
+        return provider && !!opts[provider.option];
     });
 }
 
@@ -1583,10 +1565,15 @@ fanartKeyEl.addEventListener("change", function () {
 // fight text selection there.
 var providersEl = $("providers");
 opts.providerOrder.forEach(function (id) {
-    providersEl.appendChild(providersEl.querySelector('[data-provider="' + id + '"]'));
+    var row = providersEl.querySelector('[data-provider="' + id + '"]');
+    if (!row) throw new Error("Missing artwork provider control: " + id);
+    providersEl.appendChild(row);
 });
 var providerStatusEl = $("provider-status");
-function providerName(li) { return PROVIDER_NAMES[li.dataset.provider] || li.dataset.provider; }
+function providerName(li) {
+    var provider = ART_PROVIDER_BY_ID[li.dataset.provider];
+    return provider ? provider.name : li.dataset.provider;
+}
 function syncProviderHandles(moved) {
     var rows = Array.prototype.slice.call(providersEl.querySelectorAll(".provider"));
     rows.forEach(function (li, i) {
@@ -1611,11 +1598,12 @@ syncProviderHandles();
 // enabled property (getter/setter over its backing option) - a new provider row
 // needs no handler code of its own.
 Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function (li) {
-    var p = MOVIE_ART_PROVIDERS[li.dataset.provider];
+    var provider = ART_PROVIDER_BY_ID[li.dataset.provider];
+    if (!provider) throw new Error("Unknown artwork provider control: " + li.dataset.provider);
     var box = li.querySelector('input[type="checkbox"]');
-    box.checked = p.enabled;
+    box.checked = !!opts[provider.option];
     box.addEventListener("change", function () {
-        p.enabled = box.checked;
+        opts[provider.option] = box.checked ? 1 : 0;
         tmdbCache = newMovieCache(); // every cached URL may be the other source's now
         saveOpts();
         updateBackdrop();
