@@ -113,6 +113,27 @@ test.describe("the deployed player page", () => {
         await expect(box).not.toBeChecked();
         await expect(root).toHaveCSS("color-scheme", "dark");
     });
+    test("uses the shared theme script on every page", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.addInitScript(() => localStorage.removeItem("theme"));
+
+        for (const path of ["/", "/privacy.html", "/player.html"]) {
+            await page.goto(path, { waitUntil: "domcontentloaded" });
+            await expect(page.locator('script[src^="js/theme.js?v="]')).toHaveCount(1);
+            await expect(page.locator('script:not([src])').filter({ hasText: "syncTheme" }))
+                .toHaveCount(0);
+
+            const box = page.locator("#themeswitch");
+            const before = await box.isChecked();
+            await box.evaluate((input) => {
+                input.checked = !input.checked;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            await expect(box).toBeChecked({ checked: !before });
+            expect(await page.evaluate(() => localStorage.getItem("theme")))
+                .toMatch(/^(dark|light)$/);
+        }
+    });
     test("keeps the player hidden in a sandboxed third-party frame", async ({ page }) => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const playerUrl = page.url();
