@@ -314,12 +314,21 @@ test.describe("the deployed player page", () => {
             expect(rendered.runs).toBe(24);
             expect(rendered.first).toEqual(infoTint);
             const expectSpectrumClearOfInfo = async () => {
-                const boxes = await page.evaluate(() => {
+                const readBoxes = () => page.evaluate(() => {
                     const rect = (selector) =>
                         document.querySelector(selector).getBoundingClientRect().toJSON();
                     return { stage: rect("#stage"), spectrum: rect("#stage-spectrum"),
                         cover: rect("#coverbox"), info: rect(".info") };
                 });
+                // Fullscreen changes the stage before ResizeObserver has necessarily
+                // recomputed the spectrum gap. Assert the settled geometry, not that
+                // transient frame; the same non-overlap constraints still apply.
+                await expect.poll(async () => {
+                    const boxes = await readBoxes();
+                    return boxes.spectrum.top >= boxes.cover.bottom - 1
+                        && boxes.spectrum.bottom <= boxes.info.top + 1;
+                }).toBe(true);
+                const boxes = await readBoxes();
                 expect(boxes.spectrum.left).toBeGreaterThanOrEqual(boxes.stage.left);
                 expect(boxes.spectrum.top).toBeGreaterThanOrEqual(boxes.stage.top);
                 expect(boxes.spectrum.right).toBeLessThanOrEqual(boxes.stage.right);
@@ -733,6 +742,59 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
         await page.waitForTimeout(100);
         await expect(front).toHaveAttribute("src", fastSized);
+    });
+
+    test("keeps a hidden SST cover suppressed until the next station cover is ready", async ({ page }) => {
+        const sstCover = "https://streamingsoundtracks.com/images/cover/hidden-sst.svg";
+        const sstSized = "https://streamingsoundtracks.com/images/cover/500/hidden-sst.svg";
+        const deathCover = "https://death.fm/images/cover/hidden-death.svg";
+        const deathSized = "https://death.fm/images/cover/500/hidden-death.svg";
+        const movieBackdrop = "https://image.tmdb.org/t/p/w1280/hidden-sst.jpg";
+        let deathImageRoute = null;
+
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 0,
+                tmdbArt: 1, steamGridDbArt: 0, hideCover: 1 })));
+        await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/soap\/FM24sevenJSON\.php\?/, (route) => {
+            const url = new URL(route.request().url());
+            if (url.searchParams.get("action") === "GetQueue") return route.fulfill({ json: [] });
+            const isDeath = url.hostname === "death.fm";
+            return route.fulfill({ json: {
+                Album: isDeath ? "Death album" : "SST movie", Track: "", Artist: "24seven.fm",
+                CoverLink: isDeath ? deathCover : sstCover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sstSized, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(deathSized, (route) => { deathImageRoute = route; });
+        await page.route(/\/api\/tint\?/, (route) => route.fulfill({ json: { tint: [20, 40, 60] } }));
+        await page.route(/\/api\/backdrop\?/, (route) => route.fulfill({ json: {
+            media: { id: 1, title: "SST movie", type: "movie" },
+            backdrop: movieBackdrop, source: "tmdb", tint: [100, 120, 140],
+        } }));
+        await page.route(movieBackdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const stage = page.locator("#stage");
+        const front = page.locator(
+            '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+        await expect(stage).toHaveClass(/no-cover/);
+        await expect(front).toHaveAttribute("src", sstSized);
+
+        await page.locator("label.seg", { hasText: "Death.FM" }).click();
+        await expect.poll(() => !!deathImageRoute).toBe(true);
+        await expect(stage).toHaveClass(/no-cover/);
+        await expect(front).toHaveAttribute("src", sstSized);
+        await expect(page.locator("#coverbox")).toHaveCSS("opacity", "0");
+
+        await deathImageRoute.fulfill({ status: 200, contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+        await expect(front).toHaveAttribute("src", deathSized);
+        await expect(stage).not.toHaveClass(/no-cover/);
     });
 
     test("ignores a resolver result after movie backdrops are disabled", async ({ page }) => {
@@ -1170,6 +1232,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => route.abort());
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const warning = "Backdrop service is currently unavailable.";
