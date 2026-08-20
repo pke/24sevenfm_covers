@@ -14,6 +14,8 @@
 "use strict";
 (function () {
 
+var PLAYER_SCRIPT_URL = new URL(document.currentScript.src, document.baseURI);
+
 // Mirrors shared/stations.h: same ids (used as persistence keys), same hosts. The logo
 // filenames are wildly inconsistent per station and NOT guessable - each URL below was
 // verified live (the "500x500" variants the stations' own og:image tags reference are
@@ -922,6 +924,8 @@ var spectrumData = null, spectrumFrame = null, spectrumLastFrame = 0, spectrumPe
 var spectrumEnvelope = 0, spectrumEnvelopeFrom = 0, spectrumEnvelopeTarget = 0;
 var spectrumEnvelopeStarted = 0;
 var SPECTRUM_ENVELOPE_MS = 400;
+var audioSpectrumModule = null, audioSpectrumModulePromise = null;
+var audioSpectrumModuleRetry = 0;
 
 // A compact Winamp-style spectrum. The media element stays the one source of truth:
 // Web Audio only observes its decoded samples, then forwards them to the speakers.
@@ -1200,6 +1204,40 @@ function setAudio(on) {
     stageAudioBtn.title = action;
     stageAudioBtn.textContent = on ? "⏸" : "▶";
 }
+function audioSpectrumModuleUrl() {
+    var url = new URL("audio-spectrum.js", PLAYER_SCRIPT_URL);
+    url.search = PLAYER_SCRIPT_URL.search;
+    if (audioSpectrumModuleRetry) url.searchParams.set("retry", audioSpectrumModuleRetry);
+    return url.href;
+}
+function loadAudioSpectrumModule() {
+    if (audioSpectrumModule) return Promise.resolve(audioSpectrumModule);
+    if (!audioSpectrumModulePromise) {
+        audioSpectrumModulePromise = import(audioSpectrumModuleUrl()).then(function (module) {
+            if (typeof module.createAudioSpectrumController !== "function")
+                throw new Error("Invalid audio spectrum module");
+            audioSpectrumModule = module;
+            return module;
+        }).catch(function (error) {
+            audioSpectrumModulePromise = null;
+            audioSpectrumModuleRetry++;
+            throw error;
+        });
+    }
+    return audioSpectrumModulePromise;
+}
+function toggleAudio() {
+    var on = !audioWanted;
+    // Keep play() on the original click/keypress stack. Awaiting a module fetch first
+    // would lose transient user activation in browsers that gate media playback.
+    setAudio(on);
+    if (!on) return;
+    loadAudioSpectrumModule().catch(function () {
+        if (!audioWanted) return;
+        setAudio(false);
+        setStatus("Audio controls failed to load – try again.", "audio");
+    });
+}
 audioEl.addEventListener("playing", function () {
     if (!audioWanted) return;
     audioHasPlayed = true;
@@ -1244,14 +1282,14 @@ window.addEventListener("online", function () {
     startAudio(false);
 });
 audioBtn.addEventListener("click", function () {
-    setAudio(!audioWanted);
+    toggleAudio();
 });
-stageAudioBtn.addEventListener("click", function () { setAudio(!audioWanted); });
+stageAudioBtn.addEventListener("click", toggleAudio);
 document.addEventListener("keydown", function (e) {
     if (e.key !== " " || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.target.closest("a, button, input, select, textarea, [contenteditable]")) return;
     e.preventDefault();
-    setAudio(!audioWanted);
+    toggleAudio();
 });
 function applyVolume(value) { audioEl.volume = value; }
 
