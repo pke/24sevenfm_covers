@@ -106,24 +106,28 @@ var OPTION_DEFS = {
     station: { default: "sst", coerce: function (value) {
         return stationIndex(value) >= 0 ? value : "sst";
     } },
-    layout: { default: 1, coerce: intOption(0, 1) },
+    layout: { default: 1, coerce: intOption(0, 1), effect: applyLayout },
     transition: { default: 1, coerce: intOption(0, 3) },
-    fadeMs: { default: 1000, coerce: intOption(500, 2000) },
-    showRemaining: { default: 0, coerce: boolOption },
-    remainingSize: { default: 0, coerce: intOption(0, 2) },
+    fadeMs: { default: 1000, coerce: intOption(500, 2000), event: "input",
+        format: function (value) { return (value / 1000).toFixed(1) + " s"; } },
+    showRemaining: { default: 0, coerce: boolOption, effect: renderCountdown },
+    remainingSize: { default: 0, coerce: intOption(0, 2), effect: sizeStage },
     roll: { default: 0, coerce: boolOption },
     posterBlur: { default: 24, coerce: intOption(0, 200) },
     borderRadius: { default: 45, coerce: intOption(0, 500) },
-    volume: { default: 0.8, coerce: floatOption(0.8, 0, 1) },
-    spectrumEnabled: { default: 0, coerce: boolOption },
-    spectrumBars: { default: 24, coerce: intOption(8, 64) },
-    spectrumMode: { default: "tinted", coerce: enumOption(["legacy", "tinted"], "tinted") },
+    volume: { default: 0.8, coerce: floatOption(0.8, 0, 1), event: "input",
+        effect: applyVolume },
+    spectrumEnabled: { default: 0, coerce: boolOption, effect: applySpectrumEnabled },
+    spectrumBars: { default: 24, coerce: intOption(8, 64), event: "input",
+        format: String, effect: resetSpectrumBars },
+    spectrumMode: { default: "tinted", coerce: enumOption(["legacy", "tinted"], "tinted"),
+        effect: clearSpectrum },
     // Experimental film/TV/game backdrops stay OFF by default because enabling them sends
     // current/next soundtrack titles through the project resolver. fanart's optional
     // personal client key can unlock fresher art through that same resolver.
     // providerOrder is the art priority (first enabled provider with art wins);
     // tmdbArt is TMDB's own checkbox in that list, like fanartBackdrops is fanart's.
-    tmdbBackdrops: { default: 0, coerce: boolOption },
+    tmdbBackdrops: { default: 0, coerce: boolOption, effect: updateBackdrop },
     fanartKey: { default: "", coerce: function (value) {
         return (typeof value === "string") ? value.trim() : "";
     } },
@@ -132,7 +136,7 @@ var OPTION_DEFS = {
     steamGridDbArt: { default: 1, coerce: boolOption },
     providerOrder: { default: PROVIDER_ORDER, coerce: orderedIdsOption(PROVIDER_ORDER) },
     // Hide the cover when backdrop is available
-    hideCover: { default: 0, coerce: boolOption }
+    hideCover: { default: 0, coerce: boolOption, effect: updateCoverVisibility }
 };
 var opts = loadOpts();
 var backdropApiMeta = document.querySelector('meta[name="backdrop-api"]');
@@ -911,7 +915,7 @@ if (window.ResizeObserver) {
 }
 
 // --- audio -------------------------------------------------------------------
-var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio"), volEl = $("volume");
+var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio");
 var spectrumEl = $("stage-spectrum"), spectrumCtx = spectrumEl.getContext("2d");
 var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
 var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
@@ -1255,12 +1259,7 @@ document.addEventListener("keydown", function (e) {
     e.preventDefault();
     setAudio(!audioWanted);
 });
-volEl.value = opts.volume;
-volEl.addEventListener("input", function () {
-    opts.volume = parseFloat(volEl.value);
-    audioEl.volume = opts.volume;
-    saveOpts();
-});
+function applyVolume(value) { audioEl.volume = value; }
 
 // --- fullscreen (mirrors the apps: double-click toggles) ---------------------
 function toggleFullscreen() {
@@ -1457,12 +1456,49 @@ document.addEventListener("fullscreenchange", function () {
 });
 
 // --- controls wiring ---------------------------------------------------------
-function bindRadios(name, current, apply) {
-    var inputs = document.querySelectorAll('input[name="' + name + '"]');
+function bindStationRadios(current, apply) {
+    var inputs = document.querySelectorAll('input[name="station"]');
     inputs.forEach(function (r) {
         r.checked = (r.value === String(current));
         r.addEventListener("change", function () { if (r.checked) { apply(r.value); saveOpts(); } });
     });
+}
+function syncOptionControls(key) {
+    var def = OPTION_DEFS[key], value = opts[key];
+    document.querySelectorAll('[data-option="' + key + '"]').forEach(function (control) {
+        if (control.type === "checkbox") control.checked = !!value;
+        else if (control.type === "radio") control.checked = control.value === String(value);
+        else control.value = value;
+        var outputId = control.getAttribute("data-output");
+        if (outputId && def.format) $(outputId).textContent = def.format(value);
+    });
+}
+function handleOptionControl(event) {
+    var control = event.target.closest("[data-option]");
+    if (!control) return;
+    var key = control.dataset.option, def = OPTION_DEFS[key];
+    if (!def) throw new Error("Unknown player option control: " + key);
+    if (event.type !== (def.event || "change")) return;
+    if (control.type === "radio" && !control.checked) return;
+    var raw = control.type === "checkbox" ? control.checked : control.value;
+    opts[key] = def.coerce(raw);
+    syncOptionControls(key);
+    saveOpts();
+    if (def.effect) def.effect(opts[key], control);
+}
+function bindOptionControls() {
+    var seen = Object.create(null);
+    document.querySelectorAll("[data-option]").forEach(function (control) {
+        var key = control.dataset.option;
+        if (!OPTION_DEFS[key]) throw new Error("Unknown player option control: " + key);
+        if (!seen[key]) {
+            seen[key] = true;
+            syncOptionControls(key);
+        }
+    });
+    var root = document.querySelector(".page");
+    root.addEventListener("input", handleOptionControl);
+    root.addEventListener("change", handleOptionControl);
 }
 // Station picker is built from the table so it can never drift from STATIONS.
 (function buildStations() {
@@ -1479,7 +1515,7 @@ function bindRadios(name, current, apply) {
         box.appendChild(label);
     });
 })();
-bindRadios("station", opts.station, function (v) {
+bindStationRadios(opts.station, function (v) {
     // If a media backdrop currently owns the stage, clearing it below must not expose
     // SST's still-buffered cover. showCover() releases this hold only after the new
     // station cover (or logo) has loaded and become the front buffer.
@@ -1500,60 +1536,21 @@ bindRadios("station", opts.station, function (v) {
     if (audioBtn.getAttribute("aria-pressed") === "true") setAudio(true); // retune the stream
     poll();
 });
-bindRadios("layout", opts.layout, function (v) { opts.layout = clampInt(v, 0, 1); applyLayout(); });
-bindRadios("transition", opts.transition, function (v) { opts.transition = clampInt(v, 0, 3); });
-bindRadios("cdsize", opts.remainingSize, function (v) { opts.remainingSize = clampInt(v, 0, 2); sizeStage(); });
-bindRadios("spectrum-mode", opts.spectrumMode, function (v) {
-    opts.spectrumMode = v === "legacy" ? "legacy" : "tinted";
-    clearSpectrum();
-});
 
-var spectrumEnabledEl = $("spectrum-enabled");
-var spectrumBarsEl = $("spectrum-bars"), spectrumBarsVal = $("spectrum-bars-val");
+var spectrumBarsEl = $("spectrum-bars");
 var spectrumModeEls = document.querySelectorAll('input[name="spectrum-mode"]');
-spectrumEnabledEl.checked = !!opts.spectrumEnabled;
-spectrumBarsEl.value = opts.spectrumBars;
-spectrumBarsVal.textContent = opts.spectrumBars;
 function syncSpectrumSettingControls() {
     spectrumBarsEl.disabled = !opts.spectrumEnabled;
     spectrumModeEls.forEach(function (input) { input.disabled = !opts.spectrumEnabled; });
 }
-syncSpectrumSettingControls();
-spectrumEnabledEl.addEventListener("change", function () {
-    opts.spectrumEnabled = spectrumEnabledEl.checked ? 1 : 0;
+function applySpectrumEnabled() {
     syncSpectrumSettingControls();
     if (opts.spectrumEnabled && audioWanted) prepareSpectrum();
     syncSpectrum();
-    saveOpts();
-});
-spectrumBarsEl.addEventListener("input", function () {
-    opts.spectrumBars = clampInt(spectrumBarsEl.value, 8, 64);
-    spectrumBarsVal.textContent = opts.spectrumBars;
-    spectrumPeaks = [];
-    saveOpts();
-});
-
-var fadeEl = $("fade"), fadeVal = $("fade-val");
-fadeEl.value = opts.fadeMs;
-fadeVal.textContent = (opts.fadeMs / 1000).toFixed(1) + " s";
-fadeEl.addEventListener("input", function () {
-    opts.fadeMs = clampInt(fadeEl.value, 500, 2000);
-    fadeVal.textContent = (opts.fadeMs / 1000).toFixed(1) + " s";
-    saveOpts();
-});
-var showEl = $("show-remaining"), rollEl = $("roll");
-showEl.checked = !!opts.showRemaining;
-rollEl.checked = !!opts.roll;
-showEl.addEventListener("change", function () { opts.showRemaining = showEl.checked ? 1 : 0; saveOpts(); renderCountdown(); });
-rollEl.addEventListener("change", function () { opts.roll = rollEl.checked ? 1 : 0; saveOpts(); });
-
-var tmdbOnEl = $("tmdb-on");
-tmdbOnEl.checked = !!opts.tmdbBackdrops;
-tmdbOnEl.addEventListener("change", function () {
-    opts.tmdbBackdrops = tmdbOnEl.checked ? 1 : 0;
-    saveOpts();
-    updateBackdrop();
-});
+}
+function resetSpectrumBars() { spectrumPeaks = []; }
+bindOptionControls();
+syncSpectrumSettingControls();
 var fanartKeyEl = $("fanart-key");
 fanartKeyEl.value = opts.fanartKey;
 fanartKeyEl.addEventListener("change", function () {
@@ -1692,13 +1689,6 @@ providersEl.addEventListener("keydown", function (e) {
         window.addEventListener("pointercancel", endDrag);
     });
 })();
-var hideCoverEl = $("hide-cover");
-hideCoverEl.checked = !!opts.hideCover;
-hideCoverEl.addEventListener("change", function () {
-    opts.hideCover = hideCoverEl.checked ? 1 : 0;
-    saveOpts();
-    updateCoverVisibility();
-});
 
 // --- go ----------------------------------------------------------------------
 applyLayout();
