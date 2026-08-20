@@ -10,12 +10,12 @@
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
         https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm
-        https://image.tmdb.org https://fanart.tv https://*.fanart.tv;
+        https://image.tmdb.org https://fanart.tv https://*.fanart.tv
+        https://cdn2.steamgriddb.com;
       connect-src 'self'
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
-        https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm
-        https://api.themoviedb.org https://webservice.fanart.tv;
+        https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm;
       media-src https://streamingsoundtracks.com https://*.streamingsoundtracks.com
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
         https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm;
@@ -32,6 +32,9 @@
 </script>
 <title>Player — 24seven.fm Covers</title>
 <meta name="description" content="Listen to the 24seven.fm radio stations and watch the cover art change with every track — right in your browser, nothing to install.">
+<!-- Keep these relative when the static site and Vercel functions share a domain. -->
+<meta name="backdrop-api" content="/api/backdrop">
+<meta name="tint-api" content="/api/tint">
 <link rel="icon" href="img/favicon.ico">
 <link rel="author" href="humans.txt">
 <link rel="canonical" href="{{SITE_URL}}player.html">
@@ -90,7 +93,8 @@
         <h2>Player</h2>
         <p class="lead">The desktop viewer, in your browser: covers change with every track, and
         you can stream the station's audio too — or keep it silent and just watch the artwork.
-        Everything talks directly to the station; nothing runs through this site.</p>
+        Station data and audio flow directly from the station. The optional media-backdrop feature
+        uses this site's resolver, as described in the privacy policy.</p>
 
         <!-- Station picker above the stage: choose first, watch below. Lives in its own
              .controls block so the fullscreen overlay can move it (with the main panel)
@@ -212,46 +216,47 @@
             <fieldset class="wide">
                 <legend>Experimental</legend>
                 <div class="row">
-                    <label><input type="checkbox" id="tmdb-on"> Movie backdrops</label>
-                    <label for="tmdb-key">TMDB</label>
-                    <input type="password" id="tmdb-key" autocomplete="off" spellcheck="false"
-                           placeholder="API key or Read Access Token" style="flex:1; min-width:160px; max-width:300px;">
+                    <label><input type="checkbox" id="tmdb-on"> Movie, TV &amp; game backdrops</label>
                 </div>
                 <!-- Art providers by priority: drag ⠿ or focus it and use arrow keys;
                      player.js sorts these to the saved order. The topmost ENABLED provider that has
-                     art for the movie wins; the others are fallback. TMDB always does
-                     the movie lookup itself - fanart.tv has no text search. -->
+                     art for the matched work wins; the others are fallback. TMDB searches movie/TV
+                     titles, SteamGridDB searches games, and fanart.tv uses the TMDB match. -->
                 <ul class="providers" id="providers" aria-label="Backdrop providers, in priority order">
                     <li class="provider" data-provider="fanart">
                         <button type="button" class="grip" title="Drag or use arrow keys to change priority"
                                 aria-label="Reorder fanart.tv provider">⠿</button>
                         <label><input type="checkbox" id="fanart-on"> fanart.tv</label>
                         <input type="password" id="fanart-key" autocomplete="off" spellcheck="false"
-                               aria-label="fanart.tv API key" placeholder="optional API key">
+                               aria-label="fanart.tv personal key" placeholder="optional personal key">
                     </li>
                     <li class="provider" data-provider="tmdb">
                         <button type="button" class="grip" title="Drag or use arrow keys to change priority"
                                 aria-label="Reorder TMDB provider">⠿</button>
                         <label><input type="checkbox" id="tmdbart-on"> TMDB backdrops</label>
                     </li>
+                    <li class="provider" data-provider="steamgriddb">
+                        <button type="button" class="grip" title="Drag or use arrow keys to change priority"
+                                aria-label="Reorder SteamGridDB provider">⠿</button>
+                        <label><input type="checkbox" id="steamgriddb-on"> GameArt by SteamGridDB</label>
+                    </li>
                 </ul>
                 <p id="provider-status" class="visually-hidden" role="status"></p>
                 <div class="row" style="margin-top:.6rem">
-                    <label><input type="checkbox" id="hide-cover"> Hide the cover while a movie
-                    backdrop is shown</label>
+                    <label><input type="checkbox" id="hide-cover"> Hide the cover while a movie,
+                    TV, or game backdrop is shown</label>
                 </div>
-                <p class="note">In poster layout, the movie's own backdrop replaces the blurred
-                cover — matched by album title, so it fits soundtrack stations best. Needs a free
-                credential from <a href="https://www.themoviedb.org/settings/api">themoviedb.org</a>
-                (API key or Read Access Token — the player tells them apart). Add a free
-                <a href="https://fanart.tv/get-an-api-key/">fanart.tv</a> key for curated, usually
-                textless backdrops. The list above is the priority: drag ⠿ to reorder — the
-                topmost ticked provider that has art for the movie wins, the others are fallback,
-                and unticking one skips it while keeping its key. Both keys
-                stay in your browser. When enabled, current and next queued album titles go to TMDB; each matched
-                movie's id to fanart.tv — see the <a href="privacy.html">privacy policy</a>.
-                This product uses the TMDB API but is not endorsed or certified by TMDB;
-                artwork also provided by fanart.tv.</p>
+                <p class="note">In poster layout, a movie, TV-series, or game backdrop replaces the
+                blurred cover — matched by album title, so it fits soundtrack stations best. No key is
+                required from listeners: this site's resolver searches TMDB and SteamGridDB and prefers
+                curated, usually textless fanart.tv art for screen works. A
+                <a href="https://fanart.tv/get-an-api-key/">fanart.tv</a> personal key can unlock
+                fresher artwork. The list above is the priority: drag ⠿ to
+                reorder — the topmost ticked provider that has art wins. That optional personal key
+                is sent to this site's resolver and then to fanart.tv. The browser never calls either
+                provider's metadata API directly. When enabled, current and next queued album titles
+                go through the resolver — see the <a href="privacy.html">privacy policy</a>.
+                Artwork-provider credits appear in the footer below.</p>
             </fieldset>
 
             <fieldset class="wide">
@@ -276,6 +281,17 @@
 </main>
 
 <footer>
+    <div class="art-credits" aria-label="Artwork provider credits">
+        <p class="art-credit-links">
+            <a class="tmdb-credit" href="https://www.themoviedb.org/"
+               aria-label="The Movie Database (TMDB)">
+                <img src="img/tmdb.svg" alt="TMDB" width="100" height="13">
+            </a>
+            <a href="https://fanart.tv/">Artwork by fanart.tv</a>
+            <a href="https://www.steamgriddb.com/">GameArt by SteamGridDB</a>
+        </p>
+        <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+    </div>
     <p>© 2026 <a href="https://dudesoft.app">DudeSoft</a> · Open source on <a href="https://github.com/pke/24sevenfm_covers">GitHub</a> · <a href="privacy.html">Privacy</a> · <a href="index.html">Home</a><br>
     Not affiliated with 24seven.fm — a fan-made companion for its stations.</p>
     <p class="updated">Last updated {{UPDATED}} · {{RELEASE_TAG}}</p>

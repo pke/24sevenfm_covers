@@ -51,6 +51,22 @@ test.describe("the deployed player page", () => {
         expect(blocked).toBe(true);
         expect(escaped).toBe(false);
     });
+    test("shows linked artwork-provider credits in the player footer", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const credits = page.locator("footer .art-credits");
+        await expect(credits).toContainText(
+            "This product uses the TMDB API but is not endorsed or certified by TMDB.");
+        await expect(credits.locator("a")).toHaveCount(3);
+        await expect(credits.locator("a").nth(0)).toHaveAttribute(
+            "href", "https://www.themoviedb.org/");
+        await expect(credits.locator("a").nth(1)).toHaveAttribute("href", "https://fanart.tv/");
+        await expect(credits.locator("a").nth(2)).toHaveAttribute(
+            "href", "https://www.steamgriddb.com/");
+        await expect(credits.locator("img")).toHaveAttribute("src", "img/tmdb.svg");
+        await expect.poll(() => credits.locator("img").evaluate((image) => image.naturalWidth))
+            .toBeGreaterThan(0);
+    });
     test("keeps the theme toggle working when storage is unavailable", async ({ page }) => {
         await mockProviderTestFeed(page);
         const errors = [];
@@ -714,24 +730,24 @@ test.describe("the deployed player page", () => {
         await expect(front).toHaveAttribute("src", fastSized);
     });
 
-    test("ignores a TMDB result after movie backdrops are disabled", async ({ page }) => {
+    test("ignores a resolver result after movie backdrops are disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/race.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/race.svg";
-        let backdropRequested = false, fanartRequested = false;
+        let backdropRequested = false;
         await page.addInitScript(() => {
             localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                tmdbBackdrops: 1, tmdbKey: "race-test-key",
+                tmdbBackdrops: 1,
                 fanartBackdrops: 1, fanartKey: "fanart-race-key", tmdbArt: 1,
             }));
-            window.__tmdbStarted = false;
-            window.__tmdbAborted = false;
+            window.__resolverStarted = false;
+            window.__resolverAborted = false;
             const nativeFetch = window.fetch;
             window.fetch = function (url, init) {
-                if (String(url).startsWith("https://api.themoviedb.org/3/search/movie?")) {
-                    window.__tmdbStarted = true;
+                if (String(url).includes("/api/backdrop?")) {
+                    window.__resolverStarted = true;
                     return new Promise((resolve, reject) => {
                         const abort = () => {
-                            window.__tmdbAborted = true;
+                            window.__resolverAborted = true;
                             reject(new DOMException("Aborted", "AbortError"));
                         };
                         const signal = init && init.signal;
@@ -754,12 +770,6 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) => {
-            fanartRequested = true;
-            return route.fulfill({ json: { moviebackground: [
-                { url: "https://fanart.tv/slow.jpg", lang: "", likes: "1" },
-            ] } });
-        });
         await page.route("https://image.tmdb.org/t/p/w1280/slow.jpg", (route) => {
             backdropRequested = true;
             return route.fulfill({ status: 200, contentType: "image/svg+xml",
@@ -767,20 +777,188 @@ test.describe("the deployed player page", () => {
         });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => page.evaluate(() => window.__tmdbStarted)).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.__resolverStarted)).toBe(true);
         await page.locator("label:has(#tmdb-on)").click();
-        await expect.poll(() => page.evaluate(() => window.__tmdbAborted)).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.__resolverAborted)).toBe(true);
         await page.waitForTimeout(100);
         expect(backdropRequested).toBe(false);
-        expect(fanartRequested).toBe(false);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
     });
-    test("normalizes the live rotated conjunction title for display, TMDB, and fanart.tv", async ({ page }) => {
+    test("uses the server cover tint without enabling movie backdrops", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/cover-tint.jpg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/cover-tint.jpg";
+        let tintRequests = 0, backdropRequests = 0, requestedCover = "";
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Cover Tint", Track: "No Movie Art", Artist: "24seven.fm",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/jpeg", body: Buffer.from([1, 2, 3]) }));
+        await page.route(/\/api\/tint\?/, (route) => {
+            tintRequests++;
+            requestedCover = new URL(route.request().url()).searchParams.get("url");
+            return route.fulfill({ json: { tint: [31, 63, 127] } });
+        });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            backdropRequests++;
+            return route.abort();
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => tintRequests).toBe(1);
+        expect(requestedCover).toBe(cover);
+        expect(backdropRequests).toBe(0);
+        await expect.poll(() => page.locator("#stage").evaluate((stage) =>
+             getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
+            .toBe("rgb(31, 63, 127)");
+    });
+    test("uses the cover tint resolver for every station", async ({ page }) => {
+        const stations = [
+            { name: "StreamingSoundtracks", host: "streamingsoundtracks.com", id: "sst" },
+            { name: "1980s.FM", host: "1980s.fm", id: "1980s" },
+            { name: "Adagio.FM", host: "adagio.fm", id: "adagio" },
+            { name: "Death.FM", host: "death.fm", id: "death" },
+            { name: "Entranced.FM", host: "entranced.fm", id: "entranced" },
+        ].map((entry) => ({
+            ...entry,
+            cover: "https://" + entry.host + "/images/cover/tint-" + entry.id + ".jpg",
+        }));
+        const requestedCovers = [];
+
+        await page.route(/https:\/\/(?:streamingsoundtracks\.com|1980s\.fm|adagio\.fm|death\.fm|entranced\.fm)\/soap\/FM24sevenJSON\.php\?/, (route) => {
+            const url = new URL(route.request().url());
+            if (url.searchParams.get("action") === "GetQueue") return route.fulfill({ json: [] });
+            const selected = stations.find((entry) => entry.host === url.hostname);
+            return route.fulfill({ json: {
+                Album: "Tint " + selected.name, Track: "", Artist: "24seven.fm",
+                CoverLink: selected.cover, Length: 0,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(/https:\/\/(?:streamingsoundtracks\.com|1980s\.fm|adagio\.fm|death\.fm|entranced\.fm)\/images\/cover\/500\/tint-.*\.jpg/,
+            (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/tint\?/, (route) => {
+            requestedCovers.push(new URL(route.request().url()).searchParams.get("url"));
+            return route.fulfill({ json: { tint: [31, 63, 127] } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        for (const selected of stations) {
+            if (selected.id !== "sst") {
+                await page.locator("label.seg", { hasText: selected.name }).click();
+            }
+            await expect.poll(() => requestedCovers.includes(selected.cover)).toBe(true);
+        }
+        expect(new Set(requestedCovers)).toEqual(new Set(stations.map((entry) => entry.cover)));
+    });
+    test("uses the server backdrop and tint without browser provider calls", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/arrival.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/arrival.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/arrival.jpg";
+        let resolverRequests = 0, directProviderRequests = 0;
+        let resolvedTitle = "", resolvedProviders = "", resolvedHint = "";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1,
+                fanartBackdrops: 1, tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Arrival (Original Motion Picture Soundtrack)", Track: "Heptapod B",
+                Artist: "Jóhann Jóhannsson", CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/tint\?/, (route) =>
+            route.fulfill({ json: { tint: [20, 40, 60] } }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            resolverRequests++;
+            resolvedTitle = url.searchParams.get("title");
+            resolvedProviders = url.searchParams.get("providers");
+            resolvedHint = url.searchParams.get("media_hint");
+            return route.fulfill({ json: {
+                movie: { id: 329865, title: "Arrival" }, backdrop,
+                source: "tmdb", tint: [131, 172, 255],
+            } });
+        });
+        await page.route(/https:\/\/(api\.themoviedb\.org|webservice\.fanart\.tv|www\.steamgriddb\.com)\//, (route) => {
+            directProviderRequests++;
+            return route.abort();
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => resolverRequests).toBe(1);
+        expect(resolvedTitle).toBe("Arrival");
+        expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
+        expect(resolvedHint).toBe("movie");
+        expect(directProviderRequests).toBe(0);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /arrival\.jpg/);
+        await expect.poll(() => page.locator("#stage").evaluate((stage) =>
+            getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
+            .toBe("rgb(131, 172, 255)");
+    });
+    test("sends an explicit game hint and accepts a SteamGridDB hero", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/hades.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/hades.svg";
+        const backdrop = "https://cdn2.steamgriddb.com/hero/hades.jpg";
+        let query = "", hint = "", providers = "";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 1,
+                tmdbArt: 1, steamGridDbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Hades (Original Video Game Soundtrack)", Track: "No Escape",
+                Artist: "Darren Korb", CoverLink: cover, Length: 144000,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            query = url.searchParams.get("title");
+            hint = url.searchParams.get("media_hint");
+            providers = url.searchParams.get("providers");
+            return route.fulfill({ json: {
+                media: { id: 5253, title: "Hades", type: "game" }, backdrop,
+                source: "steamgriddb", tint: [90, 100, 110],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect.poll(() => query).toBe("Hades");
+        expect(hint).toBe("game");
+        expect(providers).toBe("fanart,tmdb,steamgriddb");
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /cdn2\.steamgriddb\.com\/hero\/hades\.jpg/);
+    });
+    test("normalizes the live rotated conjunction title for the resolver", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/history-title.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/history-title.svg";
-        let tmdbQuery = "", fanartRequests = 0;
+        let resolverQuery = "", personalKey = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "history-test-key",
+            JSON.stringify({ tmdbBackdrops: 1,
                 fanartBackdrops: 1, fanartKey: "fanart-history-key", tmdbArt: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -794,19 +972,15 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
-            tmdbQuery = new URL(route.request().url()).searchParams.get("query");
-            return route.fulfill({ json: { results: [
-                { id: 429, title: "The Good, the Bad and the Ugly",
-                    original_title: "Il buono, il brutto, il cattivo",
-                    backdrop_path: "/good-bad-ugly.jpg" },
-            ] } });
-        });
-        await page.route("https://webservice.fanart.tv/v3/movies/429?*", (route) => {
-            fanartRequests++;
-            return route.fulfill({ json: { moviebackground: [
-                { url: "https://fanart.tv/good-bad-ugly.jpg", lang: "", likes: "10" },
-            ] } });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            resolverQuery = url.searchParams.get("title");
+            personalKey = url.searchParams.get("client_key");
+            return route.fulfill({ json: {
+                movie: { id: 429, title: "The Good, the Bad and the Ugly" },
+                backdrop: "https://fanart.tv/good-bad-ugly.jpg",
+                source: "fanart", tint: [200, 210, 220],
+            } });
         });
         await page.route("https://fanart.tv/good-bad-ugly.jpg", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
@@ -816,17 +990,133 @@ test.describe("the deployed player page", () => {
 
         await expect(page.locator("#info-title"))
             .toContainText("The Good, The Bad & The Ugly - The Trio (Main Title)");
-        await expect.poll(() => tmdbQuery).toBe("The Good, The Bad and The Ugly");
-        await expect.poll(() => fanartRequests).toBe(1);
+        await expect.poll(() => resolverQuery).toBe("The Good, The Bad and The Ugly");
+        expect(personalKey).toBe("fanart-history-key");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /good-bad-ugly\.jpg/);
+    });
+    test("strips a symphonic-suite album suffix for the movie resolver", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/princess-mononoke.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/princess-mononoke.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/princess-mononoke.jpg";
+        let resolverQuery = "";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 0, tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Princess Mononoke: Symphonic Suite", Track: "The Journey To The West",
+                Artist: "Joe Hisaishi", CoverLink: cover, Length: 291000,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverQuery = new URL(route.request().url()).searchParams.get("title");
+            return route.fulfill({ json: {
+                movie: { id: 128, title: "Princess Mononoke" }, backdrop,
+                source: "tmdb", tint: [150, 160, 170],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#info-title")).toContainText(
+            "Princess Mononoke: Symphonic Suite - The Journey To The West (4:51)");
+        await expect.poll(() => resolverQuery).toBe("Princess Mononoke");
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /princess-mononoke\.jpg/);
+    });
+    test("unrotates an article before a soundtrack release year", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/thomas-crown.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/thomas-crown.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/thomas-crown.jpg";
+        let resolverQuery = "";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 0, tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Thomas Crown Affair, The (1968)",
+                Track: "Theme From The Thomas Crown Affair (The Windmills Of Your Mind) (Perf. By Noel Harrison)",
+                Artist: "Michel Legrand", CoverLink: cover, Length: 138000,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverQuery = new URL(route.request().url()).searchParams.get("title");
+            return route.fulfill({ json: {
+                movie: { id: 912, title: "The Thomas Crown Affair" }, backdrop,
+                source: "tmdb", tint: [150, 160, 170],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#info-title")).toContainText(
+            "The Thomas Crown Affair (1968) - Theme From The Thomas Crown Affair "
+            + "(The Windmills Of Your Mind) (Perf. By Noel Harrison) (2:18)");
+        await expect.poll(() => resolverQuery).toBe("The Thomas Crown Affair (1968)");
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /thomas-crown\.jpg/);
+    });
+    test("maps a compilation album to its canonical TV series title", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/inspector-morse.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/inspector-morse.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/inspector-morse.jpg";
+        let resolverQuery = "";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, fanartBackdrops: 1, tmdbArt: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "The Magic Of Inspector Morse", Track: "Irish Connection",
+                Artist: "Barrington Pheloung", CoverLink: cover, Length: 183000,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverQuery = new URL(route.request().url()).searchParams.get("title");
+            return route.fulfill({ json: {
+                media: { id: 3476, title: "Inspector Morse", type: "tv" }, backdrop,
+                source: "tmdb", tint: [100, 120, 140],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#info-title"))
+            .toContainText("The Magic Of Inspector Morse - Irish Connection (3:03)");
+        await expect.poll(() => resolverQuery).toBe("Inspector Morse");
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /inspector-morse\.jpg/);
     });
     test("treats inherited object names as normal movie cache keys", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/constructor.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/constructor.svg";
-        let tmdbRequests = 0;
+        let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "cache-test-key",
+            JSON.stringify({ tmdbBackdrops: 1,
                 fanartBackdrops: 0, tmdbArt: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -840,28 +1130,29 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
-            tmdbRequests++;
-            return route.fulfill({ json: { results: [
-                { id: 13, title: "constructor", original_title: "constructor",
-                    backdrop_path: "/constructor.jpg" },
-            ] } });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
+            return route.fulfill({ json: {
+                movie: { id: 13, title: "constructor" },
+                backdrop: "https://image.tmdb.org/t/p/w1280/constructor.jpg",
+                source: "tmdb", tint: [255, 255, 255],
+            } });
         });
         await page.route("https://image.tmdb.org/t/p/w1280/constructor.jpg", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => tmdbRequests).toBe(1);
+        await expect.poll(() => resolverRequests).toBe(1);
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /constructor\.jpg/);
     });
-    virtualClockTest("preserves the missing-key warning across successful polls", async ({ page }) => {
+    virtualClockTest("preserves the resolver-outage warning across successful polls", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/no-key.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-key.svg";
         await page.clock.install();
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "" })));
+            JSON.stringify({ tmdbBackdrops: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -876,17 +1167,17 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        const warning = "Movie backdrops need a TMDB API key - see the Experimental options.";
+        const warning = "Backdrop service is currently unavailable.";
         await expect(page.locator("#status")).toHaveText(warning);
         await page.clock.fastForward(12002);
         await expect(page.locator("#status")).toHaveText(warning);
     });
-    test("rejects non-string persisted API keys", async ({ page }) => {
+    test("rejects a non-string persisted fanart personal key", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/invalid-key.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/invalid-key.svg";
-        let tmdbRequests = 0;
+        let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: 12345, fanartKey: { key: "bad" } })));
+            JSON.stringify({ tmdbBackdrops: 1, fanartKey: { key: "bad" } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -899,22 +1190,23 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\//, (route) => {
-            tmdbRequests++;
-            return route.abort();
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
+            expect(new URL(route.request().url()).searchParams.has("client_key")).toBe(false);
+            return route.fulfill({ status: 503, json: { error: "resolver_not_configured" } });
         });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect(page.locator("#tmdb-key")).toHaveValue("");
+        await expect(page.locator("#tmdb-key")).toHaveCount(0);
         await expect(page.locator("#fanart-key")).toHaveValue("");
         await expect(page.locator("#status")).toHaveText(
-            "Movie backdrops need a TMDB API key - see the Experimental options.");
-        expect(tmdbRequests).toBe(0);
+            "Backdrop service is currently unavailable.");
+        expect(resolverRequests).toBe(1);
     });
     test("preserves audio errors across backdrop option changes", async ({ page }) => {
         await page.addInitScript(() => {
             localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "" }));
+                JSON.stringify({ tmdbBackdrops: 1 }));
             HTMLMediaElement.prototype.play = function () { return Promise.reject(new Error("denied")); };
             HTMLMediaElement.prototype.pause = function () {};
             HTMLMediaElement.prototype.load = function () {};
@@ -935,9 +1227,9 @@ test.describe("the deployed player page", () => {
     test("clears stale movie art when the replacement image fails", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/movie-failure.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/movie-failure.svg";
-        let tmdbRequests = 0, failedImages = 0;
+        let resolverRequests = 0, failedImages = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "first-key",
+            JSON.stringify({ tmdbBackdrops: 1,
                 fanartBackdrops: 0, tmdbArt: 1, hideCover: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -951,13 +1243,16 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
-            tmdbRequests++;
-            const path = tmdbRequests === 1 ? "/working.jpg" : "/broken.jpg";
-            return route.fulfill({ json: { results: [
-                { id: 1, title: "Backdrop Failure", original_title: "Backdrop Failure",
-                    backdrop_path: path },
-            ] } });
+        await page.route(/\/api\/tint\?/, (route) =>
+            route.fulfill({ json: { tint: [20, 40, 60] } }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
+            const path = resolverRequests === 1 ? "/working.jpg" : "/broken.jpg";
+            return route.fulfill({ json: {
+                movie: { id: 1, title: "Backdrop Failure" },
+                backdrop: "https://image.tmdb.org/t/p/w1280" + path,
+                source: "tmdb", tint: [220, 230, 240],
+            } });
         });
         await page.route("https://image.tmdb.org/t/p/w1280/working.jpg", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
@@ -970,23 +1265,26 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(1);
         await expect(page.locator("#stage")).toHaveClass(/no-cover/);
-        await page.locator("#tmdb-key").evaluate((input) => {
-            input.value = "second-key";
+        await page.locator("#fanart-key").evaluate((input) => {
+            input.value = "new-personal-key";
             input.dispatchEvent(new Event("change", { bubbles: true }));
         });
-        await expect.poll(() => tmdbRequests).toBe(2);
+        await expect.poll(() => resolverRequests).toBe(2);
         await expect.poll(() => failedImages).toBe(1);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
         await expect(page.locator("#stage")).not.toHaveClass(/no-cover/);
+        await expect.poll(() => page.locator("#stage").evaluate((stage) =>
+            getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
+            .toBe("rgb(20, 40, 60)");
     });
 
     for (const status of [429, 500]) {
-        test(`retries TMDB after a transient HTTP ${status}`, async ({ page }) => {
+        test(`retries the resolver after a transient HTTP ${status}`, async ({ page }) => {
             const cover = "https://streamingsoundtracks.com/images/cover/retry.svg";
             const sizedCover = "https://streamingsoundtracks.com/images/cover/500/retry.svg";
-            let tmdbRequests = 0;
+            let resolverRequests = 0;
             await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "retry-test-key",
+                JSON.stringify({ tmdbBackdrops: 1,
                     fanartBackdrops: 0, tmdbArt: 1 })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
@@ -1000,37 +1298,38 @@ test.describe("the deployed player page", () => {
             await page.route(sizedCover, (route) => route.fulfill({ status: 200,
                 contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-            await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) => {
-                tmdbRequests++;
-                if (tmdbRequests === 1)
-                    return route.fulfill({ status, json: { status_message: "temporary failure" } });
-                return route.fulfill({ json: { results: [
-                    { id: 1, title: "Retry Movie", original_title: "Retry Movie",
-                        backdrop_path: "/retry.jpg" },
-                ] } });
+            await page.route(/\/api\/backdrop\?/, (route) => {
+                resolverRequests++;
+                if (resolverRequests === 1)
+                    return route.fulfill({ status, json: { error: "temporary_failure" } });
+                return route.fulfill({ json: {
+                    movie: { id: 1, title: "Retry Movie" },
+                    backdrop: "https://image.tmdb.org/t/p/w1280/retry.jpg",
+                    source: "tmdb", tint: [255, 255, 255],
+                } });
             });
             await page.route("https://image.tmdb.org/t/p/w1280/retry.jpg", (route) =>
                 route.fulfill({ status: 200, contentType: "image/svg+xml",
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
 
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            await expect.poll(() => tmdbRequests).toBe(1);
+            await expect.poll(() => resolverRequests).toBe(1);
             await page.waitForTimeout(100); // let the failed lookup settle without caching
             const toggle = page.locator("label:has(#tmdb-on)");
             await toggle.click();
             await toggle.click();
 
-            await expect.poll(() => tmdbRequests).toBe(2);
+            await expect.poll(() => resolverRequests).toBe(2);
             await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(1);
         });
     }
 
-    test("keeps next-track fanart prefetch failures out of the current status", async ({ page }) => {
+    test("keeps next-track resolver failures out of the current status", async ({ page }) => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/next.svg";
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/next.svg";
-        let fanartRequests = 0;
+        let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "prefetch-test-key",
+            JSON.stringify({ tmdbBackdrops: 1,
                 fanartBackdrops: 1, fanartKey: "bad-fanart-key", tmdbArt: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -1048,28 +1347,20 @@ test.describe("the deployed player page", () => {
         await page.route(nextSized, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
-            route.fulfill({ json: { results: [
-                { id: 7, title: "Next Movie", original_title: "Next Movie",
-                    backdrop_path: "/next.jpg" },
-            ] } }));
-        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) => {
-            fanartRequests++;
-            return route.fulfill({ status: 401, json: { error: "bad key" } });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
+            return route.fulfill({ status: 502, json: { error: "provider_unavailable" } });
         });
-        await page.route("https://image.tmdb.org/t/p/w1280/next.jpg", (route) =>
-            route.fulfill({ status: 200, contentType: "image/svg+xml",
-                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => fanartRequests).toBe(1);
+        await expect.poll(() => resolverRequests).toBe(1);
         await expect(page.locator("#status")).toHaveText("");
     });
-    test("does not promise TMDB art when that provider is disabled", async ({ page }) => {
+    test("does not request TMDB art when that provider is disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/no-fallback.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-fallback.svg";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "search-key",
+            JSON.stringify({ tmdbBackdrops: 1,
                 fanartBackdrops: 1, fanartKey: "fanart-key", tmdbArt: 0 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -1083,26 +1374,28 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
-            route.fulfill({ json: { results: [
-                { id: 21, title: "No Fallback", original_title: "No Fallback",
-                    backdrop_path: "/unused.jpg" },
-            ] } }));
-        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) =>
-            route.fulfill({ status: 500 }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const providers = new URL(route.request().url()).searchParams.get("providers").split(",");
+            expect(providers).toContain("fanart");
+            expect(providers).toContain("steamgriddb");
+            expect(providers).not.toContain("tmdb");
+            return route.fulfill({ json: {
+                movie: { id: 21, title: "No Fallback" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+            } });
+        });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect(page.locator("#status"))
-            .toHaveText("fanart.tv's API is currently unavailable.");
+        await expect(page.locator("#status")).toHaveText("");
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
         await expect(page.locator('.provider[data-provider="tmdb"] input')).not.toBeChecked();
     });
-    test("retries fanart.tv after a transient provider failure", async ({ page }) => {
+    test("re-resolves cached art after the fanart personal key changes", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/fanart-retry.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/fanart-retry.svg";
-        let fanartRequests = 0;
+        let resolverRequests = 0, lastPersonalKey = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, tmdbKey: "fanart-retry-key",
+            JSON.stringify({ tmdbBackdrops: 1,
                 fanartBackdrops: 1, fanartKey: "fanart-key", tmdbArt: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -1116,17 +1409,17 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
-            route.fulfill({ json: { results: [
-                { id: 9, title: "Fanart Retry", original_title: "Fanart Retry",
-                    backdrop_path: "/tmdb-fallback.jpg" },
-            ] } }));
-        await page.route("https://webservice.fanart.tv/v3/movies/**", (route) => {
-            fanartRequests++;
-            if (fanartRequests === 1) return route.fulfill({ status: 500 });
-            return route.fulfill({ json: { moviebackground: [
-                { url: "https://fanart.tv/fanart-retry.jpg", lang: "", likes: "1" },
-            ] } });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
+            lastPersonalKey = new URL(route.request().url()).searchParams.get("client_key");
+            const first = resolverRequests === 1;
+            return route.fulfill({ json: {
+                movie: { id: 9, title: "Fanart Retry" },
+                backdrop: first
+                    ? "https://image.tmdb.org/t/p/w1280/tmdb-fallback.jpg"
+                    : "https://fanart.tv/fanart-retry.jpg",
+                source: first ? "tmdb" : "fanart", tint: [240, 240, 240],
+            } });
         });
         await page.route("https://image.tmdb.org/t/p/w1280/tmdb-fallback.jpg", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
@@ -1136,12 +1429,14 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => fanartRequests).toBe(1);
+        await expect.poll(() => resolverRequests).toBe(1);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /tmdb-fallback/);
-        const toggle = page.locator("label:has(#tmdb-on)");
-        await toggle.click();
-        await toggle.click();
-        await expect.poll(() => fanartRequests).toBe(2);
+        await page.locator("#fanart-key").evaluate((input) => {
+            input.value = "new-personal-key";
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await expect.poll(() => resolverRequests).toBe(2);
+        expect(lastPersonalKey).toBe("new-personal-key");
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /fanart-retry/);
     });
 
@@ -1179,24 +1474,24 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(20001);
         await expect.poll(() => page.evaluate(() => window.__queueAborted)).toBe(true);
     });
-    virtualClockTest("times out a stalled prefetched fanart lookup", async ({ page }) => {
+    virtualClockTest("times out a stalled prefetched resolver lookup", async ({ page }) => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/art-timeout.svg";
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/art-timeout.svg";
         await page.clock.install();
         await page.addInitScript(() => {
             localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                tmdbBackdrops: 1, tmdbKey: "art-timeout-key",
+                tmdbBackdrops: 1,
                 fanartBackdrops: 1, fanartKey: "fanart-timeout-key", tmdbArt: 1,
             }));
-            window.__fanartStarted = false;
-            window.__fanartAborted = false;
+            window.__resolverStarted = false;
+            window.__resolverAborted = false;
             const nativeFetch = window.fetch;
             window.fetch = function (url, init) {
-                if (String(url).startsWith("https://webservice.fanart.tv/v3/movies/")) {
-                    window.__fanartStarted = true;
+                if (String(url).includes("/api/backdrop?")) {
+                    window.__resolverStarted = true;
                     return new Promise((resolve, reject) => {
                         const abort = () => {
-                            window.__fanartAborted = true;
+                            window.__resolverAborted = true;
                             reject(new DOMException("Aborted", "AbortError"));
                         };
                         const signal = init && init.signal;
@@ -1224,16 +1519,10 @@ test.describe("the deployed player page", () => {
         await page.route(nextSized, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\/3\/search\/movie\?/, (route) =>
-            route.fulfill({ json: { results: [
-                { id: 12, title: "Next Movie", original_title: "Next Movie",
-                    backdrop_path: "/next.jpg" },
-            ] } }));
-
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => page.evaluate(() => window.__fanartStarted)).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.__resolverStarted)).toBe(true);
         await page.clock.fastForward(20001);
-        await expect.poll(() => page.evaluate(() => window.__fanartAborted)).toBe(true);
+        await expect.poll(() => page.evaluate(() => window.__resolverAborted)).toBe(true);
     });
     async function mockProviderTestFeed(page) {
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
@@ -1513,9 +1802,9 @@ test.describe("the deployed player page", () => {
     });
 
     test("keeps string zero boolean options disabled", async ({ page }) => {
-        let tmdbRequests = 0;
+        let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: "0", tmdbKey: "privacy-test-key",
+            JSON.stringify({ tmdbBackdrops: "0",
                 showRemaining: "0", roll: "0", hideCover: "0" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -1529,8 +1818,8 @@ test.describe("the deployed player page", () => {
         await page.route("https://streamingsoundtracks.com/images/cover/500/privacy.svg", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/https:\/\/api\.themoviedb\.org\//, (route) => {
-            tmdbRequests++;
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
             return route.abort();
         });
 
@@ -1540,7 +1829,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#roll")).not.toBeChecked();
         await expect(page.locator("#hide-cover")).not.toBeChecked();
         await page.waitForTimeout(100);
-        expect(tmdbRequests).toBe(0);
+        expect(resolverRequests).toBe(0);
     });
     test("ignores a stale audio rejection after a station switch", async ({ page }) => {
         await page.addInitScript(() => {
@@ -1613,16 +1902,26 @@ test.describe("the deployed player page", () => {
 
         await fanartGrip.focus();
         await fanartGrip.press("ArrowDown");
-        expect(await order()).toEqual(["tmdb", "fanart"]);
+        expect(await order()).toEqual(["tmdb", "fanart", "steamgriddb"]);
         await expect(fanartGrip).toBeFocused();
-        await expect(fanartGrip).toHaveAttribute("aria-label", /position 2 of 2/);
-        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 2.");
+        await expect(fanartGrip).toHaveAttribute("aria-label", /position 2 of 3/);
+        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 3.");
 
         await page.reload({ waitUntil: "domcontentloaded" });
-        expect(await order()).toEqual(["tmdb", "fanart"]);
+        expect(await order()).toEqual(["tmdb", "fanart", "steamgriddb"]);
         await fanartGrip.focus();
         await fanartGrip.press("ArrowUp");
-        expect(await order()).toEqual(["fanart", "tmdb"]);
+        expect(await order()).toEqual(["fanart", "tmdb", "steamgriddb"]);
+    });
+
+    test("appends SteamGridDB to an older saved two-provider order", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ providerOrder: ["tmdb", "fanart"] })));
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const order = await page.locator("#providers > .provider")
+            .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
+        expect(order).toEqual(["tmdb", "fanart", "steamgriddb"]);
     });
 
     test("keeps backdrop providers pointer-draggable", async ({ page }) => {
@@ -1642,8 +1941,8 @@ test.describe("the deployed player page", () => {
 
         const order = await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
-        expect(order).toEqual(["tmdb", "fanart"]);
-        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 2.");
+        expect(order).toEqual(["tmdb", "fanart", "steamgriddb"]);
+        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 3.");
     });
 
     test("loads, polls the station, and renders a real cover", async ({ page }) => {

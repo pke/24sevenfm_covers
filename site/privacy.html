@@ -55,7 +55,7 @@
 
     <section style="border-top: 0;">
         <h2>Privacy Policy</h2>
-        <p class="effective">Effective 16 July 2026</p>
+        <p class="effective">Effective 20 August 2026</p>
         <p class="lead">24seven.fm Covers is a free, open-source fan project. This policy covers
         this website and all three downloads: the Winamp plugin, the foobar2000 component and the
         standalone desktop player.</p>
@@ -63,11 +63,11 @@
         <div class="card">
             <h3>The short version</h3>
             <p>The Winamp plugin, the foobar2000 component, the standalone player and this website
-            collect no data. None. There are no accounts, no sign-ups, no analytics, no tracking
-            scripts, no advertising, no cookies and no telemetry. <strong>No server belonging to this
-            project is ever involved</strong> — none exists that could receive anything. The only
-            network requests the software makes go directly to the radio station you’re listening
-            to, to fetch its cover art.</p>
+            use no accounts, sign-ups, analytics, tracking scripts, advertising, cookies or
+            telemetry. Station data, covers and audio flow directly from the station. To color the
+            web player, its canonical cover URL is also sent to this project's Vercel tint
+            resolver. Only if you enable the experimental movie, TV and game-backdrop option are album titles
+            sent through the artwork resolver, as detailed below.</p>
         </div>
     </section>
 
@@ -86,11 +86,12 @@
                 <h3>Local preferences</h3>
                 <p>The dark/light toggle stores one value (<code>theme</code>), and the web player
                 stores your player options (station, layout, transition, countdown, volume — and,
-                if you use the experimental backdrops feature, the API keys you entered) under
+                if you use the experimental backdrops feature, an optional fanart.tv personal key)
+                under
                 <code>24sevenfm-covers.player</code> — both in local storage. They are not cookies,
-                never leave your device (each key is sent only to its own service, to authenticate
-                your requests there), and are never sent to this project. Clearing this site’s data
-                removes them.</p>
+                and clearing this site’s data removes them. The personal key is sent to this site's
+                resolver and then to fanart.tv while resolving artwork; the project code does not
+                persist it.</p>
             </div>
             <div class="card">
                 <h3>The web player</h3>
@@ -98,18 +99,30 @@
                 24seven.fm station you pick: it fetches the “now playing” information and cover
                 images, and — only if you press play — the audio stream. Those servers can see your
                 IP address, exactly as they would if you listened in any other player or visited
-                the station’s website. Nothing is routed through this project, and nothing about
-                what you listen to is recorded by it.</p>
-                <p>One <strong>experimental, off-by-default</strong> option changes this: “Movie
-                backdrops”. If you enable it and provide your own API keys, the player sends the
-                <em>current and next queued album titles</em> to
-                <a href="https://www.themoviedb.org/">The Movie Database</a> to find the matching
-                film and, if you also added a <a href="https://fanart.tv/">fanart.tv</a> key, the
-                matched film's TMDB id to fanart.tv for nicer artwork. Both are third parties that then see
-                your IP address and those lookups, under their own privacy policies
-                (<a href="https://www.themoviedb.org/privacy-policy">TMDB</a>,
-                <a href="https://fanart.tv/privacy-policy/">fanart.tv</a>). Leave the option off
-                and neither is ever contacted.</p>
+                the station’s website. The browser still loads each cover directly; to color the
+                player UI, it additionally sends that canonical cover URL to this project's Vercel
+                tint resolver. Vercel necessarily processes your IP address and request metadata.
+                The resolver fetches one size- and time-limited copy from the same station, returns
+                only three RGB values, and keeps no listening profile or request database. Successful
+                results may be cached for up to six months.</p>
+                <p>The <strong>experimental, off-by-default</strong> “Movie, TV &amp; game backdrops” option adds
+                another request. If you enable it, the player sends the <em>current and next queued album
+                titles</em> to this project's Vercel resolver. Vercel necessarily processes your IP
+                address and request metadata; the resolver then sends the title to
+                <a href="https://www.themoviedb.org/">The Movie Database</a> for movie/TV matching,
+                <a href="https://www.steamgriddb.com/">SteamGridDB</a> for game matching, and a matched
+                movie or TV-series identifier to <a href="https://fanart.tv/">fanart.tv</a> when that
+                provider is enabled. Those providers see the resolver's metadata request rather than
+                your browser's IP. The browser does not call their metadata APIs directly; it does load
+                the selected image from the provider's CDN, which necessarily receives your IP address
+                and ordinary request metadata. The resolver stores no listening
+                profile or database of requests; its responses may be cached for up to six months.
+                The third parties process requests under their own policies
+                (<a href="https://vercel.com/legal/privacy-policy">Vercel</a>,
+                <a href="https://www.themoviedb.org/privacy-policy">TMDB</a>,
+                <a href="https://fanart.tv/privacy-policy/">fanart.tv</a>,
+                <a href="https://www.steamgriddb.com/privacy">SteamGridDB</a>). Leave the option off and
+                no album title or backdrop-provider request is made; cover-tint requests still occur.</p>
             </div>
             <div class="card">
                 <h3>Hosting</h3>
@@ -119,7 +132,8 @@
                 GitHub’s, under the
                 <a href="https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement">GitHub
                 Privacy Statement</a>. Those logs stay with GitHub and are never passed on to this
-                project.</p>
+                project. The artwork resolver endpoints are hosted separately by Vercel, as
+                described above.</p>
             </div>
         </div>
         <p class="note">Downloads link to GitHub Releases, so fetching a file is a request to GitHub
@@ -217,8 +231,10 @@
         <p class="lead">This project is not affiliated with 24seven.fm.</p>
         <p>Cover art and track information come from the 24seven.fm family of stations —
         StreamingSoundtracks, 1980s.FM, Adagio.FM, Death.FM and Entranced.FM. When a cover is
-        fetched, that request goes to the station’s own servers. What those operators log and how
-        they handle it is governed by their own policies and is outside this project’s control. The
+        fetched, that request goes to the station’s own servers. The web tint resolver also fetches
+        a bounded copy on a cache miss, so the station sees Vercel rather than your IP for that
+        additional request. What those operators log and how they handle it is governed by their
+        own policies and is outside this project’s control. The
         same applies to any external site linked from these pages, including GitHub.</p>
         <p class="note">This is a fan-made companion. No endorsement by, or affiliation with,
         24seven.fm or its stations is claimed.</p>

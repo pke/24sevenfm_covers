@@ -49,7 +49,7 @@
 .backdrop.show { opacity: 1; }
 .layout-poster .backdrop { display: block; }
 
-/* Experimental TMDB/fanart movie backdrop: the pair sits on top of the blurred pair
+/* Experimental movie/TV/game backdrop: the pair sits on top of the blurred pair
    (later in the DOM), sharp but dimmed so the cover and info box stay the subject.
    Fades in when a match arrives and out when the next album has none - the blurred
    cover underneath is the ever-present fallback. */
@@ -139,6 +139,7 @@
     backdrop-filter: blur(6px);
     color: var(--player-tint);
     text-align: center;
+    transition: color .35s ease;
 }
 .layout-poster .coverbox {
     grid-column: 1;
@@ -173,7 +174,8 @@
     max-height: 1.2em;
     overflow: hidden;
     visibility: visible;
-    transition: max-height .45s ease, margin-top .45s ease, opacity .3s ease;
+    transition: max-height .45s ease, margin-top .45s ease, opacity .3s ease,
+                color .35s ease;
 }
 .coverbox .countdown { position: absolute; right: 4%; bottom: 4%; z-index: 2; margin-top: 0; }
 .countdown.hidden {
@@ -424,7 +426,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 .fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-    .coverbox img, .coverbox .card, .coverbox, .countdown,
+    .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
     .stage-audio, .stage-fs, .stage-opts, .stage-spectrum, .backdrop { transition: none !important; }
     .stage-spectrum { display: none; }
     /* digit rolling is skipped in JS when reduced motion is set */

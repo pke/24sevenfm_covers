@@ -328,6 +328,21 @@ footer {
     text-align: center;
 }
 footer a { color: var(--text-dim); text-decoration: underline; }
+.art-credits {
+    margin: 0 auto 1.35rem;
+    padding-bottom: 1.35rem;
+    border-bottom: 1px solid var(--line);
+}
+.art-credits p { margin: .55rem 0 0; }
+.art-credit-links {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .7rem 1.2rem;
+    flex-wrap: wrap;
+}
+.art-credit-links .tmdb-credit { display: inline-flex; }
+.art-credit-links .tmdb-credit img { display: block; width: 100px; height: 13px; }
 
 /* --- Wider screens -------------------------------------------------------- */
 @media (min-width: 640px) {
