@@ -735,6 +735,7 @@ function createHandler(options = {}) {
         try {
             const albumValue = queryValue(req.query && req.query.album);
             const trackValue = queryValue(req.query && req.query.track);
+            const artistValue = queryValue(req.query && req.query.artist);
             const titleValue = typeof albumValue === "string"
                 ? albumValue : queryValue(req.query && req.query.title);
             if (typeof titleValue !== "string" || !titleValue.trim() || titleValue.length > 180
@@ -744,6 +745,11 @@ function createHandler(options = {}) {
             if (trackValue !== undefined && (typeof trackValue !== "string" || trackValue.length > 300
                     || /[\u0000-\u001F\u007F]/.test(trackValue))) {
                 throw new ResolverError("invalid_title", 400, "track must be at most 300 characters");
+            }
+            if (artistValue !== undefined && (typeof artistValue !== "string" || artistValue.length > 180
+                    || /[\u0000-\u001F\u007F]/.test(artistValue))) {
+                throw new ResolverError("invalid_artist", 400,
+                    "artist must be at most 180 characters");
             }
             const title = backdropTitleFor(titleValue, trackValue);
             if (!title || title.length > 160) {
@@ -759,7 +765,7 @@ function createHandler(options = {}) {
             }
             const result = await resolveBackdrop(title, providers, clientKey, {
                 env, fetchImpl, tintForImage,
-            }, mediaHint);
+            }, mediaHint, typeof artistValue === "string" ? artistValue.trim() : "");
             res.setHeader("Cache-Control", "public, max-age=0, s-maxage=" + CACHE_SECONDS
                 + ", stale-while-revalidate=86400");
             return sendJson(res, 200, result);
