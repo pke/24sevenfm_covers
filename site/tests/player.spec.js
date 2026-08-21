@@ -2046,6 +2046,64 @@ test.describe("the deployed player page", () => {
         ]);
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /fanart-priority-3/);
+
+        await page.locator("#tmdbart-on").check();
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /tmdb-priority/);
+        expect(providerRequests).toHaveLength(3);
+
+        await page.locator('.provider[data-provider="fanart"] .grip').press("ArrowUp");
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /fanart-priority-1/);
+        expect(providerRequests).toHaveLength(3);
+    });
+
+    test("keeps the final provider variant when a superseded lookup finishes", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/provider-race.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/provider-race.svg";
+        const providerRequests = [];
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["fanart", "tmdb"] })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Provider Race", Track: "Final Theme", Artist: "Test Composer",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-21T12:00:00Z", SystemTime: "2026-08-21T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, async (route) => {
+            const providers = new URL(route.request().url()).searchParams.get("providers");
+            providerRequests.push(providers);
+            if (providers === "tmdb") await new Promise((resolve) => setTimeout(resolve, 400));
+            const fanart = providers.startsWith("fanart");
+            return route.fulfill({ json: {
+                media: { id: 23, title: "Provider Race", type: "movie" },
+                backdrop: fanart ? "https://fanart.tv/provider-final.jpg"
+                    : "https://image.tmdb.org/t/p/w1280/provider-stale.jpg",
+                source: fanart ? "fanart" : "tmdb", tint: [240, 240, 240],
+            } }).catch(() => {});
+        });
+        await page.route(/https:\/\/(image\.tmdb\.org\/t\/p\/w1280|fanart\.tv)\//, (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /provider-final/);
+
+        await page.locator("#fanart-on").uncheck();
+        await expect.poll(() => providerRequests).toEqual(["fanart,tmdb", "tmdb"]);
+        await page.locator("#fanart-on").check();
+        await page.waitForTimeout(600);
+
+        expect(providerRequests).toEqual(["fanart,tmdb", "tmdb"]);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /provider-final/);
     });
 
     virtualClockTest("times out a stalled queue prefetch independently", async ({ page }) => {
