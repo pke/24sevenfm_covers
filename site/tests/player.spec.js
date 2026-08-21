@@ -1288,11 +1288,14 @@ test.describe("the deployed player page", () => {
     virtualClockTest("keeps the cover retry budget across short polls", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/short-poll.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/short-poll.svg";
-        let coverRequests = 0, pollRequests = 0;
+        let coverRequests = 0, pollRequests = 0, queueRequests = 0;
         await page.clock.install();
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
-            if (action === "GetQueue") return route.fulfill({ json: [] });
+            if (action === "GetQueue") {
+                queueRequests++;
+                return route.fulfill({ json: [] });
+            }
             pollRequests++;
             return route.fulfill({ json: {
                 Album: "Unknown Length", Track: "", Artist: "24seven.fm",
@@ -1308,10 +1311,15 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => coverRequests).toBe(1);
         await expect.poll(() => pollRequests).toBe(1);
+        await expect.poll(() => queueRequests).toBe(1);
 
         for (let i = 1; i <= 10; i++) {
             await page.clock.fastForward(6001);
             await expect.poll(() => pollRequests).toBe(i + 1);
+            // prefetchNext starts only after poll() has scheduled the following poll.
+            // Waiting for that queue request prevents the next clock jump from racing
+            // the async response-processing tail of the current poll.
+            await expect.poll(() => queueRequests).toBe(i + 1);
         }
         await expect.poll(() => coverRequests).toBe(4);
     });
