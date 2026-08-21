@@ -537,6 +537,15 @@ async function searchSteamGridDb(fetchImpl, query, env) {
     return { game, exact: !!game };
 }
 
+function baseGameTitle(query) {
+    const undated = String(query || "").replace(
+        /\s*\((?:18|19|20|21)\d{2}\)\s*$/, "").trim();
+    const separator = undated.indexOf(":");
+    if (separator < 0) return "";
+    const base = undated.slice(0, separator).trim();
+    return normalizedTitle(base).length >= 4 ? base : "";
+}
+
 function trustedSteamGridDbUrl(raw, kind) {
     try {
         const url = new URL(String(raw || ""));
@@ -576,6 +585,16 @@ async function steamGridDbHero(fetchImpl, game, env) {
         };
     }
     return null;
+}
+
+async function steamGridDbBaseGameHero(fetchImpl, query, exactGame, env) {
+    const baseTitle = baseGameTitle(query);
+    if (!baseTitle) return null;
+    const baseMatch = await searchSteamGridDb(fetchImpl, baseTitle, env);
+    if (!baseMatch.game || Number(baseMatch.game.id) === Number(exactGame && exactGame.id)) {
+        return null;
+    }
+    return steamGridDbHero(fetchImpl, baseMatch.game, env);
 }
 
 async function tvdbIdForTmdbSeries(fetchImpl, seriesId, env) {
@@ -1034,7 +1053,19 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             }
             if (!match.game) continue;
             const media = gameMediaResponse(match.game, query);
-            const hero = await steamGridDbHero(dependencies.fetchImpl, match.game, dependencies.env);
+            let hero = await steamGridDbHero(dependencies.fetchImpl, match.game, dependencies.env);
+            if (!hero) {
+                try {
+                    // SteamGridDB sometimes has a verified expansion entry but stores
+                    // its hero art only on the exact base-game entry. Restrict this
+                    // fallback to explicit "Base game: Subtitle" titles and require
+                    // another exact provider match before borrowing that artwork.
+                    hero = await steamGridDbBaseGameHero(dependencies.fetchImpl,
+                        query, match.game, dependencies.env);
+                } catch (error) {
+                    errors.push(error);
+                }
+            }
             if (hero) {
                 return resolvedArtResponse(media, {
                     url: hero.url, preview: hero.preview, source: "steamgriddb",

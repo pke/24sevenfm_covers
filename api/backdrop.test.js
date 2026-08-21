@@ -644,6 +644,57 @@ test("resolves an explicitly marked game through SteamGridDB hero art", async ()
     assert.equal(tintUrl, "https://cdn2.steamgriddb.com/hero_thumb/hades.jpg");
 });
 
+test("uses an exact base-game hero when an exact expansion has no hero", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Starcraft%20II%3A%20Heart%20Of%20The%20Swarm")) {
+                return response(200, { success: true, data: [{
+                    id: 5256005, name: "StarCraft II: Heart of the Swarm", verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/5256005")) {
+                return response(200, { success: true, data: [] });
+            }
+            if (value.includes("/search/autocomplete/Starcraft%20II")) {
+                return response(200, { success: true, data: [{
+                    id: 34795, name: "StarCraft II", verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/34795")) return response(200, {
+                success: true,
+                data: [{
+                    url: "https://cdn2.steamgriddb.com/hero/starcraft-ii.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/starcraft-ii.jpg",
+                }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [20, 30, 40],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Starcraft II: Heart Of The Swarm",
+        track: "The Coming Storm",
+        artist: "Glenn Stafford, Neal Acree, Derek Duke",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 5256005, title: "StarCraft II: Heart of the Swarm", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/starcraft-ii.jpg",
+        source: "steamgriddb",
+        tint: [20, 30, 40],
+        certifications: [],
+    });
+    assert.equal(requests.length, 4);
+});
+
 test("resolves a Video Games Live suite through its game track", async () => {
     const requests = [];
     const handler = createHandler({
