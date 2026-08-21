@@ -37,6 +37,20 @@ try {
     $renderedPlayer = [IO.File]::ReadAllText((Join-Path $testOutput 'player.html'))
     Assert-Test ($renderedPlayer.Contains('http://localhost:3000/api/backdrop')) `
         'the renderer should write the local API origin directly into player.html'
+    $resolverHasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $resolverHashBytes = $resolverHasher.ComputeHash([IO.File]::ReadAllBytes(
+            (Join-Path $root 'api\_lib\backdrop.js')))
+    } finally {
+        $resolverHasher.Dispose()
+    }
+    $resolverVersion = (-join @($resolverHashBytes | ForEach-Object {
+        $_.ToString('x2')
+    })).Substring(0, 12)
+    Assert-Test ($renderedPlayer.Contains("resolver_version=$resolverVersion")) `
+        'the renderer should derive the resolver cache key from the resolver source'
+    Assert-Test (-not $renderedPlayer.Contains('resolver_version=1')) `
+        'the rendered player should not retain a manually maintained resolver version'
     Assert-Test (-not $renderedPlayer.Contains('https://24covers-api.vercel.app')) `
         'the local render should not expose an intermediate production API origin'
 

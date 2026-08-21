@@ -7,6 +7,7 @@ const { join } = require("node:path");
 const test = require("node:test");
 const {
     CACHE_SECONDS,
+    MISS_CACHE_SECONDS,
     backdropTitleCandidatesFor,
     backdropTitleFor,
     certificationResponse,
@@ -275,6 +276,8 @@ test("returns German and US movie ratings without resolving artwork", async () =
         ],
     });
     assert.deepEqual(requests, ["/3/search/multi", "/3/movie/293863/release_dates"]);
+    assert.equal(res.headers.get("cache-control"), "public, max-age=" + CACHE_SECONDS
+        + ", s-maxage=" + CACHE_SECONDS + ", stale-while-revalidate=86400");
 });
 
 test("returns Game of Thrones German and US TV ratings", async () => {
@@ -1062,7 +1065,8 @@ test("returns a cacheable miss without exposing provider details", async () => {
     assert.deepEqual(JSON.parse(res.body), {
         media: null, backdrop: null, source: null, tint: [255, 255, 255],
     });
-    assert.match(res.headers.get("cache-control"), /s-maxage=/);
+    assert.equal(res.headers.get("cache-control"), "public, max-age=" + MISS_CACHE_SECONDS
+        + ", s-maxage=" + MISS_CACHE_SECONDS + ", stale-while-revalidate=60");
 });
 
 test("rejects invalid artist metadata before provider access", async () => {
