@@ -184,7 +184,7 @@ test.describe("the deployed player page", () => {
     test("keeps the player hidden in a sandboxed third-party frame", async ({ page }) => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const playerUrl = page.url();
-        const attackerUrl = localMode ? "http://localhost:4173/" : "https://attacker.invalid/";
+        const attackerUrl = localMode ? process.env.PLAYER_ATTACKER_URL : "https://attacker.invalid/";
         const attackerBody =
             `<!doctype html><iframe sandbox="allow-scripts" src="${playerUrl}"></iframe>`;
 

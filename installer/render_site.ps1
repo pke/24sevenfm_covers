@@ -1,4 +1,5 @@
-# render_site.ps1 - render site\ (tokenised source) into www\ (the GitHub Pages root).
+# render_site.ps1 - render site\ (tokenised source) into www\ (the GitHub Pages root),
+# or into an explicit isolated directory for tests.
 #
 # The page advertises the three downloads, so rendering it needs each artifact's NAME,
 # SIZE and VERSION. Those arrive as an asset list rather than being read off disk, which
@@ -16,20 +17,26 @@
 # Usage:
 #   render_site.ps1 -Assets $json -ReleaseTag v2026.07.13-16 -SiteUrl https://example/    (release)
 #   render_site.ps1 -Assets $json                                                          (local preview)
+#   render_site.ps1 -Assets $json -OutputDirectory $temporaryDirectory                     (isolated test)
 param(
     # JSON array of the release/dist artifacts: [{"name":"winamp_...-1.10.0-20260713.exe","size":206462}, ...]
     # `.sha256` sidecars are ignored. Exactly the shape `gh release view --json assets` returns.
     [Parameter(Mandatory)][string]$Assets,
     [string]$ReleaseTag = '',   # '' = local preview: links point at the downloads\ folder
     [string]$SiteUrl    = '',   # absolute site base URL (og:image); empty for local preview
-    [string]$Repo       = 'pke/24sevenfm_covers'
+    [string]$Repo       = 'pke/24sevenfm_covers',
+    [string]$OutputDirectory = '' # empty = the publishable www\ tree
 )
 
 $ErrorActionPreference = 'Stop'
 $here    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root    = Split-Path -Parent $here
 $siteSrc = Join-Path $root 'site'
-$www     = Join-Path $root 'www'
+$www     = if ($OutputDirectory) {
+    [IO.Path]::GetFullPath($OutputDirectory)
+} else {
+    Join-Path $root 'www'
+}
 $partials = Join-Path $siteSrc '_partials'
 
 # --- classify the assets ----------------------------------------------------------------
@@ -123,6 +130,7 @@ foreach ($dir in @('css', 'img', 'js')) {
 
 $utf8  = New-Object System.Text.UTF8Encoding($false)   # 5.1's default would mangle the emoji
 $stamp = if ($ReleaseTag) { $ReleaseTag } else { 'local preview' }
+$outputLabel = if ($OutputDirectory) { $www } else { 'www' }
 
 # Expand build-time HTML partials before replacing release tokens. Includes use
 # {{> name}} and resolve to site\_partials\name.html. Names deliberately allow only
@@ -179,7 +187,7 @@ foreach ($page in $publish) {
     foreach ($t in $tokens.Keys) { $text = $text.Replace($t, [string]$tokens[$t]) }
     if ($text -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\$($page.Name): $($Matches[0])" }
     [System.IO.File]::WriteAllText((Join-Path $www $page.Name), $text, $utf8)
-    Write-Host "  www\$($page.Name) rendered ($stamp)"
+    Write-Host "  $(Join-Path $outputLabel $page.Name) rendered ($stamp)"
 }
 Write-Host ("  Winamp {0} | foobar {1} | viewer {2}" -f `
     $tokens['{{VER_WINAMP}}'], $tokens['{{VER_FOOBAR}}'], $tokens['{{VER_VIEWER}}']) -ForegroundColor Cyan

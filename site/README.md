@@ -100,6 +100,16 @@ pwsh -File start_test_server.ps1
 Only generated `www\player.html` points at the local API. The committed template
 and every deployment continue to use `https://24covers-api.vercel.app`.
 
+Run the deterministic browser tests separately from `site\tests`:
+
+```powershell
+npm run test:local
+```
+
+The test runner renders into a unique temporary directory and binds two dynamically
+allocated loopback ports for the player and sandbox fixture. It never writes to `www\`
+or uses the development ports 8099 and 3000, so it cannot alter a running preview.
+
 To package the native downloads as well, run:
 
 ```powershell
