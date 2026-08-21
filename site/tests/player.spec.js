@@ -419,6 +419,31 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#fade-val")).toHaveText("1.7 s");
         await expect(page.locator("#volume")).toHaveValue("0.35");
     });
+    test("binds generated station controls through the option schema", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.route("https://death.fm/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 0, PlayStart: "2026-08-13T12:00:00Z",
+                SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://death.fm/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const stations = page.locator('#stations input[name="station"]');
+        await expect(stations).toHaveCount(5);
+        expect(await stations.evaluateAll((inputs) =>
+            inputs.map((input) => input.dataset.option))).toEqual(Array(5).fill("station"));
+        await page.locator('label.seg:has(input[value="death"])').click();
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).station)).toBe("death");
+        await expect(page.locator('input[name="station"][value="death"]')).toBeChecked();
+    });
     test("renders a real spectrum while audio plays and respects reduced motion",
         async ({ page }) => {
             await page.addInitScript(() => {

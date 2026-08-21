@@ -122,7 +122,7 @@ var OPTION_DEFS = {
     // player around to provide them. Saved options always win over defaults.
     station: { default: "sst", coerce: function (value) {
         return stationIndex(value) >= 0 ? value : "sst";
-    } },
+    }, effect: applyStation },
     layout: { default: 1, coerce: intOption(0, 1), effect: applyLayout },
     transition: { default: 1, coerce: intOption(0, 3) },
     fadeMs: { default: 1000, coerce: intOption(500, 2000), event: "input",
@@ -1326,13 +1326,6 @@ document.addEventListener("fullscreenchange", function () {
 });
 
 // --- controls wiring ---------------------------------------------------------
-function bindStationRadios(current, apply) {
-    var inputs = document.querySelectorAll('input[name="station"]');
-    inputs.forEach(function (r) {
-        r.checked = (r.value === String(current));
-        r.addEventListener("change", function () { if (r.checked) { apply(r.value); saveOpts(); } });
-    });
-}
 function syncOptionControls(key) {
     var def = OPTION_DEFS[key], value = opts[key];
     document.querySelectorAll('[data-option="' + key + '"]').forEach(function (control) {
@@ -1379,18 +1372,18 @@ function bindOptionControls() {
         label.title = s.desc;
         var input = document.createElement("input");
         input.type = "radio"; input.name = "station"; input.value = s.id;
+        input.dataset.option = "station";
         var span = document.createElement("span");
         span.textContent = s.name;
         label.appendChild(input); label.appendChild(span);
         box.appendChild(label);
     });
 })();
-bindStationRadios(opts.station, function (v) {
+function applyStation() {
     // If a media backdrop currently owns the stage, clearing it below must not expose
     // SST's still-buffered cover. showCover() releases this hold only after the new
     // station cover (or logo) has loaded and become the front buffer.
     coverHiddenForStationSwitch = stage.classList.contains("no-cover");
-    opts.station = v;
     nextRenderGeneration("cover"); // invalidate image loads before the new poll returns
     updateCoverTint("");
     const backdropGeneration = nextRenderGeneration("backdrop");
@@ -1403,9 +1396,9 @@ bindStationRadios(opts.station, function (v) {
     currentAlbum = ""; currentTrack = "";
     setInfo("Loading…", "");
     setStatus("");
-    if (audioBtn.getAttribute("aria-pressed") === "true") setAudio(true); // retune the stream
+    if (audioWanted) setAudio(true); // retune the stream
     poll();
-});
+}
 
 var spectrumBarsEl = $("spectrum-bars");
 var spectrumModeEls = document.querySelectorAll('input[name="spectrum-mode"]');
