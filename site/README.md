@@ -88,6 +88,20 @@ for those paths.
 
 ## Local preview
 
+For the interactive web player, start the static site and the Vercel Functions
+together. The site stays on port 8099; the API runs separately on port 3000 and
+allows only that local site origin. The script uses an installed `vercel` CLI or
+falls back to `pnpm dlx`/`npx`, then keeps both servers running until Ctrl+C:
+
+```powershell
+pwsh -File start_test_server.ps1
+```
+
+Only generated `www\player.html` points at the local API. The committed template
+and every deployment continue to use `https://24covers-api.vercel.app`.
+
+To package the native downloads as well, run:
+
 ```powershell
 powershell -File installer\build_artifacts.ps1          # or -Build to recompile first
 ```
