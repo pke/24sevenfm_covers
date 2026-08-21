@@ -14,6 +14,7 @@
         https://cdn2.steamgriddb.com;
       connect-src 'self'
         https://24covers-api.vercel.app
+        https://webservice.fanart.tv
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
         https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm;
@@ -210,9 +211,26 @@
                         <button type="button" class="grip" title="Drag or use arrow keys to change priority"
                                 aria-label="Reorder fanart.tv provider">⠿</button>
                         <label><input type="checkbox" id="fanart-on"> fanart.tv</label>
-                        <input type="password" id="fanart-key" data-option="fanartKey"
-                               autocomplete="off" spellcheck="false"
-                               aria-label="fanart.tv personal key" placeholder="optional personal key">
+                        <div class="provider-key-setting">
+                            <div class="provider-key-control">
+                                <input type="password" id="fanart-key" data-option="fanartKey"
+                                       autocomplete="off" spellcheck="false"
+                                       aria-label="fanart.tv personal key"
+                                       aria-describedby="fanart-key-status"
+                                       placeholder="optional personal key">
+                                <button type="button" class="fanart-key-check"
+                                        id="fanart-key-check"
+                                        aria-label="Check fanart.tv personal key">
+                                    <span id="fanart-key-check-label">Check</span>
+                                </button>
+                            </div>
+                            <p class="provider-key-help" id="fanart-key-help">
+                                <a href="https://fanart.tv/personal-api-keys/">Why?</a>
+                                <a href="https://fanart.tv/get-an-api-key/">Get one</a>
+                            </p>
+                            <p class="provider-key-status" id="fanart-key-status"
+                               role="status" aria-live="polite"></p>
+                        </div>
                     </li>
                     <li class="provider" data-provider="tmdb">
                         <button type="button" class="grip" title="Drag or use arrow keys to change priority"
@@ -239,11 +257,12 @@
                 blurred cover — matched by soundtrack title, so it fits soundtrack stations best. No key is
                 required from listeners: this site's resolver searches TMDB and SteamGridDB and prefers
                 curated, usually textless fanart.tv art for screen works. A
-                <a href="https://fanart.tv/get-an-api-key/">fanart.tv</a> personal key can unlock
+                fanart.tv personal key can unlock
                 fresher artwork. The list above is the priority: drag ⠿ to
                 reorder — the topmost ticked provider that has art wins. That optional personal key
-                is sent to this site's resolver and then to fanart.tv. The browser never calls either
-                provider's metadata API directly. When enabled, information about the current and
+                is sent to this site's resolver and then to fanart.tv. Only its explicit Check button
+                calls fanart.tv directly; normal metadata matching stays behind this site's resolver.
+                When enabled, information about the current and
                 next queued title goes through this site's resolver for matching — see the
                 <a href="privacy.html">privacy policy</a>.
                 Artwork-provider credits appear in the footer below.</p>
