@@ -1787,6 +1787,122 @@ test.describe("the deployed player page", () => {
         expect(resolvedArtist).toBe("Next Composer");
         await expect(page.locator("#status")).toHaveText("");
     });
+    test("reuses prefetched backdrop art when the queue omits the artist", async ({ page }) => {
+        const nextCover = "https://streamingsoundtracks.com/images/cover/land-before-time.svg";
+        const nextSized = "https://streamingsoundtracks.com/images/cover/500/land-before-time.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/land-before-time.jpg";
+        let current = {
+            Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+            Length: 3600000, PlayStart: "2026-08-21T12:00:00Z",
+            SystemTime: "2026-08-21T12:00:00Z",
+        };
+        let resolverRequests = 0, backdropLoads = 0, firstArtist;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"] })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [{
+                Album: "Land Before Time, The", Track: "The Great Migration",
+                CoverLink: nextCover,
+            }] });
+            return route.fulfill({ json: current });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(nextSized, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            resolverRequests++;
+            if (resolverRequests === 1) firstArtist = url.searchParams.get("artist");
+            return route.fulfill({ json: {
+                media: { id: 12144, title: "The Land Before Time", type: "movie" },
+                backdrop, source: "tmdb", tint: [110, 150, 90],
+            } });
+        });
+        await page.route(backdrop, (route) => {
+            backdropLoads++;
+            return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => resolverRequests).toBe(1);
+        await expect.poll(() => backdropLoads).toBe(1);
+        expect(firstArtist).toBe(null);
+
+        current = {
+            Album: "Land Before Time, The", Track: "The Great Migration",
+            Artist: "James Horner", CoverLink: nextCover, Length: 180000,
+            PlayStart: "2026-08-21T12:00:00Z", SystemTime: "2026-08-21T12:00:00Z",
+        };
+        await page.locator('input[name="station"][value="sst"]').evaluate((input) =>
+            input.dispatchEvent(new Event("change", { bubbles: true })));
+
+        await expect(page.locator("#info-title")).toContainText("The Land Before Time");
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute(
+            "src", /land-before-time\.jpg/);
+        await page.waitForTimeout(100);
+        expect(resolverRequests).toBe(1);
+        expect(backdropLoads).toBe(1);
+    });
+    test("retries a prefetched title miss when now-playing supplies the artist", async ({ page }) => {
+        const nextCover = "https://streamingsoundtracks.com/images/cover/composer-fallback.svg";
+        const nextSized = "https://streamingsoundtracks.com/images/cover/500/composer-fallback.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/composer-fallback.jpg";
+        let current = {
+            Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+            Length: 3600000, PlayStart: "2026-08-21T12:00:00Z",
+            SystemTime: "2026-08-21T12:00:00Z",
+        };
+        const artists = [];
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"] })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [{
+                Album: "Unmatched Sketchbook", Track: "Opening", CoverLink: nextCover,
+            }] });
+            return route.fulfill({ json: current });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(nextSized, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const artist = new URL(route.request().url()).searchParams.get("artist");
+            artists.push(artist);
+            if (!artist) return route.fulfill({ json: {
+                media: null, backdrop: null, source: null, tint: [255, 255, 255],
+            } });
+            return route.fulfill({ json: {
+                media: { id: 7, title: "Unmatched", type: "movie" },
+                backdrop, source: "tmdb", tint: [120, 140, 160],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => artists).toEqual([null]);
+
+        current = {
+            Album: "Unmatched Sketchbook", Track: "Opening", Artist: "Known Composer",
+            CoverLink: nextCover, Length: 180000, PlayStart: "2026-08-21T12:00:00Z",
+            SystemTime: "2026-08-21T12:00:00Z",
+        };
+        await page.locator('input[name="station"][value="sst"]').evaluate((input) =>
+            input.dispatchEvent(new Event("change", { bubbles: true })));
+
+        await expect.poll(() => artists).toEqual([null, "Known Composer"]);
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute(
+            "src", /composer-fallback\.jpg/);
+    });
     test("does not request TMDB art when that provider is disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/no-fallback.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-fallback.svg";

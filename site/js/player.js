@@ -794,8 +794,18 @@ async function movieArtFor(album, track, artist, generation, signal) {
     const providers = enabledMovieProviders();
     if (!renderIsCurrent("backdrop", generation) || !album || !providers.length) return null;
     const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
-    const cacheKey = album + "\n" + track + "\n" + artist;
+    const titleCacheKey = album + "\n" + track + "\n";
+    const cacheKey = titleCacheKey + artist;
     if (Object.prototype.hasOwnProperty.call(cache, cacheKey)) return cache[cacheKey];
+    // SST's queue currently omits Artist. A successful title-only prefetch is still
+    // authoritative and its already-loaded image can be reused when now-playing later
+    // supplies the composer. Do not reuse a cached miss: Artist may unlock the strict
+    // composer-credit fallback once the queued title becomes current.
+    if (artist && Object.prototype.hasOwnProperty.call(cache, titleCacheKey)
+            && cache[titleCacheKey]) {
+        cache[cacheKey] = cache[titleCacheKey];
+        return cache[cacheKey];
+    }
 
     const art = await serverMovieArt(album, track, artist, providers, signal);
     if (!renderIsCurrent("backdrop", generation)) return null;
