@@ -54,7 +54,8 @@ GET /api/backdrop?album=<raw album>&track=<raw track>[&client_key=<fanart person
 -> { media: { id, title, type: "movie" | "tv" | "game" }, backdrop: "https://...",
      source: "fanart" | "tmdb" | "steamgriddb",
      tint: [r, g, b] }
-   Cache-Control: s-maxage=15552000        (6 months - TMDB's caching ceiling)
+   Cache-Control: s-maxage=15552000        (artwork hit)
+   Cache-Control: s-maxage=900             (no-backdrop result)
 ```
 
 The legacy `title` and optional `media_hint` parameters remain accepted for direct
@@ -94,8 +95,14 @@ Key points:
 - **Images keep flowing directly from the CDNs to the client** (`image.tmdb.org`,
   `assets.fanart.tv`, `cdn2.steamgriddb.com`). The endpoint returns URLs + tint only.
 - **Edge caching per title** (`s-maxage`) means the station's finite soundtrack
-  catalog converges to ~100% cache hits; providers see one lookup per media work
-  per 6 months.
+  catalog converges to ~100% cache hits. Artwork hits live for six months; a result
+  without a backdrop lives for only 15 minutes so provider additions and resolver
+  fixes are discovered quickly.
+- **The web cache key follows the resolver source automatically.** The site renderer
+  fingerprints `api/_lib/backdrop.js` and writes the first 12 SHA-256 hex characters
+  as `resolver_version` in the endpoint URL. Resolver changes also trigger the site
+  workflow, so changing matching logic cannot depend on somebody remembering to bump
+  a manual version number.
 - **Scope-locked, not an open proxy**: only the operations the player needs are
   exposed. `/api/tint` accepts HTTPS/443 URLs only on five exact station hosts,
   only for the feed's `/images/cover/<file>` thumbnails, without credentials,
@@ -104,8 +111,8 @@ Key points:
   a 4 second deadline. CORS is restricted to the site origin. This is
   what keeps it an app backend under TMDB's terms rather than sublicensed API
   access.
-- **Abuse controls are layered.** Successful responses are edge-cached for six
-  months; invalid inputs fail before any upstream fetch. Vercel's platform DDoS
+- **Abuse controls are layered.** Artwork hits are edge-cached for six months and
+  misses for 15 minutes; invalid inputs fail before any upstream fetch. Vercel's platform DDoS
   mitigation remains the outer layer, and a WAF rate-limit rule covers `/api/*`.
   CORS is not treated as authentication or rate limiting.
 

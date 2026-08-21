@@ -1,6 +1,7 @@
 "use strict";
 
 const CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
+const MISS_CACHE_SECONDS = 15 * 60;
 // A TV result may need TMDB search, external IDs, fanart, and a tint thumbnail in
 // sequence. Keep each leg short enough that all four fit under the 15 s function
 // and 20 s client deadlines even when every upstream stalls.
@@ -20,9 +21,9 @@ const DEFAULT_TINT_HOSTS = Object.freeze([
 ]);
 const COVER_TINT_PATH = /^\/images\/cover\/[A-Za-z0-9][A-Za-z0-9._-]{0,159}\.(?:jpe?g|png|webp)$/i;
 
-function cacheControl(browserSeconds) {
-    return "public, max-age=" + browserSeconds + ", s-maxage=" + CACHE_SECONDS
-        + ", stale-while-revalidate=86400";
+function cacheControl(browserSeconds, sharedSeconds = CACHE_SECONDS, staleSeconds = 86400) {
+    return "public, max-age=" + browserSeconds + ", s-maxage=" + sharedSeconds
+        + ", stale-while-revalidate=" + staleSeconds;
 }
 const WHITE_TINT = Object.freeze([255, 255, 255]);
 const FSK_LOGOS = Object.freeze({
@@ -1175,7 +1176,10 @@ function createHandler(options = {}) {
                     || !!starTrekSeriesAlias(titleValue),
                 disambiguateExactWithArtist: !!tvSeasonIdentity(titleValue),
             });
-            res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
+            const shortCache = !result.media || (includeArt && !result.backdrop);
+            res.setHeader("Cache-Control", shortCache
+                ? cacheControl(MISS_CACHE_SECONDS, MISS_CACHE_SECONDS, 60)
+                : cacheControl(CACHE_SECONDS));
             return sendJson(res, 200, result);
         } catch (error) {
             const known = error instanceof ResolverError;
@@ -1237,6 +1241,7 @@ const tintHandler = createTintHandler();
 
 module.exports = {
     CACHE_SECONDS,
+    MISS_CACHE_SECONDS,
     WHITE_TINT,
     backdropTitleCandidatesFor,
     backdropTitleFor,

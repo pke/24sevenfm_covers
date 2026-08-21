@@ -101,6 +101,22 @@ $base = if ($ReleaseTag) { "https://github.com/$Repo/releases/download/$releaseT
 function Url([string]$key)  { $base + $found[$key].name }
 function Size([string]$key) { '{0} KB' -f [math]::Round($found[$key].size / 1KB) }
 
+# The resolver response is deliberately long-lived when it contains artwork. Derive its
+# request cache key from the implementation so a matching change cannot accidentally keep
+# serving a browser's old response merely because somebody forgot to increment a number.
+$resolverSource = Join-Path $root 'api\_lib\backdrop.js'
+if (-not (Test-Path -LiteralPath $resolverSource -PathType Leaf)) {
+    throw "render_site: resolver source does not exist: $resolverSource"
+}
+$resolverHasher = [Security.Cryptography.SHA256]::Create()
+try {
+    $resolverHashBytes = $resolverHasher.ComputeHash([IO.File]::ReadAllBytes($resolverSource))
+} finally {
+    $resolverHasher.Dispose()
+}
+$resolverHash = -join @($resolverHashBytes | ForEach-Object { $_.ToString('x2') })
+$resolverVersion = $resolverHash.Substring(0, 12)
+
 $tokens = @{
     '{{VER_WINAMP}}'            = $found['WINAMP_EXE'].version
     '{{VER_FOOBAR}}'            = $found['FOOBAR_COMPONENT'].version
@@ -132,6 +148,7 @@ $tokens = @{
     # timestamp, not the release tag: site-only deploys reuse the newest release's tag,
     # which would defeat the busting precisely when it's needed.
     '{{ASSET_V}}'               = (Get-Date -Format 'yyyyMMddHHmmss')
+    '{{RESOLVER_V}}'            = $resolverVersion
 }
 
 # --- render ------------------------------------------------------------------------------

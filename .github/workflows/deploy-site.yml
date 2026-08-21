@@ -15,6 +15,7 @@ on:
     branches: [master]
     paths:
       - 'site/**'
+      - 'api/_lib/backdrop.js'
       - 'installer/render_site.ps1'
       - 'installer/render_site.test.ps1'
       - 'installer/serve_site.ps1'
@@ -24,6 +25,7 @@ on:
   pull_request:
     paths:
       - 'site/**'
+      - 'api/_lib/backdrop.js'
       - 'installer/render_site.ps1'
       - 'installer/render_site.test.ps1'
       - 'installer/serve_site.ps1'

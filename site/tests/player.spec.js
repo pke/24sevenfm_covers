@@ -41,7 +41,7 @@ test.describe("the deployed player page", () => {
         expect(policy).toContain("https://24covers-api.vercel.app");
         expect(policy).toContain("https://webservice.fanart.tv");
         await expect(page.locator('meta[name="backdrop-api"]')).toHaveAttribute(
-            "content", "https://24covers-api.vercel.app/api/backdrop?resolver_version=1");
+            "content", /^https:\/\/24covers-api\.vercel\.app\/api\/backdrop\?resolver_version=[a-f0-9]{12}$/);
         await expect(page.locator('meta[name="tint-api"]')).toHaveAttribute(
             "content", "https://24covers-api.vercel.app/api/tint");
         expect(policy).toContain("media-src https://streamingsoundtracks.com");

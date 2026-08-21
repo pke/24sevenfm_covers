@@ -36,9 +36,9 @@
 <title>Player — 24seven.fm Covers</title>
 <meta name="description" content="Listen to the 24seven.fm radio stations and watch the cover art change with every track — right in your browser, nothing to install.">
 <!-- GitHub Pages hosts the player; the API is a separate Vercel project. -->
-<!-- Successful resolver responses live in browser caches for six months. Bump this
-     version whenever matching or response semantics change. -->
-<meta name="backdrop-api" content="https://24covers-api.vercel.app/api/backdrop?resolver_version=1">
+<!-- Artwork responses are long-lived, so the renderer derives this cache key from the
+     resolver implementation. Resolver misses expire quickly and can discover later provider art. -->
+<meta name="backdrop-api" content="https://24covers-api.vercel.app/api/backdrop?resolver_version={{RESOLVER_V}}">
 <meta name="tint-api" content="https://24covers-api.vercel.app/api/tint">
 <link rel="icon" href="img/favicon.ico">
 <link rel="author" href="humans.txt">

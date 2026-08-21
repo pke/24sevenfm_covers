@@ -153,6 +153,7 @@ curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://stre
 
 The responses should name a movie, TV series, or game and return a trusted TMDB,
 fanart.tv, or SteamGridDB image URL,
-include three tint channels, and carry a six-month `s-maxage` cache directive.
+include three tint channels, and carry a six-month `s-maxage` cache directive for
+an artwork hit. A response without a backdrop uses a 15-minute `s-maxage` instead.
 The tint response should contain only `{ "tint": [r, g, b] }`. Also verify that a
 localhost URL receives `400 invalid_image_url` without an upstream request.
