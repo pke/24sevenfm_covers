@@ -11,7 +11,7 @@
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
         https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm
         https://image.tmdb.org https://fanart.tv https://*.fanart.tv
-        https://cdn2.steamgriddb.com;
+        https://cdn2.steamgriddb.com https://24covers-api.vercel.app;
       connect-src 'self'
         https://24covers-api.vercel.app
         https://webservice.fanart.tv
@@ -64,8 +64,8 @@
         <h2>Player</h2>
         <p class="lead">The desktop viewer, in your browser: covers change with every track, and
         you can stream the station's audio too — or keep it silent and just watch the artwork.
-        Station data and audio flow directly from the station. The optional media-backdrop feature
-        uses this site's resolver, as described in the privacy policy.</p>
+        Station data and audio flow directly from the station. The optional backdrop and rating
+        features use this site's resolver, as described in the privacy policy.</p>
 
         <!-- Station picker above the stage: choose first, watch below. Lives in its own
              .controls block so the fullscreen overlay can move it (with the main panel)
@@ -97,6 +97,21 @@
             </div>
             <canvas class="stage-spectrum" id="stage-spectrum" aria-hidden="true"
                     title="Spectrum analyzer settings"></canvas>
+            <div class="rating-badges" id="rating-badges" aria-live="polite"
+                 aria-label="Age ratings">
+                <div class="rating-slot" id="rating-de" data-country="DE" aria-hidden="true">
+                    <div class="rating-card">
+                        <div class="rating-face"><img alt="" aria-hidden="true"><span></span></div>
+                        <div class="rating-face"><img alt="" aria-hidden="true"><span></span></div>
+                    </div>
+                </div>
+                <div class="rating-slot" id="rating-us" data-country="US" aria-hidden="true">
+                    <div class="rating-card">
+                        <div class="rating-face"><img alt="" aria-hidden="true"><span></span></div>
+                        <div class="rating-face"><img alt="" aria-hidden="true"><span></span></div>
+                    </div>
+                </div>
+            </div>
             <div class="options-overlay spectrum-options" id="spectrum-options" role="dialog"
                  aria-label="Spectrum analyzer settings" hidden></div>
             <div class="info">
@@ -162,6 +177,21 @@
                     <label class="seg"><input type="radio" name="spectrum-mode" value="tinted"
                                                data-option="spectrumMode"><span>Tinted</span></label>
                 </div>
+                <div class="row control-gap">
+                    <label><input type="checkbox" id="ratings-enabled" data-option="ratingsEnabled"
+                                  aria-controls="rating-country-options" aria-expanded="false">
+                        Ratings</label>
+                </div>
+                <div class="rating-country-options" id="rating-country-options" aria-hidden="true">
+                    <span>Show</span>
+                    <label><input type="checkbox" id="rating-de-enabled"
+                                  data-option="ratingDE"> DE</label>
+                    <label><input type="checkbox" id="rating-us-enabled"
+                                  data-option="ratingUS"> US</label>
+                </div>
+                <p class="note">On StreamingSoundtracks, show German FSK and/or US ratings for
+                the matched movie or series. Rating badges use the selected cover transition.
+                Enabling this sends the current and next queued title to the resolver.</p>
             </fieldset>
 
             <fieldset>

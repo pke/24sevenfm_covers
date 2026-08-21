@@ -272,6 +272,98 @@
     top: var(--spectrum-top, 72%);
     transform: translate(-50%, -50%);
 }
+
+/* Movie/series ratings sit in two retained slots. Each slot is a real double-sided
+   card, so a flip turns the already-attached next badge over exactly like the cover. */
+.rating-badges {
+    --rating-size: clamp(3rem, 8vw, 4.25rem);
+    position: absolute;
+    top: .7rem;
+    right: .7rem;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    pointer-events: none;
+}
+.rating-slot {
+    position: relative;
+    flex: 0 0 auto;
+    width: var(--rating-size);
+    max-width: 0;
+    aspect-ratio: 1 / 1;
+    margin-left: 0;
+    overflow: clip;
+    perspective: 600px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-.25rem) scale(.94);
+    transition: opacity .35s ease, transform .35s ease, max-width .45s ease,
+                margin-left .45s ease, visibility 0s linear .45s;
+}
+.rating-slot.show {
+    max-width: var(--rating-size);
+    margin-left: .45rem;
+    overflow: visible;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+    transition-delay: 0s;
+}
+.rating-card {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+}
+.rating-face {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    overflow: hidden;
+    border: 2px solid #111;
+    border-radius: .45rem;
+    background: #fff;
+    color: #111;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .4);
+    opacity: 0;
+    backface-visibility: hidden;
+}
+.rating-face img {
+    display: none;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+.rating-face.has-logo { border: 0; background: transparent; }
+.rating-face.has-logo img { display: block; }
+.rating-face span {
+    padding: .2rem;
+    font-size: clamp(.72rem, 2.1vw, 1rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -.02em;
+    text-align: center;
+}
+.rating-face.has-logo span { display: none; }
+.rating-slot[data-front="a"] .rating-face:first-child,
+.rating-slot[data-front="b"] .rating-face:last-child { opacity: 1; }
+.rating-slot[data-fx="fade"] .rating-face {
+    transition: opacity var(--fade-ms, 1000ms) ease;
+}
+.rating-slot[data-warp] .rating-face,
+.rating-slot[data-warp] .rating-card { transition: none !important; }
+.rating-slot[data-fx="fliph"] { --rating-flip-transform: rotateY(180deg); }
+.rating-slot[data-fx="flipv"] { --rating-flip-transform: rotateX(180deg); }
+.rating-slot:is([data-fx="fliph"], [data-fx="flipv"]) .rating-face { opacity: 1; }
+.rating-slot:is([data-fx="fliph"], [data-fx="flipv"]) .rating-card {
+    transition: transform var(--fade-ms, 1000ms) ease;
+}
+.rating-slot:is([data-fx="fliph"], [data-fx="flipv"]) .rating-face:last-child,
+.rating-slot:is([data-fx="fliph"], [data-fx="flipv"])[data-front="b"] .rating-card {
+    transform: var(--rating-flip-transform);
+}
 .options-overlay {
     position: absolute;
     z-index: 4;
@@ -361,6 +453,30 @@
 .controls legend { padding: 0 .4rem; font-size: .85rem; color: var(--text-dim); }
 .seg-group { display: flex; flex-wrap: wrap; gap: .5rem; }
 .control-gap { margin-top: .8rem; }
+
+.rating-country-options {
+    display: flex;
+    align-items: center;
+    gap: .8rem;
+    max-height: 0;
+    margin-top: 0;
+    overflow: hidden;
+    color: var(--text-dim);
+    font-size: .9rem;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-.25rem);
+    transition: opacity .25s ease, transform .25s ease, max-height .35s ease,
+                margin-top .35s ease, visibility 0s linear .35s;
+}
+.rating-country-options.enabled {
+    max-height: 3rem;
+    margin-top: .65rem;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition-delay: 0s;
+}
 
 /* Radio groups presented as segmented pills - real inputs underneath, so keyboard
    and screen readers see an ordinary radio group. */
@@ -597,7 +713,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
     .stage-button, .stage-spectrum, .stage-status, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
-    .fanart-key-check span, .provider-key-help, .provider-key-status {
+    .fanart-key-check span, .provider-key-help, .provider-key-status,
+    .rating-slot, .rating-card, .rating-face, .rating-country-options {
         transition: none !important;
     }
     .stage-spectrum { display: none; }
