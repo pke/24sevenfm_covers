@@ -5,6 +5,8 @@
 #
 #   installer\serve_site.ps1              render + serve on http://localhost:8099/
 #   installer\serve_site.ps1 -NoRender    serve whatever www\ already holds
+#   installer\serve_site.ps1 -ApiOrigin http://localhost:3000
+#                                          use a separately running local API
 #
 # Ctrl+C stops it. Everything is served with Cache-Control: no-store - a local preview
 # must always show the file on disk, never a cached yesterday.
@@ -15,6 +17,7 @@
 param(
     [int]$Port = 8099,
     [switch]$NoRender,
+    [string]$ApiOrigin = '',
     [string]$Repo = 'pke/24sevenfm_covers'
 )
 
@@ -30,6 +33,33 @@ if (-not $NoRender) {
                              -Headers @{ 'User-Agent' = 'serve_site' }
     $assets = $rel.assets | ForEach-Object { @{ name = $_.name; size = $_.size } }
     & (Join-Path $here 'render_site.ps1') -Assets (ConvertTo-Json $assets -Compress)
+}
+
+# A local API lives on a different port from this static server. Rewrite only the
+# generated preview: committed site\player.html must keep pointing at production.
+if ($ApiOrigin) {
+    $apiUri = $null
+    if (-not [uri]::TryCreate($ApiOrigin, [UriKind]::Absolute, [ref]$apiUri) -or
+            $apiUri.Scheme -notin @('http', 'https')) {
+        throw "serve_site: -ApiOrigin must be an absolute HTTP(S) origin without a path."
+    }
+    $normalizedApiOrigin = $apiUri.GetLeftPart([UriPartial]::Authority)
+    if ($normalizedApiOrigin -ne $ApiOrigin.TrimEnd('/')) {
+        throw "serve_site: -ApiOrigin must be an absolute HTTP(S) origin without a path."
+    }
+    if ($apiUri.UserInfo) {
+        throw "serve_site: -ApiOrigin must be an absolute HTTP(S) origin without a path."
+    }
+    $playerPath = Join-Path $www 'player.html'
+    $player = [IO.File]::ReadAllText($playerPath)
+    $productionApiOrigin = 'https://24covers-api.vercel.app'
+    if ($player.Contains($productionApiOrigin)) {
+        $player = $player.Replace($productionApiOrigin, $normalizedApiOrigin)
+    } elseif (-not $player.Contains($normalizedApiOrigin)) {
+        throw "serve_site: rendered player does not contain the production API origin."
+    }
+    [IO.File]::WriteAllText($playerPath, $player, (New-Object Text.UTF8Encoding($false)))
+    Write-Host "  Local API: $normalizedApiOrigin" -ForegroundColor Cyan
 }
 
 $mime = @{
