@@ -4,16 +4,20 @@
    the sibling selector flips the palette relative to the OS scheme. */
 
 .page {
-    --bg: #0b0d12;
-    --bg-raised: #141824;
-    --bg-card: #171c2a;
-    --text: #e8eaf2;
-    --text-dim: #9aa1b5;
-    --line: #262c3f;
+    --bg: light-dark(#f6f7fa, #0b0d12);
+    --bg-raised: light-dark(#fff, #141824);
+    --bg-card: light-dark(#fff, #171c2a);
+    --text: light-dark(#1a1e2b, #e8eaf2);
+    --text-dim: light-dark(#5b6274, #9aa1b5);
+    --line: light-dark(#e2e5ee, #262c3f);
     --accent: #7c5cff;
     --accent-2: #ff5c9d;
     --accent-grad: linear-gradient(135deg, #7c5cff, #ff5c9d);
-    --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+    --text-inverse: #fff;
+    --media-bg: #000;
+    --shadow: 0 10px 30px light-dark(rgba(30, 35, 60, .12), rgba(0, 0, 0, .45));
+    --theme-transition: background-color .35s ease, border-color .35s ease,
+                        color .35s ease, box-shadow .35s ease;
     color-scheme: dark;
     background: var(--bg);
     color: var(--text);
@@ -21,41 +25,14 @@
 }
 
 @media (prefers-color-scheme: light) {
-    .page {
-        --bg: #f6f7fa;
-        --bg-raised: #ffffff;
-        --bg-card: #ffffff;
-        --text: #1a1e2b;
-        --text-dim: #5b6274;
-        --line: #e2e5ee;
-        --shadow: 0 10px 30px rgba(30, 35, 60, .12);
-        color-scheme: light;
-    }
+    .page { color-scheme: light; }
     /* toggled: dark on a light OS */
-    #themeswitch:checked ~ .page {
-        --bg: #0b0d12;
-        --bg-raised: #141824;
-        --bg-card: #171c2a;
-        --text: #e8eaf2;
-        --text-dim: #9aa1b5;
-        --line: #262c3f;
-        --shadow: 0 10px 30px rgba(0, 0, 0, .45);
-        color-scheme: dark;
-    }
+    #themeswitch:checked ~ .page { color-scheme: dark; }
 }
 
 @media (prefers-color-scheme: dark) {
     /* toggled: light on a dark OS */
-    #themeswitch:checked ~ .page {
-        --bg: #f6f7fa;
-        --bg-raised: #ffffff;
-        --bg-card: #ffffff;
-        --text: #1a1e2b;
-        --text-dim: #5b6274;
-        --line: #e2e5ee;
-        --shadow: 0 10px 30px rgba(30, 35, 60, .12);
-        color-scheme: light;
-    }
+    #themeswitch:checked ~ .page { color-scheme: light; }
 }
 
 /* Flipping the toggle crossfades the palette instead of snapping. The custom properties
@@ -66,8 +43,7 @@
    No fade on load: the checkbox is set by the script BEFORE .page exists, so a restored
    theme is already correct at first paint and has nothing to transition from. */
 .page, .page *, .page *::before, .page *::after {
-    transition: background-color .35s ease, border-color .35s ease,
-                color .35s ease, box-shadow .35s ease;
+    transition: var(--theme-transition);
 }
 
 /* Honour a reduced-motion preference: switch instantly rather than animate. */
@@ -204,20 +180,14 @@ header {
 
 .btn:hover { text-decoration: none; filter: brightness(1.08); }
 
-.btn.primary { background: var(--accent-grad); color: #fff; box-shadow: var(--shadow); }
-
-.btn.ghost {
-    border: 1px solid var(--line);
-    background: var(--bg-raised);
-    color: var(--text);
-}
+.btn.primary { background: var(--accent-grad); color: var(--text-inverse); box-shadow: var(--shadow); }
 
 .shot {
     border-radius: .9rem;
     border: 1px solid var(--line);
     box-shadow: var(--shadow);
     overflow: hidden;
-    background: #000;
+    background: var(--media-bg);
 }
 
 .shot img, .shot svg { display: block; width: 100%; }
@@ -290,7 +260,7 @@ section p.lead.wide { max-width: none; }
     padding: .35rem .7rem;
     background: var(--bg-raised);
 }
-.links a.main { background: var(--accent-grad); border: 0; color: #fff; font-weight: 600; }
+.links a.main { background: var(--accent-grad); border: 0; color: var(--text-inverse); font-weight: 600; }
 .links a:hover { text-decoration: none; filter: brightness(1.08); }
 .links .size { font-weight: 400; font-size: .9em; opacity: .75; }
 

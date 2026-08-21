@@ -134,6 +134,42 @@ test.describe("the deployed player page", () => {
                 .toMatch(/^(dark|light)$/);
         }
     });
+    test("paints the OS palette and its manual inverse", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.addInitScript(() => localStorage.removeItem("theme"));
+
+        const cases = [
+            { os: "light", normal: "rgb(246, 247, 250)", inverse: "rgb(11, 13, 18)" },
+            { os: "dark", normal: "rgb(11, 13, 18)", inverse: "rgb(246, 247, 250)" }
+        ];
+        for (const palette of cases) {
+            await page.emulateMedia({ colorScheme: palette.os });
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            const root = page.locator(".page");
+            const toggle = page.locator("#themeswitch");
+
+            await expect(root).toHaveCSS("background-color", palette.normal);
+            await expect(root).toHaveCSS("color-scheme", palette.os);
+            await toggle.evaluate((input) => { input.checked = true; });
+            await expect(root).toHaveCSS("background-color", palette.inverse);
+            await expect(root).toHaveCSS("color-scheme",
+                palette.os === "light" ? "dark" : "light");
+        }
+    });
+    test("uses shared stage-button and options-overlay components", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator(".stage-button")).toHaveCount(3);
+        await expect(page.locator(".options-overlay")).toHaveCount(2);
+        for (const selector of ["#spectrum-options", "#fs-options"]) {
+            const transitionProperties = await page.locator(selector).evaluate((element) =>
+                getComputedStyle(element).transitionProperty.split(", "));
+            expect(transitionProperties).toEqual(expect.arrayContaining([
+                "opacity", "transform", "visibility"
+            ]));
+        }
+    });
     test("keeps the player hidden in a sandboxed third-party frame", async ({ page }) => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const playerUrl = page.url();
@@ -419,6 +455,33 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#fade-val")).toHaveText("1.7 s");
         await expect(page.locator("#volume")).toHaveValue("0.35");
     });
+    test("maps both flip effects to their CSS axes", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const transforms = await page.locator("#coverbox").evaluate((coverBox) => {
+            const card = coverBox.querySelector(".card");
+            const back = coverBox.querySelector("img:last-of-type");
+            coverBox.dataset.warp = "";
+            return ["fliph", "flipv"].map((effect) => {
+                coverBox.dataset.fx = effect;
+                coverBox.dataset.front = "b";
+                return {
+                    axis: getComputedStyle(coverBox).getPropertyValue("--flip-transform").trim(),
+                    back: getComputedStyle(back).transform,
+                    card: getComputedStyle(card).transform
+                };
+            });
+        });
+
+        expect(transforms.map(({ axis }) => axis))
+            .toEqual(["rotateY(180deg)", "rotateX(180deg)"]);
+        for (const transform of transforms) {
+            expect(transform.back).not.toBe("none");
+            expect(transform.card).toBe(transform.back);
+        }
+        expect(transforms[0].card).not.toBe(transforms[1].card);
+    });
     test("binds generated station controls through the option schema", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.route("https://death.fm/soap/FM24sevenJSON.php?*", (route) => {
@@ -669,6 +732,9 @@ test.describe("the deployed player page", () => {
         const coverStatus = page.locator("#stage-status");
         await expect(coverStatus).toBeVisible();
         await expect(coverStatus).toHaveText(retryPattern);
+        expect(await coverStatus.evaluate((element) =>
+            getComputedStyle(element).transitionProperty.split(", ")))
+            .toEqual(expect.arrayContaining(["opacity", "visibility"]));
         expect(await coverStatus.evaluate((el) => el.parentElement.id)).toBe("coverbox");
         await page.locator("#fullscreen").click();
         await expect.poll(() => page.evaluate(() =>

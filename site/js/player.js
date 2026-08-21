@@ -437,12 +437,29 @@ async function poll() {
 }
 
 var statusMessages = { station: "", audio: "", backdrop: "", general: "" };
+var stageStatusClearTimer = null;
 function renderStatus() {
     var text = statusMessages.station || statusMessages.audio
         || statusMessages.backdrop || statusMessages.general;
     statusEl.textContent = text;
-    stageStatusEl.textContent = statusMessages.station;
-    stageStatusEl.classList.toggle("show", !!statusMessages.station);
+    clearTimeout(stageStatusClearTimer);
+    stageStatusClearTimer = null;
+    if (statusMessages.station) {
+        stageStatusEl.textContent = statusMessages.station;
+        stageStatusEl.classList.add("show");
+        return;
+    }
+    stageStatusEl.classList.remove("show");
+    if (!stageStatusEl.textContent) return;
+    var duration = reducedMotion.matches ? 0 : transitionTotalMs(stageStatusEl);
+    if (!duration) {
+        stageStatusEl.textContent = "";
+        return;
+    }
+    stageStatusClearTimer = setTimeout(function () {
+        if (!statusMessages.station) stageStatusEl.textContent = "";
+        stageStatusClearTimer = null;
+    }, duration);
 }
 function setStatus(text, source) {
     if (source) statusMessages[source] = text;

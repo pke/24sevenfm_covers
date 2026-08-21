@@ -8,7 +8,8 @@
    cover's size is a percentage of the stage, and the stage can be the embedded box
    or the whole screen without any per-mode positioning. */
 .stage {
-    --player-tint: #fff;
+    --player-tint: var(--text-inverse);
+    --art-text-shadow: 0 1px 8px rgba(0, 0, 0, .8);
     position: relative;
     display: flex;
     align-items: center;
@@ -17,7 +18,7 @@
     height: min(70vh, 640px);
     border-radius: .9rem;
     border: 1px solid var(--line);
-    background: #000;             /* both layouts sit on black, like the apps */
+    background: var(--media-bg);  /* both layouts sit on black, like the apps */
     overflow: hidden;
     box-shadow: var(--shadow);
     user-select: none;
@@ -62,7 +63,6 @@
 /* Experimental: hide the cover while a movie backdrop is showing - the backdrop
    becomes the star, so it earns back some brightness. Opacity, not display: the
    coverbox keeps its size, so the info box below it doesn't jump. */
-.coverbox { transition: opacity .8s ease; }
 .layout-poster.no-cover .coverbox { opacity: 0; pointer-events: none; }
 .no-cover .backdrop-movie { filter: brightness(.7); }
 
@@ -76,6 +76,7 @@
     z-index: 1;
     aspect-ratio: 1 / 1;   /* pre-JS fallback; JS sets explicit width+height */
     perspective: 1200px;
+    transition: opacity .8s ease;
 }
 /* The rigid card holding both buffers: the flip effects rotate THIS, fade/none
    leave it untransformed. preserve-3d keeps the faces glued to it. */
@@ -114,14 +115,16 @@
    its BACK (a fixed 180° pose - the incoming cover literally sticks behind the
    current one), and data-front turns the whole card: front="a" shows the face,
    front="b" the back. Both imgs stay opaque - backface culling does the hiding. */
-.coverbox[data-fx="fliph"] img,
-.coverbox[data-fx="flipv"] img { opacity: 1; }
-.coverbox[data-fx="fliph"] .card,
-.coverbox[data-fx="flipv"] .card { transition: transform var(--fade-ms, 1000ms) ease; }
-.coverbox[data-fx="fliph"] img:last-of-type { transform: rotateY(180deg); }
-.coverbox[data-fx="flipv"] img:last-of-type { transform: rotateX(180deg); }
-.coverbox[data-fx="fliph"][data-front="b"] .card { transform: rotateY(180deg); }
-.coverbox[data-fx="flipv"][data-front="b"] .card { transform: rotateX(180deg); }
+.coverbox[data-fx="fliph"] { --flip-transform: rotateY(180deg); }
+.coverbox[data-fx="flipv"] { --flip-transform: rotateX(180deg); }
+.coverbox:is([data-fx="fliph"], [data-fx="flipv"]) img { opacity: 1; }
+.coverbox:is([data-fx="fliph"], [data-fx="flipv"]) .card {
+    transition: transform var(--fade-ms, 1000ms) ease;
+}
+.coverbox:is([data-fx="fliph"], [data-fx="flipv"]) img:last-of-type,
+.coverbox:is([data-fx="fliph"], [data-fx="flipv"])[data-front="b"] .card {
+    transform: var(--flip-transform);
+}
 
 /* --- info box (poster only) ------------------------------------------------------ */
 /* The lower grid row holds title, artist and countdown. Its center never moves, so the
@@ -166,7 +169,7 @@
     font-weight: 500;
     color: var(--player-tint);
     opacity: .85;               /* a status row, quieter than the title above it */
-    text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    text-shadow: var(--art-text-shadow);
     display: flex;
     justify-content: center;
     margin-top: .4rem;
@@ -197,7 +200,7 @@
 /* Station progress belongs to the cover itself, including in browser fullscreen.
    The regular status line remains the single accessibility announcement source. */
 .stage-status {
-    display: none;
+    display: block;
     position: absolute;
     bottom: 4%;
     left: 50%;
@@ -210,24 +213,31 @@
     border: 1px solid rgba(255, 255, 255, .16);
     border-radius: .65rem;
     background: rgba(0, 0, 0, .58);
-    color: #fff;
+    color: var(--text-inverse);
     font-size: clamp(.8rem, 2vw, 1.15rem);
     font-variant-numeric: tabular-nums;
     text-align: center;
-    text-shadow: 0 1px 8px rgba(0, 0, 0, .8);
+    text-shadow: var(--art-text-shadow);
     white-space: pre-line;
+    opacity: 0;
+    visibility: hidden;
     pointer-events: none;
+    transition: opacity .2s ease, visibility 0s linear .2s;
 }
-.stage-status.show { display: block; }
+.stage-status.show {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
 
 /* --- stage chrome: audio, fullscreen toggle + fullscreen options ----------------- */
-.stage-audio, .stage-fs, .stage-opts {
+.stage-button {
     position: absolute;
     z-index: 3;
     width: 2.4rem; height: 2.4rem;
     border: 0; border-radius: .6rem;
     background: rgba(0, 0, 0, .45);
-    color: #fff;
+    color: var(--text-inverse);
     font-size: 1.2rem;
     cursor: pointer;
     opacity: 0;
@@ -262,28 +272,33 @@
     top: var(--spectrum-top, 72%);
     transform: translate(-50%, -50%);
 }
-.spectrum-options {
+.options-overlay {
     position: absolute;
     z-index: 4;
-    max-height: calc(100% - 1rem);
     overflow: auto;
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transform: translateY(calc(-50% + .4rem));
-    transition: opacity .2s ease, transform .2s ease, visibility 0s linear .2s;
+    transform: var(--overlay-closed-transform);
+    transition: opacity .2s ease, transform .2s ease, visibility 0s linear .2s,
+                var(--theme-transition);
+}
+.options-overlay[data-state="open"] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: var(--overlay-open-transform);
+    transition-delay: 0s;
+}
+.options-overlay[hidden] { display: none; }
+.spectrum-options {
+    --overlay-closed-transform: translateY(calc(-50% + .4rem));
+    --overlay-open-transform: translateY(-50%);
+    max-height: calc(100% - 1rem);
     color: var(--text);
     text-align: left;
     user-select: auto;
 }
-.spectrum-options[data-state="open"] {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transform: translateY(-50%);
-    transition-delay: 0s;
-}
-.spectrum-options[hidden], .fs-options[hidden] { display: none; }
 .spectrum-options fieldset {
     margin: 0;
     padding: .9rem 1rem 1rem;
@@ -307,47 +322,32 @@
 .stage-fs { top: .7rem; right: .7rem; }
 .stage-opts { right: .7rem; bottom: .7rem; display: none; } /* fullscreen only - embedded, the panel is right below */
 .stage:fullscreen .stage-opts { display: block; }
-.stage:hover .stage-audio, .stage:hover .stage-fs, .stage:hover .stage-opts,
-.stage-audio:focus-visible, .stage-fs:focus-visible, .stage-opts:focus-visible { opacity: 1; }
-@media (hover: none) { .stage-audio, .stage-fs, .stage-opts { opacity: .6; } } /* touch: no hover, keep visible */
+.stage:hover .stage-button, .stage-button:focus-visible { opacity: 1; }
+@media (hover: none) { .stage-button { opacity: .6; } } /* touch: no hover, keep visible */
 
 /* In fullscreen the stage IS the screen, so :hover is permanently true and useless as
    an idle signal. JS sets .idle after 2s without pointer movement: the chrome fades
    out (these rules out-specify the :hover ones) and the cursor goes with it - a cursor
    parked on the artwork is the same clutter. Any movement lifts .idle again. */
-.stage:fullscreen.idle .stage-audio,
-.stage:fullscreen.idle .stage-fs,
-.stage:fullscreen.idle .stage-opts { opacity: 0; }
+.stage:fullscreen.idle .stage-button { opacity: 0; }
 .stage:fullscreen.idle { cursor: none; }
 
 /* The options overlay: hosts the REAL .controls panel while open in fullscreen. */
 .fs-options {
-    position: absolute;
+    --overlay-closed-transform: translateY(.4rem);
+    --overlay-open-transform: translateY(0);
     right: 1rem; bottom: 3.6rem;
-    z-index: 4;
     width: min(440px, calc(100% - 2rem));
     max-height: calc(100% - 5.5rem);
-    overflow: auto;
     padding: 1rem;
     border: 1px solid var(--line);
     border-radius: .9rem;
     background: var(--bg);
     box-shadow: var(--shadow);
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transform: translateY(.4rem);
-    transition: opacity .2s ease, transform .2s ease, visibility 0s linear .2s;
-}
-.fs-options[data-state="open"] {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transform: translateY(0);
-    transition-delay: 0s;
 }
 
 /* --- controls ------------------------------------------------------------------- */
+.player-section { border-top: 0; }
 .controls { display: grid; gap: 1rem; margin-top: 1.5rem; }
 /* The station picker block sits ABOVE the stage: its gap belongs below it. */
 .controls-top { margin: 0 0 1rem; }
@@ -360,6 +360,7 @@
 }
 .controls legend { padding: 0 .4rem; font-size: .85rem; color: var(--text-dim); }
 .seg-group { display: flex; flex-wrap: wrap; gap: .5rem; }
+.control-gap { margin-top: .8rem; }
 
 /* Radio groups presented as segmented pills - real inputs underneath, so keyboard
    and screen readers see an ordinary radio group. */
@@ -373,11 +374,12 @@
     font-size: .9rem;
     cursor: pointer;
 }
-.seg input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
+.seg input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--text-inverse); }
 .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Backdrop providers: a drag-sortable priority list - topmost wins, rest fallback. */
 .providers { list-style: none; margin: .8rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.provider-followup { margin-top: .6rem; }
 .provider {
     display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
     padding: .45rem .6rem;
@@ -433,9 +435,17 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     font-weight: 600;
     cursor: pointer;
 }
-.btn-player[aria-pressed="true"] { background: var(--accent-grad); border: 0; color: #fff; }
+.btn-player[aria-pressed="true"] { background: var(--accent-grad); border: 0; color: var(--text-inverse); }
 
 /* --- noscript ------------------------------------------------------------------- */
+.noscript-player {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    padding: 1.2rem;
+    background: var(--bg-card);
+    color: var(--text);
+}
 .noscript-player p { margin: .5rem 0; }
 .noscript-player audio { width: 100%; max-width: 420px; display: block; margin-top: .25rem; }
 
@@ -450,7 +460,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 
 @media (prefers-reduced-motion: reduce) {
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
-    .stage-audio, .stage-fs, .stage-opts, .stage-spectrum, .backdrop { transition: none !important; }
+    .stage-button, .stage-spectrum, .stage-status, .options-overlay,
+    .backdrop { transition: none !important; }
     .stage-spectrum { display: none; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }
