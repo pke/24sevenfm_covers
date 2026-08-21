@@ -50,6 +50,10 @@ try {
     $apiWorkspace = Join-Path $logDirectory 'project'
     New-Item -ItemType Directory -Path $apiWorkspace | Out-Null
     Copy-Item (Join-Path $root 'api') $apiWorkspace -Recurse
+    $publicDirectory = Join-Path $root 'public'
+    if (Test-Path $publicDirectory -PathType Container) {
+        Copy-Item $publicDirectory $apiWorkspace -Recurse
+    }
     foreach ($file in @('package.json', 'package-lock.json', 'vercel.json')) {
         Copy-Item (Join-Path $root $file) $apiWorkspace
     }
@@ -93,7 +97,10 @@ try {
     }
 
     $portReady = $false
-    for ($attempt = 1; $attempt -le 120; $attempt++) {
+    # pnpm/Vercel can take a little over 30 seconds on a cold cache or a network-backed
+    # workspace. Keep the bounded check, but do not abandon a process that is still
+    # starting successfully at the old deadline.
+    for ($attempt = 1; $attempt -le 240; $attempt++) {
         if ($apiProcess.HasExited) {
             $details = ((Get-Content $stdoutLog, $stderrLog -ErrorAction SilentlyContinue) -join "`n").Trim()
             throw "Local Vercel API exited before startup.`n$details"

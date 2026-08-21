@@ -4,7 +4,7 @@
   "description": "Playwright functional tests for the deployed web player (see player.spec.js)",
   "scripts": {
     "test:local": "pwsh -NoProfile -File ./run_local.ps1",
-    "test:isolation": "pwsh -NoProfile -File ../../installer/render_site.test.ps1 && pwsh -NoProfile -File ./run_local.test.ps1"
+    "test:isolation": "pwsh -NoProfile -File ../../installer/render_site.test.ps1 && pwsh -NoProfile -File ../../installer/serve_site.test.ps1 && pwsh -NoProfile -File ./run_local.test.ps1"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0"

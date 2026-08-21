@@ -17,6 +17,8 @@ on:
       - 'site/**'
       - 'installer/render_site.ps1'
       - 'installer/render_site.test.ps1'
+      - 'installer/serve_site.ps1'
+      - 'installer/serve_site.test.ps1'
       - '.github/workflows/deploy-site.yml'
   workflow_dispatch:
   pull_request:
@@ -24,6 +26,8 @@ on:
       - 'site/**'
       - 'installer/render_site.ps1'
       - 'installer/render_site.test.ps1'
+      - 'installer/serve_site.ps1'
+      - 'installer/serve_site.test.ps1'
       - '.github/workflows/deploy-site.yml'
 
 permissions:
@@ -52,6 +56,7 @@ jobs:
         shell: pwsh
         run: |
           ../../installer/render_site.test.ps1
+          ../../installer/serve_site.test.ps1
           ./run_local.test.ps1
       - name: Run deterministic player tests
         shell: pwsh
