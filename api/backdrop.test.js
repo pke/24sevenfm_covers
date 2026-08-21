@@ -1,6 +1,9 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
+const { readFileSync, readdirSync } = require("node:fs");
+const { join } = require("node:path");
 const test = require("node:test");
 const {
     CACHE_SECONDS,
@@ -14,6 +17,7 @@ const {
     pickGame,
     pickMedia,
     pickMovie,
+    requestedRatings,
     tintFromMeans,
     tintPreviewUrl,
     trustedCoverTintUrl,
@@ -55,6 +59,136 @@ test("resolves the live The Wings Of A Film album and track contract", async () 
         source: "tmdb",
         tint: [100, 120, 140],
     });
+});
+
+test("returns German and US movie ratings without resolving artwork", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 293863, media_type: "movie", title: "The Age of Adaline",
+                backdrop_path: "/adaline.jpg",
+            }] });
+            if (parsed.pathname === "/3/movie/293863/release_dates") return response(200, {
+                results: [
+                    { iso_3166_1: "DE", release_dates: [
+                        { certification: "12", type: 4 },
+                        { certification: "6", type: 3 },
+                    ] },
+                    { iso_3166_1: "US", release_dates: [
+                        { certification: "PG-13", type: 3 },
+                    ] },
+                ],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => { throw new Error("must not resolve tint"); },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Age Of Adaline, The", providers: "tmdb", ratings: "DE,US", art: "0",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 293863, title: "The Age of Adaline", type: "movie" },
+        backdrop: null,
+        source: null,
+        tint: [255, 255, 255],
+        certifications: [
+            {
+                country: "DE", system: "FSK", rating: "6", label: "FSK 6",
+                logo: "/ratings/fsk/fsk-6.e11fbaf818b2.png",
+            },
+            { country: "US", system: "MPA", rating: "PG-13", label: "PG-13" },
+        ],
+    });
+    assert.deepEqual(requests, ["/3/search/multi", "/3/movie/293863/release_dates"]);
+});
+
+test("returns Game of Thrones German and US TV ratings", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 1399, media_type: "tv", name: "Game of Thrones",
+                backdrop_path: "/game-of-thrones.jpg",
+            }] });
+            if (parsed.pathname === "/3/tv/1399/content_ratings") return response(200, {
+                results: [
+                    { iso_3166_1: "DE", rating: "16" },
+                    { iso_3166_1: "US", rating: "TV-MA" },
+                ],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => { throw new Error("must not resolve tint"); },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Game Of Thrones", providers: "tmdb", ratings: "DE,US", art: "0",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body).certifications, [
+        {
+            country: "DE", system: "FSK", rating: "16", label: "FSK 16",
+            logo: "/ratings/fsk/fsk-16.83651dbb7b3b.png",
+        },
+        {
+            country: "US", system: "TV Parental Guidelines", rating: "TV-MA", label: "TV-MA",
+        },
+    ]);
+});
+
+test("keeps backdrop artwork available when the rating lookup fails", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 329865, media_type: "movie", title: "Arrival", backdrop_path: "/arrival.jpg",
+            }] });
+            if (parsed.pathname === "/3/movie/329865/release_dates") return response(503, {});
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [10, 20, 30],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Arrival", providers: "tmdb", ratings: "DE,US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 329865, title: "Arrival", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/arrival.jpg",
+        source: "tmdb",
+        tint: [10, 20, 30],
+        certifications: [],
+    });
+});
+
+test("validates the requested rating countries", () => {
+    assert.deepEqual(requestedRatings(undefined), []);
+    assert.deepEqual(requestedRatings("de,US,DE"), ["DE", "US"]);
+    assert.throws(() => requestedRatings("GB"), /ratings must contain DE and\/or US/);
+});
+
+test("keeps every FSK asset filename tied to its final PNG bytes", () => {
+    const directory = join(__dirname, "..", "public", "ratings", "fsk");
+    const files = readdirSync(directory).sort();
+    assert.deepEqual(files.map((file) => file.match(/^fsk-(0|6|12|16|18)\./)?.[1]),
+        ["0", "12", "16", "18", "6"]);
+    for (const file of files) {
+        const match = file.match(/^fsk-(?:0|6|12|16|18)\.([a-f0-9]{12})\.png$/);
+        assert.ok(match, "unexpected FSK asset name: " + file);
+        const digest = createHash("sha256").update(readFileSync(join(directory, file)))
+            .digest("hex");
+        assert.equal(match[1], digest.slice(0, 12));
+    }
 });
 
 test("resolves The Dune Sketchbook through Hans Zimmer composer credits", async () => {

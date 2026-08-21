@@ -2,9 +2,15 @@
 
 ADR 0001 is implemented by `api/backdrop.js` and `api/tint.js`. Vercel discovers
 both as Node.js Functions and installs the root `package.json`. The backdrop API
-returns a selected CDN URL and RGB tint; the tint API downloads a bounded station
+returns a selected CDN URL and RGB tint and can optionally return DE/US media
+certifications; the tint API downloads a bounded station
 cover on cache miss and returns only its RGB tint. Neither endpoint proxies image
 bytes to the browser.
+
+`ratings=DE,US` adds a `certifications` array to the response. `art=0` skips artwork
+and tint resolution, allowing the Ratings visualization to use the same media match
+without paying for unused image-provider work. Rating lookup is best-effort: a TMDB
+certification failure returns an empty array and does not fail otherwise valid art.
 
 ## Project settings
 
@@ -81,6 +87,14 @@ on GitHub Pages, change both API meta tags to the absolute Vercel project URL an
 add that origin to the page's `connect-src` CSP. Also keep the public site origin
 in `BACKDROP_ALLOWED_ORIGINS`.
 
+The [official FSK print package](https://www.fsk.de/wp-content/uploads/FSK_Kennzeichen_ai_qxp_pdf.zip)
+is rendered to PNG files under `public/ratings/fsk`. Each filename contains the first
+12 lowercase hex characters of the SHA-256 digest of the final PNG bytes. Vercel
+serves them at `/ratings/fsk/...`; `vercel.json` marks
+those immutable filenames cacheable for one year. Resolver responses reference the
+hashed filename directly, so old hashed badge files must remain available for at
+least the six-month response-cache lifetime when an asset is replaced.
+
 ## Abuse protection
 
 `/api/tint` is deliberately not a general image fetcher. It accepts only HTTPS/443
@@ -112,6 +126,7 @@ After deployment, verify a known soundtrack without printing any configured key:
 ```powershell
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Arrival"
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Hades" --data-urlencode "media_hint=game"
+curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Game Of Thrones" --data-urlencode "providers=tmdb" --data-urlencode "ratings=DE,US" --data-urlencode "art=0"
 curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://streamingsoundtracks.com/images/cover/B000FBFTCS.jpg"
 ```
 
