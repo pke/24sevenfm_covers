@@ -138,6 +138,7 @@ var OPTION_DEFS = {
     volume: { default: 0.8, coerce: floatOption(0.8, 0, 1), event: "input",
         effect: applyVolume },
     laserEnabled: { default: 1, coerce: boolOption, effect: applyLaserEnabled },
+    strobeEnabled: { default: 0, coerce: boolOption },
     spectrumEnabled: { default: 0, coerce: boolOption, effect: applySpectrumEnabled },
     spectrumBars: { default: 24, coerce: intOption(8, 64), event: "input",
         format: String, effect: resetSpectrumBars },
@@ -1860,9 +1861,13 @@ function applyStation() {
 
 var spectrumBarsEl = $("spectrum-bars");
 var spectrumModeEls = document.querySelectorAll('input[name="spectrum-mode"]');
+var strobeEnabledEl = $("strobe-enabled");
 function syncSpectrumSettingControls() {
     spectrumBarsEl.disabled = !opts.spectrumEnabled;
     spectrumModeEls.forEach(function (input) { input.disabled = !opts.spectrumEnabled; });
+}
+function syncLaserSettingControls() {
+    strobeEnabledEl.disabled = !opts.laserEnabled;
 }
 function applySpectrumEnabled() {
     syncSpectrumSettingControls();
@@ -1870,6 +1875,7 @@ function applySpectrumEnabled() {
     syncSpectrum();
 }
 function applyLaserEnabled() {
+    syncLaserSettingControls();
     if (opts.laserEnabled && audioWanted) prepareSpectrum();
     syncSpectrum();
 }
@@ -1879,6 +1885,7 @@ function resetSpectrumBars() {
 bindOptionControls();
 restoreFanartKeyCheck();
 syncSpectrumSettingControls();
+syncLaserSettingControls();
 syncRatingControls();
 
 // --- provider priority: pointer + keyboard ------------------------------------

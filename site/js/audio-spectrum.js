@@ -24,6 +24,19 @@ function beatChoreographyFrame(beatCount, beatAge, bpm) {
     };
 }
 
+function strobeEnvelope(timestamp, startedAt, enabled) {
+    if (!enabled || startedAt < 0) return 0;
+    const age = timestamp - startedAt;
+    function flash(start, duration, strength) {
+        const progress = (age - start) / duration;
+        if (progress <= 0 || progress >= 1) return 0;
+        // A fast eased ramp avoids a single hard white frame while preserving the
+        // unmistakable double-flash cadence of a club strobe.
+        return smoothstep(Math.min(progress * 2, (1 - progress) * 2)) * strength;
+    }
+    return Math.max(flash(0, 100, 1), flash(145, 110, .72));
+}
+
 function resizeCanvas(canvas, maxScale = 2) {
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return false;
@@ -661,18 +674,22 @@ function createLaserForegroundRenderer(canvas, webglCoordinates, hardwareWebGl) 
     const context = canvas.getContext("2d");
     if (!context) return null;
     let paintedFrames = 0;
+    let strobePaintedFrames = 0;
 
     function clear() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         paintedFrames = 0;
+        strobePaintedFrames = 0;
         canvas.dataset.frontBeams = "0";
         canvas.dataset.frontPaintedFrames = "0";
+        canvas.dataset.strobePaintedFrames = "0";
+        canvas.dataset.strobeLevel = "0";
     }
 
     return {
         clear,
         draw({ timestamp, mids, highs, beat, beatCount, beatAge, envelope,
-            drive, bpm }) {
+            drive, bpm, strobe }) {
             const rect = canvas.getBoundingClientRect();
             const pixelBudget = hardwareWebGl ? 600000 : 280000;
             const maximumScale = hardwareWebGl ? 1.5 : .75;
@@ -723,9 +740,19 @@ function createLaserForegroundRenderer(canvas, webglCoordinates, hardwareWebGl) 
                     frontBeams++;
                 }
             }
+            if (strobe > .002) {
+                context.save();
+                context.globalCompositeOperation = "screen";
+                context.fillStyle = "#eefaff";
+                context.globalAlpha = Math.min(.72, strobe * envelope * .72);
+                context.fillRect(0, 0, width, height);
+                context.restore();
+                canvas.dataset.strobePaintedFrames = String(++strobePaintedFrames);
+            }
             canvas.dataset.frontBeams = String(frontBeams);
             if (frontBeams > 0)
                 canvas.dataset.frontPaintedFrames = String(++paintedFrames);
+            canvas.dataset.strobeLevel = strobe.toFixed(3);
         }
     };
 }
@@ -749,6 +776,8 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
     let beatAt = -10000;
     let accentAt = -10000;
     let accentCount = 0;
+    let strobeAt = -10000;
+    let strobeCount = 0;
     let drive = 0;
     let estimatedBpm = 0;
     const onsetTimes = [];
@@ -776,7 +805,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         });
     }
 
-    function detectBeat(data, timestamp, synthetic) {
+    function detectBeat(data, timestamp, synthetic, strobeEnabled) {
         // Keep the trigger down in the kick/bass region. The old wide band reached
         // well into the low mids, so vocals and synth stabs looked like random beats.
         const rawBass = averageBand(data, .003, .018);
@@ -856,6 +885,14 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
             beatAt = timestamp;
             accentAt = timestamp;
             beatCount++;
+            // One restrained double flash per eight-beat phrase. Requiring an
+            // established rhythmic drive prevents ballads and detector warm-up from
+            // producing an isolated surprise flash.
+            if (strobeEnabled && drive >= .42 && beatCount % 8 === 0
+                    && timestamp - strobeAt >= 1800) {
+                strobeAt = timestamp;
+                strobeCount++;
+            }
             onsetTimes.push(timestamp);
             restartBeatMarker();
         } else if (accent) {
@@ -879,6 +916,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         canvas.dataset.laserMode = drive >= .42 ? "beat" : "calm";
         canvas.dataset.bpm = estimatedBpm ? String(Math.round(estimatedBpm)) : "";
         canvas.dataset.beatAccentCount = String(accentCount);
+        canvas.dataset.strobeCount = String(strobeCount);
     }
 
     function clear() {
@@ -891,6 +929,8 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         beatAt = -10000;
         accentAt = -10000;
         accentCount = 0;
+        strobeAt = -10000;
+        strobeCount = 0;
         drive = 0;
         estimatedBpm = 0;
         onsetTimes.length = 0;
@@ -903,6 +943,8 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         canvas.dataset.frame = "0";
         canvas.dataset.beatCount = "1";
         canvas.dataset.beatAccentCount = "0";
+        canvas.dataset.strobeCount = "0";
+        canvas.dataset.strobeLevel = "0";
         canvas.dataset.laserMode = "calm";
         canvas.dataset.bpm = "";
         if (renderer) renderer.clear();
@@ -912,6 +954,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
     canvas.dataset.renderer = renderer ? renderer.type : "none";
     canvas.dataset.rigOrigin = "ceiling";
     canvas.dataset.landingSpots = "6";
+    canvas.dataset.strobePattern = "occasional-double";
     canvas.dataset.spectrumBands = String(spectrumBands.length);
     if (foregroundCanvas) {
         foregroundCanvas.dataset.renderer = foregroundRenderer ? "canvas" : "none";
@@ -928,11 +971,15 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
             if (stage) stage.classList.toggle("laser-scene", active);
         },
         clear,
-        draw({ timestamp, frequencyData, envelope, synthetic }) {
+        draw({ timestamp, frequencyData, envelope, synthetic, options }) {
             if (!renderer || !frequencyData || !frequencyData.length) return;
             canvas.dataset.audioSource = synthetic ? "ambient" : "spectrum";
-            detectBeat(frequencyData, timestamp, synthetic);
+            const strobeEnabled = !!(options && options.strobeEnabled);
+            if (!strobeEnabled) strobeAt = -10000;
+            detectBeat(frequencyData, timestamp, synthetic, strobeEnabled);
             canvas.dataset.beatCount = String(beatCount);
+            const strobe = strobeEnvelope(timestamp, strobeAt, strobeEnabled);
+            canvas.dataset.strobeLevel = strobe.toFixed(3);
             const renderFrame = {
                 timestamp,
                 bass,
@@ -944,6 +991,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
                 envelope,
                 drive,
                 bpm: estimatedBpm,
+                strobe,
                 spectrumBands
             };
             renderer.draw(renderFrame);
