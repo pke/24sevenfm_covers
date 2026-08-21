@@ -59,6 +59,15 @@ or `Themes From` is treated as a screen compilation: the resolver uses the work-
 prefix before the spaced dash in `Track` and accepts only an exact TMDB film/TV-title
 match. Thus `Remington Steele - Laura's Theme` resolves as `Remington Steele` without
 an album-name-specific exception.
+
+A trailing `: Series N`, `- Season N`, or `– Staffel N` is parsed as structured TV
+metadata. The suffix is removed for title search and supplies a `tv` hint. When TMDB
+returns multiple exact series with the same title, an exact `Artist` person and that
+person's `Original Music Composer` credit may select the matching series. For example,
+`Doctor Who: Series 9` plus `Murray Gold` resolves to the 2005 series rather than the
+same-named 1963 series. Artwork remains series-level; the season number is not treated
+as part of the TMDB title.
+
 Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
 supplies `game`.
 

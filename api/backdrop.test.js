@@ -124,6 +124,63 @@ test("resolves the live Film Noir's Finest TV cue through its track prefix", asy
     });
 });
 
+test("extracts a trailing TV season marker without a title-specific exception", () => {
+    assert.equal(backdropTitleFor("Doctor Who: Series 9",
+        "We Need To Get Back To The Tardis"), "Doctor Who");
+    assert.equal(backdropTitleFor("The Crown - Season 3", "Olding"), "The Crown");
+    assert.equal(backdropTitleFor("Dark – Staffel 2", "Anfänge und Enden"), "Dark");
+    assert.equal(mediaHintForAlbum("Doctor Who: Series 9"), "tv");
+    assert.equal(mediaHintForAlbum("The Crown - Season 3"), "tv");
+    assert.equal(mediaHintForAlbum("Dark – Staffel 2"), "tv");
+    assert.equal(backdropTitleFor("Series 7: The Contenders", "Opening"),
+        "Series 7: The Contenders");
+});
+
+test("uses the composer to disambiguate a season-marked TV series", async () => {
+    let titleQuery = "";
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/multi") {
+                titleQuery = parsed.searchParams.get("query");
+                return response(200, { results: [
+                    { id: 121, media_type: "tv", name: "Doctor Who",
+                        first_air_date: "1963-11-23", backdrop_path: "/classic.jpg" },
+                    { id: 57243, media_type: "tv", name: "Doctor Who",
+                        first_air_date: "2005-03-26", backdrop_path: "/modern.jpg" },
+                ] });
+            }
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 2428, name: "Murray Gold", known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/person/2428/combined_credits") {
+                return response(200, { crew: [{
+                    id: 57243, media_type: "tv", name: "Doctor Who",
+                    job: "Original Music Composer", backdrop_path: "/modern.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Doctor Who: Series 9",
+        track: "We Need To Get Back To The Tardis",
+        artist: "Murray Gold",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(titleQuery, "Doctor Who");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 57243, title: "Doctor Who", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/modern.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+    });
+});
+
 test("returns German and US movie ratings without resolving artwork", async () => {
     const requests = [];
     const handler = createHandler({

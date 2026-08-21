@@ -58,6 +58,16 @@ function cleanMovieTitle(album) {
     return cleaned;
 }
 
+function tvSeasonIdentity(album) {
+    const cleaned = cleanMovieTitle(album);
+    const match = cleaned.match(
+        /^(.+?)\s*[:\-–—]\s*(series|season|staffel)\s+([0-9]{1,2})\s*$/i);
+    if (!match) return null;
+    const title = cleanMovieTitle(match[1]);
+    if (!title) return null;
+    return { title, season: Number(match[3]) };
+}
+
 function isTrackPrefixedMovieCompilation(title) {
     return /^the wings of a film$/i.test(title)
         || /^music for a darkened theatre,\s*vol\.\s*[12]$/i.test(title);
@@ -112,6 +122,8 @@ function trackPrefixCandidates(track) {
 
 function backdropTitleFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
+    const seasonIdentity = tvSeasonIdentity(normalizedAlbum);
+    if (seasonIdentity) return seasonIdentity.title;
     if (usesExactTrackPrefix(normalizedAlbum)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates[0];
@@ -143,6 +155,7 @@ function backdropTitleCandidatesFor(album, track) {
 function mediaHintForAlbum(album) {
     const title = String(album || "");
     const cleanedTitle = cleanMovieTitle(title);
+    if (tvSeasonIdentity(cleanedTitle)) return "tv";
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
     if (isTrackTitledScreenCompilation(cleanedTitle)) return "screen";
     if (isTrackTitledGameCompilation(cleanedTitle)) return "game";
@@ -227,6 +240,7 @@ function pickComposerCredit(combinedCredits, album) {
 function pickMediaMatch(results, query, wantedType) {
     const wanted = normalizedTitle(query);
     let exact = null;
+    const exactMatches = [];
     let withBackdrop = null;
     let first = null;
     for (const media of Array.isArray(results) ? results : []) {
@@ -237,10 +251,14 @@ function pickMediaMatch(results, query, wantedType) {
         if (!first) first = media;
         const titles = mediaType(media) === "tv"
             ? [media.name, media.original_name] : [media.title, media.original_title];
-        if (!exact && titles.some((title) => normalizedTitle(title) === wanted)) exact = media;
+        if (titles.some((title) => normalizedTitle(title) === wanted)) {
+            if (!exact) exact = media;
+            if (!exactMatches.some((candidate) => candidate.id === media.id
+                    && mediaType(candidate) === mediaType(media))) exactMatches.push(media);
+        }
         if (!withBackdrop && media.backdrop_path) withBackdrop = media;
     }
-    return { media: exact || withBackdrop || first || null, exact: !!exact };
+    return { media: exact || withBackdrop || first || null, exact: !!exact, exactMatches };
 }
 
 function pickMedia(results, query, wantedType) {
@@ -846,6 +864,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     const screenQueries = Array.isArray(options.screenQueries) && options.screenQueries.length
         ? options.screenQueries : [query];
     const requireExactScreenMatch = options.requireExactScreenMatch === true;
+    const disambiguateExactWithArtist = options.disambiguateExactWithArtist === true;
     const hint = configuredMediaHint(query, requestHint, dependencies.env);
     const wantsScreen = ratingCountries.length > 0 || (includeArt
         && providers.some((provider) => provider === "fanart" || provider === "tmdb"));
@@ -888,7 +907,8 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
         if (category === "screen") {
             // Start the exact person lookup beside the normal title lookup so the
             // conservative fallback does not add another full provider timeout. Its
-            // result is consumed only when the title search has no exact match.
+            // result is consumed when title search has no exact match, or when a
+            // season-marked album has multiple exact series with the same name.
             const personLookup = artist && !requireExactScreenMatch
                 ? searchTmdbPerson(dependencies.fetchImpl, artist,
                 dependencies.env).then((person) => ({ person }), (error) => ({ error })) : null;
@@ -922,6 +942,24 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 }
             }
             if (!match && !requireExactScreenMatch) match = fallbackMatch;
+            if (match && match.exact && disambiguateExactWithArtist && personLookup
+                    && match.exactMatches.length > 1) {
+                const personResult = await personLookup;
+                if (personResult.error) {
+                    errors.push(personResult.error);
+                } else if (personResult.person) {
+                    try {
+                        const credit = await composerCreditForAlbum(dependencies.fetchImpl,
+                            personResult.person, query, dependencies.env);
+                        const creditedMatch = credit && match.exactMatches.find((candidate) =>
+                            Number(candidate.id) === Number(credit.id)
+                            && mediaType(candidate) === mediaType(credit));
+                        if (creditedMatch) match = { ...match, media: creditedMatch };
+                    } catch (error) {
+                        errors.push(error);
+                    }
+                }
+            }
             if ((!match || !match.exact) && personLookup) {
                 const personResult = await personLookup;
                 if (personResult.error) {
@@ -1073,6 +1111,7 @@ function createHandler(options = {}) {
                 includeArt,
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue)),
+                disambiguateExactWithArtist: !!tvSeasonIdentity(titleValue),
             });
             res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
             return sendJson(res, 200, result);
