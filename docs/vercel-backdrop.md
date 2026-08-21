@@ -104,13 +104,10 @@ on GitHub Pages, change both API meta tags to the absolute Vercel project URL an
 add that origin to the page's `connect-src` CSP. Also keep the public site origin
 in `BACKDROP_ALLOWED_ORIGINS`.
 
-The [official FSK print package](https://www.fsk.de/wp-content/uploads/FSK_Kennzeichen_ai_qxp_pdf.zip)
-is rendered to PNG files under `public/ratings/fsk`. Each filename contains the first
-12 lowercase hex characters of the SHA-256 digest of the final PNG bytes. Vercel
-serves them at `/ratings/fsk/...`; `vercel.json` marks
-those immutable filenames cacheable for one year. Resolver responses reference the
-hashed filename directly, so old hashed badge files must remain available for at
-least the six-month response-cache lifetime when an asset is replaced.
+The resolver returns direct Wikimedia Commons original-file URLs for the coloured
+FSK 0/6/12/16/18 and MPA G/PG/PG-13/R/NC-17 SVGs. The browser accepts only those
+ten exact `https://upload.wikimedia.org` URLs, and the player's `img-src` CSP permits
+that host. Unsupported ratings, including US TV ratings, continue to use text badges.
 
 ## Abuse protection
 

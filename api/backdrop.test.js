@@ -9,6 +9,7 @@ const {
     CACHE_SECONDS,
     backdropTitleCandidatesFor,
     backdropTitleFor,
+    certificationResponse,
     cleanMovieTitle,
     createHandler,
     createTintHandler,
@@ -221,9 +222,12 @@ test("returns German and US movie ratings without resolving artwork", async () =
         certifications: [
             {
                 country: "DE", system: "FSK", rating: "6", label: "FSK 6",
-                logo: "/ratings/fsk/fsk-6.e11fbaf818b2.png",
+                logo: "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg",
             },
-            { country: "US", system: "MPA", rating: "PG-13", label: "PG-13" },
+            {
+                country: "US", system: "MPA", rating: "PG-13", label: "PG-13",
+                logo: "https://upload.wikimedia.org/wikipedia/commons/9/98/MPA_PG-13_RATING.svg",
+            },
         ],
     });
     assert.deepEqual(requests, ["/3/search/multi", "/3/movie/293863/release_dates"]);
@@ -256,7 +260,7 @@ test("returns Game of Thrones German and US TV ratings", async () => {
     assert.deepEqual(JSON.parse(res.body).certifications, [
         {
             country: "DE", system: "FSK", rating: "16", label: "FSK 16",
-            logo: "/ratings/fsk/fsk-16.83651dbb7b3b.png",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg",
         },
         {
             country: "US", system: "TV Parental Guidelines", rating: "TV-MA", label: "TV-MA",
@@ -295,6 +299,27 @@ test("validates the requested rating countries", () => {
     assert.deepEqual(requestedRatings(undefined), []);
     assert.deepEqual(requestedRatings("de,US,DE"), ["DE", "US"]);
     assert.throws(() => requestedRatings("GB"), /ratings must contain DE and\/or US/);
+});
+
+test("maps every supported FSK and MPA movie rating to its Wikimedia SVG", () => {
+    const logos = {
+        "DE|0": "https://upload.wikimedia.org/wikipedia/commons/1/17/FSK_0.svg",
+        "DE|6": "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg",
+        "DE|12": "https://upload.wikimedia.org/wikipedia/commons/6/6e/FSK_12.svg",
+        "DE|16": "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg",
+        "DE|18": "https://upload.wikimedia.org/wikipedia/commons/5/5d/FSK_18.svg",
+        "US|G": "https://upload.wikimedia.org/wikipedia/commons/4/4f/MPA_G_RATING.svg",
+        "US|PG": "https://upload.wikimedia.org/wikipedia/commons/9/9a/MPA_PG_RATING.svg",
+        "US|PG-13": "https://upload.wikimedia.org/wikipedia/commons/9/98/MPA_PG-13_RATING.svg",
+        "US|R": "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
+        "US|NC-17": "https://upload.wikimedia.org/wikipedia/commons/c/c0/MPA_NC-17_RATING.svg",
+    };
+    for (const [key, logo] of Object.entries(logos)) {
+        const [country, rating] = key.split("|");
+        assert.equal(certificationResponse(country, rating, "movie").logo, logo);
+    }
+    assert.equal(certificationResponse("US", "NR", "movie").logo, null);
+    assert.equal("logo" in certificationResponse("US", "TV-MA", "tv"), false);
 });
 
 test("keeps every FSK asset filename tied to its final PNG bytes", () => {
