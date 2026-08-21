@@ -18,6 +18,11 @@ const DEFAULT_TINT_HOSTS = Object.freeze([
     "entranced.fm",
 ]);
 const COVER_TINT_PATH = /^\/images\/cover\/[A-Za-z0-9][A-Za-z0-9._-]{0,159}\.(?:jpe?g|png|webp)$/i;
+
+function cacheControl(browserSeconds) {
+    return "public, max-age=" + browserSeconds + ", s-maxage=" + CACHE_SECONDS
+        + ", stale-while-revalidate=86400";
+}
 const WHITE_TINT = Object.freeze([255, 255, 255]);
 
 class ResolverError extends Error {
@@ -851,8 +856,7 @@ function createHandler(options = {}) {
             const result = await resolveBackdrop(title, providers, clientKey, {
                 env, fetchImpl, tintForImage,
             }, mediaHint, typeof artistValue === "string" ? artistValue.trim() : "");
-            res.setHeader("Cache-Control", "public, max-age=0, s-maxage=" + CACHE_SECONDS
-                + ", stale-while-revalidate=86400");
+            res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
             return sendJson(res, 200, result);
         } catch (error) {
             const known = error instanceof ResolverError;
@@ -897,8 +901,7 @@ function createTintHandler(options = {}) {
                 throw new ResolverError("invalid_image_url", 400, "exactly one image URL is required");
             }
             const tint = await coverTintForUrl(query.url, { env, fetchImpl, tintFromBytes });
-            res.setHeader("Cache-Control", "public, max-age=0, s-maxage=" + CACHE_SECONDS
-                + ", stale-while-revalidate=86400");
+            res.setHeader("Cache-Control", cacheControl(0));
             return sendJson(res, 200, { tint });
         } catch (error) {
             const known = error instanceof ResolverError;

@@ -398,7 +398,8 @@ test("resolves fanart first and returns a precomputed tint", async () => {
     assert.match(requests[1], /client_key=personal-key/);
     assert.equal(tintUrl, "https://assets.fanart.tv/preview/movies/429/best.jpg");
     assert.equal(res.headers.get("access-control-allow-origin"), "https://example.test");
-    assert.match(res.headers.get("cache-control"), new RegExp("s-maxage=" + CACHE_SECONDS));
+    assert.equal(res.headers.get("cache-control"), "public, max-age=" + CACHE_SECONDS
+        + ", s-maxage=" + CACHE_SECONDS + ", stale-while-revalidate=86400");
 });
 
 test("falls back to TMDB when fanart is unavailable", async () => {
