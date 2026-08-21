@@ -380,6 +380,40 @@
 /* Backdrop providers: a drag-sortable priority list - topmost wins, rest fallback. */
 .providers { list-style: none; margin: .8rem 0 0; padding: 0; display: grid; gap: .5rem; }
 .provider-followup { margin-top: .6rem; }
+.backdrop-error {
+    display: flex;
+    align-items: baseline;
+    gap: .4rem;
+    max-height: 0;
+    margin-top: 0;
+    overflow: hidden;
+    color: var(--text-dim);
+    font-size: .9rem;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-.2rem);
+    transition: opacity .2s ease, transform .2s ease, max-height .2s ease,
+                margin-top .2s ease, visibility 0s linear .2s;
+}
+.backdrop-error.show {
+    max-height: 4rem;
+    margin-top: .6rem;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition-delay: 0s;
+}
+.backdrop-error button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+    transition: opacity .2s ease;
+}
+.backdrop-error button:disabled { cursor: default; opacity: .5; }
 .provider {
     display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
     padding: .45rem .6rem;
@@ -461,7 +495,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 @media (prefers-reduced-motion: reduce) {
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
     .stage-button, .stage-spectrum, .stage-status, .options-overlay,
-    .backdrop { transition: none !important; }
+    .backdrop, .backdrop-error, .backdrop-error button { transition: none !important; }
     .stage-spectrum { display: none; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }

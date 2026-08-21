@@ -311,6 +311,8 @@ function makeLayer(a, b, channel) {
 var blurLayer = makeLayer($("backdropA"), $("backdropB"), "cover");
 var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), stageStatusEl = $("stage-status");
+var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
+var backdropRetryEl = $("backdrop-retry");
 var audioEl = $("audio");
 
 // One info box serves both layouts (title, artist, countdown) - overlaid on the
@@ -615,9 +617,12 @@ var currentAlbum = "", currentTrack = "", currentArtist = "", stationIdActive = 
 
 var SERVER_ART_UNAVAILABLE = {};
 
-async function fetchResolverJson(url, signal) {
+async function fetchResolverJson(url, signal, cacheMode) {
     var response;
-    try { response = await fetch(url.href, signal ? { signal: signal } : undefined); }
+    var init = {};
+    if (signal) init.signal = signal;
+    if (cacheMode) init.cache = cacheMode;
+    try { response = await fetch(url.href, init); }
     catch (error) {
         if (error && error.name === "AbortError") throw error;
         throw SERVER_ART_UNAVAILABLE;
@@ -722,7 +727,7 @@ function updateCoverTint(nextUrl) {
     });
 }
 
-async function serverMovieArt(album, track, artist, providers, signal) {
+async function serverMovieArt(album, track, artist, providers, signal, cacheMode) {
     if (!BACKDROP_API_URL) throw SERVER_ART_UNAVAILABLE;
     var url;
     try {
@@ -735,7 +740,7 @@ async function serverMovieArt(album, track, artist, providers, signal) {
             url.searchParams.set("client_key", opts.fanartKey);
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
 
-    var body = await fetchResolverJson(url, signal);
+    var body = await fetchResolverJson(url, signal, cacheMode);
     if (!body || !body.backdrop) return null;
     var resolved = trustedResolvedBackdrop(body.backdrop, body.source);
     if (!resolved) throw SERVER_ART_UNAVAILABLE;
@@ -773,10 +778,28 @@ function setMovieBackdrop(art, generation) {
         });
 }
 
-function updateBackdrop() {
+function setBackdropErrorState(state) {
+    if (state === "error") {
+        backdropErrorTextEl.textContent = "Backdrop artwork couldn’t be loaded.";
+        backdropRetryEl.disabled = false;
+    } else if (state === "retrying") {
+        backdropErrorTextEl.textContent = "Loading backdrop artwork…";
+        backdropRetryEl.disabled = true;
+    }
+    backdropErrorEl.classList.toggle("show", !!state);
+    backdropErrorEl.setAttribute("aria-hidden", state ? "false" : "true");
+}
+
+function requestBackdrop(cacheMode) {
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
-    clearStatus("backdrop");
+    if (cacheMode === "reload") {
+        setStatus("Loading backdrop artwork…", "backdrop");
+        setBackdropErrorState("retrying");
+    } else {
+        clearStatus("backdrop");
+        setBackdropErrorState("");
+    }
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
     if (stationIdActive || !opts.tmdbBackdrops) { setMovieBackdrop(null, generation); return; }
@@ -788,48 +811,60 @@ function updateBackdrop() {
         kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT)
     };
     backdropRequest = request;
-    Promise.resolve(resolver(generation, ctl.signal)).then(settled, settled);
+    Promise.resolve(resolver(generation, ctl.signal, cacheMode)).then(settled, settled);
     function settled() {
         clearTimeout(request.kill);
         if (backdropRequest === request) backdropRequest = null;
     }
 }
 
+function updateBackdrop() { requestBackdrop(); }
+function retryBackdrop() { requestBackdrop("reload"); }
+
 // Resolve only through the project endpoint. The per-title cache stores misses too;
 // endpoint failures stay uncached so a later poll or option change can retry.
-async function movieArtFor(album, track, artist, generation, signal) {
+async function movieArtFor(album, track, artist, generation, signal, cacheMode) {
     const providers = enabledMovieProviders();
     if (!renderIsCurrent("backdrop", generation) || !album || !providers.length) return null;
     const cache = movieCacheFor(providers);
     const titleCacheKey = album + "\n" + track + "\n";
     const cacheKey = titleCacheKey + artist;
-    if (Object.prototype.hasOwnProperty.call(cache, cacheKey)) return cache[cacheKey];
+    if (cacheMode !== "reload" && Object.prototype.hasOwnProperty.call(cache, cacheKey))
+        return cache[cacheKey];
     // SST's queue currently omits Artist. A successful title-only prefetch is still
     // authoritative and its already-loaded image can be reused when now-playing later
     // supplies the composer. Do not reuse a cached miss: Artist may unlock the strict
     // composer-credit fallback once the queued title becomes current.
-    if (artist && Object.prototype.hasOwnProperty.call(cache, titleCacheKey)
+    if (cacheMode !== "reload" && artist
+            && Object.prototype.hasOwnProperty.call(cache, titleCacheKey)
             && cache[titleCacheKey]) {
         cache[cacheKey] = cache[titleCacheKey];
         return cache[cacheKey];
     }
 
-    const art = await serverMovieArt(album, track, artist, providers, signal);
+    const art = await serverMovieArt(album, track, artist, providers, signal, cacheMode);
     if (!renderIsCurrent("backdrop", generation)) return null;
     cache[cacheKey] = art;
     return art;
 }
 
-async function resolveMovieBackdrop(generation, signal) {
+async function resolveMovieBackdrop(generation, signal, cacheMode) {
     if (!renderIsCurrent("backdrop", generation)) return;
     try {
-        const art = await movieArtFor(currentAlbum, currentTrack, currentArtist, generation, signal);
+        const art = await movieArtFor(currentAlbum, currentTrack, currentArtist, generation, signal,
+            cacheMode);
         if (!renderIsCurrent("backdrop", generation)) return;
+        clearStatus("backdrop");
+        setBackdropErrorState("");
         setMovieBackdrop(art, generation);
     } catch (e) {
         if (!renderIsCurrent("backdrop", generation)) return;
-        if (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError"))
+        if (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError")) {
             setStatus("Backdrop service is currently unavailable.", "backdrop");
+            setBackdropErrorState("error");
+        } else {
+            setBackdropErrorState("");
+        }
         setMovieBackdrop(null, generation); // any failure: quietly back to the blurred cover
     }
 }
@@ -1466,6 +1501,7 @@ syncSpectrumSettingControls();
 // The ⠿ grip is the only handle: the row also holds a key input, and a drag must not
 // fight text selection there.
 var providersEl = $("providers");
+backdropRetryEl.addEventListener("click", retryBackdrop);
 opts.providerOrder.forEach(function (id) {
     var row = providersEl.querySelector('[data-provider="' + id + '"]');
     if (!row) throw new Error("Missing artwork provider control: " + id);
