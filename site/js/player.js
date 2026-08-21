@@ -142,6 +142,11 @@ var OPTION_DEFS = {
         format: String, effect: resetSpectrumBars },
     spectrumMode: { default: "tinted", coerce: enumOption(["legacy", "tinted"], "tinted"),
         effect: clearSpectrum },
+    // Ratings are independently opt-in because they use the same title resolver as
+    // backdrops. Country choices remain selected while the master switch is off.
+    ratingsEnabled: { default: 0, coerce: boolOption, effect: applyRatingsEnabled },
+    ratingDE: { default: 1, coerce: boolOption, effect: applyRatingCountries },
+    ratingUS: { default: 1, coerce: boolOption, effect: applyRatingCountries },
     // Experimental film/TV/game backdrops stay OFF by default because enabling them sends
     // current/next soundtrack titles through the project resolver. fanart's optional
     // personal client key can unlock fresher art through that same resolver.
@@ -375,6 +380,112 @@ function setInfo(title, artist) {
 
 var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+// Each country keeps two badge faces on one 3D card. The next rating is loaded into
+// the hidden face first, then the same transition and duration as the cover turn the
+// already-attached back face into view.
+function makeRatingSlot(slot) {
+    var faces = Array.from(slot.querySelectorAll(".rating-face"));
+    var token = "", version = 0;
+
+    function setFace(face, certification, logo) {
+        var img = face.querySelector("img"), label = face.querySelector("span");
+        face.classList.toggle("has-logo", !!logo);
+        if (logo) img.src = logo;
+        else img.removeAttribute("src");
+        label.textContent = certification.label;
+    }
+
+    function hide() {
+        version++;
+        slot.classList.remove("show");
+        slot.setAttribute("aria-hidden", "true");
+        slot.removeAttribute("aria-label");
+    }
+
+    function show(certification, generation) {
+        if (!certification) { hide(); return; }
+        var nextToken = [certification.rating, certification.label,
+            certification.logo || ""].join("\n");
+        if (token === nextToken && slot.dataset.front) {
+            slot.classList.add("show");
+            slot.setAttribute("aria-hidden", "false");
+            slot.setAttribute("aria-label", certification.accessibleLabel);
+            return;
+        }
+
+        var currentVersion = ++version;
+        var back = slot.dataset.front === "a" ? faces[1] : faces[0];
+        var commit = function (logo) {
+            if (version !== currentVersion || !renderIsCurrent("backdrop", generation)) return;
+            setFace(back, certification, logo);
+            token = nextToken;
+            var effect = reducedMotion.matches ? 0 : opts.transition;
+            stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
+            var fx = ["none", "fade", "fliph", "flipv"][effect];
+            if (slot.dataset.fx !== fx) {
+                slot.dataset.warp = "";
+                slot.dataset.fx = fx;
+                void slot.offsetWidth;
+                delete slot.dataset.warp;
+            }
+            void slot.offsetWidth;
+            slot.dataset.front = back === faces[0] ? "a" : "b";
+            slot.classList.add("show");
+            slot.setAttribute("aria-hidden", "false");
+            slot.setAttribute("aria-label", certification.accessibleLabel);
+        };
+        if (certification.logo) {
+            preloadImage(certification.logo,
+                function () { commit(certification.logo); },
+                function () { commit(""); });
+        } else {
+            commit("");
+        }
+    }
+
+    return { show: show, hide: hide };
+}
+
+var ratingSlots = {
+    DE: makeRatingSlot($("rating-de")),
+    US: makeRatingSlot($("rating-us")),
+};
+var currentCertifications = [];
+
+function renderRatingBadges(generation) {
+    var byCountry = currentCertifications.reduce(function (ratings, certification) {
+        ratings[certification.country] = certification;
+        return ratings;
+    }, Object.create(null));
+    ratingSlots.DE.show(opts.ratingsEnabled && opts.ratingDE ? byCountry.DE : null, generation);
+    ratingSlots.US.show(opts.ratingsEnabled && opts.ratingUS ? byCountry.US : null, generation);
+}
+
+function setRatings(certifications, generation) {
+    if (!renderIsCurrent("backdrop", generation)) return;
+    currentCertifications = certifications instanceof Array ? certifications : [];
+    renderRatingBadges(generation);
+}
+
+function syncRatingControls() {
+    var countries = $("rating-country-options"), master = $("ratings-enabled");
+    countries.classList.toggle("enabled", !!opts.ratingsEnabled);
+    countries.setAttribute("aria-hidden", opts.ratingsEnabled ? "false" : "true");
+    master.setAttribute("aria-expanded", opts.ratingsEnabled ? "true" : "false");
+    [$("rating-de-enabled"), $("rating-us-enabled")].forEach(function (control) {
+        control.disabled = !opts.ratingsEnabled;
+    });
+}
+
+function applyRatingsEnabled() {
+    syncRatingControls();
+    updateBackdrop();
+}
+
+function applyRatingCountries() {
+    renderRatingBadges(renderGenerations.backdrop);
+}
+
 // --- poll engine (ported from lib/coverfetch.cpp) ----------------------------
 var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 60, REQ_TIMEOUT = 20000;
 var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
@@ -526,8 +637,8 @@ function clearStatus(source) { setStatus("", source); }
 
 // Prefetch the NEXT track from the station's queue (action=GetQueue, same CORS
 // grant as the now-playing feed; [0] is up next): warm its sized cover into the
-// browser cache, and - when screen backdrops are on and this station resolves them -
-// resolve its movie/TV/game art into the per-title cache and load it into the retained
+// browser cache, and - when backdrops or ratings are on and this station resolves them -
+// resolve its media response into the per-title cache and load any image into the retained
 // hidden movie layer. The track change can then reveal that exact decoded image rather
 // than trusting the provider's browser-cache headers. Best-effort by design: one attempt per poll, and
 // any failure just means the switch loads the way it always did. A child controller
@@ -551,7 +662,7 @@ async function prefetchNext(ctl, generation) {
         new Image().src = nextCover;
         // station().backdrop currently always means the screen-media resolver; if other
         // resolver kinds ever appear, prefetching becomes their concern.
-        if (opts.tmdbBackdrops && station().backdrop) {
+        if ((opts.tmdbBackdrops || opts.ratingsEnabled) && station().backdrop) {
             const art = await movieArtFor(htmlDecode(next.Album), htmlDecode(next.Track),
                                           htmlDecode(next.Artist), generation, prefetchCtl.signal);
             if (art && art.url && renderIsCurrent("backdrop", generation))
@@ -637,12 +748,14 @@ function newMovieCache() { return Object.create(null); }
 var movieCaches = Object.create(null);
 var backdropRequest = null;
 
-function movieCacheFor(providers) {
+function movieCacheFor(providers, includeArt, includeRatings) {
     // Provider configuration is part of the resolver result. Keep its title cache
     // separate so switching back to a configuration can reuse both hits and misses.
     const configKey = JSON.stringify([
         providers,
-        providers.indexOf("fanart") >= 0 ? opts.fanartKey : ""
+        providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
+        includeArt,
+        includeRatings
     ]);
     if (!Object.prototype.hasOwnProperty.call(movieCaches, configKey))
         movieCaches[configKey] = newMovieCache();
@@ -701,6 +814,47 @@ function trustedResolvedBackdrop(raw, source) {
         return trusted && url.protocol === "https:" && !url.username && !url.password
             ? url.href : "";
     } catch (e) { return ""; }
+}
+
+function trustedRatingLogo(raw) {
+    if (typeof raw !== "string" || !raw) return "";
+    try {
+        var base = new URL(BACKDROP_API_URL, location.href);
+        var url = new URL(raw, base);
+        return url.origin === base.origin && !url.username && !url.password
+            && !url.search && !url.hash
+            && /^\/ratings\/fsk\/fsk-(?:0|6|12|16|18)\.[a-f0-9]{12}\.png$/.test(url.pathname)
+            ? url.href : "";
+    } catch (e) { return ""; }
+}
+
+function trustedCertifications(raw) {
+    if (!(raw instanceof Array)) return [];
+    var seen = Object.create(null);
+    return raw.reduce(function (certifications, entry) {
+        if (!entry || (entry.country !== "DE" && entry.country !== "US")
+                || seen[entry.country]) return certifications;
+        var rating = typeof entry.rating === "string" ? entry.rating.trim() : "";
+        var label = typeof entry.label === "string" ? entry.label.trim() : "";
+        var system = typeof entry.system === "string" ? entry.system.trim() : "";
+        if (!rating || rating.length > 32 || !label || label.length > 40
+                || !system || system.length > 40
+                || /[\u0000-\u001F\u007F]/.test(rating + label + system)) return certifications;
+        if (entry.country === "DE" && (system !== "FSK"
+                || ["0", "6", "12", "16", "18"].indexOf(rating) < 0)) return certifications;
+        if (entry.country === "US" && system !== "MPA"
+                && system !== "TV Parental Guidelines") return certifications;
+        seen[entry.country] = true;
+        certifications.push({
+            country: entry.country,
+            rating: rating,
+            label: label,
+            system: system,
+            logo: entry.country === "DE" ? trustedRatingLogo(entry.logo) : "",
+            accessibleLabel: (entry.country === "DE" ? "Germany: " : "United States: ") + label,
+        });
+        return certifications;
+    }, []);
 }
 
 function validTint(value) {
@@ -778,7 +932,8 @@ function updateCoverTint(nextUrl) {
     });
 }
 
-async function serverMovieArt(album, track, artist, providers, signal, cacheMode) {
+async function serverMovieArt(album, track, artist, providers, includeArt, includeRatings,
+    signal, cacheMode) {
     if (!BACKDROP_API_URL) throw SERVER_ART_UNAVAILABLE;
     var url;
     try {
@@ -787,15 +942,23 @@ async function serverMovieArt(album, track, artist, providers, signal, cacheMode
         if (track) url.searchParams.set("track", track);
         if (artist) url.searchParams.set("artist", artist);
         url.searchParams.set("providers", providers.join(","));
+        if (!includeArt) url.searchParams.set("art", "0");
+        if (includeRatings) url.searchParams.set("ratings", "DE,US");
         if (opts.fanartKey && providers.indexOf("fanart") >= 0)
             url.searchParams.set("client_key", opts.fanartKey);
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
 
     var body = await fetchResolverJson(url, signal, cacheMode);
-    if (!body || !body.backdrop) return null;
-    var resolved = trustedResolvedBackdrop(body.backdrop, body.source);
-    if (!resolved) throw SERVER_ART_UNAVAILABLE;
-    return { url: resolved, tint: validTint(body.tint), source: body.source };
+    if (!body || typeof body !== "object") return null;
+    var certifications = trustedCertifications(body.certifications);
+    var resolved = body.backdrop ? trustedResolvedBackdrop(body.backdrop, body.source) : "";
+    if (body.backdrop && !resolved) throw SERVER_ART_UNAVAILABLE;
+    return resolved || certifications.length ? {
+        url: resolved,
+        tint: resolved ? validTint(body.tint) : null,
+        source: resolved ? body.source : null,
+        certifications: certifications,
+    } : null;
 }
 
 function setPlayerTint(tint) {
@@ -844,7 +1007,7 @@ function setBackdropErrorState(state) {
 function requestBackdrop(cacheMode) {
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
-    if (cacheMode === "reload") {
+    if (cacheMode === "reload" && opts.tmdbBackdrops) {
         setStatus("Loading backdrop artwork…", "backdrop");
         setBackdropErrorState("retrying");
     } else {
@@ -853,9 +1016,17 @@ function requestBackdrop(cacheMode) {
     }
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
-    if (stationIdActive || !opts.tmdbBackdrops) { setMovieBackdrop(null, generation); return; }
+    if (stationIdActive || (!opts.tmdbBackdrops && !opts.ratingsEnabled)) {
+        setMovieBackdrop(null, generation);
+        setRatings([], generation);
+        return;
+    }
     const resolver = station().backdrop;
-    if (!resolver) { setMovieBackdrop(null, generation); return; } // no art source
+    if (!resolver) {
+        setMovieBackdrop(null, generation);
+        setRatings([], generation);
+        return;
+    } // no media source
     const ctl = new AbortController();
     const request = {
         ctl: ctl,
@@ -876,8 +1047,12 @@ function retryBackdrop() { requestBackdrop("reload"); }
 // endpoint failures stay uncached so a later poll or option change can retry.
 async function movieArtFor(album, track, artist, generation, signal, cacheMode) {
     const providers = enabledMovieProviders();
-    if (!renderIsCurrent("backdrop", generation) || !album || !providers.length) return null;
-    const cache = movieCacheFor(providers);
+    const includeArt = !!opts.tmdbBackdrops && providers.length > 0;
+    const includeRatings = !!opts.ratingsEnabled;
+    const requestedProviders = includeArt ? providers : ["tmdb"];
+    if (!renderIsCurrent("backdrop", generation) || !album
+            || (!includeArt && !includeRatings)) return null;
+    const cache = movieCacheFor(requestedProviders, includeArt, includeRatings);
     const titleCacheKey = album + "\n" + track + "\n";
     const cacheKey = titleCacheKey + artist;
     if (cacheMode !== "reload" && Object.prototype.hasOwnProperty.call(cache, cacheKey))
@@ -893,7 +1068,8 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode) 
         return cache[cacheKey];
     }
 
-    const art = await serverMovieArt(album, track, artist, providers, signal, cacheMode);
+    const art = await serverMovieArt(album, track, artist, requestedProviders,
+        includeArt, includeRatings, signal, cacheMode);
     if (!renderIsCurrent("backdrop", generation)) return null;
     cache[cacheKey] = art;
     return art;
@@ -907,16 +1083,19 @@ async function resolveMovieBackdrop(generation, signal, cacheMode) {
         if (!renderIsCurrent("backdrop", generation)) return;
         clearStatus("backdrop");
         setBackdropErrorState("");
-        setMovieBackdrop(art, generation);
+        setMovieBackdrop(opts.tmdbBackdrops ? art : null, generation);
+        setRatings(art && art.certifications || [], generation);
     } catch (e) {
         if (!renderIsCurrent("backdrop", generation)) return;
-        if (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError")) {
+        if (opts.tmdbBackdrops
+                && (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError"))) {
             setStatus("Backdrop service is currently unavailable.", "backdrop");
             setBackdropErrorState("error");
         } else {
             setBackdropErrorState("");
         }
         setMovieBackdrop(null, generation); // any failure: quietly back to the blurred cover
+        setRatings([], generation);
     }
 }
 
@@ -1639,6 +1818,7 @@ function applyStation() {
     const backdropGeneration = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
     setMovieBackdrop(null, backdropGeneration);
+    setRatings([], backdropGeneration);
     shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
     resetCoverRetry("");
     // The resolver is per-station now - always re-evaluate after a switch, even if
@@ -1667,6 +1847,7 @@ function resetSpectrumBars() {
 bindOptionControls();
 restoreFanartKeyCheck();
 syncSpectrumSettingControls();
+syncRatingControls();
 
 // --- provider priority: pointer + keyboard ------------------------------------
 // Pointer-based, NOT native HTML5 DnD: the native API renders a translucent

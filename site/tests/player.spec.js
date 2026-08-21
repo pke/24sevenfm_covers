@@ -429,6 +429,129 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
         await expect(page.locator('input[name="spectrum-mode"][value="legacy"]')).toBeChecked();
     });
+    test("keeps ratings opt-in while preserving the DE and US choices", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const master = page.locator("#ratings-enabled");
+        const countries = page.locator("#rating-country-options");
+        const de = page.locator("#rating-de-enabled");
+        const us = page.locator("#rating-us-enabled");
+        await expect(master).not.toBeChecked();
+        await expect(master).toHaveAttribute("aria-expanded", "false");
+        await expect(de).toBeChecked();
+        await expect(us).toBeChecked();
+        await expect(de).toBeDisabled();
+        await expect(us).toBeDisabled();
+        await expect(countries).toBeHidden();
+
+        await master.check();
+        await expect(countries).toBeVisible();
+        await expect(de).toBeEnabled();
+        await expect(us).toBeEnabled();
+        await us.uncheck();
+        await master.uncheck();
+        await expect(countries).toBeHidden();
+        await expect(de).toBeChecked();
+        await expect(us).not.toBeChecked();
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(master).not.toBeChecked();
+        await expect(de).toBeChecked();
+        await expect(us).not.toBeChecked();
+        await expect(de).toBeDisabled();
+        await expect(us).toBeDisabled();
+    });
+    test("resolves ratings without artwork and glues the next logos to the flip card", async ({ page }) => {
+        const covers = [
+            "https://streamingsoundtracks.com/images/cover/adaline.svg",
+            "https://streamingsoundtracks.com/images/cover/got.svg",
+        ];
+        let nowPlayingRequests = 0;
+        const resolverRequests = [];
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ ratingsEnabled: 1, ratingDE: 1, ratingUS: 1,
+                tmdbBackdrops: 0, transition: 2, fadeMs: 1000 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            const second = nowPlayingRequests++ > 0;
+            return route.fulfill({ json: {
+                Album: second ? "Game Of Thrones" : "Age Of Adaline, The",
+                Track: second ? "Main Title" : "Start Again",
+                Artist: second ? "Ramin Djawadi" : "Rob Simonsen",
+                CoverLink: second ? covers[1] : covers[0],
+                Length: 0, PlayStart: "2026-08-20T12:00:00Z",
+                SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(/streamingsoundtracks\.com\/images\/cover\/500\/(?:adaline|got)\.svg/,
+            (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/tint\?/, (route) =>
+            route.fulfill({ json: { tint: [40, 50, 60] } }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            resolverRequests.push({
+                album: url.searchParams.get("album"),
+                art: url.searchParams.get("art"),
+                ratings: url.searchParams.get("ratings"),
+                providers: url.searchParams.get("providers"),
+            });
+            const gameOfThrones = /Game Of Thrones/i.test(url.searchParams.get("album"));
+            return route.fulfill({ json: {
+                media: { id: gameOfThrones ? 1399 : 293863,
+                    title: gameOfThrones ? "Game of Thrones" : "The Age of Adaline",
+                    type: gameOfThrones ? "tv" : "movie" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+                certifications: gameOfThrones ? [
+                    { country: "DE", system: "FSK", rating: "16", label: "FSK 16",
+                        logo: "/ratings/fsk/fsk-16.83651dbb7b3b.png" },
+                    { country: "US", system: "TV Parental Guidelines", rating: "TV-MA",
+                        label: "TV-MA" },
+                ] : [
+                    { country: "DE", system: "FSK", rating: "6", label: "FSK 6",
+                        logo: "/ratings/fsk/fsk-6.e11fbaf818b2.png" },
+                    { country: "US", system: "MPA", rating: "PG-13", label: "PG-13" },
+                ],
+            } });
+        });
+        await page.route("https://24covers-api.vercel.app/ratings/fsk/*.png", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => resolverRequests.length).toBeGreaterThanOrEqual(1);
+        expect(resolverRequests[0]).toEqual({
+            album: "Age Of Adaline, The", art: "0", ratings: "DE,US", providers: "tmdb",
+        });
+        await expect(page.locator("#rating-de")).toHaveClass(/show/);
+        await expect(page.locator("#rating-us")).toHaveClass(/show/);
+        await expect(page.locator("#rating-us .rating-face").first()).toHaveText("PG-13");
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
+
+        await expect.poll(() => resolverRequests.some((request) =>
+            request.album === "Game Of Thrones"), { timeout: 10000 }).toBe(true);
+        await expect(page.locator("#rating-de")).toHaveAttribute("data-front", "b");
+        await expect(page.locator("#rating-de")).toHaveAttribute("data-fx", "fliph");
+        const glued = await page.locator("#rating-de").evaluate((slot) => {
+            const faces = Array.from(slot.querySelectorAll(".rating-face"));
+            return {
+                sources: faces.map((face) => face.querySelector("img").getAttribute("src")),
+                backTransform: getComputedStyle(faces[1]).transform,
+                cardTransform: getComputedStyle(slot.querySelector(".rating-card")).transform,
+            };
+        });
+        expect(glued.sources[0]).toContain("fsk-6.e11fbaf818b2.png");
+        expect(glued.sources[1]).toContain("fsk-16.83651dbb7b3b.png");
+        expect(glued.backTransform).not.toBe("none");
+        await expect.poll(() => page.locator("#rating-de").evaluate((slot) => {
+            const back = slot.querySelector(".rating-face:last-child");
+            return getComputedStyle(slot.querySelector(".rating-card")).transform
+                === getComputedStyle(back).transform;
+        })).toBe(true);
+        await expect(page.locator("#rating-us .rating-face").last()).toHaveText("TV-MA");
+    });
     test("persists scalar controls and reapplies their effects", async ({ page }) => {
         await mockLayoutTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
