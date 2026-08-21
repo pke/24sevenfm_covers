@@ -2293,7 +2293,7 @@ test.describe("the deployed player page", () => {
             { id: "fanart", label: "fanart.tv", controlId: "fanart-on", enabled: true,
                 reorderLabel: expect.stringMatching(/^Reorder fanart\.tv, position 1 of 3\./) },
             { id: "tmdb", label: "TMDB backdrops", controlId: "tmdbart-on", enabled: true,
-                reorderLabel: expect.stringMatching(/^Reorder TMDB, position 2 of 3\./) },
+                reorderLabel: expect.stringMatching(/^Reorder TMDB backdrops, position 2 of 3\./) },
             { id: "steamgriddb", label: "GameArt by SteamGridDB",
                 controlId: "steamgriddb-on", enabled: true,
                 reorderLabel: expect.stringMatching(/^Reorder GameArt by SteamGridDB, position 3 of 3\./) },

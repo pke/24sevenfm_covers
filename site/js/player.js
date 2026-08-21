@@ -106,11 +106,13 @@ function enabledIdsOption(known) {
     };
 }
 
-var ART_PROVIDER_DEFS = [
-    { id: "fanart", name: "fanart.tv" },
-    { id: "tmdb", name: "TMDB" },
-    { id: "steamgriddb", name: "GameArt by SteamGridDB" }
-];
+var ART_PROVIDER_DEFS = Array.from(
+    document.querySelectorAll("#providers > .provider"),
+    row => ({
+        id: row.dataset.provider,
+        name: row.querySelector("label").textContent.trim()
+    })
+);
 var PROVIDER_ORDER = ART_PROVIDER_DEFS.map(({ id }) => id);
 var ART_PROVIDER_BY_ID = ART_PROVIDER_DEFS.reduce((providers, provider) => {
     providers[provider.id] = provider;
