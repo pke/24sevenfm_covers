@@ -24,6 +24,13 @@ function cacheControl(browserSeconds) {
         + ", stale-while-revalidate=86400";
 }
 const WHITE_TINT = Object.freeze([255, 255, 255]);
+const FSK_LOGOS = Object.freeze({
+    "0": "/ratings/fsk/fsk-0.88562bb9abe3.png",
+    "6": "/ratings/fsk/fsk-6.e11fbaf818b2.png",
+    "12": "/ratings/fsk/fsk-12.f9fee6f6ecb9.png",
+    "16": "/ratings/fsk/fsk-16.83651dbb7b3b.png",
+    "18": "/ratings/fsk/fsk-18.e2a882b91142.png",
+});
 
 class ResolverError extends Error {
     constructor(code, status, message) {
@@ -219,6 +226,24 @@ function requestedProviders(value) {
             "providers must contain fanart, tmdb, and/or steamgriddb");
     }
     return [...new Set(providers)];
+}
+
+function requestedRatings(value) {
+    if (value === undefined || value === null || value === "") return [];
+    if (typeof value !== "string") {
+        throw new ResolverError("invalid_ratings", 400, "ratings must contain DE and/or US");
+    }
+    const countries = value.split(",").map((entry) => entry.trim().toUpperCase());
+    if (!countries.length || countries.some((entry) => !["DE", "US"].includes(entry))) {
+        throw new ResolverError("invalid_ratings", 400, "ratings must contain DE and/or US");
+    }
+    return [...new Set(countries)];
+}
+
+function requestedArt(value) {
+    if (value === undefined || value === null || value === "" || value === "1") return true;
+    if (value === "0") return false;
+    throw new ResolverError("invalid_art", 400, "art must be 0 or 1");
 }
 
 function requestedMediaHint(value) {
@@ -660,6 +685,62 @@ async function screenArt(fetchImpl, media, providers, clientKey, env) {
     return null;
 }
 
+function cleanCertification(raw, country) {
+    const value = String(raw || "").trim();
+    if (!value || value.length > 32 || /[\u0000-\u001F\u007F]/.test(value)) return "";
+    if (country !== "DE") return value;
+    const match = value.match(/(?:^|\D)(0|6|12|16|18)(?:\D|$)/);
+    return match ? match[1] : "";
+}
+
+function movieCertification(countryResult, country) {
+    const rank = new Map([[3, 0], [2, 1], [1, 2], [4, 3], [5, 4], [6, 5]]);
+    return (Array.isArray(countryResult && countryResult.release_dates)
+        ? countryResult.release_dates : [])
+        .map((release, index) => ({
+            rating: cleanCertification(release && release.certification, country),
+            rank: rank.has(Number(release && release.type))
+                ? rank.get(Number(release.type)) : 99,
+            index,
+        }))
+        .filter((release) => release.rating)
+        .sort((a, b) => a.rank - b.rank || a.index - b.index)[0]?.rating || "";
+}
+
+function certificationResponse(country, rating, type) {
+    if (!rating) return null;
+    if (country === "DE") {
+        return {
+            country,
+            system: "FSK",
+            rating,
+            label: "FSK " + rating,
+            logo: FSK_LOGOS[rating] || null,
+        };
+    }
+    return {
+        country,
+        system: type === "tv" ? "TV Parental Guidelines" : "MPA",
+        rating,
+        label: rating,
+    };
+}
+
+async function screenCertifications(fetchImpl, media, countries, env) {
+    if (!countries.length) return [];
+    const type = mediaType(media);
+    const url = new URL("https://api.themoviedb.org/3/" + type + "/"
+        + encodeURIComponent(media.id) + (type === "tv" ? "/content_ratings" : "/release_dates"));
+    const body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
+    const results = Array.isArray(body && body.results) ? body.results : [];
+    return countries.map((country) => {
+        const countryResult = results.find((entry) => entry && entry.iso_3166_1 === country);
+        const raw = type === "tv" ? countryResult && countryResult.rating
+            : movieCertification(countryResult, country);
+        return certificationResponse(country, cleanCertification(raw, country), type);
+    }).filter(Boolean);
+}
+
 function screenMediaResponse(media, query) {
     return media ? { id: media.id, title: mediaTitle(media) || query, type: mediaType(media) } : null;
 }
@@ -668,16 +749,29 @@ function gameMediaResponse(game, query) {
     return game ? { id: Number(game.id), title: game.name || query, type: "game" } : null;
 }
 
-async function resolvedArtResponse(media, art, dependencies) {
-    const tint = await dependencies.tintForImage(art.preview, dependencies.fetchImpl);
-    return { media, backdrop: art.url, source: art.source, tint };
+function withCertifications(response, certifications, ratingCountries) {
+    if (ratingCountries.length) response.certifications = certifications;
+    return response;
+}
+
+async function resolvedArtResponse(media, art, dependencies,
+    certificationsPromise = Promise.resolve([]), ratingCountries = []) {
+    const [tint, certifications] = await Promise.all([
+        dependencies.tintForImage(art.preview, dependencies.fetchImpl),
+        certificationsPromise,
+    ]);
+    return withCertifications({ media, backdrop: art.url, source: art.source, tint },
+        certifications, ratingCountries);
 }
 
 async function resolveBackdrop(query, providers, clientKey, dependencies, requestHint = "auto",
-    artist = "") {
+    artist = "", options = {}) {
+    const ratingCountries = Array.isArray(options.ratingCountries) ? options.ratingCountries : [];
+    const includeArt = options.includeArt !== false;
     const hint = configuredMediaHint(query, requestHint, dependencies.env);
-    const wantsScreen = providers.some((provider) => provider === "fanart" || provider === "tmdb");
-    const wantsGame = providers.includes("steamgriddb");
+    const wantsScreen = ratingCountries.length > 0 || (includeArt
+        && providers.some((provider) => provider === "fanart" || provider === "tmdb"));
+    const wantsGame = includeArt && providers.includes("steamgriddb");
     const screenAvailable = wantsScreen && hasTmdbCredential(dependencies.env);
     const gameAvailable = wantsGame && hasSteamGridDbCredential(dependencies.env);
     if (!screenAvailable && !gameAvailable) {
@@ -703,12 +797,15 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
         });
     }
     if (!categories.length) {
-        return { media: null, backdrop: null, source: null, tint: [...WHITE_TINT] };
+        return withCertifications(
+            { media: null, backdrop: null, source: null, tint: [...WHITE_TINT] },
+            [], ratingCountries);
     }
 
     const errors = [];
     let screenFallback = null;
     let matchedWithoutArt = null;
+    let matchedCertifications = [];
     for (const category of categories) {
         if (category === "screen") {
             // Start the exact person lookup beside the normal title lookup so the
@@ -747,10 +844,16 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 continue;
             }
             const media = screenMediaResponse(match.media, query);
-            const art = await screenArt(dependencies.fetchImpl, match.media, providers,
-                clientKey, dependencies.env);
-            if (art) return resolvedArtResponse(media, art, dependencies);
+            const certifications = ratingCountries.length
+                ? screenCertifications(dependencies.fetchImpl, match.media, ratingCountries,
+                    dependencies.env).catch(() => [])
+                : Promise.resolve([]);
+            const art = includeArt ? await screenArt(dependencies.fetchImpl, match.media, providers,
+                clientKey, dependencies.env) : null;
+            if (art) return resolvedArtResponse(media, art, dependencies,
+                certifications, ratingCountries);
             matchedWithoutArt = matchedWithoutArt || media;
+            matchedCertifications = await certifications;
             break;
         } else {
             let match;
@@ -766,7 +869,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             if (hero) {
                 return resolvedArtResponse(media, {
                     url: hero.url, preview: hero.preview, source: "steamgriddb",
-                }, dependencies);
+                }, dependencies, Promise.resolve([]), ratingCountries);
             }
             matchedWithoutArt = matchedWithoutArt || media;
             break;
@@ -775,18 +878,24 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
 
     if (screenFallback) {
         const media = screenMediaResponse(screenFallback, query);
-        const art = await screenArt(dependencies.fetchImpl, screenFallback, providers,
-            clientKey, dependencies.env);
-        if (art) return resolvedArtResponse(media, art, dependencies);
+        const certifications = ratingCountries.length
+            ? screenCertifications(dependencies.fetchImpl, screenFallback, ratingCountries,
+                dependencies.env).catch(() => [])
+            : Promise.resolve([]);
+        const art = includeArt ? await screenArt(dependencies.fetchImpl, screenFallback, providers,
+            clientKey, dependencies.env) : null;
+        if (art) return resolvedArtResponse(media, art, dependencies,
+            certifications, ratingCountries);
         matchedWithoutArt = matchedWithoutArt || media;
+        matchedCertifications = await certifications;
     }
     if (!matchedWithoutArt && errors.length) throw errors[0];
-    return {
+    return withCertifications({
         media: matchedWithoutArt,
         backdrop: null,
         source: null,
         tint: [...WHITE_TINT],
-    };
+    }, matchedCertifications, ratingCountries);
 }
 
 function sendJson(res, status, body) {
@@ -846,6 +955,8 @@ function createHandler(options = {}) {
                 throw new ResolverError("invalid_title", 400, "cleaned title is empty or too long");
             }
             const providers = requestedProviders(queryValue(req.query && req.query.providers));
+            const ratingCountries = requestedRatings(queryValue(req.query && req.query.ratings));
+            const includeArt = requestedArt(queryValue(req.query && req.query.art));
             const requestedHint = requestedMediaHint(queryValue(req.query && req.query.media_hint));
             const mediaHint = requestedHint === "auto" ? mediaHintForAlbum(titleValue) : requestedHint;
             const rawClientKey = queryValue(req.query && req.query.client_key);
@@ -855,7 +966,9 @@ function createHandler(options = {}) {
             }
             const result = await resolveBackdrop(title, providers, clientKey, {
                 env, fetchImpl, tintForImage,
-            }, mediaHint, typeof artistValue === "string" ? artistValue.trim() : "");
+            }, mediaHint, typeof artistValue === "string" ? artistValue.trim() : "", {
+                ratingCountries, includeArt,
+            });
             res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
             return sendJson(res, 200, result);
         } catch (error) {
@@ -932,6 +1045,7 @@ module.exports = {
     pickMedia,
     pickMovie,
     requestedProviders,
+    requestedRatings,
     requestedMediaHint,
     resolveBackdrop,
     tintFromMeans,

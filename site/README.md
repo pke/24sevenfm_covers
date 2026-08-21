@@ -79,8 +79,10 @@ Two workflows, both ending in a GitHub Pages deploy:
 Both use the same renderer, so they cannot drift. The site tracks the newest
 release either way.
 
-The movie/TV/game-backdrop and cover-tint resolvers are separate Vercel Functions at the
-repository root (`api/backdrop.js` and `api/tint.js`). Their deployment, security
+The movie/TV/game-backdrop, DE/US-rating and cover-tint resolvers are served by the
+Vercel project at the repository root. The media features share `api/backdrop.js`; the
+content-hashed official FSK badges live in `public/ratings/fsk`. Cover tint uses
+`api/tint.js`. Their deployment, security
 limits and environment variables are documented in `docs/vercel-backdrop.md`.
 `player.html` uses `/api/backdrop` and `/api/tint`, so a GitHub Pages deployment
 needs absolute Vercel Function URLs in both API meta tags or a same-domain proxy
