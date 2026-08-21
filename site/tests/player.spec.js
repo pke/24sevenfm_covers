@@ -597,6 +597,12 @@ test.describe("the deployed player page", () => {
         await key.fill("personal-client-key");
         await expect(check).toBeVisible();
         await expect(check).toHaveText("Check");
+        const label = page.locator("#fanart-key-check-label");
+        await expect(label).not.toHaveClass(/changing/);
+        await key.press("End");
+        await key.press("x");
+        expect(await label.evaluate((element) => element.classList.contains("changing")))
+            .toBe(false);
         const transition = await check.evaluate((element) => ({
             opacity: getComputedStyle(element).transitionProperty.includes("opacity"),
             width: getComputedStyle(element).transitionProperty.includes("max-width")
@@ -613,7 +619,7 @@ test.describe("the deployed player page", () => {
         await expect(status).toContainText("Personal key accepted.");
 
         const url = new URL(requestUrl);
-        expect(url.searchParams.get("client_key")).toBe("personal-client-key");
+        expect(url.searchParams.get("client_key")).toBe("personal-client-keyx");
         expect(url.searchParams.has("api_key")).toBe(false);
         expect(await page.evaluate(() => window.fanartKeyCheckFetchOptions)).toEqual({
             cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer"

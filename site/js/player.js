@@ -1449,6 +1449,7 @@ let fanartKeyCheckController = null;
 let fanartKeyCheckGeneration = 0;
 let fanartKeyLabelTimer = null;
 let fanartKeyStatusTimer = null;
+let fanartKeyCheckButtonState = "idle";
 
 function setFanartKeyCheckButton(state) {
     const labels = { idle: "Check", checking: "…", success: "✓" };
@@ -1460,6 +1461,8 @@ function setFanartKeyCheckButton(state) {
     fanartKeyCheckElement.disabled = state !== "idle";
     fanartKeyCheckElement.classList.toggle("success", state === "success");
     fanartKeyCheckElement.setAttribute("aria-label", accessibleNames[state]);
+    if (state === fanartKeyCheckButtonState) return;
+    fanartKeyCheckButtonState = state;
     clearTimeout(fanartKeyLabelTimer);
     fanartKeyCheckLabelElement.classList.add("changing");
     fanartKeyLabelTimer = setTimeout(() => {
