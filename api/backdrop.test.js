@@ -182,6 +182,50 @@ test("uses the composer to disambiguate a season-marked TV series", async () => 
     });
 });
 
+test("normalizes only explicitly prefixed Star Trek series aliases", () => {
+    assert.equal(backdropTitleFor(
+        "Star Trek, TNG Vol. 2, Best Of Both Worlds", "First Attack"),
+    "Star Trek: The Next Generation");
+    assert.equal(backdropTitleFor("Star Trek, DS9 Vol. 1", "The Emissary"),
+        "Star Trek: Deep Space Nine");
+    assert.equal(backdropTitleFor("Star Trek - VOY Collection", "Caretaker"),
+        "Star Trek: Voyager");
+    assert.equal(mediaHintForAlbum("Star Trek, TNG Vol. 2, Best Of Both Worlds"), "tv");
+    assert.equal(backdropTitleFor("Star Trek: The Motion Picture", "Main Title"),
+        "Star Trek: The Motion Picture");
+    assert.equal(backdropTitleFor("TNG Vol. 2", "First Attack"), "TNG Vol. 2");
+});
+
+test("resolves the live abbreviated Star Trek album as The Next Generation", async () => {
+    let providerQuery = "";
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQuery = parsed.searchParams.get("query");
+            return response(200, { results: [{
+                id: 655, media_type: "tv", name: "Star Trek: The Next Generation",
+                backdrop_path: "/next-generation.jpg",
+            }] });
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Star Trek, TNG Vol. 2, Best Of Both Worlds",
+        track: "First Attack",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(providerQuery, "Star Trek: The Next Generation");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 655, title: "Star Trek: The Next Generation", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/next-generation.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+    });
+});
+
 test("returns German and US movie ratings without resolving artwork", async () => {
     const requests = [];
     const handler = createHandler({
