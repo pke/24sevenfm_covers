@@ -3111,6 +3111,34 @@ test.describe("the deployed player page", () => {
             .toEqual(["fanart", "tmdb", "steamgriddb"]);
     });
 
+    test("keeps the selected station in the URL across a reload", async ({ page }) => {
+        await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/soap\/FM24sevenJSON\.php\?/, (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "", Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/images\/logos\//, (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html?station=sst&campaign=canary#share",
+            { waitUntil: "domcontentloaded" });
+        const historyLength = await page.evaluate(() => history.length);
+        await page.locator("label.seg", { hasText: "Death.FM" }).click();
+
+        await expect.poll(() => new URL(page.url()).searchParams.get("station")).toBe("death");
+        expect(new URL(page.url()).searchParams.get("campaign")).toBe("canary");
+        expect(new URL(page.url()).hash).toBe("#share");
+        expect(await page.evaluate(() => history.length)).toBe(historyLength);
+
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator('input[name="station"][value="death"]')).toBeChecked();
+        expect(new URL(page.url()).searchParams.get("station")).toBe("death");
+    });
+
     test("keeps string zero boolean options disabled", async ({ page }) => {
         let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",

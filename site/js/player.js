@@ -210,6 +210,12 @@ function stationIndex(id) {
     for (var i = 0; i < STATIONS.length; i++) if (STATIONS[i].id === id) return i;
     return -1;
 }
+function syncStationUrl() {
+    var url = new URL(location.href);
+    if (url.searchParams.get("station") === opts.station) return;
+    url.searchParams.set("station", opts.station);
+    history.replaceState(history.state, "", url);
+}
 
 // The feed stores track text HTML-encoded ("R&amp;B", "&#039;") - decode it for
 // display, like lib/coverfetch.cpp's htmlDecode. DOMParser never executes anything,
@@ -1825,6 +1831,10 @@ fanartKeyCheckElement.addEventListener("click", checkFanartKey);
     });
 })();
 function applyStation() {
+    // Keep the shareable URL on the station the player is actually showing. Replace
+    // the current history entry so trying several stations does not make Back step
+    // through every radio-button click; unrelated parameters and the hash survive.
+    syncStationUrl();
     // If a media backdrop currently owns the stage, clearing it below must not expose
     // SST's still-buffered cover. showCover() releases this hold only after the new
     // station cover (or logo) has loaded and become the front buffer.
