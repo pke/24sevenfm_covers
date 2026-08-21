@@ -2108,6 +2108,13 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => resolverRequests).toBe(1);
         await expect.poll(() => backdropLoads).toBe(1);
         expect(firstArtist).toBe(null);
+        const preparedBackdrop = page.locator(
+            `#movieA[src="${backdrop}"], #movieB[src="${backdrop}"]`);
+        await expect(preparedBackdrop).toHaveCount(1);
+        await expect(preparedBackdrop).not.toHaveClass(/show/);
+        await expect.poll(() => preparedBackdrop.evaluate((image) =>
+            image.complete && image.naturalWidth > 0)).toBe(true);
+        const preparedBackdropId = await preparedBackdrop.getAttribute("id");
 
         current = {
             Album: "Land Before Time, The", Track: "The Great Migration",
@@ -2118,8 +2125,7 @@ test.describe("the deployed player page", () => {
             input.dispatchEvent(new Event("change", { bubbles: true })));
 
         await expect(page.locator("#info-title")).toContainText("The Land Before Time");
-        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute(
-            "src", /land-before-time\.jpg/);
+        await expect(page.locator(`#${preparedBackdropId}`)).toHaveClass(/show/);
         await page.waitForTimeout(100);
         expect(resolverRequests).toBe(1);
         expect(backdropLoads).toBe(1);
