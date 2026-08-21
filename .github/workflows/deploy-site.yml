@@ -46,10 +46,23 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
+      - name: Render site test fixture
+        shell: pwsh
+        run: |
+          $assets = @(
+            @{ name = 'winamp_24sevenfm_covers-1.2.3-20260821.exe'; size = 1024 }
+            @{ name = 'winamp_24sevenfm_covers-1.2.3-20260821.zip'; size = 1024 }
+            @{ name = 'foobar_24sevenfm_covers-1.2.3-20260821.fb2k-component'; size = 1024 }
+            @{ name = 'foobar_24sevenfm_covers-1.2.3-20260821.exe'; size = 1024 }
+            @{ name = 'foobar_24sevenfm_covers-1.2.3-20260821.zip'; size = 1024 }
+            @{ name = 'viewer_24sevenfm_covers-1.2.3-20260821.exe'; size = 1024 }
+            @{ name = 'viewer_24sevenfm_covers-1.2.3-20260821.zip'; size = 1024 }
+          )
+          ../../installer/render_site.ps1 -Assets ($assets | ConvertTo-Json -Compress)
       - name: Run deterministic player tests
         shell: bash
         run: |
-          python3 -m http.server 4173 --directory .. > "$RUNNER_TEMP/player-http.log" 2>&1 &
+          python3 -m http.server 4173 --directory ../../www > "$RUNNER_TEMP/player-http.log" 2>&1 &
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
 
