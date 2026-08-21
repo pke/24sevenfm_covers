@@ -449,6 +449,25 @@ test("returns a cacheable miss without exposing provider details", async () => {
     assert.match(res.headers.get("cache-control"), /s-maxage=/);
 });
 
+test("rejects invalid artist metadata before provider access", async () => {
+    let requests = 0;
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async () => {
+            requests++;
+            return response(200, { results: [] });
+        },
+        tintForImage: async () => { throw new Error("must not run"); },
+    });
+    for (const artist of ["x".repeat(181), "Hans\u0000Zimmer"]) {
+        const res = mockResponse();
+        await handler(mockRequest({ title: "Dune", artist }), res);
+        assert.equal(res.statusCode, 400);
+        assert.deepEqual(JSON.parse(res.body), { error: "invalid_artist" });
+    }
+    assert.equal(requests, 0);
+});
+
 test("accepts only canonical cover URLs from explicitly allowed hosts", () => {
     const env = { TINT_ALLOWED_HOSTS: "streamingsoundtracks.com" };
     assert.equal(trustedCoverTintUrl(

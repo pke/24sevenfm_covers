@@ -388,7 +388,7 @@ async function poll() {
         remAnchorAt = Date.now();
 
         const album = htmlDecode(j.Album), displayAlbum = unrotateTitleArticle(album);
-        const track = htmlDecode(j.Track);
+        const track = htmlDecode(j.Track), artist = htmlDecode(j.Artist);
         // ONE determination drives everything downstream: no trusted CoverLink means
         // a station ID, unregistered track, or rejected off-origin URL.
         // The same flag that swaps the cover for the station logo below also
@@ -401,9 +401,9 @@ async function poll() {
         // The feed's original CoverLink is already a 200 px thumbnail. Keep the
         // /500/ variant for display, but send only the smaller original to /api/tint.
         updateCoverTint(isStationId ? "" : tintCover);
-        if (album !== currentAlbum || track !== currentTrack
+        if (album !== currentAlbum || track !== currentTrack || artist !== currentArtist
                 || isStationId !== stationIdActive) {
-            currentAlbum = album; currentTrack = track;
+            currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
             updateBackdrop();
         }
@@ -412,7 +412,7 @@ async function poll() {
         else if (track) title = track;
         if (title && lengthSec > 0)
             title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
-        setInfo(title || "—", htmlDecode(j.Artist));
+        setInfo(title || "—", artist);
 
         const cover = isStationId ? station().logo : trustedCover;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
@@ -499,8 +499,8 @@ async function prefetchNext(ctl, generation) {
         // station().backdrop currently always means the screen-media resolver; if other
         // resolver kinds ever appear, prefetching becomes their concern.
         if (opts.tmdbBackdrops && station().backdrop) {
-            const art = await movieArtFor(htmlDecode(next.Album), htmlDecode(next.Track), generation,
-                                          prefetchCtl.signal);
+            const art = await movieArtFor(htmlDecode(next.Album), htmlDecode(next.Track),
+                                          htmlDecode(next.Artist), generation, prefetchCtl.signal);
             if (art && art.url && renderIsCurrent("backdrop", generation))
                 new Image().src = art.url;
         }
@@ -604,7 +604,7 @@ function updateCoverVisibility() {
     stage.classList.toggle("no-cover",
         !!(coverHiddenForStationSwitch || (opts.hideCover && movieShown)));
 }
-var currentAlbum = "", currentTrack = "", stationIdActive = false;
+var currentAlbum = "", currentTrack = "", currentArtist = "", stationIdActive = false;
 
 var SERVER_ART_UNAVAILABLE = {};
 
@@ -715,13 +715,14 @@ function updateCoverTint(nextUrl) {
     });
 }
 
-async function serverMovieArt(album, track, providers, signal) {
+async function serverMovieArt(album, track, artist, providers, signal) {
     if (!BACKDROP_API_URL) throw SERVER_ART_UNAVAILABLE;
     var url;
     try {
         url = new URL(BACKDROP_API_URL, location.href);
         url.searchParams.set("album", album);
         if (track) url.searchParams.set("track", track);
+        if (artist) url.searchParams.set("artist", artist);
         url.searchParams.set("providers", providers.join(","));
         if (opts.fanartKey && providers.indexOf("fanart") >= 0)
             url.searchParams.set("client_key", opts.fanartKey);
@@ -789,14 +790,14 @@ function updateBackdrop() {
 
 // Resolve only through the project endpoint. The per-title cache stores misses too;
 // endpoint failures stay uncached so a later poll or option change can retry.
-async function movieArtFor(album, track, generation, signal) {
+async function movieArtFor(album, track, artist, generation, signal) {
     const providers = enabledMovieProviders();
     if (!renderIsCurrent("backdrop", generation) || !album || !providers.length) return null;
     const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
-    const cacheKey = album + "\n" + track;
+    const cacheKey = album + "\n" + track + "\n" + artist;
     if (Object.prototype.hasOwnProperty.call(cache, cacheKey)) return cache[cacheKey];
 
-    const art = await serverMovieArt(album, track, providers, signal);
+    const art = await serverMovieArt(album, track, artist, providers, signal);
     if (!renderIsCurrent("backdrop", generation)) return null;
     cache[cacheKey] = art;
     return art;
@@ -805,7 +806,7 @@ async function movieArtFor(album, track, generation, signal) {
 async function resolveMovieBackdrop(generation, signal) {
     if (!renderIsCurrent("backdrop", generation)) return;
     try {
-        const art = await movieArtFor(currentAlbum, currentTrack, generation, signal);
+        const art = await movieArtFor(currentAlbum, currentTrack, currentArtist, generation, signal);
         if (!renderIsCurrent("backdrop", generation)) return;
         setMovieBackdrop(art, generation);
     } catch (e) {
@@ -1411,7 +1412,7 @@ function applyStation() {
     resetCoverRetry("");
     // The resolver is per-station now - always re-evaluate after a switch, even if
     // the new station plays an identically named album.
-    currentAlbum = ""; currentTrack = "";
+    currentAlbum = ""; currentTrack = ""; currentArtist = "";
     setInfo("Loading…", "");
     setStatus("");
     if (audioWanted) setAudio(true); // retune the stream

@@ -72,6 +72,17 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => credits.locator("img").evaluate((image) => image.naturalWidth))
             .toBeGreaterThan(0);
     });
+    test("describes backdrop title data without binding the copy to feed fields", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/privacy.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("main")).toContainText(
+            "information about the current and next queued title");
+        await expect(page.locator("main")).not.toContainText("Album and Track fields");
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("fieldset:has(#tmdb-on) > p.note"))
+            .toContainText("information about the current and next queued title");
+    });
     test("keeps the theme toggle working when storage is unavailable", async ({ page }) => {
         await mockProviderTestFeed(page);
         const errors = [];
@@ -1229,7 +1240,7 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/arrival.svg";
         const backdrop = "https://image.tmdb.org/t/p/w1280/arrival.jpg";
         let resolverRequests = 0, directProviderRequests = 0;
-        let resolvedAlbum = "", resolvedTrack = "", resolvedProviders = "";
+        let resolvedAlbum = "", resolvedTrack = "", resolvedArtist = "", resolvedProviders = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
                 enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
@@ -1252,6 +1263,7 @@ test.describe("the deployed player page", () => {
             resolverRequests++;
             resolvedAlbum = url.searchParams.get("album");
             resolvedTrack = url.searchParams.get("track");
+            resolvedArtist = url.searchParams.get("artist");
             resolvedProviders = url.searchParams.get("providers");
             return route.fulfill({ json: {
                 movie: { id: 329865, title: "Arrival" }, backdrop,
@@ -1270,6 +1282,7 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => resolverRequests).toBe(1);
         expect(resolvedAlbum).toBe("Arrival (Original Motion Picture Soundtrack)");
         expect(resolvedTrack).toBe("Heptapod B");
+        expect(resolvedArtist).toBe("Jóhann Jóhannsson");
         expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
         expect(directProviderRequests).toBe(0);
         await expect(page.locator("#movieA.show, #movieB.show"))
@@ -1741,7 +1754,7 @@ test.describe("the deployed player page", () => {
     test("keeps next-track resolver failures out of the current status", async ({ page }) => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/next.svg";
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/next.svg";
-        let resolverRequests = 0;
+        let resolverRequests = 0, resolvedArtist = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
                 enabledProviders: ["fanart", "tmdb", "steamgriddb"],
@@ -1749,7 +1762,8 @@ test.describe("the deployed player page", () => {
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [{
-                Album: "Next Movie", CoverLink: nextCover,
+                Album: "Next Movie", Track: "Next Cue", Artist: "Next Composer",
+                CoverLink: nextCover,
             }] });
             return route.fulfill({ json: {
                 Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "", Length: 0,
@@ -1764,11 +1778,13 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/backdrop\?/, (route) => {
             resolverRequests++;
+            resolvedArtist = new URL(route.request().url()).searchParams.get("artist");
             return route.fulfill({ status: 502, json: { error: "provider_unavailable" } });
         });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => resolverRequests).toBe(1);
+        expect(resolvedArtist).toBe("Next Composer");
         await expect(page.locator("#status")).toHaveText("");
     });
     test("does not request TMDB art when that provider is disabled", async ({ page }) => {
