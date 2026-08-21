@@ -40,7 +40,7 @@ test.describe("the deployed player page", () => {
         expect(policy).toContain("connect-src 'self'");
         expect(policy).toContain("https://24covers-api.vercel.app");
         await expect(page.locator('meta[name="backdrop-api"]')).toHaveAttribute(
-            "content", "https://24covers-api.vercel.app/api/backdrop");
+            "content", "https://24covers-api.vercel.app/api/backdrop?resolver_version=1");
         await expect(page.locator('meta[name="tint-api"]')).toHaveAttribute(
             "content", "https://24covers-api.vercel.app/api/tint");
         expect(policy).toContain("media-src https://streamingsoundtracks.com");
@@ -1241,6 +1241,7 @@ test.describe("the deployed player page", () => {
         const backdrop = "https://image.tmdb.org/t/p/w1280/arrival.jpg";
         let resolverRequests = 0, directProviderRequests = 0;
         let resolvedAlbum = "", resolvedTrack = "", resolvedArtist = "", resolvedProviders = "";
+        let resolverVersion = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
                 enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
@@ -1265,6 +1266,7 @@ test.describe("the deployed player page", () => {
             resolvedTrack = url.searchParams.get("track");
             resolvedArtist = url.searchParams.get("artist");
             resolvedProviders = url.searchParams.get("providers");
+            resolverVersion = url.searchParams.get("resolver_version");
             return route.fulfill({ json: {
                 movie: { id: 329865, title: "Arrival" }, backdrop,
                 source: "tmdb", tint: [131, 172, 255],
@@ -1284,6 +1286,7 @@ test.describe("the deployed player page", () => {
         expect(resolvedTrack).toBe("Heptapod B");
         expect(resolvedArtist).toBe("Jóhann Jóhannsson");
         expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
+        expect(resolverVersion).toBe("1");
         expect(directProviderRequests).toBe(0);
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /arrival\.jpg/);
@@ -1657,7 +1660,7 @@ test.describe("the deployed player page", () => {
         let resolverRequests = 0, failedImages = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["tmdb", "steamgriddb"], hideCover: 1 })));
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"], hideCover: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
