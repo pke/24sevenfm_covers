@@ -149,7 +149,7 @@ var OPTION_DEFS = {
     tmdbBackdrops: { default: 0, coerce: boolOption, effect: updateBackdrop },
     fanartKey: { default: "", coerce: function (value) {
         return (typeof value === "string") ? value.trim() : "";
-    }, effect: refreshMovieArt },
+    }, effect: updateBackdrop },
     enabledProviders: { default: PROVIDER_ORDER, coerce: enabledIdsOption(PROVIDER_ORDER) },
     providerOrder: { default: PROVIDER_ORDER, coerce: orderedIdsOption(PROVIDER_ORDER) },
     // Hide the cover when backdrop is available
@@ -581,12 +581,19 @@ var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a screen backdrop is currently visible (drives hide-cover)
 var coverHiddenForStationSwitch = false;
 function newMovieCache() { return Object.create(null); }
-var tmdbCache = newMovieCache(); // cleaned title -> {url,tint} or null (searched, no match)
+var movieCaches = Object.create(null);
 var backdropRequest = null;
 
-function refreshMovieArt() {
-    tmdbCache = newMovieCache();
-    updateBackdrop();
+function movieCacheFor(providers) {
+    // Provider configuration is part of the resolver result. Keep its title cache
+    // separate so switching back to a configuration can reuse both hits and misses.
+    const configKey = JSON.stringify([
+        providers,
+        providers.indexOf("fanart") >= 0 ? opts.fanartKey : ""
+    ]);
+    if (!Object.prototype.hasOwnProperty.call(movieCaches, configKey))
+        movieCaches[configKey] = newMovieCache();
+    return movieCaches[configKey];
 }
 
 function cancelBackdropRequest() {
@@ -793,7 +800,7 @@ function updateBackdrop() {
 async function movieArtFor(album, track, artist, generation, signal) {
     const providers = enabledMovieProviders();
     if (!renderIsCurrent("backdrop", generation) || !album || !providers.length) return null;
-    const cache = tmdbCache; // option changes replace the cache; stale work keeps this one
+    const cache = movieCacheFor(providers);
     const titleCacheKey = album + "\n" + track + "\n";
     const cacheKey = titleCacheKey + artist;
     if (Object.prototype.hasOwnProperty.call(cache, cacheKey)) return cache[cacheKey];
@@ -1484,7 +1491,7 @@ function commitProviderOrder(moved) {
         return li.dataset.provider;
     });
     saveOpts();
-    refreshMovieArt(); // priority decides which source's URL gets cached
+    updateBackdrop();
     syncProviderHandles(moved);
 }
 syncProviderHandles();
@@ -1502,7 +1509,7 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
                 ? box.checked : opts.enabledProviders.indexOf(id) >= 0;
         });
         saveOpts();
-        refreshMovieArt(); // every cached URL may be the other source's now
+        updateBackdrop();
     });
 });
 providersEl.addEventListener("keydown", function (e) {
