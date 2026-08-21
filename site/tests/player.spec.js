@@ -615,8 +615,12 @@ test.describe("the deployed player page", () => {
         await expect(check).toHaveText("…");
         await expect(check).toHaveText("✓");
         await expect(check).toHaveClass(/success/);
-        await expect(check).toHaveAccessibleName("fanart.tv personal key is valid");
+        await expect(check).toHaveAccessibleName(
+            /fanart\.tv personal key successfully checked on \d{4}-\d{2}-\d{2}/);
         await expect(status).toContainText("Personal key accepted.");
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            .toBeGreaterThan(0);
 
         const url = new URL(requestUrl);
         expect(url.searchParams.get("client_key")).toBe("personal-client-keyx");
@@ -668,6 +672,40 @@ test.describe("the deployed player page", () => {
         await expect(status).toHaveText("Couldn’t check the personal key right now.");
         await expect(check).toBeEnabled();
         expect(requests).toBe(3);
+    });
+    test("restores a checked fanart key without another API request", async ({ page }) => {
+        const verifiedAt = Date.UTC(2026, 7, 20, 12, 34, 56);
+        await page.addInitScript((saved) => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify(saved)), {
+            fanartKey: "persisted-client-key", fanartKeyVerifiedAt: verifiedAt
+        });
+        await mockProviderTestFeed(page);
+        let fanartRequests = 0;
+        await page.route("https://webservice.fanart.tv/v3/movies/27205?*", (route) => {
+            fanartRequests++;
+            return route.fulfill({ json: { name: "Inception", tmdb_id: "27205" } });
+        });
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const key = page.locator("#fanart-key");
+        const check = page.locator("#fanart-key-check");
+        await expect(key).toHaveValue("persisted-client-key");
+        await expect(check).toHaveText("✓");
+        await expect(check).toHaveClass(/success/);
+        await expect(check).toBeDisabled();
+        await expect(check).toHaveAccessibleName(
+            "fanart.tv personal key successfully checked on 2026-08-20");
+        expect(fanartRequests).toBe(0);
+
+        await key.press("End");
+        await key.press("x");
+        await key.dispatchEvent("change");
+        await expect(check).toHaveText("Check");
+        await expect(check).toBeEnabled();
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            .toBe(0);
+        expect(fanartRequests).toBe(0);
     });
     test("renders a real spectrum while audio plays and respects reduced motion",
         async ({ page }) => {

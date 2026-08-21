@@ -151,6 +151,11 @@ var OPTION_DEFS = {
     fanartKey: { default: "", coerce: function (value) {
         return (typeof value === "string") ? value.trim() : "";
     }, effect: updateBackdrop },
+    fanartKeyVerifiedAt: { default: 0, coerce: value => {
+        const timestamp = Number(value);
+        return Number.isSafeInteger(timestamp) && timestamp > 0
+            && timestamp <= 8640000000000000 ? timestamp : 0;
+    } },
     enabledProviders: { default: PROVIDER_ORDER, coerce: enabledIdsOption(PROVIDER_ORDER) },
     providerOrder: { default: PROVIDER_ORDER, coerce: orderedIdsOption(PROVIDER_ORDER) },
     // Hide the cover when backdrop is available
@@ -1456,7 +1461,10 @@ function setFanartKeyCheckButton(state) {
     const accessibleNames = {
         idle: "Check fanart.tv personal key",
         checking: "Checking fanart.tv personal key",
-        success: "fanart.tv personal key is valid"
+        success: opts.fanartKeyVerifiedAt
+            ? "fanart.tv personal key successfully checked on "
+                + new Date(opts.fanartKeyVerifiedAt).toISOString().slice(0, 10)
+            : "fanart.tv personal key successfully checked"
     };
     fanartKeyCheckElement.disabled = state !== "idle";
     fanartKeyCheckElement.classList.toggle("success", state === "success");
@@ -1489,10 +1497,17 @@ function resetFanartKeyCheck() {
     fanartKeyCheckGeneration++;
     if (fanartKeyCheckController) fanartKeyCheckController.abort();
     fanartKeyCheckController = null;
+    opts.fanartKeyVerifiedAt = 0;
     const hasKey = fanartKeyElement.value.trim() !== "";
     fanartKeySettingElement.classList.toggle("has-key", hasKey);
     setFanartKeyCheckButton("idle");
     hideFanartKeyStatus();
+}
+
+function restoreFanartKeyCheck() {
+    const hasKey = fanartKeyElement.value.trim() !== "";
+    fanartKeySettingElement.classList.toggle("has-key", hasKey);
+    setFanartKeyCheckButton(hasKey && opts.fanartKeyVerifiedAt ? "success" : "idle");
 }
 
 async function checkFanartKey() {
@@ -1526,6 +1541,10 @@ async function checkFanartKey() {
         if (!body || String(body.tmdb_id) !== "27205")
             throw new Error("fanart.tv returned an unexpected response");
         fanartKeyCheckController = null;
+        opts.fanartKey = personalKey;
+        opts.fanartKeyVerifiedAt = Date.now();
+        syncOptionControls("fanartKey");
+        saveOpts();
         setFanartKeyCheckButton("success");
         hideFanartKeyStatus("Personal key accepted.");
     } catch (error) {
@@ -1591,7 +1610,7 @@ function resetSpectrumBars() {
     if (audioSpectrumController) audioSpectrumController.resetBars();
 }
 bindOptionControls();
-resetFanartKeyCheck();
+restoreFanartKeyCheck();
 syncSpectrumSettingControls();
 
 // --- provider priority: pointer + keyboard ------------------------------------
