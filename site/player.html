@@ -57,7 +57,7 @@
 
 <main class="wrap">
 
-    <section style="border-top: 0;">
+    <section class="player-section">
         <h2>Player</h2>
         <p class="lead">The desktop viewer, in your browser: covers change with every track, and
         you can stream the station's audio too — or keep it silent and just watch the artwork.
@@ -94,24 +94,24 @@
             </div>
             <canvas class="stage-spectrum" id="stage-spectrum" aria-hidden="true"
                     title="Spectrum analyzer settings"></canvas>
-            <div class="spectrum-options" id="spectrum-options" role="dialog"
+            <div class="options-overlay spectrum-options" id="spectrum-options" role="dialog"
                  aria-label="Spectrum analyzer settings" hidden></div>
             <div class="info">
                 <div class="t" id="info-title">Loading…</div>
                 <div class="a" id="info-artist"></div>
                 <div class="countdown hidden" id="countdown" aria-hidden="true"></div>
             </div>
-            <button class="stage-audio" id="stage-audio" type="button" title="Play audio"
+            <button class="stage-button stage-audio" id="stage-audio" type="button" title="Play audio"
                     aria-label="Play audio" aria-pressed="false">▶</button>
-            <button class="stage-fs" id="fullscreen" title="Fullscreen" aria-label="Toggle fullscreen">⛶</button>
-            <button class="stage-opts" id="stage-options" title="Options" aria-label="Options"
+            <button class="stage-button stage-fs" id="fullscreen" title="Fullscreen" aria-label="Toggle fullscreen">⛶</button>
+            <button class="stage-button stage-opts" id="stage-options" title="Options" aria-label="Options"
                     aria-pressed="false">⋯</button>
-            <div class="fs-options" id="fs-options" hidden><!-- the real .controls panel is
+            <div class="options-overlay fs-options" id="fs-options" hidden><!-- the real .controls panel is
                  MOVED here while open in fullscreen (only descendants of the fullscreen
                  element are visible), and moved back on close/exit --></div>
 
             <noscript>
-                <div class="noscript-player" style="position:absolute; inset:0; overflow:auto; padding:1.2rem; background:var(--bg-card); color:var(--text);">
+                <div class="noscript-player">
                     <p><strong>The live cover display needs JavaScript</strong> — it polls the
                     station for the current track. The audio needs none at all: these are the
                     stations' own streams, playable right here.</p>
@@ -153,7 +153,7 @@
                            data-output="spectrum-bars-val" min="8" max="64" step="8" value="24">
                     <output id="spectrum-bars-val" for="spectrum-bars">24</output>
                 </div>
-                <div class="seg-group" style="margin-top:.8rem">
+                <div class="seg-group control-gap">
                     <label class="seg"><input type="radio" name="spectrum-mode" value="legacy"
                                                data-option="spectrumMode"><span>Legacy</span></label>
                     <label class="seg"><input type="radio" name="spectrum-mode" value="tinted"
@@ -185,7 +185,7 @@
                     <label class="seg"><input type="radio" name="transition" value="3"
                                                data-option="transition"><span>Flip vertical</span></label>
                 </div>
-                <div class="row" style="margin-top:.8rem">
+                <div class="row control-gap">
                     <label for="fade">Duration</label>
                     <input type="range" id="fade" data-option="fadeMs" data-output="fade-val"
                            min="500" max="2000" step="100">
@@ -224,7 +224,7 @@
                     </li>
                 </ul>
                 <p id="provider-status" class="visually-hidden" role="status"></p>
-                <div class="row" style="margin-top:.6rem">
+                <div class="row provider-followup">
                     <label><input type="checkbox" id="hide-cover" data-option="hideCover">
                     Hide the cover while a movie,
                     TV, or game backdrop is shown</label>
