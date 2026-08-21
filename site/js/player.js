@@ -147,7 +147,7 @@ var OPTION_DEFS = {
     tmdbBackdrops: { default: 0, coerce: boolOption, effect: updateBackdrop },
     fanartKey: { default: "", coerce: function (value) {
         return (typeof value === "string") ? value.trim() : "";
-    } },
+    }, effect: refreshMovieArt },
     enabledProviders: { default: PROVIDER_ORDER, coerce: enabledIdsOption(PROVIDER_ORDER) },
     providerOrder: { default: PROVIDER_ORDER, coerce: orderedIdsOption(PROVIDER_ORDER) },
     // Hide the cover when backdrop is available
@@ -564,6 +564,11 @@ var coverHiddenForStationSwitch = false;
 function newMovieCache() { return Object.create(null); }
 var tmdbCache = newMovieCache(); // cleaned title -> {url,tint} or null (searched, no match)
 var backdropRequest = null;
+
+function refreshMovieArt() {
+    tmdbCache = newMovieCache();
+    updateBackdrop();
+}
 
 function cancelBackdropRequest() {
     if (!backdropRequest) return;
@@ -1416,14 +1421,6 @@ function resetSpectrumBars() {
 }
 bindOptionControls();
 syncSpectrumSettingControls();
-var fanartKeyEl = $("fanart-key");
-fanartKeyEl.value = opts.fanartKey;
-fanartKeyEl.addEventListener("change", function () {
-    opts.fanartKey = fanartKeyEl.value.trim();
-    tmdbCache = newMovieCache(); // cached art may now be upgradable (or was fanart-based)
-    saveOpts();
-    updateBackdrop();
-});
 
 // --- provider priority: pointer + keyboard ------------------------------------
 // Pointer-based, NOT native HTML5 DnD: the native API renders a translucent
@@ -1462,9 +1459,8 @@ function commitProviderOrder(moved) {
     opts.providerOrder = Array.prototype.map.call(providersEl.children, function (li) {
         return li.dataset.provider;
     });
-    tmdbCache = newMovieCache(); // priority decides which source's URL gets cached
     saveOpts();
-    updateBackdrop();
+    refreshMovieArt(); // priority decides which source's URL gets cached
     syncProviderHandles(moved);
 }
 syncProviderHandles();
@@ -1481,9 +1477,8 @@ Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function
             return id === provider.id
                 ? box.checked : opts.enabledProviders.indexOf(id) >= 0;
         });
-        tmdbCache = newMovieCache(); // every cached URL may be the other source's now
         saveOpts();
-        updateBackdrop();
+        refreshMovieArt(); // every cached URL may be the other source's now
     });
 });
 providersEl.addEventListener("keydown", function (e) {
