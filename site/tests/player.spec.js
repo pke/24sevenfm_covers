@@ -1072,7 +1072,9 @@ test.describe("the deployed player page", () => {
                     getByteFrequencyData(data) {
                         window.__analyserReads++;
                         data.fill(52);
-                        if (window.__analyserReads % 8 === 0) {
+                        const beatPhase = window.__analyserReads % 8;
+                        // A primary kick followed roughly 100ms later by a double-hit.
+                        if (beatPhase === 0 || beatPhase === 3) {
                             window.__laserKicks++;
                             for (let index = 1; index < Math.floor(data.length * .04); index++)
                                 data[index] = 244;
@@ -1112,6 +1114,7 @@ test.describe("the deployed player page", () => {
 
             const audio = page.locator("#audio");
             const lasers = page.locator("#stage-lasers");
+            const frontLasers = page.locator("#stage-lasers-front");
             const spectrum = page.locator("#stage-spectrum");
             await expect(page.locator("#laser-enabled")).toBeChecked();
             await page.locator("#audio-toggle").click();
@@ -1122,12 +1125,20 @@ test.describe("the deployed player page", () => {
             await page.locator("label.seg", { hasText: "1980s.FM" }).click();
             await audio.dispatchEvent("playing");
             await expect(lasers).toHaveClass(/active/);
+            await expect(frontLasers).toHaveClass(/active/);
             await expect(lasers).toHaveCSS("opacity", "1");
+            await expect(frontLasers).toHaveCSS("opacity", "1");
             await expect(lasers).toHaveCSS("background-color", "rgb(0, 0, 0)");
+            await expect(frontLasers).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
             await expect(page.locator("#stage")).toHaveClass(/laser-scene/);
             await expect(page.locator("#coverbox")).toBeVisible();
             await expect(page.locator("#coverbox")).toHaveCSS("opacity", "1");
+            const coverDepthScale = await page.locator("#coverbox").evaluate((cover) =>
+                cover.getBoundingClientRect().width / parseFloat(getComputedStyle(cover).width));
+            expect(coverDepthScale).toBeCloseTo(.8, 1);
             await expect(lasers).toHaveAttribute("data-renderer", "webgl");
+            await expect(lasers).toHaveAttribute("data-rig-origin", "ceiling");
+            await expect(lasers).toHaveAttribute("data-landing-spots", "6");
             await expect(lasers).toHaveAttribute("data-gpu-tier", /^(hardware|software)$/);
             await expect(lasers).toHaveAttribute("data-spectrum-bands", "32");
             await expect(lasers).toHaveAttribute("data-audio-source", "spectrum");
@@ -1144,6 +1155,8 @@ test.describe("the deployed player page", () => {
             expect(beatTelemetry.beats).toBeLessThanOrEqual(beatTelemetry.kicks);
             await expect(lasers).toHaveAttribute("data-laser-mode", "beat");
             await expect.poll(async () => Number(
+                await lasers.getAttribute("data-beat-accent-count"))).toBeGreaterThan(0);
+            await expect.poll(async () => Number(
                 await lasers.getAttribute("data-bpm"))).toBeGreaterThanOrEqual(80);
             expect(Number(await lasers.getAttribute("data-bpm"))).toBeLessThanOrEqual(160);
             expect(pageErrors).toEqual([]);
@@ -1159,6 +1172,7 @@ test.describe("the deployed player page", () => {
             expect(renderSurface.filter).toBe("none");
             expect(renderSurface.blend).toBe("normal");
             expect(renderSurface.zIndex).toBe("1");
+            await expect(frontLasers).toHaveCSS("z-index", "2");
             const geometry = await page.evaluate(() => {
                 const rect = (selector) =>
                     document.querySelector(selector).getBoundingClientRect().toJSON();
@@ -1172,6 +1186,11 @@ test.describe("the deployed player page", () => {
                 .toBeLessThanOrEqual(geometry.stage.y + geometry.stage.height);
             expect(geometry.lasers.width).toBeGreaterThan(geometry.stage.width - 3);
             expect(geometry.lasers.height).toBeGreaterThan(geometry.stage.height - 3);
+            // Foreground beams fade to transparent at each pose boundary, so use the
+            // monotonic paint count rather than racing a single transient frame.
+            await expect.poll(async () => Number(await frontLasers
+                .getAttribute("data-front-painted-frames")),
+            { timeout: 15000 }).toBeGreaterThan(0);
 
             await page.locator("#spectrum-enabled").check();
             await expect(spectrum).toHaveClass(/active/);
@@ -1187,11 +1206,14 @@ test.describe("the deployed player page", () => {
             await audio.dispatchEvent("playing");
             await expect(spectrum).toHaveClass(/active/);
             await expect(lasers).not.toHaveClass(/active/);
+            await expect(frontLasers).not.toHaveClass(/active/);
             await expect(page.locator("#stage")).not.toHaveClass(/laser-scene/);
             await expect.poll(() => laserHasPixels(lasers)).toBe(false);
+            await expect.poll(() => laserHasPixels(frontLasers)).toBe(false);
 
             await page.emulateMedia({ reducedMotion: "reduce" });
             await expect(lasers).toHaveCSS("display", "none");
+            await expect(frontLasers).toHaveCSS("display", "none");
             await page.locator("#audio-toggle").click();
         });
     test("shows an ambient 80s laser fallback when Web Audio is unavailable",

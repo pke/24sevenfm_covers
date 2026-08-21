@@ -13,6 +13,17 @@ function smoothstep(value) {
     return progress * progress * (3 - 2 * progress);
 }
 
+function beatChoreographyFrame(beatCount, beatAge, bpm) {
+    const period = bpm ? 60000 / bpm : 500;
+    const continuousProgress = Math.max(0, beatAge / period);
+    const completedCycles = Math.floor(continuousProgress);
+    return {
+        from: beatCount + completedCycles % 8,
+        to: beatCount + completedCycles % 8 + 1,
+        travel: smoothstep(continuousProgress - completedCycles)
+    };
+}
+
 function resizeCanvas(canvas, maxScale = 2) {
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return false;
@@ -37,35 +48,40 @@ function rgba(rgb, alpha) {
 }
 
 // Eight repeatable mirror poses make the rig read as choreography, not noise.
-// Coordinates are normalized stage X and WebGL Y (zero at the floor).
+// Pose values are authored like a ceiling fan, then projected down onto the floor;
+// coordinates returned here use WebGL Y (zero at the floor).
 function laserTargetForBeat(beatCount, index) {
     const lane = (index + .5) / 6;
+    const edge = Math.abs(lane - .5);
     const pose = ((beatCount % 8) + 8) % 8;
     let x = lane;
-    let y = .72 + (index % 2) * .14;
+    let y = .82;                                  // straight curtain
     if (pose === 1) {
-        x = 1 - lane;                         // crossed fan
-        y = .78 + ((index + 1) % 2) * .13;
+        x = 1 - lane;                             // crossed curtain
+        y = .82;
     } else if (pose === 2) {
-        x = .5 + (lane - .5) * .28;           // center pinch
-        y = .68 + Math.abs(lane - .5) * .48;
+        x = .5 + (lane - .5) * .24;              // center pinch
+        y = .72 + edge * .34;
     } else if (pose === 3) {
-        x = .5 + (lane - .5) * 1.12;          // wide ceiling fan
-        y = .9 - Math.abs(lane - .5) * .28;
+        x = .5 + (lane - .5) * 1.18;             // wide fan
+        y = .88 - edge * .2;
     } else if (pose === 4) {
-        x = .1 + lane * .5;                    // left bank
-        y = .68 + (index % 3) * .11;
+        x = lane;                                 // crown / shallow V
+        y = .68 + edge * .48;
     } else if (pose === 5) {
-        x = .4 + lane * .5;                    // right bank
-        y = .68 + ((5 - index) % 3) * .11;
+        x = 1 - lane;                             // crossed crown
+        y = .68 + edge * .48;
     } else if (pose === 6) {
-        x = index % 2 ? .74 - index * .025 : .26 + index * .025;
-        y = .7 + (index % 3) * .1;             // alternating V
+        x = .5 + (lane - .5) * .4;               // narrow diamond
+        y = .9 - edge * .3;
     } else if (pose === 7) {
-        x = lane;
-        y = .67 + Math.abs(lane - .5) * .55;   // crown
+        x = .5 + (lane - .5) * 1.1;              // wide crown
+        y = .72 + edge * .38;
     }
-    return { x: Math.max(.03, Math.min(.97, x)), y: Math.min(.96, y) };
+    return {
+        x: Math.max(.03, Math.min(.97, x)),
+        y: Math.max(.09, Math.min(.44, 1.05 - Math.min(.96, y)))
+    };
 }
 
 function calmLaserTarget(timestamp, index, bpm) {
@@ -74,7 +90,7 @@ function calmLaserTarget(timestamp, index, bpm) {
     const tempo = bpm ? Math.max(.5, Math.min(1.5, bpm / 120)) : .55;
     return {
         x: .5 + Math.sin(seconds * (.1 + tempo * .11) + offset) * .32,
-        y: .78 + Math.cos(seconds * (.075 + tempo * .085) + offset) * .12
+        y: .27 - Math.cos(seconds * (.075 + tempo * .085) + offset) * .12
     };
 }
 
@@ -161,7 +177,7 @@ export function createSpectrumVisualization({ canvas, tintElement }) {
 function createLaserWebGlRenderer(canvas) {
     const gl = canvas.getContext("webgl", {
         alpha: true,
-        antialias: false,
+        antialias: true,
         depth: false,
         preserveDrawingBuffer: true,
         premultipliedAlpha: false,
@@ -175,7 +191,7 @@ function createLaserWebGlRenderer(canvas) {
     const softwareWebGl = /swiftshader|llvmpipe|software|warp|basic render/i
         .test(rendererName);
     const fragmentBudget = softwareWebGl ? 180000 : 600000;
-    const maximumScale = softwareWebGl ? .35 : .5;
+    const maximumScale = softwareWebGl ? .35 : 1.5;
     canvas.dataset.gpuTier = softwareWebGl ? "software" : "hardware";
 
     const vertexSource = `
@@ -275,9 +291,11 @@ function createLaserWebGlRenderer(canvas) {
                     step(0.5, fract(tile * 0.5)));
                 float tilePulse = (0.04 + u_bass * 0.16 + u_beat * u_drive * 0.7)
                     * step(0.5, fract((tile + u_beat_count) * 0.5));
+                float rearFade = 1.0 - smoothstep(0.7, 0.95, floorY);
                 light += gridColor * (horizontal + vertical)
-                    * mix(0.075, 0.18 + u_bass * 0.42, u_drive);
-                light += gridColor * tilePulse * (1.0 - floorY) * 0.5 * u_drive;
+                    * mix(0.075, 0.18 + u_bass * 0.42, u_drive) * rearFade;
+                light += gridColor * tilePulse * (1.0 - floorY)
+                    * 0.5 * u_drive * rearFade;
             }
 
             // The far wall is a real 32-band FFT texture, not a decorative equalizer.
@@ -308,20 +326,46 @@ function createLaserWebGlRenderer(canvas) {
             for (int beam = 0; beam < 6; beam++) {
                 float index = float(beam);
                 float originX = mix(-aspect * 0.48, aspect * 0.48, (index + 0.5) / 6.0);
-                vec2 origin = vec2(originX, 0.035 + mod(index, 2.0) * 0.025);
+                vec2 origin = vec2(originX, 0.965 - mod(index, 2.0) * 0.025);
                 vec2 target = beamTarget(beam);
                 float distanceToBeam = segmentDistanceSquared(point, origin, target);
+                float beamPulse = u_beat * u_drive;
                 float coreWidth = 0.0012 + u_highs * 0.0012
-                    + u_beat * u_drive * 0.001;
+                    + beamPulse * 0.0015;
+                float glowWidth = 0.012 + u_bass * 0.012 + beamPulse * 0.02;
                 float intensity = mix(0.11 + u_highs * 0.16,
-                    0.28 + u_mids * 0.82, u_drive) + u_beat * u_drive * 1.15;
+                    0.28 + u_mids * 0.82, u_drive) + beamPulse * 1.45;
                 light += laserColor(index) * neonLine(distanceToBeam,
-                    coreWidth, 0.014 + u_bass * 0.014) * intensity;
+                    coreWidth, glowWidth) * intensity;
+                // A separate, low-energy halo makes the complete beam breathe on the
+                // kick. It is pulse-only, so it cannot turn the black room into fog.
+                light += laserColor(index) * cheapGlow(distanceToBeam,
+                    0.022 + beamPulse * 0.026) * beamPulse * 0.62;
 
-                // Bright projector heads stop the beams feeling like loose strings.
+                // The beam terminates in a compressed pool of light on the floor.
+                // Without this footprint the round segment cap reads as if the ray
+                // continued through the stage.
+                vec2 landingDelta = point - target;
+                landingDelta.y *= 2.7;
+                float landingDistance = dot(landingDelta, landingDelta);
+                float landingHalo = cheapGlow(landingDistance,
+                    0.018 + beamPulse * 0.009);
+                float landingCore = cheapGlow(landingDistance,
+                    0.005 + beamPulse * 0.003);
+                light += laserColor(index) * landingHalo
+                    * (0.3 + intensity * 0.22 + beamPulse * 0.38);
+                // Put the large projector-like energy peak where the ray hits the
+                // stage, rather than leaving the brightest blobs on the ceiling.
+                light += laserColor(index) * cheapGlow(landingDistance,
+                    0.014 + beamPulse * 0.009)
+                    * (0.48 + u_drive * 0.72 + beamPulse * 2.0);
+                light += vec3(1.0) * landingCore
+                    * (0.18 + beamPulse * 0.42);
+
+                // A small emitter remains visible, but the large glow lives at impact.
                 vec2 emitterDelta = point - origin;
-                light += laserColor(index) * cheapGlow(dot(emitterDelta, emitterDelta), 0.014)
-                    * (0.48 + u_drive * 0.72 + u_beat * u_drive * 2.0);
+                light += laserColor(index) * cheapGlow(dot(emitterDelta, emitterDelta), 0.006)
+                    * (0.18 + u_drive * 0.2 + beamPulse * 0.24);
             }
 
             // A beat shockwave and radial diffraction spikes sell the club-light hit
@@ -416,11 +460,12 @@ function createLaserWebGlRenderer(canvas) {
 
     return {
         type: "webgl",
+        gpuTier: softwareWebGl ? "software" : "hardware",
         clear,
         draw({ timestamp, bass, mids, highs, beat, beatCount, beatAge, envelope,
             drive, bpm, spectrumBands }) {
-            // Keep the fragment count bounded even on a 4K/HiDPI stage. The neon
-            // bloom makes the CSS upscale look intentional rather than pixelated.
+            // Keep the fragment count bounded on large/HiDPI stages, while normal
+            // embedded players can reach device resolution when they fit the budget.
             const rect = canvas.getBoundingClientRect();
             const pixelBudgetScale = rect.width && rect.height
                 ? Math.sqrt(fragmentBudget / (rect.width * rect.height)) : maximumScale;
@@ -441,18 +486,19 @@ function createLaserWebGlRenderer(canvas) {
             gl.uniform1f(uniforms.envelope, envelope);
             gl.uniform1f(uniforms.drive, drive);
             gl.uniform1f(uniforms.tempo, bpm ? Math.max(.5, Math.min(1.5, bpm / 120)) : .55);
-            const beatPeriod = bpm ? 60000 / bpm : 500;
-            // Travel during the beat instead of snapping in two or three 30fps frames.
-            // At the next onset the new start pose is the pose we just reached, so
-            // normal detector jitter does not cause a discontinuity.
-            const travel = smoothstep(beatAge / (beatPeriod * .82));
+            // Use the complete beat interval: reaching the pose early introduced a
+            // visible hold before every kick. Predicted cycles continue if an onset
+            // arrives late, so a still-rhythmic section never leaves the rig parked.
+            const choreography = beatChoreographyFrame(beatCount, beatAge, bpm);
             const aspect = canvas.width / canvas.height;
             for (let index = 0; index < uniforms.beamTargets.length; index++) {
-                const oldTarget = laserTargetForBeat(beatCount, index);
-                const newTarget = laserTargetForBeat(beatCount + 1, index);
+                const oldTarget = laserTargetForBeat(choreography.from, index);
+                const newTarget = laserTargetForBeat(choreography.to, index);
                 const calmTarget = calmLaserTarget(timestamp, index, bpm);
-                const beatX = oldTarget.x + (newTarget.x - oldTarget.x) * travel;
-                const beatY = oldTarget.y + (newTarget.y - oldTarget.y) * travel;
+                const beatX = oldTarget.x
+                    + (newTarget.x - oldTarget.x) * choreography.travel;
+                const beatY = oldTarget.y
+                    + (newTarget.y - oldTarget.y) * choreography.travel;
                 gl.uniform2f(uniforms.beamTargets[index],
                     ((calmTarget.x + (beatX - calmTarget.x) * drive) - .5)
                         * aspect * 1.18,
@@ -470,30 +516,55 @@ function createLaserWebGlRenderer(canvas) {
     };
 }
 
+const LASER_COLORS = ["#00ffff", "#ff00ad", "#7aff00", "#940dff", "#0d47ff", "#ff0d29"];
+
+function drawCanvasBeam(context, x1, y1, x2, y2, color, strength, pulse,
+        opacity = 1) {
+    context.save();
+    context.globalCompositeOperation = "screen";
+    context.strokeStyle = color;
+    context.lineCap = "round";
+    context.shadowColor = color;
+    context.shadowBlur = 22 + strength * 28 + pulse * 38;
+    context.globalAlpha = Math.min(1, (.1 + strength * .18 + pulse * .2) * opacity);
+    context.lineWidth = 8 + strength * 12 + pulse * 20;
+    context.beginPath();
+    context.moveTo(x1, y1);
+    context.lineTo(x2, y2);
+    context.stroke();
+    context.globalAlpha = Math.min(1, (.65 + strength * .35) * opacity);
+    context.shadowBlur = 9 + strength * 14 + pulse * 12;
+    context.lineWidth = 1.25 + strength * 2 + pulse * 1.5;
+    context.stroke();
+    context.restore();
+}
+
+function drawCanvasLandingSpot(context, x, y, color, strength, pulse, unit,
+        opacity = 1) {
+    const radius = unit * (.012 + strength * .005 + pulse * .006);
+    context.save();
+    context.translate(x, y);
+    context.globalCompositeOperation = "screen";
+    context.fillStyle = color;
+    context.shadowColor = color;
+    context.shadowBlur = 12 + strength * 16 + pulse * 18;
+    context.globalAlpha = Math.min(1, (.38 + strength * .28 + pulse * .2) * opacity);
+    context.beginPath();
+    context.ellipse(0, 0, radius, radius * .3, 0, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = "#fff";
+    context.shadowBlur = 5 + pulse * 8;
+    context.globalAlpha = Math.min(1, (.3 + pulse * .34) * opacity);
+    context.beginPath();
+    context.ellipse(0, 0, radius * .28, radius * .12, 0, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+}
+
 function createLaserCanvasRenderer(canvas) {
     const context = canvas.getContext("2d");
     if (!context) return null;
-    const colors = ["#00ffff", "#ff00ad", "#7aff00", "#940dff", "#0d47ff", "#ff0d29"];
-
-    function beam(x1, y1, x2, y2, color, strength) {
-        context.save();
-        context.globalCompositeOperation = "screen";
-        context.strokeStyle = color;
-        context.lineCap = "round";
-        context.shadowColor = color;
-        context.shadowBlur = 22 + strength * 34;
-        context.globalAlpha = .12 + strength * .22;
-        context.lineWidth = 10 + strength * 15;
-        context.beginPath();
-        context.moveTo(x1, y1);
-        context.lineTo(x2, y2);
-        context.stroke();
-        context.globalAlpha = .65 + strength * .35;
-        context.shadowBlur = 9 + strength * 14;
-        context.lineWidth = 1.25 + strength * 2;
-        context.stroke();
-        context.restore();
-    }
+    const colors = LASER_COLORS;
 
     return {
         type: "canvas",
@@ -502,8 +573,8 @@ function createLaserCanvasRenderer(canvas) {
             drive, bpm, spectrumBands }) {
             const rect = canvas.getBoundingClientRect();
             const pixelBudgetScale = rect.width && rect.height
-                ? Math.sqrt(450000 / (rect.width * rect.height)) : .65;
-            resizeCanvas(canvas, Math.max(.2, Math.min(.65, pixelBudgetScale)));
+                ? Math.sqrt(450000 / (rect.width * rect.height)) : .8;
+            resizeCanvas(canvas, Math.max(.25, Math.min(.8, pixelBudgetScale)));
             const width = canvas.width;
             const height = canvas.height;
             context.clearRect(0, 0, width, height);
@@ -540,6 +611,8 @@ function createLaserCanvasRenderer(canvas) {
                 const phase = (row / 7 + timestamp * .00009
                     * (1 + drive * tempo + bass * drive)) % 1;
                 const y = horizon + phase * phase * (height - horizon);
+                context.globalAlpha = (.07 + drive * .11 + bass * drive * .32
+                    + beat * drive * .35) * envelope * smoothstep(phase / .28);
                 context.strokeStyle = row % 2 ? colors[0] : colors[1];
                 context.shadowColor = context.strokeStyle;
                 context.beginPath();
@@ -548,38 +621,122 @@ function createLaserCanvasRenderer(canvas) {
                 context.stroke();
             }
             for (let column = -5; column <= 5; column++) {
+                const floorStart = .08;
+                const endX = width * (.5 + column * .115);
                 context.strokeStyle = column % 2 ? colors[0] : colors[1];
                 context.beginPath();
-                context.moveTo(width * .5, horizon);
-                context.lineTo(width * (.5 + column * .115), height);
+                context.moveTo(width * .5 + (endX - width * .5) * floorStart,
+                    horizon + (height - horizon) * floorStart);
+                context.lineTo(endX, height);
                 context.stroke();
             }
             context.restore();
-            const beatPeriod = bpm ? 60000 / bpm : 500;
-            const travel = smoothstep(beatAge / (beatPeriod * .82));
+            const choreography = beatChoreographyFrame(beatCount, beatAge, bpm);
             for (let index = 0; index < 6; index++) {
-                const oldTarget = laserTargetForBeat(beatCount, index);
-                const newTarget = laserTargetForBeat(beatCount + 1, index);
+                const oldTarget = laserTargetForBeat(choreography.from, index);
+                const newTarget = laserTargetForBeat(choreography.to, index);
                 const calmTarget = calmLaserTarget(timestamp, index, bpm);
-                const beatX = oldTarget.x + (newTarget.x - oldTarget.x) * travel;
-                const beatY = oldTarget.y + (newTarget.y - oldTarget.y) * travel;
+                const beatX = oldTarget.x
+                    + (newTarget.x - oldTarget.x) * choreography.travel;
+                const beatY = oldTarget.y
+                    + (newTarget.y - oldTarget.y) * choreography.travel;
                 const targetX = width * (calmTarget.x + (beatX - calmTarget.x) * drive);
                 const targetY = height * (1 - calmTarget.y - (beatY - calmTarget.y) * drive);
                 const calmStrength = .12 + highs * .15;
                 const activeStrength = mids * .7 + highs * .35;
                 const strength = Math.min(1, (calmStrength
                     + (activeStrength - calmStrength) * drive + beat * drive) * envelope);
-                beam(width * ((index + .5) / 6), height * .96,
-                    targetX, targetY, colors[index], strength);
+                drawCanvasBeam(context, width * ((index + .5) / 6),
+                    height * (.04 + (index % 2) * .025),
+                    targetX, targetY, colors[index], strength, beat * drive * envelope);
+                drawCanvasLandingSpot(context, targetX, targetY, colors[index],
+                    strength, beat * drive * envelope, Math.min(width, height), envelope);
             }
         }
     };
 }
 
-export function createLaserVisualization({ canvas }) {
+function createLaserForegroundRenderer(canvas, webglCoordinates, hardwareWebGl) {
+    if (!canvas) return null;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    let paintedFrames = 0;
+
+    function clear() {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        paintedFrames = 0;
+        canvas.dataset.frontBeams = "0";
+        canvas.dataset.frontPaintedFrames = "0";
+    }
+
+    return {
+        clear,
+        draw({ timestamp, mids, highs, beat, beatCount, beatAge, envelope,
+            drive, bpm }) {
+            const rect = canvas.getBoundingClientRect();
+            const pixelBudget = hardwareWebGl ? 600000 : 280000;
+            const maximumScale = hardwareWebGl ? 1.5 : .75;
+            const pixelBudgetScale = rect.width && rect.height
+                ? Math.sqrt(pixelBudget / (rect.width * rect.height)) : maximumScale;
+            resizeCanvas(canvas, Math.max(.25,
+                Math.min(maximumScale, pixelBudgetScale)));
+            const width = canvas.width;
+            const height = canvas.height;
+            context.clearRect(0, 0, width, height);
+            const choreography = beatChoreographyFrame(beatCount, beatAge, bpm);
+            // Fade the foreground pass in and out inside each beat. Selection can then
+            // change at the pose boundary without a beam popping across the cover.
+            const weave = Math.sin(Math.PI * choreography.travel) * drive * envelope;
+            let frontBeams = 0;
+            if (weave > .002) {
+                for (let index = 0; index < 6; index++) {
+                    const oldTarget = laserTargetForBeat(choreography.from, index);
+                    const newTarget = laserTargetForBeat(choreography.to, index);
+                    const movingInward = Math.abs(oldTarget.x - .5)
+                        - Math.abs(newTarget.x - .5) > .035;
+                    // One readable depth rule for the whole rig: contracting beams
+                    // weave in front of the cover, expanding beams remain behind it.
+                    if (!movingInward) continue;
+                    const calmTarget = calmLaserTarget(timestamp, index, bpm);
+                    const beatX = oldTarget.x
+                        + (newTarget.x - oldTarget.x) * choreography.travel;
+                    const beatY = oldTarget.y
+                        + (newTarget.y - oldTarget.y) * choreography.travel;
+                    const normalizedTargetX = calmTarget.x
+                        + (beatX - calmTarget.x) * drive;
+                    const targetX = width * (webglCoordinates
+                        ? .5 + (normalizedTargetX - .5) * 1.18
+                        : normalizedTargetX);
+                    const targetY = height
+                        * (1 - calmTarget.y - (beatY - calmTarget.y) * drive);
+                    const strength = Math.min(1,
+                        (mids * .72 + highs * .32 + beat * drive) * envelope);
+                    const lane = (index + .5) / 6;
+                    const originX = width * (webglCoordinates ? .02 + lane * .96 : lane);
+                    const originY = height * ((webglCoordinates ? .035 : .04)
+                        + (index % 2) * .025);
+                    drawCanvasBeam(context, originX, originY,
+                        targetX, targetY, LASER_COLORS[index], strength,
+                        beat * drive * envelope, weave);
+                    drawCanvasLandingSpot(context, targetX, targetY, LASER_COLORS[index],
+                        strength, beat * drive * envelope, Math.min(width, height), weave);
+                    frontBeams++;
+                }
+            }
+            canvas.dataset.frontBeams = String(frontBeams);
+            if (frontBeams > 0)
+                canvas.dataset.frontPaintedFrames = String(++paintedFrames);
+        }
+    };
+}
+
+export function createLaserVisualization({ canvas, foregroundCanvas }) {
     // WebGL is the browser equivalent of OpenGL. The 2D renderer is deliberately a
     // compatibility path; both consume the same adaptive beat detector below.
     const renderer = createLaserWebGlRenderer(canvas) || createLaserCanvasRenderer(canvas);
+    const foregroundRenderer = createLaserForegroundRenderer(foregroundCanvas,
+        !!renderer && renderer.type === "webgl",
+        !!renderer && renderer.type === "webgl" && renderer.gpuTier === "hardware");
     let bass = 0;
     let mids = 0;
     let highs = 0;
@@ -590,6 +747,8 @@ export function createLaserVisualization({ canvas }) {
     let beat = 0;
     let beatCount = 1;
     let beatAt = -10000;
+    let accentAt = -10000;
+    let accentCount = 0;
     let drive = 0;
     let estimatedBpm = 0;
     const onsetTimes = [];
@@ -606,6 +765,17 @@ export function createLaserVisualization({ canvas }) {
         return total / ((end - start) * 255);
     }
 
+    function restartBeatMarker() {
+        canvas.classList.remove("beat");
+        // Restart the beat marker without forcing layout. Accents use the same marker
+        // so CSS-driven additions can react to both primary and double hits.
+        if (beatFrame !== null) cancelAnimationFrame(beatFrame);
+        beatFrame = requestAnimationFrame(() => {
+            beatFrame = null;
+            if (canvas.classList.contains("active")) canvas.classList.add("beat");
+        });
+    }
+
     function detectBeat(data, timestamp, synthetic) {
         // Keep the trigger down in the kick/bass region. The old wide band reached
         // well into the low mids, so vocals and synth stabs looked like random beats.
@@ -620,7 +790,10 @@ export function createLaserVisualization({ canvas }) {
             const from = Math.pow(band / spectrumBands.length, 1.72) * .82;
             const to = Math.pow((band + 1) / spectrumBands.length, 1.72) * .82;
             const value = averageBand(data, from, Math.max(to, from + .006));
-            const speed = value > spectrumBands[band] ? .64 : .34;
+            // The compact analyzer already feels immediate because it consumes the
+            // shared analyser values directly. Keep the wall's band averaging, but
+            // avoid a visibly sluggish second smoothing pass—especially on release.
+            const speed = value > spectrumBands[band] ? .8 : .58;
             spectrumBands[band] += (value - spectrumBands[band]) * speed;
         }
 
@@ -646,17 +819,25 @@ export function createLaserVisualization({ canvas }) {
         frames++;
 
         let onset = false;
+        let accent = false;
         if (synthetic) {
             // With no real analyser there is no honest beat information. Stay in
             // Slow Dance mode instead of inventing a metronome for the lasers.
             onset = false;
-        } else if (frames > 4 && timestamp - beatAt > 240) {
+        } else if (frames > 4) {
             const bassThreshold = .012 + Math.sqrt(Math.max(.0001, bassVariance)) * 1.05;
             const fluxThreshold = .003 + fluxMean * 1.35;
             const bassScore = Math.max(0, deviation) / bassThreshold;
             const fluxScore = flux / fluxThreshold;
-            onset = rawBass > .08 && bassScore > .62 && fluxScore > .55
-                && bassScore * .82 + fluxScore * .36 > 1.15;
+            const sinceBeat = timestamp - beatAt;
+            const onsetScore = bassScore * .82 + fluxScore * .36;
+            onset = sinceBeat > 240 && rawBass > .08
+                && bassScore > .62 && fluxScore > .55 && onsetScore > 1.15;
+            // A strong transient inside the BPM refractory window is a double-hit,
+            // not a new tempo sample. Give it visual energy without moving beatAt.
+            accent = !onset && sinceBeat >= 80 && sinceBeat <= 240
+                && timestamp - accentAt >= 80 && rawBass > .09
+                && bassScore > .72 && fluxScore > .64 && onsetScore > 1.28;
         }
         if (onset) {
             if (beatAt > 0) {
@@ -673,15 +854,17 @@ export function createLaserVisualization({ canvas }) {
             }
             beat = 1;
             beatAt = timestamp;
+            accentAt = timestamp;
             beatCount++;
             onsetTimes.push(timestamp);
-            canvas.classList.remove("beat");
-            // Restart the beat marker on every onset without forcing layout.
-            if (beatFrame !== null) cancelAnimationFrame(beatFrame);
-            beatFrame = requestAnimationFrame(() => {
-                beatFrame = null;
-                if (canvas.classList.contains("active")) canvas.classList.add("beat");
-            });
+            restartBeatMarker();
+        } else if (accent) {
+            accentAt = timestamp;
+            accentCount++;
+            // Stack the double-hit on the still-decaying primary pulse. Values above
+            // one deliberately overdrive the beam halo and diffraction for the accent.
+            beat = Math.min(1.7, Math.max(1, beat + .65));
+            restartBeatMarker();
         } else {
             const beatPeriod = estimatedBpm ? 60000 / estimatedBpm : 500;
             const release = Math.max(140, Math.min(320, beatPeriod * .42));
@@ -695,6 +878,7 @@ export function createLaserVisualization({ canvas }) {
         if (drive < .001) drive = 0;
         canvas.dataset.laserMode = drive >= .42 ? "beat" : "calm";
         canvas.dataset.bpm = estimatedBpm ? String(Math.round(estimatedBpm)) : "";
+        canvas.dataset.beatAccentCount = String(accentCount);
     }
 
     function clear() {
@@ -705,6 +889,8 @@ export function createLaserVisualization({ canvas }) {
         beat = 0;
         beatCount = 1;
         beatAt = -10000;
+        accentAt = -10000;
+        accentCount = 0;
         drive = 0;
         estimatedBpm = 0;
         onsetTimes.length = 0;
@@ -716,19 +902,28 @@ export function createLaserVisualization({ canvas }) {
         canvas.classList.remove("beat");
         canvas.dataset.frame = "0";
         canvas.dataset.beatCount = "1";
+        canvas.dataset.beatAccentCount = "0";
         canvas.dataset.laserMode = "calm";
         canvas.dataset.bpm = "";
         if (renderer) renderer.clear();
+        if (foregroundRenderer) foregroundRenderer.clear();
     }
 
     canvas.dataset.renderer = renderer ? renderer.type : "none";
+    canvas.dataset.rigOrigin = "ceiling";
+    canvas.dataset.landingSpots = "6";
     canvas.dataset.spectrumBands = String(spectrumBands.length);
+    if (foregroundCanvas) {
+        foregroundCanvas.dataset.renderer = foregroundRenderer ? "canvas" : "none";
+        foregroundCanvas.dataset.rigOrigin = "ceiling";
+    }
     return {
         id: "lasers",
         supportsSyntheticData: true,
         enabled(options) { return !!options.laserEnabled && options.station === "1980s"; },
         setActive(active) {
             canvas.classList.toggle("active", active);
+            if (foregroundCanvas) foregroundCanvas.classList.toggle("active", active);
             const stage = canvas.closest(".stage");
             if (stage) stage.classList.toggle("laser-scene", active);
         },
@@ -738,7 +933,7 @@ export function createLaserVisualization({ canvas }) {
             canvas.dataset.audioSource = synthetic ? "ambient" : "spectrum";
             detectBeat(frequencyData, timestamp, synthetic);
             canvas.dataset.beatCount = String(beatCount);
-            renderer.draw({
+            const renderFrame = {
                 timestamp,
                 bass,
                 mids,
@@ -750,7 +945,9 @@ export function createLaserVisualization({ canvas }) {
                 drive,
                 bpm: estimatedBpm,
                 spectrumBands
-            });
+            };
+            renderer.draw(renderFrame);
+            if (foregroundRenderer) foregroundRenderer.draw(renderFrame);
             canvas.dataset.frame = String((Number(canvas.dataset.frame) || 0) + 1);
         }
     };
@@ -936,6 +1133,7 @@ export function createAudioVisualizationController({
     audioElement,
     spectrumElement,
     laserElement,
+    laserForegroundElement,
     infoElement,
     getOptions,
     isAudioWanted,
@@ -950,7 +1148,10 @@ export function createAudioVisualizationController({
         reducedMotion,
         visualizations: [
             createSpectrumVisualization({ canvas: spectrumElement, tintElement: infoElement }),
-            createLaserVisualization({ canvas: laserElement })
+            createLaserVisualization({
+                canvas: laserElement,
+                foregroundCanvas: laserForegroundElement
+            })
         ]
     });
 }
