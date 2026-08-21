@@ -408,7 +408,10 @@ test.describe("the deployed player page", () => {
         const bars = page.locator("#spectrum-bars");
         const enabled = page.locator("#spectrum-enabled");
         const lasers = page.locator("#laser-enabled");
+        const strobe = page.locator("#strobe-enabled");
         await expect(lasers).toBeChecked();
+        await expect(strobe).not.toBeChecked();
+        await expect(strobe).toBeEnabled();
         await expect(enabled).not.toBeChecked();
         await expect(bars).toHaveValue("24");
         await expect(bars).toHaveAttribute("step", "8");
@@ -417,7 +420,9 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
 
         await enabled.check();
+        await strobe.check();
         await lasers.uncheck();
+        await expect(strobe).toBeDisabled();
         await expect(bars).toBeEnabled();
         await bars.evaluate((input) => {
             input.value = "48";
@@ -428,6 +433,8 @@ test.describe("the deployed player page", () => {
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await expect(lasers).not.toBeChecked();
+        await expect(strobe).toBeChecked();
+        await expect(strobe).toBeDisabled();
         await expect(enabled).toBeChecked();
         await expect(bars).toHaveValue("48");
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
@@ -1117,6 +1124,9 @@ test.describe("the deployed player page", () => {
             const frontLasers = page.locator("#stage-lasers-front");
             const spectrum = page.locator("#stage-spectrum");
             await expect(page.locator("#laser-enabled")).toBeChecked();
+            const strobe = page.locator("#strobe-enabled");
+            await expect(strobe).not.toBeChecked();
+            await strobe.check();
             await page.locator("#audio-toggle").click();
             await audio.dispatchEvent("playing");
             await expect(lasers).not.toHaveClass(/active/);
@@ -1139,6 +1149,8 @@ test.describe("the deployed player page", () => {
             await expect(lasers).toHaveAttribute("data-renderer", "webgl");
             await expect(lasers).toHaveAttribute("data-rig-origin", "ceiling");
             await expect(lasers).toHaveAttribute("data-landing-spots", "6");
+            await expect(lasers).toHaveAttribute("data-strobe-pattern",
+                "occasional-double");
             await expect(lasers).toHaveAttribute("data-gpu-tier", /^(hardware|software)$/);
             await expect(lasers).toHaveAttribute("data-spectrum-bands", "32");
             await expect(lasers).toHaveAttribute("data-audio-source", "spectrum");
@@ -1156,6 +1168,12 @@ test.describe("the deployed player page", () => {
             await expect(lasers).toHaveAttribute("data-laser-mode", "beat");
             await expect.poll(async () => Number(
                 await lasers.getAttribute("data-beat-accent-count"))).toBeGreaterThan(0);
+            await expect.poll(async () => Number(
+                await lasers.getAttribute("data-strobe-count")),
+            { timeout: 15000 }).toBeGreaterThan(0);
+            await expect.poll(async () => Number(
+                await frontLasers.getAttribute("data-strobe-painted-frames")),
+            { timeout: 15000 }).toBeGreaterThan(0);
             await expect.poll(async () => Number(
                 await lasers.getAttribute("data-bpm"))).toBeGreaterThanOrEqual(80);
             expect(Number(await lasers.getAttribute("data-bpm"))).toBeLessThanOrEqual(160);

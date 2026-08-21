@@ -168,12 +168,17 @@
                 <div class="row">
                     <label><input type="checkbox" id="laser-enabled"
                                   data-option="laserEnabled"> 80s laser show</label>
+                    <label><input type="checkbox" id="strobe-enabled"
+                                  data-option="strobeEnabled"
+                                  aria-describedby="strobe-warning"> Occasional beat strobe</label>
                 </div>
-                <p class="note">On 1980s.FM, a WebGL neon dance floor, a 32-band spectrum
+                <p class="note" id="strobe-warning">On 1980s.FM, a WebGL neon dance floor, a 32-band spectrum
                 wall, laser snaps and diffraction bursts follow stable kicks and their
                 estimated BPM. Beat-light songs ease into a quieter floor with slowly
                 circling laser patterns. Browsers without Web Audio use that calm mode too.
-                Motion is disabled when your system requests reduced motion.</p>
+                The optional strobe adds occasional double flashes on strong phrase beats;
+                leave it off if you are sensitive to flashing lights. Motion and flashes are
+                disabled when your system requests reduced motion.</p>
                 <div class="row">
                     <label><input type="checkbox" id="spectrum-enabled"
                                   data-option="spectrumEnabled"> Show analyzer</label>
