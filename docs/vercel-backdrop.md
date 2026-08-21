@@ -68,6 +68,13 @@ person's `Original Music Composer` credit may select the matching series. For ex
 same-named 1963 series. Artwork remains series-level; the season number is not treated
 as part of the TMDB title.
 
+Star Trek soundtrack compilations may put a series abbreviation immediately after a
+delimited `Star Trek` prefix. In that restricted position the resolver expands `TOS`,
+`TNG`, `DS9`, `VOY`, `ENT`, `PIC`, `SNW`, and `DIS`/`DSC` to their canonical TV titles
+and requires an exact TMDB match. Remaining volume, episode and cue text is ignored;
+an unprefixed abbreviation or a normal title such as `Star Trek: The Motion Picture`
+is not rewritten.
+
 Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
 supplies `game`.
 

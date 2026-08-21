@@ -75,6 +75,24 @@ function tvSeasonIdentity(album) {
     return { title, season: Number(match[3]) };
 }
 
+function starTrekSeriesAlias(album) {
+    const match = cleanMovieTitle(album).match(
+        /^star trek\s*[,\-–—:]\s*(tos|tng|ds9|voy|ent|pic|snw|dis|dsc)\b/i);
+    if (!match) return null;
+    const aliases = {
+        TOS: "Star Trek",
+        TNG: "Star Trek: The Next Generation",
+        DS9: "Star Trek: Deep Space Nine",
+        VOY: "Star Trek: Voyager",
+        ENT: "Star Trek: Enterprise",
+        PIC: "Star Trek: Picard",
+        SNW: "Star Trek: Strange New Worlds",
+        DIS: "Star Trek: Discovery",
+        DSC: "Star Trek: Discovery",
+    };
+    return aliases[match[1].toUpperCase()] || null;
+}
+
 function isTrackPrefixedMovieCompilation(title) {
     return /^the wings of a film$/i.test(title)
         || /^music for a darkened theatre,\s*vol\.\s*[12]$/i.test(title);
@@ -129,6 +147,8 @@ function trackPrefixCandidates(track) {
 
 function backdropTitleFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
+    const seriesAlias = starTrekSeriesAlias(normalizedAlbum);
+    if (seriesAlias) return seriesAlias;
     const seasonIdentity = tvSeasonIdentity(normalizedAlbum);
     if (seasonIdentity) return seasonIdentity.title;
     if (usesExactTrackPrefix(normalizedAlbum)) {
@@ -162,6 +182,7 @@ function backdropTitleCandidatesFor(album, track) {
 function mediaHintForAlbum(album) {
     const title = String(album || "");
     const cleanedTitle = cleanMovieTitle(title);
+    if (starTrekSeriesAlias(cleanedTitle)) return "tv";
     if (tvSeasonIdentity(cleanedTitle)) return "tv";
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
     if (isTrackTitledScreenCompilation(cleanedTitle)) return "screen";
@@ -1119,7 +1140,8 @@ function createHandler(options = {}) {
                 ratingCountries,
                 includeArt,
                 screenQueries: titleCandidates,
-                requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue)),
+                requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
+                    || !!starTrekSeriesAlias(titleValue),
                 disambiguateExactWithArtist: !!tvSeasonIdentity(titleValue),
             });
             res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
