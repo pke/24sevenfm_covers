@@ -49,10 +49,11 @@ redeploy. Do not add the key to `site/js/player.js`, HTML, or a committed file.
 The station's now-playing JSON contains separate `Album`, `Track`, and `Artist`
 strings but no movie/TV/game type. The player sends that title metadata to this
 resolver, which owns title matching and infers a narrow `game`, `movie`, or `tv` hint
-when `Album` explicitly names that kind of soundtrack. For the known multi-film compilation
-`The Wings Of A Film`, the resolver uses the movie-name prefix before the first colon
-in `Track`. Otherwise TMDB's matched result supplies `movie` versus `tv`, and
-SteamGridDB supplies `game`.
+when `Album` explicitly names that kind of soundtrack. For known multi-film
+compilations such as `The Wings Of A Film` and `Music For A Darkened Theatre,
+Vol. 1/2`, the resolver uses the movie-name prefix before the first colon in `Track`.
+Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
+supplies `game`.
 
 When TMDB has no exact title match, the resolver may use `Artist` as a conservative
 composer fallback: it requires one exact TMDB person-name match, then considers only

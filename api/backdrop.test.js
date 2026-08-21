@@ -61,6 +61,36 @@ test("resolves the live The Wings Of A Film album and track contract", async () 
     });
 });
 
+test("resolves the live Music For A Darkened Theatre compilation track", async () => {
+    let providerQuery = "";
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQuery = parsed.searchParams.get("query");
+            return response(200, { results: [{
+                id: 1049, title: "Sommersby", backdrop_path: "/sommersby.jpg",
+            }] });
+        },
+        tintForImage: async () => [90, 110, 130],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Music For A Darkened Theatre, Vol. 2",
+        track: "Sommersby: Return Montage",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(providerQuery, "Sommersby");
+    assert.equal(mediaHintForAlbum("Music For A Darkened Theatre, Vol. 2"), "movie");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 1049, title: "Sommersby", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/sommersby.jpg",
+        source: "tmdb",
+        tint: [90, 110, 130],
+    });
+});
+
 test("returns German and US movie ratings without resolving artwork", async () => {
     const requests = [];
     const handler = createHandler({

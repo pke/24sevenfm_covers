@@ -57,9 +57,14 @@ function cleanMovieTitle(album) {
     return cleaned;
 }
 
+function isTrackPrefixedMovieCompilation(title) {
+    return /^the wings of a film$/i.test(title)
+        || /^music for a darkened theatre,\s*vol\.\s*[12]$/i.test(title);
+}
+
 function backdropTitleFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
-    if (/^the wings of a film$/i.test(normalizedAlbum)) {
+    if (isTrackPrefixedMovieCompilation(normalizedAlbum)) {
         const separator = String(track || "").indexOf(":");
         if (separator > 0) {
             const workTitle = cleanMovieTitle(String(track).slice(0, separator));
@@ -71,7 +76,7 @@ function backdropTitleFor(album, track) {
 
 function mediaHintForAlbum(album) {
     const title = String(album || "");
-    if (/^the wings of a film$/i.test(cleanMovieTitle(title))) return "movie";
+    if (isTrackPrefixedMovieCompilation(cleanMovieTitle(title))) return "movie";
     if (/\b(?:original\s+)?video\s+game\s+(?:soundtrack|score)\b/i.test(title)
             || /\b(?:soundtrack|music|score)\s+(?:from|to)\s+the\s+(?:video\s+)?game\b/i.test(title)
             || /\boriginal\s+game\s+(?:soundtrack|score)\b/i.test(title)) return "game";
