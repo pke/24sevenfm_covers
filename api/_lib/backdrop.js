@@ -91,6 +91,52 @@ function mediaTitle(media) {
         : (media && (media.title || media.original_title));
 }
 
+function pickExactPerson(results, artist) {
+    const wanted = normalizedTitle(artist);
+    if (!wanted) return null;
+    const matches = new Map();
+    for (const person of Array.isArray(results) ? results : []) {
+        const id = Number(person && person.id);
+        if (!Number.isSafeInteger(id) || id <= 0
+                || normalizedTitle(person && person.name) !== wanted) continue;
+        if (!matches.has(id)) matches.set(id, person);
+    }
+    return matches.size === 1 ? matches.values().next().value : null;
+}
+
+function titleWords(value) {
+    return String(value || "").normalize("NFKD").replace(/\p{M}/gu, "")
+        .toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+function containsWordSequence(words, sequence) {
+    if (!sequence.length || sequence.length > words.length) return false;
+    for (let start = 0; start <= words.length - sequence.length; start++) {
+        if (sequence.every((word, index) => words[start + index] === word)) return true;
+    }
+    return false;
+}
+
+function pickComposerCredit(combinedCredits, album) {
+    const albumWords = titleWords(album);
+    const matches = new Map();
+    for (const credit of Array.isArray(combinedCredits && combinedCredits.crew)
+        ? combinedCredits.crew : []) {
+        const id = Number(credit && credit.id);
+        if (!credit || credit.job !== "Original Music Composer"
+                || (credit.media_type !== "movie" && credit.media_type !== "tv")
+                || !Number.isSafeInteger(id) || id <= 0) continue;
+        const title = mediaTitle(credit);
+        const words = titleWords(title);
+        // Reject tiny one-word titles such as Up, It, Her, or Us. Even with a verified
+        // composer they are too weak to infer safely from a soundtrack-album phrase.
+        if (normalizedTitle(title).length < 4 || !containsWordSequence(albumWords, words)) continue;
+        const key = credit.media_type + ":" + id;
+        if (!matches.has(key)) matches.set(key, credit);
+    }
+    return matches.size === 1 ? matches.values().next().value : null;
+}
+
 function pickMediaMatch(results, query, wantedType) {
     const wanted = normalizedTitle(query);
     let exact = null;
@@ -838,6 +884,8 @@ module.exports = {
     createTintHandler,
     handler,
     mediaHintForAlbum,
+    pickComposerCredit,
+    pickExactPerson,
     pickGame,
     pickMedia,
     pickMovie,

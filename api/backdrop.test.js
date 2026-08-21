@@ -9,6 +9,8 @@ const {
     createHandler,
     createTintHandler,
     mediaHintForAlbum,
+    pickComposerCredit,
+    pickExactPerson,
     pickGame,
     pickMedia,
     pickMovie,
@@ -120,6 +122,41 @@ test("matches TV names and ignores people in TMDB multi-search results", () => {
         { id: 2, media_type: "movie", title: "Inspector Morse's Oxford" },
         show,
     ], "Inspector Morse"), show);
+});
+
+test("selects one exact composer person and rejects ambiguous or partial names", () => {
+    const hans = { id: 947, name: "Hans Zimmer", known_for_department: "Sound" };
+    assert.equal(pickExactPerson([hans], "Hans Zimmer"), hans);
+    assert.equal(pickExactPerson([hans], "Hans Zimmer Live"), null);
+    assert.equal(pickExactPerson([hans, { id: 2, name: "Hans Zimmer" }], "Hans Zimmer"), null);
+    assert.equal(pickExactPerson([{ id: 0, name: "Hans Zimmer" }], "Hans Zimmer"), null);
+});
+
+test("matches a unique whole-title composer crew credit inside an album title", () => {
+    const dune = {
+        id: 438631, media_type: "movie", title: "Dune", job: "Original Music Composer",
+        backdrop_path: "/dune.jpg",
+    };
+    assert.equal(pickComposerCredit({
+        cast: [{ ...dune, job: undefined }],
+        crew: [dune, { ...dune }],
+    }, "The Dune Sketchbook"), dune);
+});
+
+test("rejects unsafe composer-credit fallbacks", () => {
+    const credit = (id, title, job = "Original Music Composer") => ({
+        id, media_type: "movie", title, job, backdrop_path: "/" + id + ".jpg",
+    });
+    assert.equal(pickComposerCredit({ crew: [credit(1, "Dune", "Music Supervisor")] },
+        "The Dune Sketchbook"), null);
+    assert.equal(pickComposerCredit({ crew: [credit(1, "Dune")] },
+        "The Dunedin Sketchbook"), null);
+    assert.equal(pickComposerCredit({ crew: [credit(1, "Dune"), credit(2, "Sketchbook")] },
+        "The Dune Sketchbook"), null);
+    assert.equal(pickComposerCredit({ crew: [credit(1, "Up")] },
+        "The Up Sketchbook"), null);
+    assert.equal(pickComposerCredit({ cast: [credit(1, "Dune")] },
+        "The Dune Sketchbook"), null);
 });
 
 test("ports the native overlay tint normalization", () => {
