@@ -1988,6 +1988,66 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /fanart-retry/);
     });
 
+    test("re-resolves cached art after provider priority or enablement changes", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/provider-refresh.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/provider-refresh.svg";
+        const providerRequests = [];
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ tmdbBackdrops: 1,
+                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Provider Refresh", Track: "Main Theme", Artist: "Test Composer",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-21T12:00:00Z", SystemTime: "2026-08-21T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const providers = new URL(route.request().url()).searchParams.get("providers").split(",");
+            providerRequests.push(providers);
+            const first = providers[0];
+            const backdrop = first === "tmdb"
+                ? "https://image.tmdb.org/t/p/w1280/tmdb-priority.jpg"
+                : `https://fanart.tv/fanart-priority-${providerRequests.length}.jpg`;
+            return route.fulfill({ json: {
+                media: { id: 22, title: "Provider Refresh", type: "movie" },
+                backdrop, source: first, tint: [240, 240, 240],
+            } });
+        });
+        await page.route(/https:\/\/(image\.tmdb\.org\/t\/p\/w1280|fanart\.tv)\//, (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => providerRequests).toEqual([
+            ["fanart", "tmdb", "steamgriddb"],
+        ]);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /fanart-priority-1/);
+
+        await page.locator('.provider[data-provider="fanart"] .grip').press("ArrowDown");
+        await expect.poll(() => providerRequests).toEqual([
+            ["fanart", "tmdb", "steamgriddb"],
+            ["tmdb", "fanart", "steamgriddb"],
+        ]);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /tmdb-priority/);
+
+        await page.locator("#tmdbart-on").uncheck();
+        await expect.poll(() => providerRequests).toEqual([
+            ["fanart", "tmdb", "steamgriddb"],
+            ["tmdb", "fanart", "steamgriddb"],
+            ["fanart", "steamgriddb"],
+        ]);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", /fanart-priority-3/);
+    });
+
     virtualClockTest("times out a stalled queue prefetch independently", async ({ page }) => {
         await page.clock.install();
         await page.addInitScript(() => {
