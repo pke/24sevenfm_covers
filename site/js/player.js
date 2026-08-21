@@ -1462,11 +1462,13 @@ function setFanartKeyCheckButton(state) {
         idle: "Check fanart.tv personal key",
         checking: "Checking fanart.tv personal key",
         success: opts.fanartKeyVerifiedAt
-            ? "fanart.tv personal key successfully checked on "
+            ? "Recheck fanart.tv personal key; successfully checked on "
                 + new Date(opts.fanartKeyVerifiedAt).toISOString().slice(0, 10)
-            : "fanart.tv personal key successfully checked"
+            : "Recheck fanart.tv personal key"
     };
-    fanartKeyCheckElement.disabled = state !== "idle";
+    fanartKeyCheckElement.disabled = state === "checking";
+    fanartKeyCheckElement.title = state === "success"
+        ? "Check fanart.tv personal key again" : accessibleNames[state];
     fanartKeyCheckElement.classList.toggle("success", state === "success");
     fanartKeyCheckElement.setAttribute("aria-label", accessibleNames[state]);
     if (state === fanartKeyCheckButtonState) return;
@@ -1513,6 +1515,7 @@ function restoreFanartKeyCheck() {
 async function checkFanartKey() {
     const personalKey = fanartKeyElement.value.trim();
     if (!personalKey) return;
+    const previousVerification = opts.fanartKeyVerifiedAt;
     if (fanartKeyCheckController) fanartKeyCheckController.abort();
     const controller = new AbortController();
     fanartKeyCheckController = controller;
@@ -1531,6 +1534,9 @@ async function checkFanartKey() {
         });
         if (generation !== fanartKeyCheckGeneration) return;
         if (response.status === 401 || response.status === 403) {
+            fanartKeyCheckController = null;
+            opts.fanartKeyVerifiedAt = 0;
+            saveOpts();
             setFanartKeyCheckButton("idle");
             showFanartKeyError("Personal key not accepted.");
             return;
@@ -1551,7 +1557,7 @@ async function checkFanartKey() {
         if ((error && error.name === "AbortError")
                 || generation !== fanartKeyCheckGeneration) return;
         fanartKeyCheckController = null;
-        setFanartKeyCheckButton("idle");
+        setFanartKeyCheckButton(previousVerification ? "success" : "idle");
         showFanartKeyError("Couldn’t check the personal key right now.");
     }
 }

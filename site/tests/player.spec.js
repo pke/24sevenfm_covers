@@ -581,9 +581,11 @@ test.describe("the deployed player page", () => {
             };
         });
         let requestUrl = "";
+        let releaseFanartResponse;
+        const fanartResponseGate = new Promise((resolve) => { releaseFanartResponse = resolve; });
         await page.route("https://webservice.fanart.tv/v3/movies/27205?*", async (route) => {
             requestUrl = route.request().url();
-            await new Promise((resolve) => setTimeout(resolve, 350));
+            await fanartResponseGate;
             await route.fulfill({ json: { name: "Inception", tmdb_id: "27205",
                 moviebackground: [] } });
         });
@@ -613,10 +615,11 @@ test.describe("the deployed player page", () => {
         await expect(check).toBeDisabled();
         await expect(check).toHaveAccessibleName("Checking fanart.tv personal key");
         await expect(check).toHaveText("…");
+        releaseFanartResponse();
         await expect(check).toHaveText("✓");
         await expect(check).toHaveClass(/success/);
         await expect(check).toHaveAccessibleName(
-            /fanart\.tv personal key successfully checked on \d{4}-\d{2}-\d{2}/);
+            /Recheck fanart\.tv personal key; successfully checked on \d{4}-\d{2}-\d{2}/);
         await expect(status).toContainText("Personal key accepted.");
         await expect.poll(() => page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
@@ -683,6 +686,9 @@ test.describe("the deployed player page", () => {
         let fanartRequests = 0;
         await page.route("https://webservice.fanart.tv/v3/movies/27205?*", (route) => {
             fanartRequests++;
+            if (fanartRequests === 1) return route.abort();
+            if (fanartRequests === 2)
+                return route.fulfill({ status: 401, json: { error: "Invalid client key" } });
             return route.fulfill({ json: { name: "Inception", tmdb_id: "27205" } });
         });
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
@@ -692,10 +698,33 @@ test.describe("the deployed player page", () => {
         await expect(key).toHaveValue("persisted-client-key");
         await expect(check).toHaveText("✓");
         await expect(check).toHaveClass(/success/);
-        await expect(check).toBeDisabled();
+        await expect(check).toBeEnabled();
         await expect(check).toHaveAccessibleName(
-            "fanart.tv personal key successfully checked on 2026-08-20");
+            "Recheck fanart.tv personal key; successfully checked on 2026-08-20");
+        await expect(check).toHaveAttribute("title", "Check fanart.tv personal key again");
         expect(fanartRequests).toBe(0);
+
+        await check.click();
+        await expect(page.locator("#fanart-key-status")).toHaveText(
+            "Couldn’t check the personal key right now.");
+        await expect(check).toHaveText("✓");
+        await expect(check).toBeEnabled();
+        expect(await page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            .toBe(verifiedAt);
+
+        await check.click();
+        await expect(check).toHaveText("Check");
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            .toBe(0);
+
+        await check.click();
+        await expect(check).toHaveText("✓");
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            .toBeGreaterThan(verifiedAt);
+        expect(fanartRequests).toBe(3);
 
         await key.press("End");
         await key.press("x");
@@ -705,7 +734,7 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
             .toBe(0);
-        expect(fanartRequests).toBe(0);
+        expect(fanartRequests).toBe(3);
     });
     test("renders a real spectrum while audio plays and respects reduced motion",
         async ({ page }) => {
