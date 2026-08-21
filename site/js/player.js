@@ -1458,17 +1458,22 @@ let fanartKeyCheckButtonState = "idle";
 
 function setFanartKeyCheckButton(state) {
     const labels = { idle: "Check", checking: "…", success: "✓" };
+    const verificationText = opts.fanartKeyVerifiedAt
+        ? "successfully checked on "
+            + new Date(opts.fanartKeyVerifiedAt).toISOString().slice(0, 10)
+        : "";
     const accessibleNames = {
         idle: "Check fanart.tv personal key",
         checking: "Checking fanart.tv personal key",
-        success: opts.fanartKeyVerifiedAt
-            ? "Recheck fanart.tv personal key; successfully checked on "
-                + new Date(opts.fanartKeyVerifiedAt).toISOString().slice(0, 10)
+        success: verificationText
+            ? "Recheck fanart.tv personal key; " + verificationText
             : "Recheck fanart.tv personal key"
     };
     fanartKeyCheckElement.disabled = state === "checking";
     fanartKeyCheckElement.title = state === "success"
-        ? "Check fanart.tv personal key again" : accessibleNames[state];
+        ? "Check fanart.tv personal key again"
+            + (verificationText ? "; " + verificationText : "")
+        : accessibleNames[state];
     fanartKeyCheckElement.classList.toggle("success", state === "success");
     fanartKeyCheckElement.setAttribute("aria-label", accessibleNames[state]);
     if (state === fanartKeyCheckButtonState) return;

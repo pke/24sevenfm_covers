@@ -701,7 +701,8 @@ test.describe("the deployed player page", () => {
         await expect(check).toBeEnabled();
         await expect(check).toHaveAccessibleName(
             "Recheck fanart.tv personal key; successfully checked on 2026-08-20");
-        await expect(check).toHaveAttribute("title", "Check fanart.tv personal key again");
+        await expect(check).toHaveAttribute("title",
+            "Check fanart.tv personal key again; successfully checked on 2026-08-20");
         expect(fanartRequests).toBe(0);
 
         await check.click();
