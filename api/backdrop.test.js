@@ -7,6 +7,7 @@ const { join } = require("node:path");
 const test = require("node:test");
 const {
     CACHE_SECONDS,
+    backdropTitleCandidatesFor,
     backdropTitleFor,
     cleanMovieTitle,
     createHandler,
@@ -330,9 +331,28 @@ test("cleans soundtrack noise and rotated articles", () => {
 test("infers only explicit game, movie, and TV soundtrack markers", () => {
     assert.equal(mediaHintForAlbum("Hades (Original Video Game Soundtrack)"), "game");
     assert.equal(mediaHintForAlbum("Journey - Music From The Video Game"), "game");
+    assert.equal(mediaHintForAlbum("Video Games Live: Level 2"), "game");
     assert.equal(mediaHintForAlbum("Arrival (Original Motion Picture Soundtrack)"), "movie");
     assert.equal(mediaHintForAlbum("Doctor Who (Original Television Soundtrack)"), "tv");
     assert.equal(mediaHintForAlbum("Prey"), "auto");
+});
+
+test("uses the track title for a Video Games Live compilation", () => {
+    assert.equal(backdropTitleFor("Video Games Live: Level 2",
+        "The Legend Of Zelda Suite"), "The Legend Of Zelda");
+});
+
+test("uses exact TV-title prefixes for a Great British TV Themes track", () => {
+    assert.equal(mediaHintForAlbum("Great British TV Themes"), "tv");
+    assert.deepEqual(backdropTitleCandidatesFor("Great British TV Themes",
+        "The Protectors Avenues And Alleyways"), [
+        "The Protectors Avenues And Alleyways",
+        "The Protectors Avenues And",
+        "The Protectors Avenues",
+        "The Protectors",
+    ]);
+    assert.deepEqual(backdropTitleCandidatesFor("Great British TV Themes",
+        "The Protectors - Avenues And Alleyways"), ["The Protectors"]);
 });
 
 test("uses a game's release year to disambiguate exact SteamGridDB names", () => {
@@ -457,6 +477,114 @@ test("resolves an explicitly marked game through SteamGridDB hero art", async ()
     });
     assert.equal(requests.length, 2);
     assert.equal(tintUrl, "https://cdn2.steamgriddb.com/hero_thumb/hades.jpg");
+});
+
+test("resolves a Video Games Live suite through its game track", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/The%20Legend%20Of%20Zelda")) {
+                return response(200, { success: true, data: [{
+                    id: 38050, name: "The Legend of Zelda", verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/38050")) return response(200, {
+                success: true,
+                data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/zelda.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/zelda.jpg" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [10, 20, 30],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Video Games Live: Level 2",
+        track: "The Legend Of Zelda Suite",
+        providers: "fanart,tmdb,steamgriddb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 38050, title: "The Legend of Zelda", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/zelda.jpg",
+        source: "steamgriddb",
+        tint: [10, 20, 30],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
+test("resolves a Great British TV Themes cue through an exact track prefix", async () => {
+    const queries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            const query = parsed.searchParams.get("query");
+            queries.push(query);
+            return response(200, { results: [{
+                id: 4354, media_type: "tv", name: "The Protectors",
+                backdrop_path: "/protectors.jpg",
+            }] });
+        },
+        tintForImage: async () => [40, 50, 60],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Great British TV Themes",
+        track: "The Protectors Avenues And Alleyways",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(queries, [
+        "The Protectors Avenues And Alleyways",
+        "The Protectors Avenues And",
+        "The Protectors Avenues",
+        "The Protectors",
+    ]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 4354, title: "The Protectors", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/protectors.jpg",
+        source: "tmdb",
+        tint: [40, 50, 60],
+    });
+});
+
+test("bounds TV compilation prefix searches", () => {
+    const candidates = backdropTitleCandidatesFor("Great British TV Themes",
+        "One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve");
+    assert.equal(candidates.length, 8);
+});
+
+test("rejects fuzzy TV-prefix results for a Great British TV Themes track", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async () => response(200, { results: [{
+            id: 999, media_type: "tv", name: "Unrelated Programme",
+            backdrop_path: "/unrelated.jpg",
+        }] }),
+        tintForImage: async () => { throw new Error("must not resolve tint"); },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Great British TV Themes",
+        track: "Unknown Programme Famous Theme",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: null,
+        backdrop: null,
+        source: null,
+        tint: [255, 255, 255],
+    });
 });
 
 test("uses provider order to break an otherwise ambiguous exact title", async () => {

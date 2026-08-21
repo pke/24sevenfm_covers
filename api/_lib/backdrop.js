@@ -9,6 +9,7 @@ const MAX_TINT_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_TINT_IMAGE_PIXELS = 4 * 1000 * 1000;
 const MAX_TINT_URL_LENGTH = 512;
 const MAX_TINT_REDIRECTS = 2;
+const MAX_TRACK_PREFIX_CANDIDATES = 8;
 const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
@@ -62,8 +63,53 @@ function isTrackPrefixedMovieCompilation(title) {
         || /^music for a darkened theatre,\s*vol\.\s*[12]$/i.test(title);
 }
 
+function isTrackTitledGameCompilation(title) {
+    return /^video games live(?:\s*:\s*level\s*\d+)?$/i.test(title);
+}
+
+function isTrackTitledTvCompilation(title) {
+    return /^great british tv themes$/i.test(title);
+}
+
+function trackPrefixCandidates(track) {
+    const title = String(track || "").trim();
+    if (!title) return [];
+
+    // Some station metadata drops the spaced dash used by the compilation's
+    // printed track list. Preserve the cheap unambiguous case, then fall back to
+    // progressively shorter prefixes so the provider can validate the boundary.
+    const separated = title.match(/^(.+?)\s+[-–—]\s+.+$/);
+    if (separated) {
+        const workTitle = cleanMovieTitle(separated[1]);
+        return workTitle ? [workTitle] : [];
+    }
+
+    const words = title.match(/\S+/g) || [];
+    const candidates = [];
+    const seen = new Set();
+    for (let end = words.length; end > 0 && candidates.length < MAX_TRACK_PREFIX_CANDIDATES; end--) {
+        const candidate = cleanMovieTitle(words.slice(0, end).join(" "));
+        const key = normalizedTitle(candidate);
+        // Retain a very short title only when it is the complete track (for
+        // example UFO); inferring a cue's work from a short prefix is unsafe.
+        if (!key || (end < words.length && key.length < 4) || seen.has(key)) continue;
+        seen.add(key);
+        candidates.push(candidate);
+    }
+    return candidates;
+}
+
 function backdropTitleFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
+    if (isTrackTitledTvCompilation(normalizedAlbum)) {
+        const candidates = trackPrefixCandidates(track);
+        if (candidates.length) return candidates[0];
+    }
+    if (isTrackTitledGameCompilation(normalizedAlbum)) {
+        const workTitle = cleanMovieTitle(track)
+            .replace(/\s+(?:symphonic\s+)?suite\s*$/i, "").trim();
+        if (workTitle) return workTitle;
+    }
     if (isTrackPrefixedMovieCompilation(normalizedAlbum)) {
         const separator = String(track || "").indexOf(":");
         if (separator > 0) {
@@ -74,9 +120,21 @@ function backdropTitleFor(album, track) {
     return normalizedAlbum;
 }
 
+function backdropTitleCandidatesFor(album, track) {
+    const normalizedAlbum = cleanMovieTitle(album);
+    if (isTrackTitledTvCompilation(normalizedAlbum)) {
+        const candidates = trackPrefixCandidates(track);
+        if (candidates.length) return candidates;
+    }
+    return [backdropTitleFor(album, track)];
+}
+
 function mediaHintForAlbum(album) {
     const title = String(album || "");
-    if (isTrackPrefixedMovieCompilation(cleanMovieTitle(title))) return "movie";
+    const cleanedTitle = cleanMovieTitle(title);
+    if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
+    if (isTrackTitledGameCompilation(cleanedTitle)) return "game";
+    if (isTrackPrefixedMovieCompilation(cleanedTitle)) return "movie";
     if (/\b(?:original\s+)?video\s+game\s+(?:soundtrack|score)\b/i.test(title)
             || /\b(?:soundtrack|music|score)\s+(?:from|to)\s+the\s+(?:video\s+)?game\b/i.test(title)
             || /\boriginal\s+game\s+(?:soundtrack|score)\b/i.test(title)) return "game";
@@ -773,6 +831,9 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     artist = "", options = {}) {
     const ratingCountries = Array.isArray(options.ratingCountries) ? options.ratingCountries : [];
     const includeArt = options.includeArt !== false;
+    const screenQueries = Array.isArray(options.screenQueries) && options.screenQueries.length
+        ? options.screenQueries : [query];
+    const requireExactScreenMatch = options.requireExactScreenMatch === true;
     const hint = configuredMediaHint(query, requestHint, dependencies.env);
     const wantsScreen = ratingCountries.length > 0 || (includeArt
         && providers.some((provider) => provider === "fanart" || provider === "tmdb"));
@@ -816,16 +877,39 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             // Start the exact person lookup beside the normal title lookup so the
             // conservative fallback does not add another full provider timeout. Its
             // result is consumed only when the title search has no exact match.
-            const personLookup = artist ? searchTmdbPerson(dependencies.fetchImpl, artist,
+            const personLookup = artist && !requireExactScreenMatch
+                ? searchTmdbPerson(dependencies.fetchImpl, artist,
                 dependencies.env).then((person) => ({ person }), (error) => ({ error })) : null;
-            let match;
-            let titleError = null;
-            try {
-                match = await searchTmdb(dependencies.fetchImpl, query, dependencies.env,
-                    hint === "movie" || hint === "tv" ? hint : undefined);
-            } catch (error) {
-                titleError = error;
+            let match = null;
+            let fallbackMatch = null;
+            let matchedQuery = query;
+            let successfulTitleLookup = false;
+            const titleErrors = [];
+            const titleLookups = await Promise.all(screenQueries.map(async (candidate) => {
+                try {
+                    return { candidate, match: await searchTmdb(dependencies.fetchImpl, candidate,
+                        dependencies.env, hint === "movie" || hint === "tv" ? hint : undefined) };
+                } catch (error) {
+                    return { candidate, error };
+                }
+            }));
+            for (const lookup of titleLookups) {
+                if (lookup.error) {
+                    titleErrors.push(lookup.error);
+                    continue;
+                }
+                successfulTitleLookup = true;
+                if (lookup.match && lookup.match.exact) {
+                    match = lookup.match;
+                    matchedQuery = lookup.candidate;
+                    break;
+                }
+                if (!fallbackMatch && lookup.match && lookup.match.media) {
+                    fallbackMatch = lookup.match;
+                    matchedQuery = lookup.candidate;
+                }
             }
+            if (!match && !requireExactScreenMatch) match = fallbackMatch;
             if ((!match || !match.exact) && personLookup) {
                 const personResult = await personLookup;
                 if (personResult.error) {
@@ -841,14 +925,14 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 }
             }
             if (!match || !match.media) {
-                if (titleError) errors.push(titleError);
+                if (!successfulTitleLookup) errors.push(...titleErrors);
                 continue;
             }
             if (!match.exact) {
                 screenFallback = match.media;
                 continue;
             }
-            const media = screenMediaResponse(match.media, query);
+            const media = screenMediaResponse(match.media, matchedQuery);
             const certifications = ratingCountries.length
                 ? screenCertifications(dependencies.fetchImpl, match.media, ratingCountries,
                     dependencies.env).catch(() => [])
@@ -955,7 +1039,8 @@ function createHandler(options = {}) {
                 throw new ResolverError("invalid_artist", 400,
                     "artist must be at most 180 characters");
             }
-            const title = backdropTitleFor(titleValue, trackValue);
+            const titleCandidates = backdropTitleCandidatesFor(titleValue, trackValue);
+            const title = titleCandidates[0];
             if (!title || title.length > 160) {
                 throw new ResolverError("invalid_title", 400, "cleaned title is empty or too long");
             }
@@ -972,7 +1057,10 @@ function createHandler(options = {}) {
             const result = await resolveBackdrop(title, providers, clientKey, {
                 env, fetchImpl, tintForImage,
             }, mediaHint, typeof artistValue === "string" ? artistValue.trim() : "", {
-                ratingCountries, includeArt,
+                ratingCountries,
+                includeArt,
+                screenQueries: titleCandidates,
+                requireExactScreenMatch: isTrackTitledTvCompilation(cleanMovieTitle(titleValue)),
             });
             res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
             return sendJson(res, 200, result);
@@ -1037,6 +1125,7 @@ const tintHandler = createTintHandler();
 module.exports = {
     CACHE_SECONDS,
     WHITE_TINT,
+    backdropTitleCandidatesFor,
     backdropTitleFor,
     cleanMovieTitle,
     coverTintForUrl,

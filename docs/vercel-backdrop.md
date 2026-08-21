@@ -52,6 +52,9 @@ resolver, which owns title matching and infers a narrow `game`, `movie`, or `tv`
 when `Album` explicitly names that kind of soundtrack. For known multi-film
 compilations such as `The Wings Of A Film` and `Music For A Darkened Theatre,
 Vol. 1/2`, the resolver uses the movie-name prefix before the first colon in `Track`.
+For `Great British TV Themes`, whose station metadata can omit the printed dash
+between programme and cue, it tries progressively shorter track prefixes and accepts
+only an exact TMDB TV-title match.
 Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
 supplies `game`.
 
