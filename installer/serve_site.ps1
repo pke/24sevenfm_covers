@@ -25,6 +25,7 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $here
 $www  = Join-Path $root 'www'
+. (Join-Path $here 'http_response.ps1')
 
 if (-not $NoRender) {
     # Same asset source as deploy-site.yml: the newest release. Anonymous REST call - the
@@ -82,15 +83,15 @@ try {
         if ($path -eq '') { $path = 'index.html' }
         # Resolve inside www\ only; anything traversing out of it is a 404 like any miss.
         $file = [IO.Path]::GetFullPath((Join-Path $www $path))
+        $bytes = [byte[]]::new(0)
         if ($file.StartsWith($www, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path $file -PathType Leaf)) {
             $bytes = [IO.File]::ReadAllBytes($file)
             $ext   = [IO.Path]::GetExtension($file).ToLower()
             $ctx.Response.ContentType = if ($mime.ContainsKey($ext)) { $mime[$ext] } else { 'application/octet-stream' }
             $ctx.Response.Headers['Cache-Control'] = 'no-store'
-            $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
         } else {
             $ctx.Response.StatusCode = 404
         }
-        $ctx.Response.Close()
+        Send-HttpListenerResponse -Response $ctx.Response -Bytes $bytes | Out-Null
     }
 } finally { $listener.Stop() }
