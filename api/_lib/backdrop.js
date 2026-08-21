@@ -71,6 +71,17 @@ function isTrackTitledTvCompilation(title) {
     return /^great british tv themes$/i.test(title);
 }
 
+function isTrackTitledScreenCompilation(title) {
+    // Compilation titles commonly advertise "Themes From ...", while each Track
+    // carries "Work - Cue". The prefix still has to be an exact TMDB title, so this
+    // pattern cannot turn an arbitrary cue containing a dash into a fuzzy match.
+    return /\bthemes?\s+from\b/i.test(title);
+}
+
+function usesExactTrackPrefix(title) {
+    return isTrackTitledTvCompilation(title) || isTrackTitledScreenCompilation(title);
+}
+
 function trackPrefixCandidates(track) {
     const title = String(track || "").trim();
     if (!title) return [];
@@ -101,7 +112,7 @@ function trackPrefixCandidates(track) {
 
 function backdropTitleFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
-    if (isTrackTitledTvCompilation(normalizedAlbum)) {
+    if (usesExactTrackPrefix(normalizedAlbum)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates[0];
     }
@@ -122,7 +133,7 @@ function backdropTitleFor(album, track) {
 
 function backdropTitleCandidatesFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
-    if (isTrackTitledTvCompilation(normalizedAlbum)) {
+    if (usesExactTrackPrefix(normalizedAlbum)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates;
     }
@@ -133,6 +144,7 @@ function mediaHintForAlbum(album) {
     const title = String(album || "");
     const cleanedTitle = cleanMovieTitle(title);
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
+    if (isTrackTitledScreenCompilation(cleanedTitle)) return "screen";
     if (isTrackTitledGameCompilation(cleanedTitle)) return "game";
     if (isTrackPrefixedMovieCompilation(cleanedTitle)) return "movie";
     if (/\b(?:original\s+)?video\s+game\s+(?:soundtrack|score)\b/i.test(title)
@@ -1060,7 +1072,7 @@ function createHandler(options = {}) {
                 ratingCountries,
                 includeArt,
                 screenQueries: titleCandidates,
-                requireExactScreenMatch: isTrackTitledTvCompilation(cleanMovieTitle(titleValue)),
+                requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue)),
             });
             res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
             return sendJson(res, 200, result);

@@ -54,7 +54,11 @@ compilations such as `The Wings Of A Film` and `Music For A Darkened Theatre,
 Vol. 1/2`, the resolver uses the movie-name prefix before the first colon in `Track`.
 For `Great British TV Themes`, whose station metadata can omit the printed dash
 between programme and cue, it tries progressively shorter track prefixes and accepts
-only an exact TMDB TV-title match.
+only an exact TMDB TV-title match. More generally, an album containing `Theme From`
+or `Themes From` is treated as a screen compilation: the resolver uses the work-name
+prefix before the spaced dash in `Track` and accepts only an exact TMDB film/TV-title
+match. Thus `Remington Steele - Laura's Theme` resolves as `Remington Steele` without
+an album-name-specific exception.
 Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
 supplies `game`.
 

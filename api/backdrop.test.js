@@ -92,6 +92,38 @@ test("resolves the live Music For A Darkened Theatre compilation track", async (
     });
 });
 
+test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
+    let providerQuery = "";
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQuery = parsed.searchParams.get("query");
+            return response(200, { results: [{
+                id: 713, media_type: "tv", name: "Remington Steele",
+                backdrop_path: "/remington-steele.jpg",
+            }] });
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Film Noir's Finest: Themes From The Dark Side Of The Lens",
+        track: "Remington Steele - Laura's Theme",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(providerQuery, "Remington Steele");
+    assert.equal(mediaHintForAlbum(
+        "Film Noir's Finest: Themes From The Dark Side Of The Lens"), "screen");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 713, title: "Remington Steele", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/remington-steele.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+    });
+});
+
 test("returns German and US movie ratings without resolving artwork", async () => {
     const requests = [];
     const handler = createHandler({
@@ -353,6 +385,13 @@ test("uses exact TV-title prefixes for a Great British TV Themes track", () => {
     ]);
     assert.deepEqual(backdropTitleCandidatesFor("Great British TV Themes",
         "The Protectors - Avenues And Alleyways"), ["The Protectors"]);
+});
+
+test("recognizes Theme(s) From compilations without an album-name exception", () => {
+    assert.equal(mediaHintForAlbum("Cinema Classics: Themes From The Screen"), "screen");
+    assert.deepEqual(backdropTitleCandidatesFor("Cinema Classics: Themes From The Screen",
+        "Casablanca - As Time Goes By"), ["Casablanca"]);
+    assert.equal(backdropTitleFor("Arrival", "Remington Steele - Laura's Theme"), "Arrival");
 });
 
 test("uses a game's release year to disambiguate exact SteamGridDB names", () => {
