@@ -26,11 +26,18 @@ function cacheControl(browserSeconds) {
 }
 const WHITE_TINT = Object.freeze([255, 255, 255]);
 const FSK_LOGOS = Object.freeze({
-    "0": "/ratings/fsk/fsk-0.88562bb9abe3.png",
-    "6": "/ratings/fsk/fsk-6.e11fbaf818b2.png",
-    "12": "/ratings/fsk/fsk-12.f9fee6f6ecb9.png",
-    "16": "/ratings/fsk/fsk-16.83651dbb7b3b.png",
-    "18": "/ratings/fsk/fsk-18.e2a882b91142.png",
+    "0": "https://upload.wikimedia.org/wikipedia/commons/1/17/FSK_0.svg",
+    "6": "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg",
+    "12": "https://upload.wikimedia.org/wikipedia/commons/6/6e/FSK_12.svg",
+    "16": "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg",
+    "18": "https://upload.wikimedia.org/wikipedia/commons/5/5d/FSK_18.svg",
+});
+const MPA_LOGOS = Object.freeze({
+    "G": "https://upload.wikimedia.org/wikipedia/commons/4/4f/MPA_G_RATING.svg",
+    "PG": "https://upload.wikimedia.org/wikipedia/commons/9/9a/MPA_PG_RATING.svg",
+    "PG-13": "https://upload.wikimedia.org/wikipedia/commons/9/98/MPA_PG-13_RATING.svg",
+    "R": "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
+    "NC-17": "https://upload.wikimedia.org/wikipedia/commons/c/c0/MPA_NC-17_RATING.svg",
 });
 
 class ResolverError extends Error {
@@ -811,12 +818,14 @@ function certificationResponse(country, rating, type) {
             logo: FSK_LOGOS[rating] || null,
         };
     }
-    return {
+    const response = {
         country,
         system: type === "tv" ? "TV Parental Guidelines" : "MPA",
         rating,
         label: rating,
     };
+    if (type !== "tv") response.logo = MPA_LOGOS[rating] || null;
+    return response;
 }
 
 async function screenCertifications(fetchImpl, media, countries, env) {
@@ -1178,6 +1187,7 @@ module.exports = {
     WHITE_TINT,
     backdropTitleCandidatesFor,
     backdropTitleFor,
+    certificationResponse,
     cleanMovieTitle,
     coverTintForUrl,
     createHandler,

@@ -81,8 +81,8 @@ release either way.
 
 The movie/TV/game-backdrop, DE/US-rating and cover-tint resolvers are served by the
 Vercel project at the repository root. The media features share `api/backdrop.js`; the
-content-hashed official FSK badges live in `public/ratings/fsk`. Cover tint uses
-`api/tint.js`. Their deployment, security
+rating resolver returns exact Wikimedia Commons SVG URLs for FSK and MPA movie badges.
+Cover tint uses `api/tint.js`. Their deployment, security
 limits and environment variables are documented in `docs/vercel-backdrop.md`.
 `player.html` uses `/api/backdrop` and `/api/tint`, so a GitHub Pages deployment
 needs absolute Vercel Function URLs in both API meta tags or a same-domain proxy

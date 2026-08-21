@@ -510,17 +510,18 @@ test.describe("the deployed player page", () => {
                 backdrop: null, source: null, tint: [255, 255, 255],
                 certifications: gameOfThrones ? [
                     { country: "DE", system: "FSK", rating: "16", label: "FSK 16",
-                        logo: "/ratings/fsk/fsk-16.83651dbb7b3b.png" },
+                        logo: "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg" },
                     { country: "US", system: "TV Parental Guidelines", rating: "TV-MA",
                         label: "TV-MA" },
                 ] : [
                     { country: "DE", system: "FSK", rating: "6", label: "FSK 6",
-                        logo: "/ratings/fsk/fsk-6.e11fbaf818b2.png" },
-                    { country: "US", system: "MPA", rating: "PG-13", label: "PG-13" },
+                        logo: "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg" },
+                    { country: "US", system: "MPA", rating: "PG-13", label: "PG-13",
+                        logo: "https://upload.wikimedia.org/wikipedia/commons/9/98/MPA_PG-13_RATING.svg" },
                 ],
             } });
         });
-        await page.route("https://24covers-api.vercel.app/ratings/fsk/*.png", (route) =>
+        await page.route("https://upload.wikimedia.org/wikipedia/commons/**/*.svg", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
 
@@ -531,7 +532,7 @@ test.describe("the deployed player page", () => {
         });
         await expect(page.locator("#rating-de")).toHaveClass(/show/);
         await expect(page.locator("#rating-us")).toHaveClass(/show/);
-        await expect(page.locator("#rating-us .rating-face").first()).toHaveText("PG-13");
+        await expect(page.locator("#rating-us .rating-face").first()).toHaveClass(/has-logo/);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
 
         await expect.poll(() => resolverRequests.some((request) =>
@@ -546,8 +547,8 @@ test.describe("the deployed player page", () => {
                 cardTransform: getComputedStyle(slot.querySelector(".rating-card")).transform,
             };
         });
-        expect(glued.sources[0]).toContain("fsk-6.e11fbaf818b2.png");
-        expect(glued.sources[1]).toContain("fsk-16.83651dbb7b3b.png");
+        expect(glued.sources[0]).toContain("FSK_ab_6_logo.svg");
+        expect(glued.sources[1]).toContain("FSK_16.svg");
         expect(glued.backTransform).not.toBe("none");
         await expect.poll(() => page.locator("#rating-de").evaluate((slot) => {
             const back = slot.querySelector(".rating-face:last-child");

@@ -817,15 +817,27 @@ function trustedResolvedBackdrop(raw, source) {
     } catch (e) { return ""; }
 }
 
-function trustedRatingLogo(raw) {
-    if (typeof raw !== "string" || !raw) return "";
+var WIKIMEDIA_RATING_LOGOS = Object.freeze({
+    "DE|FSK|0": "https://upload.wikimedia.org/wikipedia/commons/1/17/FSK_0.svg",
+    "DE|FSK|6": "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg",
+    "DE|FSK|12": "https://upload.wikimedia.org/wikipedia/commons/6/6e/FSK_12.svg",
+    "DE|FSK|16": "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg",
+    "DE|FSK|18": "https://upload.wikimedia.org/wikipedia/commons/5/5d/FSK_18.svg",
+    "US|MPA|G": "https://upload.wikimedia.org/wikipedia/commons/4/4f/MPA_G_RATING.svg",
+    "US|MPA|PG": "https://upload.wikimedia.org/wikipedia/commons/9/9a/MPA_PG_RATING.svg",
+    "US|MPA|PG-13": "https://upload.wikimedia.org/wikipedia/commons/9/98/MPA_PG-13_RATING.svg",
+    "US|MPA|R": "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
+    "US|MPA|NC-17": "https://upload.wikimedia.org/wikipedia/commons/c/c0/MPA_NC-17_RATING.svg",
+});
+
+function trustedRatingLogo(raw, country, system, rating) {
+    var expected = WIKIMEDIA_RATING_LOGOS[[country, system, rating].join("|")];
+    if (typeof raw !== "string" || raw !== expected) return "";
     try {
-        var base = new URL(BACKDROP_API_URL, location.href);
-        var url = new URL(raw, base);
-        return url.origin === base.origin && !url.username && !url.password
-            && !url.search && !url.hash
-            && /^\/ratings\/fsk\/fsk-(?:0|6|12|16|18)\.[a-f0-9]{12}\.png$/.test(url.pathname)
-            ? url.href : "";
+        var url = new URL(raw);
+        return url.protocol === "https:" && url.hostname === "upload.wikimedia.org"
+            && !url.username && !url.password && !url.search && !url.hash
+            && url.href === expected ? url.href : "";
     } catch (e) { return ""; }
 }
 
@@ -851,7 +863,7 @@ function trustedCertifications(raw) {
             rating: rating,
             label: label,
             system: system,
-            logo: entry.country === "DE" ? trustedRatingLogo(entry.logo) : "",
+            logo: trustedRatingLogo(entry.logo, entry.country, system, rating),
             accessibleLabel: (entry.country === "DE" ? "Germany: " : "United States: ") + label,
         });
         return certifications;
