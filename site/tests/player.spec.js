@@ -270,8 +270,8 @@ test.describe("the deployed player page", () => {
                 moduleUrls.push(route.request().url());
                 if (moduleUrls.length === 1) return route.abort("failed");
                 return route.fulfill({ contentType: "text/javascript",
-                    body: `export function createAudioSpectrumController() {
-                        return { prepare() {}, sync() {} };
+                    body: `export function createAudioVisualizationController() {
+                        return { prepare() {}, sync() {}, clear() {}, reset() {} };
                     }` });
             });
             await page.addInitScript(() => {
@@ -401,12 +401,14 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("main .controls-top")).toHaveCount(1);
         await page.evaluate(() => document.exitFullscreen());
     });
-    test("defaults the tinted analyzer off and persists analyzer settings", async ({ page }) => {
+    test("defaults the 80s lasers on, keeps the analyzer off, and persists visualization settings", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
         const bars = page.locator("#spectrum-bars");
         const enabled = page.locator("#spectrum-enabled");
+        const lasers = page.locator("#laser-enabled");
+        await expect(lasers).toBeChecked();
         await expect(enabled).not.toBeChecked();
         await expect(bars).toHaveValue("24");
         await expect(bars).toHaveAttribute("step", "8");
@@ -415,6 +417,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
 
         await enabled.check();
+        await lasers.uncheck();
         await expect(bars).toBeEnabled();
         await bars.evaluate((input) => {
             input.value = "48";
@@ -424,6 +427,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
 
         await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(lasers).not.toBeChecked();
         await expect(enabled).toBeChecked();
         await expect(bars).toHaveValue("48");
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
@@ -1049,6 +1053,184 @@ test.describe("the deployed player page", () => {
             await expect(spectrum).not.toHaveClass(/active/);
             await expect(spectrum).toHaveCSS("display", "none");
             await page.locator("#audio-toggle").click();
+        });
+    test("runs the 80s laser plugin from the shared analyser and fades it between stations",
+        async ({ page }) => {
+            const pageErrors = [];
+            page.on("pageerror", (error) => pageErrors.push(String(error)));
+            await page.addInitScript(() => {
+                window.__analyserReads = 0;
+                window.__audioContexts = 0;
+                window.__laserKicks = 0;
+                class FakeAudioNode { connect() {} }
+                class FakeAnalyser extends FakeAudioNode {
+                    constructor() {
+                        super();
+                        this.frequencyBinCount = 128;
+                    }
+                    getByteFrequencyData(data) {
+                        window.__analyserReads++;
+                        data.fill(52);
+                        if (window.__analyserReads % 8 === 0) {
+                            window.__laserKicks++;
+                            for (let index = 1; index < Math.floor(data.length * .04); index++)
+                                data[index] = 244;
+                        }
+                        for (let index = Math.floor(data.length * .22); index < data.length; index++)
+                            data[index] = 96 + (index % 5) * 16;
+                    }
+                }
+                window.AudioContext = class {
+                    constructor() {
+                        window.__audioContexts++;
+                        this.destination = {};
+                        this.state = "running";
+                    }
+                    createAnalyser() { return new FakeAnalyser(); }
+                    createMediaElementSource() { return new FakeAudioNode(); }
+                    resume() { return Promise.resolve(); }
+                };
+                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await mockProviderTestFeed(page);
+            await page.route("https://1980s.fm/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: "Laser Test", Track: "Neon Nights", Artist: "24seven.fm",
+                    CoverLink: "", Length: 0, PlayStart: "2026-08-13T12:00:00Z",
+                    SystemTime: "2026-08-13T12:00:00Z",
+                } });
+            });
+            await page.route("https://1980s.fm/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+            const audio = page.locator("#audio");
+            const lasers = page.locator("#stage-lasers");
+            const spectrum = page.locator("#stage-spectrum");
+            await expect(page.locator("#laser-enabled")).toBeChecked();
+            await page.locator("#audio-toggle").click();
+            await audio.dispatchEvent("playing");
+            await expect(lasers).not.toHaveClass(/active/);
+            expect(await page.evaluate(() => window.__audioContexts)).toBe(0);
+
+            await page.locator("label.seg", { hasText: "1980s.FM" }).click();
+            await audio.dispatchEvent("playing");
+            await expect(lasers).toHaveClass(/active/);
+            await expect(lasers).toHaveCSS("opacity", "1");
+            await expect(lasers).toHaveCSS("background-color", "rgb(0, 0, 0)");
+            await expect(page.locator("#stage")).toHaveClass(/laser-scene/);
+            await expect(page.locator("#coverbox")).toBeVisible();
+            await expect(page.locator("#coverbox")).toHaveCSS("opacity", "1");
+            await expect(lasers).toHaveAttribute("data-renderer", "webgl");
+            await expect(lasers).toHaveAttribute("data-gpu-tier", /^(hardware|software)$/);
+            await expect(lasers).toHaveAttribute("data-spectrum-bands", "32");
+            await expect(lasers).toHaveAttribute("data-audio-source", "spectrum");
+            await expect.poll(() => page.evaluate(() => window.__analyserReads))
+                .toBeGreaterThan(0);
+            await expect(lasers).toHaveClass(/beat/);
+            await expect.poll(async () => Number(
+                await lasers.getAttribute("data-beat-count"))).toBeGreaterThan(1);
+            const beatTelemetry = await page.evaluate(() => ({
+                beats: Number(document.querySelector("#stage-lasers").dataset.beatCount) - 1,
+                kicks: window.__laserKicks
+            }));
+            expect(beatTelemetry.beats).toBeGreaterThan(0);
+            expect(beatTelemetry.beats).toBeLessThanOrEqual(beatTelemetry.kicks);
+            await expect(lasers).toHaveAttribute("data-laser-mode", "beat");
+            await expect.poll(async () => Number(
+                await lasers.getAttribute("data-bpm"))).toBeGreaterThanOrEqual(80);
+            expect(Number(await lasers.getAttribute("data-bpm"))).toBeLessThanOrEqual(160);
+            expect(pageErrors).toEqual([]);
+            await expect.poll(() => laserHasPixels(lasers)).toBe(true);
+            const renderSurface = await lasers.evaluate((canvas) => ({
+                pixels: canvas.width * canvas.height,
+                budget: canvas.dataset.gpuTier === "software" ? 180000 : 600000,
+                filter: getComputedStyle(canvas).filter,
+                blend: getComputedStyle(canvas).mixBlendMode,
+                zIndex: getComputedStyle(canvas).zIndex
+            }));
+            expect(renderSurface.pixels).toBeLessThanOrEqual(renderSurface.budget * 1.01);
+            expect(renderSurface.filter).toBe("none");
+            expect(renderSurface.blend).toBe("normal");
+            expect(renderSurface.zIndex).toBe("1");
+            const geometry = await page.evaluate(() => {
+                const rect = (selector) =>
+                    document.querySelector(selector).getBoundingClientRect().toJSON();
+                return { stage: rect("#stage"), lasers: rect("#stage-lasers") };
+            });
+            expect(geometry.lasers.x).toBeGreaterThanOrEqual(geometry.stage.x);
+            expect(geometry.lasers.y).toBeGreaterThanOrEqual(geometry.stage.y);
+            expect(geometry.lasers.x + geometry.lasers.width)
+                .toBeLessThanOrEqual(geometry.stage.x + geometry.stage.width);
+            expect(geometry.lasers.y + geometry.lasers.height)
+                .toBeLessThanOrEqual(geometry.stage.y + geometry.stage.height);
+            expect(geometry.lasers.width).toBeGreaterThan(geometry.stage.width - 3);
+            expect(geometry.lasers.height).toBeGreaterThan(geometry.stage.height - 3);
+
+            await page.locator("#spectrum-enabled").check();
+            await expect(spectrum).toHaveClass(/active/);
+            expect(await page.evaluate(() => window.__audioContexts)).toBe(1);
+
+            const releaseStartedWhileMounted = await page.locator("label.seg",
+                { hasText: "StreamingSoundtracks" }).evaluate((label) => {
+                    label.click();
+                    return document.querySelector("#stage-lasers").classList.contains("active");
+                });
+            // The outgoing plugin stays mounted while its 400ms envelope releases.
+            expect(releaseStartedWhileMounted).toBe(true);
+            await audio.dispatchEvent("playing");
+            await expect(spectrum).toHaveClass(/active/);
+            await expect(lasers).not.toHaveClass(/active/);
+            await expect(page.locator("#stage")).not.toHaveClass(/laser-scene/);
+            await expect.poll(() => laserHasPixels(lasers)).toBe(false);
+
+            await page.emulateMedia({ reducedMotion: "reduce" });
+            await expect(lasers).toHaveCSS("display", "none");
+            await page.locator("#audio-toggle").click();
+        });
+    test("shows an ambient 80s laser fallback when Web Audio is unavailable",
+        async ({ page }) => {
+            await page.addInitScript(() => {
+                Object.defineProperty(window, "AudioContext",
+                    { configurable: true, value: undefined });
+                Object.defineProperty(window, "webkitAudioContext",
+                    { configurable: true, value: undefined });
+                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await page.route("https://1980s.fm/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: "Ambient Laser Test", Track: "", Artist: "24seven.fm",
+                    CoverLink: "", Length: 0, PlayStart: "2026-08-13T12:00:00Z",
+                    SystemTime: "2026-08-13T12:00:00Z",
+                } });
+            });
+            await page.route("https://1980s.fm/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.goto("/player.html?station=1980s", { waitUntil: "domcontentloaded" });
+
+            const audio = page.locator("#audio");
+            const lasers = page.locator("#stage-lasers");
+            await page.locator("#audio-toggle").click();
+            await audio.dispatchEvent("playing");
+            await expect(lasers).toHaveClass(/active/);
+            await expect(lasers).toHaveAttribute("data-renderer", "webgl");
+            await expect(lasers).toHaveAttribute("data-audio-source", "ambient");
+            await expect(lasers).toHaveAttribute("data-laser-mode", "calm");
+            await expect(lasers).toHaveAttribute("data-bpm", "");
+            await expect.poll(() => laserHasPixels(lasers)).toBe(true);
+            expect(await page.evaluate(() => typeof window.AudioContext)).toBe("undefined");
+            await page.locator("#audio-toggle").click();
+            await expect(lasers).not.toHaveClass(/active/);
         });
     test("shows a grayscale station image without treating a backend error as a station ID", async ({ page }) => {
         let logoRequested = false, pollRequests = 0;
@@ -2616,6 +2798,23 @@ test.describe("the deployed player page", () => {
         await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+    }
+
+    async function laserHasPixels(lasers) {
+        return lasers.evaluate((canvas) => {
+            if (canvas.dataset.renderer === "webgl") {
+                const gl = canvas.getContext("webgl");
+                if (!gl || !Number(canvas.dataset.frame)) return false;
+                const sampleHeight = Math.min(48, canvas.height);
+                const pixels = new Uint8Array(canvas.width * sampleHeight * 4);
+                gl.readPixels(0, 0, canvas.width, sampleHeight,
+                    gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+                return pixels.some(Boolean);
+            }
+            const context = canvas.getContext("2d");
+            return context && context.getImageData(0, 0, canvas.width, canvas.height)
+                .data.some(Boolean);
+        });
     }
 
     async function mockLayoutTestFeed(page) {

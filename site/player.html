@@ -86,6 +86,7 @@
             <img class="backdrop" id="backdropB" alt="" aria-hidden="true">
             <img class="backdrop backdrop-movie" id="movieA" alt="" aria-hidden="true">
             <img class="backdrop backdrop-movie" id="movieB" alt="" aria-hidden="true">
+            <canvas class="stage-lasers" id="stage-lasers" aria-hidden="true"></canvas>
             <div class="coverbox" id="coverbox">
                 <div class="card"><!-- one rigid card: in the flip effects the two
                      buffers are its front and back FACES and the card turns over;
@@ -160,7 +161,16 @@
             </fieldset>
 
             <fieldset id="spectrum-settings">
-                <legend>Spectrum analyzer</legend>
+                <legend>Visualizations</legend>
+                <div class="row">
+                    <label><input type="checkbox" id="laser-enabled"
+                                  data-option="laserEnabled"> 80s laser show</label>
+                </div>
+                <p class="note">On 1980s.FM, a WebGL neon dance floor, a 32-band spectrum
+                wall, laser snaps and diffraction bursts follow stable kicks and their
+                estimated BPM. Beat-light songs ease into a quieter floor with slowly
+                circling laser patterns. Browsers without Web Audio use that calm mode too.
+                Motion is disabled when your system requests reduced motion.</p>
                 <div class="row">
                     <label><input type="checkbox" id="spectrum-enabled"
                                   data-option="spectrumEnabled"> Show analyzer</label>

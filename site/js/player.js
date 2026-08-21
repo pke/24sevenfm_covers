@@ -137,6 +137,7 @@ var OPTION_DEFS = {
     borderRadius: { default: 45, coerce: intOption(0, 500) },
     volume: { default: 0.8, coerce: floatOption(0.8, 0, 1), event: "input",
         effect: applyVolume },
+    laserEnabled: { default: 1, coerce: boolOption, effect: applyLaserEnabled },
     spectrumEnabled: { default: 0, coerce: boolOption, effect: applySpectrumEnabled },
     spectrumBars: { default: 24, coerce: intOption(8, 64), event: "input",
         format: String, effect: resetSpectrumBars },
@@ -1213,7 +1214,7 @@ if (window.ResizeObserver) {
 
 // --- audio -------------------------------------------------------------------
 var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio");
-var spectrumEl = $("stage-spectrum");
+var spectrumEl = $("stage-spectrum"), laserEl = $("stage-lasers");
 var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
 var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
 var audioRetryAttempt = 0, audioLastProgressTime = 0;
@@ -1229,7 +1230,7 @@ function prepareSpectrum() {
     return audioSpectrumController ? audioSpectrumController.prepare() : false;
 }
 function clearSpectrum() {
-    if (audioSpectrumController) audioSpectrumController.clear();
+    if (audioSpectrumController) audioSpectrumController.clear("spectrum");
 }
 function audioUrl() { return "https://" + station().host + "/live"; }
 function clearAudioTimers() {
@@ -1347,11 +1348,12 @@ function loadAudioSpectrumModule() {
     if (audioSpectrumController) return Promise.resolve(audioSpectrumController);
     if (!audioSpectrumModulePromise) {
         audioSpectrumModulePromise = import(audioSpectrumModuleUrl()).then(function (module) {
-            if (typeof module.createAudioSpectrumController !== "function")
-                throw new Error("Invalid audio spectrum module");
-            audioSpectrumController = module.createAudioSpectrumController({
+            if (typeof module.createAudioVisualizationController !== "function")
+                throw new Error("Invalid audio visualization module");
+            audioSpectrumController = module.createAudioVisualizationController({
                 audioElement: audioEl,
                 spectrumElement: spectrumEl,
+                laserElement: laserEl,
                 infoElement: document.querySelector(".info"),
                 getOptions: () => opts,
                 isAudioWanted: () => audioWanted,
@@ -1362,7 +1364,9 @@ function loadAudioSpectrumModule() {
                     || typeof audioSpectrumController.prepare !== "function"
                     || typeof audioSpectrumController.sync !== "function")
                 throw new Error("Invalid audio spectrum controller");
-            if (opts.spectrumEnabled && audioWanted) audioSpectrumController.prepare();
+            // The shared analyser may be needed by any plugin (the 80s laser show is
+            // on by default), not only by the compact spectrum plugin.
+            if (audioWanted) audioSpectrumController.prepare();
             audioSpectrumController.sync();
             return audioSpectrumController;
         }).catch(function (error) {
@@ -1841,8 +1845,12 @@ function applySpectrumEnabled() {
     if (opts.spectrumEnabled && audioWanted) prepareSpectrum();
     syncSpectrum();
 }
+function applyLaserEnabled() {
+    if (opts.laserEnabled && audioWanted) prepareSpectrum();
+    syncSpectrum();
+}
 function resetSpectrumBars() {
-    if (audioSpectrumController) audioSpectrumController.resetBars();
+    if (audioSpectrumController) audioSpectrumController.reset("spectrum");
 }
 bindOptionControls();
 restoreFanartKeyCheck();
