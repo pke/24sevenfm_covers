@@ -3,6 +3,11 @@
 // pass" - and can be overridden with PLAYER_URL for a local build.
 const { defineConfig } = require("@playwright/test");
 const localMode = process.env.PLAYER_LOCAL === "1";
+if (localMode && (!process.env.PLAYER_URL || !process.env.PLAYER_ATTACKER_URL))
+    throw new Error("Local tests must run through run_local.ps1 with isolated player and attacker origins.");
+if (localMode && new URL(process.env.PLAYER_URL).origin
+        === new URL(process.env.PLAYER_ATTACKER_URL).origin)
+    throw new Error("The local player and attacker fixtures must use different origins.");
 
 module.exports = defineConfig({
     timeout: 120000,   // the station server is slow and drops connections under load

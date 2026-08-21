@@ -16,12 +16,14 @@ on:
     paths:
       - 'site/**'
       - 'installer/render_site.ps1'
+      - 'installer/render_site.test.ps1'
       - '.github/workflows/deploy-site.yml'
   workflow_dispatch:
   pull_request:
     paths:
       - 'site/**'
       - 'installer/render_site.ps1'
+      - 'installer/render_site.test.ps1'
       - '.github/workflows/deploy-site.yml'
 
 permissions:
@@ -46,38 +48,14 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Render site test fixture
+      - name: Verify isolated test fixture
         shell: pwsh
         run: |
-          $assets = @(
-            @{ name = 'winamp_24sevenfm_covers-1.2.3-20260821.exe'; size = 1024 }
-            @{ name = 'winamp_24sevenfm_covers-1.2.3-20260821.zip'; size = 1024 }
-            @{ name = 'foobar_24sevenfm_covers-1.2.3-20260821.fb2k-component'; size = 1024 }
-            @{ name = 'foobar_24sevenfm_covers-1.2.3-20260821.exe'; size = 1024 }
-            @{ name = 'foobar_24sevenfm_covers-1.2.3-20260821.zip'; size = 1024 }
-            @{ name = 'viewer_24sevenfm_covers-1.2.3-20260821.exe'; size = 1024 }
-            @{ name = 'viewer_24sevenfm_covers-1.2.3-20260821.zip'; size = 1024 }
-          )
-          ../../installer/render_site.ps1 -Assets ($assets | ConvertTo-Json -Compress)
+          ../../installer/render_site.test.ps1
+          ./run_local.test.ps1
       - name: Run deterministic player tests
-        shell: bash
-        run: |
-          python3 -m http.server 4173 --directory ../../www > "$RUNNER_TEMP/player-http.log" 2>&1 &
-          server=$!
-          trap 'kill "$server" 2>/dev/null || true' EXIT
-
-          for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:4173/player.html >/dev/null; then
-              break
-            fi
-            if [ "$attempt" -eq 30 ]; then
-              cat "$RUNNER_TEMP/player-http.log"
-              exit 1
-            fi
-            sleep 1
-          done
-
-          PLAYER_URL=http://127.0.0.1:4173 PLAYER_LOCAL=1 npx playwright test --retries=0
+        shell: pwsh
+        run: ./run_local.ps1
 
   deploy:
     needs: test
