@@ -1233,6 +1233,7 @@ if (window.ResizeObserver) {
 // --- audio -------------------------------------------------------------------
 var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio");
 var spectrumEl = $("stage-spectrum"), laserEl = $("stage-lasers");
+var laserFrontEl = $("stage-lasers-front");
 var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
 var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
 var audioRetryAttempt = 0, audioLastProgressTime = 0;
@@ -1372,6 +1373,7 @@ function loadAudioSpectrumModule() {
                 audioElement: audioEl,
                 spectrumElement: spectrumEl,
                 laserElement: laserEl,
+                laserForegroundElement: laserFrontEl,
                 infoElement: document.querySelector(".info"),
                 getOptions: () => opts,
                 isAudioWanted: () => audioWanted,
