@@ -30,9 +30,15 @@ $assets = @(
 
 try {
     & (Join-Path $PSScriptRoot 'render_site.ps1') `
-        -Assets ($assets | ConvertTo-Json -Compress) -OutputDirectory $testOutput
+        -Assets ($assets | ConvertTo-Json -Compress) -OutputDirectory $testOutput `
+        -ApiOrigin 'http://localhost:3000'
     Assert-Test (Test-Path -LiteralPath (Join-Path $testOutput 'player.html') -PathType Leaf) `
         'the isolated output should contain player.html'
+    $renderedPlayer = [IO.File]::ReadAllText((Join-Path $testOutput 'player.html'))
+    Assert-Test ($renderedPlayer.Contains('http://localhost:3000/api/backdrop')) `
+        'the renderer should write the local API origin directly into player.html'
+    Assert-Test (-not $renderedPlayer.Contains('https://24covers-api.vercel.app')) `
+        'the local render should not expose an intermediate production API origin'
 
     Assert-Test ((Test-Path -LiteralPath $publishedPlayer -PathType Leaf) -eq $publishedPlayerExisted) `
         'an isolated render should not create or remove www\player.html'

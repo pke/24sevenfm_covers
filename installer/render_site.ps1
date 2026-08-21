@@ -25,7 +25,8 @@ param(
     [string]$ReleaseTag = '',   # '' = local preview: links point at the downloads\ folder
     [string]$SiteUrl    = '',   # absolute site base URL (og:image); empty for local preview
     [string]$Repo       = 'pke/24sevenfm_covers',
-    [string]$OutputDirectory = '' # empty = the publishable www\ tree
+    [string]$OutputDirectory = '', # empty = the publishable www\ tree
+    [string]$ApiOrigin = '' # local preview only; empty keeps the production API origin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,6 +81,19 @@ if ($ReleaseTag -and -not $SiteUrl) {
 # turn release metadata into markup when {{RELEASE_TAG}} is written into each page footer.
 if ($ReleaseTag -and $ReleaseTag -notmatch '^v\d{4}\.\d{2}\.\d{2}-\d+$') {
     throw "render_site: invalid -ReleaseTag '$ReleaseTag'; expected vYYYY.MM.DD-<run>."
+}
+
+$normalizedApiOrigin = ''
+if ($ApiOrigin) {
+    $apiUri = $null
+    if (-not [uri]::TryCreate($ApiOrigin, [UriKind]::Absolute, [ref]$apiUri) -or
+            $apiUri.Scheme -notin @('http', 'https') -or $apiUri.UserInfo) {
+        throw 'render_site: ApiOrigin must be an absolute HTTP(S) origin without credentials or a path.'
+    }
+    $normalizedApiOrigin = $apiUri.GetLeftPart([UriPartial]::Authority)
+    if ($normalizedApiOrigin -ne $ApiOrigin.TrimEnd('/')) {
+        throw 'render_site: ApiOrigin must be an absolute HTTP(S) origin without credentials or a path.'
+    }
 }
 
 $releaseTagUrl = if ($ReleaseTag) { [uri]::EscapeDataString($ReleaseTag) } else { '' }
@@ -185,6 +199,9 @@ foreach ($page in $publish) {
     $text = [System.IO.File]::ReadAllText($page.FullName, $utf8)
     $text = Expand-Partials $text $page.Name
     foreach ($t in $tokens.Keys) { $text = $text.Replace($t, [string]$tokens[$t]) }
+    if ($normalizedApiOrigin) {
+        $text = $text.Replace('https://24covers-api.vercel.app', $normalizedApiOrigin)
+    }
     if ($text -match '\{\{[A-Z_]+\}\}') { throw "Unsubstituted token in site\$($page.Name): $($Matches[0])" }
     [System.IO.File]::WriteAllText((Join-Path $www $page.Name), $text, $utf8)
     Write-Host "  $(Join-Path $outputLabel $page.Name) rendered ($stamp)"
