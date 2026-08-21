@@ -1602,6 +1602,76 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(12002);
         await expect(page.locator("#status")).toHaveText(warning);
     });
+    test("offers an explanatory cache-bypassing retry after a backdrop outage", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/retry.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/retry.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w1280/retry.jpg";
+        let resolverRequests = 0;
+        let releaseRetry;
+        const retryMayFinish = new Promise((resolve) => { releaseRetry = resolve; });
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"] }));
+            const nativeFetch = window.fetch;
+            window.backdropFetchCacheModes = [];
+            window.fetch = function (input, init) {
+                if (new URL(typeof input === "string" ? input : input.url, location.href)
+                        .pathname === "/api/backdrop") {
+                    window.backdropFetchCacheModes.push(init && init.cache || "default");
+                }
+                return nativeFetch.apply(this, arguments);
+            };
+        });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Retry Movie", Track: "Retry Cue", Artist: "Retry Composer",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, async (route) => {
+            resolverRequests++;
+            if (resolverRequests === 1)
+                return route.fulfill({ status: 503, json: { error: "temporarily_unavailable" } });
+            await retryMayFinish;
+            return route.fulfill({ json: {
+                movie: { id: 42, title: "Retry Movie" },
+                backdrop, source: "tmdb", tint: [40, 50, 60],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const error = page.locator("#backdrop-error");
+        const retry = page.locator("#backdrop-retry");
+        await expect(error).toBeVisible();
+        await expect(error).toContainText("Backdrop artwork couldn’t be loaded.");
+        await expect(retry).toHaveText("Retry");
+        await expect(retry).toBeEnabled();
+        const transitionProperties = await error.evaluate((element) =>
+            getComputedStyle(element).transitionProperty.split(", "));
+        expect(transitionProperties).toEqual(expect.arrayContaining(["opacity", "max-height"]));
+
+        await retry.click();
+        await expect(error).toContainText("Loading backdrop artwork…");
+        await expect(retry).toBeDisabled();
+        expect(await page.evaluate(() => window.backdropFetchCacheModes))
+            .toEqual(["default", "reload"]);
+
+        releaseRetry();
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", backdrop);
+        await expect(error).toBeHidden();
+        await expect(error).toContainText("Loading backdrop artwork… Retry");
+        await expect(page.locator("#status")).toHaveText("");
+        expect(resolverRequests).toBe(2);
+    });
     test("rejects a non-string persisted fanart personal key", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/invalid-key.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/invalid-key.svg";
