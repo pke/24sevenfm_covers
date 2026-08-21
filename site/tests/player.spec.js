@@ -444,6 +444,22 @@ test.describe("the deployed player page", () => {
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).station)).toBe("death");
         await expect(page.locator('input[name="station"][value="death"]')).toBeChecked();
     });
+    test("binds the fanart personal key through the option schema", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ fanartKey: "initial-key" })));
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const key = page.locator("#fanart-key");
+        await expect(key).toHaveAttribute("data-option", "fanartKey");
+        await expect(key).toHaveValue("initial-key");
+        await key.fill("  updated-key  ");
+        await key.dispatchEvent("change");
+        await expect(key).toHaveValue("updated-key");
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKey))
+            .toBe("updated-key");
+    });
     test("renders a real spectrum while audio plays and respects reduced motion",
         async ({ page }) => {
             await page.addInitScript(() => {
