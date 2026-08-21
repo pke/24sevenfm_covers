@@ -292,20 +292,64 @@ function preloadImage(url, onLoad, onError) {
 // both backdrop layers - a bare src swap would hard-cut, and backgrounds deserve the
 // same crossfade the cover gets.
 function makeLayer(a, b, channel) {
-    var front = null;
+    var front = null, pendingLoad = null;
+
+    function loadedElement(url) {
+        return [a, b].find(element => element.src === url
+            && element.complete && element.naturalWidth > 0) || null;
+    }
+
+    function settlePending(record, element, removeSource) {
+        if (record.settled) return;
+        record.settled = true;
+        clearTimeout(record.kill);
+        record.element.onload = record.element.onerror = null;
+        if (removeSource) record.element.removeAttribute("src");
+        if (pendingLoad === record) pendingLoad = null;
+        record.resolve(element);
+    }
+
+    function loadIntoBack(url) {
+        const loaded = loadedElement(url);
+        if (loaded) return Promise.resolve(loaded);
+        if (pendingLoad && pendingLoad.url === url) return pendingLoad.promise;
+        if (pendingLoad) settlePending(pendingLoad, null, true);
+
+        const back = front === a ? b : a;
+        const record = {
+            element: back,
+            url,
+            settled: false,
+            kill: null,
+            resolve: null,
+            promise: null
+        };
+        record.promise = new Promise(resolve => { record.resolve = resolve; });
+        pendingLoad = record;
+        record.kill = setTimeout(() => settlePending(record, null, true), IMAGE_TIMEOUT);
+        back.onload = () => settlePending(record, back, false);
+        back.onerror = () => settlePending(record, null, true);
+        back.src = url;
+        // A memory-cache hit may complete synchronously without a later load event.
+        if (back.complete && back.naturalWidth > 0)
+            queueMicrotask(() => settlePending(record, back, false));
+        return record.promise;
+    }
+
     return {
+        prepare: function (url) { return loadIntoBack(url); },
         show: function (url, generation, onShown, onError) {
             if (front && front.src === url && front.classList.contains("show")) return;
-            var back = (front === a) ? b : a;
-            preloadImage(url, function () {
+            loadIntoBack(url).then(function (back) {
                 if (!renderIsCurrent(channel, generation)) return;
-                back.src = url;
+                if (!back) {
+                    if (onError) onError();
+                    return;
+                }
                 back.classList.add("show");
-                if (front) front.classList.remove("show");
+                if (front && front !== back) front.classList.remove("show");
                 front = back;
                 if (onShown) onShown();
-            }, function () {
-                if (renderIsCurrent(channel, generation) && onError) onError();
             });
         },
         hide: function () {
@@ -483,9 +527,9 @@ function clearStatus(source) { setStatus("", source); }
 // Prefetch the NEXT track from the station's queue (action=GetQueue, same CORS
 // grant as the now-playing feed; [0] is up next): warm its sized cover into the
 // browser cache, and - when screen backdrops are on and this station resolves them -
-// resolve its movie/TV/game art into the per-title cache and warm that image too. The
-// track change then lands with zero network waits: showCover's preload and the
-// backdrop lookup all hit caches. Best-effort by design: one attempt per poll, and
+// resolve its movie/TV/game art into the per-title cache and load it into the retained
+// hidden movie layer. The track change can then reveal that exact decoded image rather
+// than trusting the provider's browser-cache headers. Best-effort by design: one attempt per poll, and
 // any failure just means the switch loads the way it always did. A child controller
 // keeps the request's own timeout alive after poll() clears its timer, while still
 // inheriting the poll abort so a station switch cancels stale queue work immediately.
@@ -511,7 +555,7 @@ async function prefetchNext(ctl, generation) {
             const art = await movieArtFor(htmlDecode(next.Album), htmlDecode(next.Track),
                                           htmlDecode(next.Artist), generation, prefetchCtl.signal);
             if (art && art.url && renderIsCurrent("backdrop", generation))
-                new Image().src = art.url;
+                movieLayer.prepare(art.url);
         }
     } catch (e) { /* prefetch is best-effort */ }
     finally {
