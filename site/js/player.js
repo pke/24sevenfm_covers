@@ -7,7 +7,8 @@
 // https://<host>/live - the same endpoint the station's own web player uses. So
 // Station playback still talks DIRECTLY to the selected station. The optional movie
 // backdrop feature uses this project's small resolver endpoint, as disclosed in the
-// privacy policy. The browser never calls the metadata providers directly.
+// privacy policy. Metadata matching stays behind that resolver; only the explicit
+// personal-key check calls fanart.tv directly.
 //
 // Without JavaScript none of this runs; the <noscript> block in player.html still
 // offers the plain <audio> streams, which need no script at all.
@@ -162,6 +163,7 @@ var BACKDROP_API_URL = (backdropApiMeta && backdropApiMeta.getAttribute("content
 var tintApiMeta = document.querySelector('meta[name="tint-api"]');
 var TINT_API_URL = (tintApiMeta && tintApiMeta.getAttribute("content")
     || "/api/tint").trim();
+const FANART_KEY_CHECK_URL = "https://webservice.fanart.tv/v3/movies/27205";
 // Local visual QA can force the retry state even while the real station is healthy.
 // The hostname guard makes the switch inert on every deployed origin.
 var simulateStationFailure = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
@@ -1434,6 +1436,106 @@ function bindOptionControls() {
     root.addEventListener("input", handleOptionControl);
     root.addEventListener("change", handleOptionControl);
 }
+
+// fanart.tv distinguishes the project's api_key from a listener's personal
+// client_key. Check the latter against one stable movie directly, without involving
+// this site's resolver or changing normal artwork matching.
+const fanartKeyElement = $("fanart-key");
+const fanartKeySettingElement = fanartKeyElement.closest(".provider-key-setting");
+const fanartKeyCheckElement = $("fanart-key-check");
+const fanartKeyCheckLabelElement = $("fanart-key-check-label");
+const fanartKeyStatusElement = $("fanart-key-status");
+let fanartKeyCheckController = null;
+let fanartKeyCheckGeneration = 0;
+let fanartKeyLabelTimer = null;
+let fanartKeyStatusTimer = null;
+
+function setFanartKeyCheckButton(state) {
+    const labels = { idle: "Check", checking: "…", success: "✓" };
+    const accessibleNames = {
+        idle: "Check fanart.tv personal key",
+        checking: "Checking fanart.tv personal key",
+        success: "fanart.tv personal key is valid"
+    };
+    fanartKeyCheckElement.disabled = state !== "idle";
+    fanartKeyCheckElement.classList.toggle("success", state === "success");
+    fanartKeyCheckElement.setAttribute("aria-label", accessibleNames[state]);
+    clearTimeout(fanartKeyLabelTimer);
+    fanartKeyCheckLabelElement.classList.add("changing");
+    fanartKeyLabelTimer = setTimeout(() => {
+        fanartKeyCheckLabelElement.textContent = labels[state];
+        fanartKeyCheckLabelElement.classList.remove("changing");
+    }, reducedMotion.matches ? 0 : 150);
+}
+
+function hideFanartKeyStatus(nextText = "") {
+    fanartKeyStatusElement.classList.remove("show");
+    clearTimeout(fanartKeyStatusTimer);
+    fanartKeyStatusTimer = setTimeout(() => {
+        fanartKeyStatusElement.textContent = nextText;
+    }, reducedMotion.matches ? 0 : 200);
+}
+
+function showFanartKeyError(message) {
+    clearTimeout(fanartKeyStatusTimer);
+    fanartKeyStatusElement.textContent = message;
+    requestAnimationFrame(() => fanartKeyStatusElement.classList.add("show"));
+}
+
+function resetFanartKeyCheck() {
+    fanartKeyCheckGeneration++;
+    if (fanartKeyCheckController) fanartKeyCheckController.abort();
+    fanartKeyCheckController = null;
+    const hasKey = fanartKeyElement.value.trim() !== "";
+    fanartKeySettingElement.classList.toggle("has-key", hasKey);
+    setFanartKeyCheckButton("idle");
+    hideFanartKeyStatus();
+}
+
+async function checkFanartKey() {
+    const personalKey = fanartKeyElement.value.trim();
+    if (!personalKey) return;
+    if (fanartKeyCheckController) fanartKeyCheckController.abort();
+    const controller = new AbortController();
+    fanartKeyCheckController = controller;
+    const generation = ++fanartKeyCheckGeneration;
+    setFanartKeyCheckButton("checking");
+    hideFanartKeyStatus();
+
+    const url = new URL(FANART_KEY_CHECK_URL);
+    url.searchParams.set("client_key", personalKey);
+    try {
+        const response = await fetch(url, {
+            cache: "no-store",
+            credentials: "omit",
+            referrerPolicy: "no-referrer",
+            signal: controller.signal
+        });
+        if (generation !== fanartKeyCheckGeneration) return;
+        if (response.status === 401 || response.status === 403) {
+            setFanartKeyCheckButton("idle");
+            showFanartKeyError("Personal key not accepted.");
+            return;
+        }
+        if (!response.ok) throw new Error("fanart.tv returned " + response.status);
+        const body = await response.json();
+        if (generation !== fanartKeyCheckGeneration) return;
+        if (!body || String(body.tmdb_id) !== "27205")
+            throw new Error("fanart.tv returned an unexpected response");
+        fanartKeyCheckController = null;
+        setFanartKeyCheckButton("success");
+        hideFanartKeyStatus("Personal key accepted.");
+    } catch (error) {
+        if ((error && error.name === "AbortError")
+                || generation !== fanartKeyCheckGeneration) return;
+        fanartKeyCheckController = null;
+        setFanartKeyCheckButton("idle");
+        showFanartKeyError("Couldn’t check the personal key right now.");
+    }
+}
+
+fanartKeyElement.addEventListener("input", resetFanartKeyCheck);
+fanartKeyCheckElement.addEventListener("click", checkFanartKey);
 // Station picker is built from the table so it can never drift from STATIONS.
 (function buildStations() {
     var box = $("stations");
@@ -1486,6 +1588,7 @@ function resetSpectrumBars() {
     if (audioSpectrumController) audioSpectrumController.resetBars();
 }
 bindOptionControls();
+resetFanartKeyCheck();
 syncSpectrumSettingControls();
 
 // --- provider priority: pointer + keyboard ------------------------------------

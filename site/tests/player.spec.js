@@ -39,6 +39,7 @@ test.describe("the deployed player page", () => {
         expect(policy).toContain("script-src 'self' 'sha256-");
         expect(policy).toContain("connect-src 'self'");
         expect(policy).toContain("https://24covers-api.vercel.app");
+        expect(policy).toContain("https://webservice.fanart.tv");
         await expect(page.locator('meta[name="backdrop-api"]')).toHaveAttribute(
             "content", "https://24covers-api.vercel.app/api/backdrop?resolver_version=1");
         await expect(page.locator('meta[name="tint-api"]')).toHaveAttribute(
@@ -77,6 +78,8 @@ test.describe("the deployed player page", () => {
         await page.goto("/privacy.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("main")).toContainText(
             "information about the current and next queued title");
+        await expect(page.locator("main")).toContainText(
+            "If you press Check, the browser sends it directly to fanart.tv once");
         await expect(page.locator("main")).not.toContainText("Album and Track fields");
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
@@ -533,6 +536,132 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKey))
             .toBe("updated-key");
+    });
+    test("offers personal-key help below an empty fanart field", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const provider = page.locator('.provider[data-provider="fanart"]');
+        const key = provider.locator("#fanart-key");
+        const help = provider.locator("#fanart-key-help");
+        await expect(help).toBeVisible();
+        await expect(help.getByRole("link", { name: "Why?", exact: true }))
+            .toHaveAttribute("href", "https://fanart.tv/personal-api-keys/");
+        await expect(help.getByRole("link", { name: "Get one", exact: true }))
+            .toHaveAttribute("href", "https://fanart.tv/get-an-api-key/");
+
+        const rows = await provider.evaluate((element) => {
+            const label = element.querySelector("label").getBoundingClientRect();
+            const input = element.querySelector("#fanart-key").getBoundingClientRect();
+            const links = element.querySelector("#fanart-key-help").getBoundingClientRect();
+            return { labelBottom: label.bottom, inputTop: input.top,
+                inputBottom: input.bottom, linksTop: links.top };
+        });
+        expect(rows.inputTop).toBeGreaterThanOrEqual(rows.labelBottom);
+        expect(rows.linksTop).toBeGreaterThanOrEqual(rows.inputBottom);
+
+        await key.fill("personal-key");
+        await expect(help).toBeHidden();
+        await key.fill("");
+        await expect(help).toBeVisible();
+    });
+    test("checks a fanart personal key directly as a client key", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        await page.addInitScript(() => {
+            const nativeFetch = window.fetch;
+            window.fetch = function (input, init) {
+                if (String(input).startsWith("https://webservice.fanart.tv/")) {
+                    window.fanartKeyCheckFetchOptions = {
+                        cache: init.cache,
+                        credentials: init.credentials,
+                        referrerPolicy: init.referrerPolicy
+                    };
+                }
+                return nativeFetch.call(this, input, init);
+            };
+        });
+        let requestUrl = "";
+        await page.route("https://webservice.fanart.tv/v3/movies/27205?*", async (route) => {
+            requestUrl = route.request().url();
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            await route.fulfill({ json: { name: "Inception", tmdb_id: "27205",
+                moviebackground: [] } });
+        });
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const key = page.locator("#fanart-key");
+        const check = page.locator("#fanart-key-check");
+        const status = page.locator("#fanart-key-status");
+        await expect(check).toBeHidden();
+
+        await key.fill("personal-client-key");
+        await expect(check).toBeVisible();
+        await expect(check).toHaveText("Check");
+        const transition = await check.evaluate((element) => ({
+            opacity: getComputedStyle(element).transitionProperty.includes("opacity"),
+            width: getComputedStyle(element).transitionProperty.includes("max-width")
+        }));
+        expect(transition).toEqual({ opacity: true, width: true });
+
+        await check.click();
+        await expect(check).toBeDisabled();
+        await expect(check).toHaveAccessibleName("Checking fanart.tv personal key");
+        await expect(check).toHaveText("…");
+        await expect(check).toHaveText("✓");
+        await expect(check).toHaveClass(/success/);
+        await expect(check).toHaveAccessibleName("fanart.tv personal key is valid");
+        await expect(status).toContainText("Personal key accepted.");
+
+        const url = new URL(requestUrl);
+        expect(url.searchParams.get("client_key")).toBe("personal-client-key");
+        expect(url.searchParams.has("api_key")).toBe(false);
+        expect(await page.evaluate(() => window.fanartKeyCheckFetchOptions)).toEqual({
+            cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer"
+        });
+
+        await key.fill("changed-client-key");
+        await expect(check).toHaveText("Check");
+        await expect(check).not.toHaveClass(/success/);
+    });
+    test("keeps the fanart key check retryable after an API error", async ({ page }) => {
+        await mockProviderTestFeed(page);
+        let requests = 0;
+        await page.route("https://webservice.fanart.tv/v3/movies/27205?*", async (route) => {
+            requests++;
+            if (requests === 1) {
+                return route.fulfill({ status: 401, json: { error: "Invalid client key" } });
+            }
+            if (requests === 3) return route.abort();
+            return route.fulfill({ json: { name: "Inception", tmdb_id: "27205" } });
+        });
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        const key = page.locator("#fanart-key");
+        const check = page.locator("#fanart-key-check");
+        const status = page.locator("#fanart-key-status");
+        await key.fill("invalid-client-key");
+        await check.click();
+        await expect(check).toBeEnabled();
+        await expect(check).toHaveText("Check");
+        await expect(status).toBeVisible();
+        await expect(status).toHaveText("Personal key not accepted.");
+        const transition = await status.evaluate((element) => ({
+            opacity: getComputedStyle(element).transitionProperty.includes("opacity"),
+            height: getComputedStyle(element).transitionProperty.includes("max-height")
+        }));
+        expect(transition).toEqual({ opacity: true, height: true });
+
+        await check.click();
+        await expect(check).toHaveText("✓");
+        await expect(status).toBeHidden();
+        expect(requests).toBe(2);
+
+        await key.fill("another-client-key");
+        await check.click();
+        await expect(status).toBeVisible();
+        await expect(status).toHaveText("Couldn’t check the personal key right now.");
+        await expect(check).toBeEnabled();
+        expect(requests).toBe(3);
     });
     test("renders a real spectrum while audio plays and respects reduced motion",
         async ({ page }) => {

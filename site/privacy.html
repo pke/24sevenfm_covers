@@ -58,7 +58,8 @@
                 under
                 <code>24sevenfm-covers.player</code> — both in local storage. They are not cookies,
                 and clearing this site’s data removes them. The personal key is sent to this site's
-                resolver and then to fanart.tv while resolving artwork; the project code does not
+                resolver and then to fanart.tv while resolving artwork. If you press Check, the
+                browser sends it directly to fanart.tv once to verify it; the project code does not
                 persist it.</p>
             </div>
             <div class="card">
@@ -83,7 +84,8 @@
                 <a href="https://www.steamgriddb.com/">SteamGridDB</a> for game matching, and a matched
                 movie or TV-series identifier to <a href="https://fanart.tv/">fanart.tv</a> when that
                 provider is enabled. Those providers see the resolver's metadata request rather than
-                your browser's IP. The browser does not call their metadata APIs directly; it does load
+                your browser's IP. During artwork matching, the browser does not call their metadata
+                APIs directly; only the explicit fanart.tv key check does so. The browser does load
                 the selected image from the provider's CDN, which necessarily receives your IP address
                 and ordinary request metadata. The resolver stores no listening
                 profile or database of requests; its responses may be cached for up to six months.
