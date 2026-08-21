@@ -57,6 +57,76 @@ test("resolves the live The Wings Of A Film album and track contract", async () 
     });
 });
 
+test("resolves The Dune Sketchbook through Hans Zimmer composer credits", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "The Dune Sketchbook");
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/person") {
+                assert.equal(parsed.searchParams.get("query"), "Hans Zimmer");
+                return response(200, { results: [{ id: 947, name: "Hans Zimmer" }] });
+            }
+            if (parsed.pathname === "/3/person/947/combined_credits") {
+                return response(200, { crew: [{
+                    id: 438631, media_type: "movie", title: "Dune",
+                    job: "Original Music Composer", backdrop_path: "/dune.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [214, 190, 155],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "The Dune Sketchbook", track: "House Atreides",
+        artist: "Hans Zimmer", providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 438631, title: "Dune", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/dune.jpg",
+        source: "tmdb",
+        tint: [214, 190, 155],
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi", "/3/search/person", "/3/person/947/combined_credits",
+    ]));
+});
+
+test("keeps an exact title match ahead of composer-credit fallback", async () => {
+    let combinedCreditRequests = 0;
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 329865, media_type: "movie", title: "Arrival", backdrop_path: "/arrival.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [{ id: 19099, name: "Jóhann Jóhannsson" }] });
+            }
+            if (parsed.pathname.includes("/combined_credits")) combinedCreditRequests++;
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [100, 110, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Arrival", artist: "Jóhann Jóhannsson", providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).media.title, "Arrival");
+    assert.equal(combinedCreditRequests, 0);
+});
+
 function response(status, body) {
     return {
         ok: status >= 200 && status < 300,

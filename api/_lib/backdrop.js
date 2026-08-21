@@ -328,6 +328,22 @@ async function searchTmdb(fetchImpl, query, env, wantedType) {
     return pickMediaMatch(results, searchTitle, wantedType);
 }
 
+async function searchTmdbPerson(fetchImpl, artist, env) {
+    const url = new URL("https://api.themoviedb.org/3/search/person");
+    url.searchParams.set("include_adult", "false");
+    url.searchParams.set("query", artist);
+    const body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
+    return pickExactPerson(body && body.results, artist);
+}
+
+async function composerCreditForAlbum(fetchImpl, person, album, env) {
+    if (!person) return null;
+    const url = new URL("https://api.themoviedb.org/3/person/"
+        + encodeURIComponent(person.id) + "/combined_credits");
+    const body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
+    return pickComposerCredit(body, album);
+}
+
 function steamGridDbRequest(env) {
     const key = String(env.STEAMGRIDDB_API_KEY || "").trim();
     if (!key) {
@@ -652,7 +668,8 @@ async function resolvedArtResponse(media, art, dependencies) {
     return { media, backdrop: art.url, source: art.source, tint };
 }
 
-async function resolveBackdrop(query, providers, clientKey, dependencies, requestHint = "auto") {
+async function resolveBackdrop(query, providers, clientKey, dependencies, requestHint = "auto",
+    artist = "") {
     const hint = configuredMediaHint(query, requestHint, dependencies.env);
     const wantsScreen = providers.some((provider) => provider === "fanart" || provider === "tmdb");
     const wantsGame = providers.includes("steamgriddb");
@@ -689,15 +706,37 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     let matchedWithoutArt = null;
     for (const category of categories) {
         if (category === "screen") {
+            // Start the exact person lookup beside the normal title lookup so the
+            // conservative fallback does not add another full provider timeout. Its
+            // result is consumed only when the title search has no exact match.
+            const personLookup = artist ? searchTmdbPerson(dependencies.fetchImpl, artist,
+                dependencies.env).then((person) => ({ person }), (error) => ({ error })) : null;
             let match;
+            let titleError = null;
             try {
                 match = await searchTmdb(dependencies.fetchImpl, query, dependencies.env,
                     hint === "movie" || hint === "tv" ? hint : undefined);
             } catch (error) {
-                errors.push(error);
+                titleError = error;
+            }
+            if ((!match || !match.exact) && personLookup) {
+                const personResult = await personLookup;
+                if (personResult.error) {
+                    errors.push(personResult.error);
+                } else if (personResult.person) {
+                    try {
+                        const credit = await composerCreditForAlbum(dependencies.fetchImpl,
+                            personResult.person, query, dependencies.env);
+                        if (credit) match = { media: credit, exact: true };
+                    } catch (error) {
+                        errors.push(error);
+                    }
+                }
+            }
+            if (!match || !match.media) {
+                if (titleError) errors.push(titleError);
                 continue;
             }
-            if (!match.media) continue;
             if (!match.exact) {
                 screenFallback = match.media;
                 continue;
