@@ -589,6 +589,18 @@ var currentAlbum = "", currentTrack = "", stationIdActive = false;
 
 var SERVER_ART_UNAVAILABLE = {};
 
+async function fetchResolverJson(url, signal) {
+    var response;
+    try { response = await fetch(url.href, signal ? { signal: signal } : undefined); }
+    catch (error) {
+        if (error && error.name === "AbortError") throw error;
+        throw SERVER_ART_UNAVAILABLE;
+    }
+    if (!response.ok) throw SERVER_ART_UNAVAILABLE;
+    try { return await response.json(); }
+    catch (error) { throw SERVER_ART_UNAVAILABLE; }
+}
+
 function enabledMovieProviders() {
     return opts.providerOrder.filter(id =>
         ART_PROVIDER_BY_ID[id] && opts.enabledProviders.indexOf(id) >= 0);
@@ -640,16 +652,7 @@ async function serverCoverTint(coverUrl, signal) {
         url.searchParams.set("url", coverUrl);
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
 
-    var response;
-    try { response = await fetch(url.href, signal ? { signal: signal } : undefined); }
-    catch (e) {
-        if (e && e.name === "AbortError") throw e;
-        throw SERVER_ART_UNAVAILABLE;
-    }
-    if (!response.ok) throw SERVER_ART_UNAVAILABLE;
-    var body;
-    try { body = await response.json(); }
-    catch (e) { throw SERVER_ART_UNAVAILABLE; }
+    var body = await fetchResolverJson(url, signal);
     var tint = body && validTint(body.tint);
     if (!tint) throw SERVER_ART_UNAVAILABLE;
     return tint;
@@ -705,16 +708,7 @@ async function serverMovieArt(album, track, providers, signal) {
             url.searchParams.set("client_key", opts.fanartKey);
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
 
-    var response;
-    try { response = await fetch(url.href, signal ? { signal: signal } : undefined); }
-    catch (e) {
-        if (e && e.name === "AbortError") throw e;
-        throw SERVER_ART_UNAVAILABLE;
-    }
-    if (!response.ok) throw SERVER_ART_UNAVAILABLE;
-    var body;
-    try { body = await response.json(); }
-    catch (e) { throw SERVER_ART_UNAVAILABLE; }
+    var body = await fetchResolverJson(url, signal);
     if (!body || !body.backdrop) return null;
     var resolved = trustedResolvedBackdrop(body.backdrop, body.source);
     if (!resolved) throw SERVER_ART_UNAVAILABLE;
