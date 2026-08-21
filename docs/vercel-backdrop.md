@@ -40,13 +40,20 @@ redeploy. Do not add the key to `site/js/player.js`, HTML, or a committed file.
 
 ## Media-type classification
 
-The station's now-playing JSON contains separate `Album` and `Track` strings but no
-movie/TV/game type. The player sends both raw fields to this resolver, which owns
-title normalization and infers a narrow `game`, `movie`, or `tv` hint when `Album`
-explicitly names that kind of soundtrack. For the known multi-film compilation
+The station's now-playing JSON contains separate `Album`, `Track`, and `Artist`
+strings but no movie/TV/game type. The player sends that title metadata to this
+resolver, which owns title matching and infers a narrow `game`, `movie`, or `tv` hint
+when `Album` explicitly names that kind of soundtrack. For the known multi-film compilation
 `The Wings Of A Film`, the resolver uses the movie-name prefix before the first colon
 in `Track`. Otherwise TMDB's matched result supplies `movie` versus `tv`, and
 SteamGridDB supplies `game`.
+
+When TMDB has no exact title match, the resolver may use `Artist` as a conservative
+composer fallback: it requires one exact TMDB person-name match, then considers only
+that person's `Original Music Composer` crew credits. A work is accepted only when
+its complete title occurs on word boundaries in `Album` and exactly one credit
+matches. Cast credits, other music jobs, partial words, short one-word titles, and
+ambiguous results remain misses.
 
 For an unmarked title, the resolver tries the enabled catalog category that appears
 first in the user's provider order. It accepts exact normalized SteamGridDB matches;
