@@ -418,6 +418,7 @@ function makeRatingSlot(slot) {
             slot.classList.add("show");
             slot.setAttribute("aria-hidden", "false");
             slot.setAttribute("aria-label", certification.accessibleLabel);
+            maybeBeginRatingTrackVisibility();
             return;
         }
 
@@ -441,6 +442,7 @@ function makeRatingSlot(slot) {
             slot.classList.add("show");
             slot.setAttribute("aria-hidden", "false");
             slot.setAttribute("aria-label", certification.accessibleLabel);
+            maybeBeginRatingTrackVisibility();
         };
         if (certification.logo) {
             preloadImage(certification.logo,
@@ -459,6 +461,28 @@ var ratingSlots = {
     US: makeRatingSlot($("rating-us")),
 };
 var currentCertifications = [];
+var ratingBadgesEl = $("rating-badges");
+var STAGE_IDLE_MS = 2000, RATING_TRACK_VISIBLE_MS = 10000;
+var ratingIntroTimer = null, ratingIntroPending = false;
+
+// A new track reserves an intro window, but its ten seconds start only when the
+// first selected rating is actually revealed. Resolver and SVG latency therefore
+// cannot consume the entire window before the listener has seen a badge.
+function prepareRatingTrackVisibility() {
+    clearTimeout(ratingIntroTimer);
+    ratingIntroPending = true;
+    ratingBadgesEl.classList.remove("track-intro");
+}
+
+function maybeBeginRatingTrackVisibility() {
+    if (!ratingIntroPending || !ratingBadgesEl.querySelector(".rating-slot.show")) return;
+    ratingIntroPending = false;
+    ratingBadgesEl.classList.add("track-intro");
+    ratingBadgesEl.setAttribute("aria-hidden", "false");
+    ratingIntroTimer = setTimeout(function () {
+        ratingBadgesEl.classList.remove("track-intro");
+    }, RATING_TRACK_VISIBLE_MS);
+}
 
 function renderRatingBadges(generation) {
     var byCountry = currentCertifications.reduce(function (ratings, certification) {
@@ -487,6 +511,9 @@ function syncRatingControls() {
 
 function applyRatingsEnabled() {
     syncRatingControls();
+    // Hiding is immediate state work (the CSS then performs the exit transition).
+    // Do not leave a stale badge up while a replacement resolver request settles.
+    renderRatingBadges(renderGenerations.backdrop);
     updateBackdrop();
 }
 
@@ -575,8 +602,11 @@ async function poll() {
         updateCoverTint(isStationId ? "" : tintCover);
         if (album !== currentAlbum || track !== currentTrack || artist !== currentArtist
                 || isStationId !== stationIdActive) {
+            const trackChanged = album !== currentAlbum || track !== currentTrack
+                || artist !== currentArtist;
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
+            if (trackChanged) prepareRatingTrackVisibility();
             updateBackdrop();
         }
         let title = displayAlbum;
@@ -1631,7 +1661,8 @@ stage.addEventListener("pointerdown", function (e) {
 
 // In fullscreen the chrome (▶/⏸, ⛶, ⋯, and the cursor) fades out after 2s without pointer
 // movement and comes back on the next move - :hover can't express "idle" when the
-// stage covers the whole screen. pointermove covers mouse, pen and touch alike.
+// stage covers the whole screen. After their guaranteed ten-second track window,
+// rating badges follow this same `.idle` state through CSS.
 var idleTimer = null;
 function chromeWake() {
     if (!document.fullscreenElement) return;
@@ -1639,7 +1670,7 @@ function chromeWake() {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(function () {
         if (!optionsOpen) stage.classList.add("idle"); // never fade while adjusting options
-    }, 2000);
+    }, STAGE_IDLE_MS);
 }
 stage.addEventListener("pointermove", chromeWake);
 document.addEventListener("fullscreenchange", function () {

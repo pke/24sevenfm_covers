@@ -328,6 +328,18 @@
     align-items: center;
     justify-content: flex-end;
     pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .35s ease, visibility 0s linear .35s;
+}
+.stage:hover .rating-badges,
+.rating-badges.track-intro {
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s, 0s;
+}
+@media (hover: none) {
+    .rating-badges { opacity: .6; visibility: visible; transition-delay: 0s, 0s; }
 }
 .rating-slot {
     position: relative;
@@ -465,6 +477,11 @@
    out (these rules out-specify the :hover ones) and the cursor goes with it - a cursor
    parked on the artwork is the same clutter. Any movement lifts .idle again. */
 .stage:fullscreen.idle .stage-button { opacity: 0; }
+.stage:fullscreen.idle .rating-badges { opacity: 0; visibility: hidden; }
+.stage:fullscreen.idle .rating-badges.track-intro {
+    opacity: 1;
+    visibility: visible;
+}
 .stage:fullscreen.idle { cursor: none; }
 
 /* The options overlay: hosts the REAL .controls panel while open in fullscreen. */
@@ -758,7 +775,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     .stage-status, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
     .fanart-key-check span, .provider-key-help, .provider-key-status,
-    .rating-slot, .rating-card, .rating-face, .rating-country-options {
+    .rating-badges, .rating-slot, .rating-card, .rating-face, .rating-country-options {
         transition: none !important;
     }
     .stage-lasers, .stage-lasers-front, .stage-spectrum { display: none; }
