@@ -99,6 +99,10 @@ falls back to `pnpm dlx`/`npx`, then keeps both servers running until Ctrl+C:
 pwsh -File start_test_server.ps1
 ```
 
+The local site server watches `site\` recursively. After a short debounce, every
+source edit is rendered into `www\` automatically; reloading port 8099 therefore
+always uses the latest source without restarting either server.
+
 Only generated `www\player.html` points at the local API. The committed template
 and every deployment continue to use `https://24covers-api.vercel.app`.
 
