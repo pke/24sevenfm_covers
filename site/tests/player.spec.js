@@ -480,7 +480,7 @@ test.describe("the deployed player page", () => {
         await expect(de).toBeDisabled();
         await expect(us).toBeDisabled();
     });
-    test("resolves ratings without artwork and glues the next logos to the flip card", async ({ page }) => {
+    test("resolves ratings without artwork, flips the next logos, and settles SVGs flat", async ({ page }) => {
         const covers = [
             "https://streamingsoundtracks.com/images/cover/adaline.svg",
             "https://streamingsoundtracks.com/images/cover/got.svg",
@@ -550,6 +550,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#rating-us")).toHaveClass(/show/);
         await expect(page.locator("#rating-us .rating-face").first()).toHaveClass(/has-logo/);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
+        await expect(page.locator("#rating-de")).toHaveAttribute("data-settled", "");
 
         await expect.poll(() => page.locator("#rating-badges").evaluate(() => {
             const stage = document.querySelector("#stage").getBoundingClientRect();
@@ -574,6 +575,11 @@ test.describe("the deployed player page", () => {
                 transitionProperties: slotStyle.transitionProperty,
                 transitionDurations: slotStyle.transitionDuration,
                 cardDuration: cardStyle.transitionDuration,
+                cardTransformStyle: cardStyle.transformStyle,
+                frontBackface: getComputedStyle(document.querySelector(
+                    "#rating-de .rating-face:first-child")).backfaceVisibility,
+                backOpacity: getComputedStyle(document.querySelector(
+                    "#rating-de .rating-face:last-child")).opacity,
                 cardWidth: document.querySelector("#rating-de .rating-card").offsetWidth,
                 cardHeight: document.querySelector("#rating-de .rating-card").offsetHeight,
                 effect: document.querySelector("#rating-de").dataset.fx,
@@ -585,6 +591,9 @@ test.describe("the deployed player page", () => {
         expect(badgeGeometry.transitionProperties.split(", ")).not.toContain("transform");
         expect(badgeGeometry.transitionDurations.split(", ")).toContain("1s");
         expect(badgeGeometry.cardDuration).toBe("1s");
+        expect(badgeGeometry.cardTransformStyle).toBe("flat");
+        expect(badgeGeometry.frontBackface).toBe("visible");
+        expect(badgeGeometry.backOpacity).toBe("0");
         expect(badgeGeometry.effect).toBe("fliph");
 
         const master = page.locator("#ratings-enabled");
@@ -633,11 +642,28 @@ test.describe("the deployed player page", () => {
         expect(glued.sources[0]).toContain("FSK_ab_6_logo.svg");
         expect(glued.sources[1]).toContain("FSK_16.svg");
         expect(glued.backTransform).not.toBe("none");
-        await expect.poll(() => page.locator("#rating-de").evaluate((slot) => {
-            const back = slot.querySelector(".rating-face:last-child");
-            return getComputedStyle(slot.querySelector(".rating-card")).transform
-                === getComputedStyle(back).transform;
-        })).toBe(true);
+        // The SVG may use the 3D card while it is visibly flipping, but must be
+        // normalized back onto the untransformed front face afterwards. Leaving the
+        // two 180° layers composed indefinitely makes Chromium rasterize it softly.
+        await expect.poll(() => page.locator("#rating-de").getAttribute("data-front"),
+            { timeout: 3000 }).toBe("a");
+        await expect(page.locator("#rating-de")).toHaveAttribute("data-settled", "");
+        const settled = await page.locator("#rating-de").evaluate((slot) => {
+            const front = slot.querySelector(".rating-face:first-child");
+            return {
+                cardTransform: getComputedStyle(slot.querySelector(".rating-card")).transform,
+                cardTransformStyle: getComputedStyle(slot.querySelector(
+                    ".rating-card")).transformStyle,
+                faceTransform: getComputedStyle(front).transform,
+                faceBackface: getComputedStyle(front).backfaceVisibility,
+                source: front.querySelector("img").getAttribute("src"),
+            };
+        });
+        expect(settled.cardTransform).toBe("none");
+        expect(settled.cardTransformStyle).toBe("flat");
+        expect(settled.faceTransform).toBe("none");
+        expect(settled.faceBackface).toBe("visible");
+        expect(settled.source).toContain("FSK_16.svg");
         await expect(page.locator("#rating-us .rating-face").last()).toHaveText("TV-MA");
     });
     test("fades ratings after ten idle seconds and wakes them on pointer movement", async ({ page }) => {

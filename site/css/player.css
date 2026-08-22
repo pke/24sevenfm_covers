@@ -426,6 +426,9 @@
 .rating-slot:is([data-fx="fliph"], [data-fx="flipv"])[data-front="b"] .rating-card {
     transform: var(--rating-flip-transform);
 }
+.rating-slot[data-settled] .rating-card { transform-style: flat; }
+.rating-slot[data-settled] .rating-face:first-child { backface-visibility: visible; }
+.rating-slot[data-settled] .rating-face:last-child { opacity: 0; }
 .options-overlay {
     position: absolute;
     z-index: 4;

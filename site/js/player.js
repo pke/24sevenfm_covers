@@ -394,7 +394,7 @@ var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 // already-attached back face into view.
 function makeRatingSlot(slot) {
     var faces = Array.from(slot.querySelectorAll(".rating-face"));
-    var token = "", version = 0;
+    var token = "", version = 0, settleTimer = null;
 
     function setFace(face, certification, logo) {
         var img = face.querySelector("img"), label = face.querySelector("span");
@@ -404,7 +404,16 @@ function makeRatingSlot(slot) {
         label.textContent = certification.label;
     }
 
+    function copyFace(from, to) {
+        var fromImg = from.querySelector("img"), toImg = to.querySelector("img");
+        to.classList.toggle("has-logo", from.classList.contains("has-logo"));
+        if (fromImg.hasAttribute("src")) toImg.src = fromImg.getAttribute("src");
+        else toImg.removeAttribute("src");
+        to.querySelector("span").textContent = from.querySelector("span").textContent;
+    }
+
     function hide() {
+        clearTimeout(settleTimer);
         version++;
         slot.classList.remove("show");
         slot.setAttribute("aria-hidden", "true");
@@ -419,6 +428,8 @@ function makeRatingSlot(slot) {
 
     function reveal(front, certification) {
         var fx = effectName(), wasHidden = !slot.classList.contains("show");
+        clearTimeout(settleTimer);
+        delete slot.dataset.settled;
         if (slot.dataset.fx !== fx) {
             slot.dataset.warp = "";
             slot.dataset.fx = fx;
@@ -440,6 +451,23 @@ function makeRatingSlot(slot) {
         slot.setAttribute("aria-hidden", "false");
         slot.setAttribute("aria-label", certification.accessibleLabel);
         maybeBeginRatingTrackVisibility();
+        if (fx === "fliph" || fx === "flipv") {
+            var settleVersion = version;
+            // Once the visible flip has completed, keep or copy the new SVG on the
+            // flat front face and reset both 3D rotations in a transition-free frame.
+            // Keeping an SVG in two permanent 180° GPU layers makes it look rasterized.
+            settleTimer = setTimeout(function () {
+                if (version !== settleVersion || (slot.dataset.front !== "b"
+                        && slot.dataset.front !== "a")
+                        || !slot.classList.contains("show")) return;
+                if (slot.dataset.front === "b") copyFace(faces[1], faces[0]);
+                slot.dataset.warp = "";
+                slot.dataset.front = "a";
+                slot.dataset.settled = "";
+                void slot.offsetWidth;
+                delete slot.dataset.warp;
+            }, opts.fadeMs + 50);
+        }
     }
 
     function show(certification, generation) {
