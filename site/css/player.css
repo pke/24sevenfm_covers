@@ -292,7 +292,7 @@
     left: .7rem;
     top: .7rem;
     z-index: 3;
-    width: clamp(8.5rem, 26vw, 15rem);
+    width: var(--cover-side, clamp(8.5rem, 26vw, 15rem));
     height: clamp(2rem, 7.5vh, 3rem);
     border: 0;
     border-radius: 0;
@@ -309,6 +309,9 @@
     pointer-events: auto;
     cursor: pointer;
     transition-delay: 0s;
+}
+.stage.laser-scene .stage-spectrum {
+    width: var(--cover-depth-side, var(--cover-side, 12rem));
 }
 .layout-poster .stage-spectrum {
     left: 50%;

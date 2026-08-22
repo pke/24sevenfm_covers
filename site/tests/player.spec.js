@@ -1172,7 +1172,8 @@ test.describe("the deployed player page", () => {
                 await expect.poll(async () => {
                     const boxes = await readBoxes();
                     return boxes.spectrum.top >= boxes.cover.bottom - 1
-                        && boxes.spectrum.bottom <= boxes.info.top + 1;
+                        && boxes.spectrum.bottom <= boxes.info.top + 1
+                        && Math.abs(boxes.spectrum.width - boxes.cover.width) <= 1;
                 }).toBe(true);
                 const boxes = await readBoxes();
                 expect(boxes.spectrum.left).toBeGreaterThanOrEqual(boxes.stage.left);
@@ -1189,6 +1190,8 @@ test.describe("the deployed player page", () => {
                 const spectrumCenter = (boxes.spectrum.left + boxes.spectrum.right) * 0.5;
                 const coverCenter = (boxes.cover.left + boxes.cover.right) * 0.5;
                 const infoCenter = (boxes.info.left + boxes.info.right) * 0.5;
+                expect(Math.abs(boxes.spectrum.width - boxes.cover.width))
+                    .toBeLessThanOrEqual(1);
                 expect(Math.abs(spectrumCenter - coverCenter)).toBeLessThanOrEqual(1);
                 expect(Math.abs(spectrumCenter - infoCenter)).toBeLessThanOrEqual(1);
             };
@@ -1213,6 +1216,8 @@ test.describe("the deployed player page", () => {
             expect(placement.gap).toBeLessThanOrEqual(16);
             expect(placement.inside).toBe(true);
             expect(placement.legendInside).toBe(true);
+            await spectrum.click();
+            await expect(spectrumOptions).toBeHidden();
             await page.locator("#fullscreen").click();
             await expect.poll(() => page.evaluate(() =>
                 document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
@@ -1431,6 +1436,13 @@ test.describe("the deployed player page", () => {
             await page.locator("#spectrum-enabled").check();
             await expect(spectrum).toHaveClass(/active/);
             expect(await page.evaluate(() => window.__audioContexts)).toBe(1);
+            const spectrumCoverWidthDelta = () => page.evaluate(() => {
+                const spectrumBox = document.querySelector("#stage-spectrum")
+                    .getBoundingClientRect();
+                const coverBox = document.querySelector("#coverbox").getBoundingClientRect();
+                return Math.abs(spectrumBox.width - coverBox.width);
+            });
+            await expect.poll(spectrumCoverWidthDelta).toBeLessThanOrEqual(1);
 
             const releaseStartedWhileMounted = await page.locator("label.seg",
                 { hasText: "StreamingSoundtracks" }).evaluate((label) => {
@@ -1444,6 +1456,7 @@ test.describe("the deployed player page", () => {
             await expect(lasers).not.toHaveClass(/active/);
             await expect(frontLasers).not.toHaveClass(/active/);
             await expect(page.locator("#stage")).not.toHaveClass(/laser-scene/);
+            await expect.poll(spectrumCoverWidthDelta).toBeLessThanOrEqual(1);
             await expect.poll(() => laserHasPixels(lasers)).toBe(false);
             await expect.poll(() => laserHasPixels(frontLasers)).toBe(false);
 

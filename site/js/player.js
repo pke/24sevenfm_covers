@@ -1251,6 +1251,11 @@ function sizeStage() {
         : Math.min(r.height * 0.96, r.width * 0.96);
     coverBox.style.width = side + "px";
     coverBox.style.height = side + "px";
+    // The compact analyser shares the cover's width in every stage size. The 80s
+    // laser scene gives the cover visual depth with a .8 scale, so expose that final
+    // width too; CSS animates between both values with the analyser's width transition.
+    stage.style.setProperty("--cover-side", side + "px");
+    stage.style.setProperty("--cover-depth-side", (side * 0.8) + "px");
     // The C++ renderer sizes everything off the cover's side; do the same, with the
     // poster's actual fractions: title 7.2%, artist 5.8% of the cover side. The
     // countdown sits BELOW the title in the hierarchy - it's a status row, not the
