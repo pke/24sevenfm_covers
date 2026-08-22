@@ -533,14 +533,83 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => resolverRequests.length).toBeGreaterThanOrEqual(1);
-        expect(resolverRequests[0]).toEqual({
+        await expect.poll(() => resolverRequests.some((request) =>
+            request.album === "Age Of Adaline, The")).toBe(true);
+        expect(resolverRequests.find((request) =>
+            request.album === "Age Of Adaline, The")).toEqual({
             album: "Age Of Adaline, The", art: "0", ratings: "DE,US", providers: "tmdb",
         });
         await expect(page.locator("#rating-de")).toHaveClass(/show/);
         await expect(page.locator("#rating-us")).toHaveClass(/show/);
         await expect(page.locator("#rating-us .rating-face").first()).toHaveClass(/has-logo/);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
+
+        await expect.poll(() => page.locator("#rating-badges").evaluate(() => {
+            const stage = document.querySelector("#stage").getBoundingClientRect();
+            const de = document.querySelector("#rating-de").getBoundingClientRect();
+            const us = document.querySelector("#rating-us").getBoundingClientRect();
+            const right = stage.right - us.right;
+            return Math.max(Math.abs((us.left - de.right) - right),
+                Math.abs((stage.bottom - us.bottom) - right));
+        })).toBeLessThan(1.1);
+
+        const badgeGeometry = await page.locator("#rating-badges").evaluate((badges) => {
+            const stage = document.querySelector("#stage").getBoundingClientRect();
+            const de = document.querySelector("#rating-de").getBoundingClientRect();
+            const us = document.querySelector("#rating-us").getBoundingClientRect();
+            const slotStyle = getComputedStyle(document.querySelector("#rating-de"));
+            const cardStyle = getComputedStyle(document.querySelector("#rating-de .rating-card"));
+            return {
+                right: stage.right - us.right,
+                bottom: stage.bottom - us.bottom,
+                gap: us.left - de.right,
+                transform: slotStyle.transform,
+                transitionProperties: slotStyle.transitionProperty,
+                transitionDurations: slotStyle.transitionDuration,
+                cardDuration: cardStyle.transitionDuration,
+                cardWidth: document.querySelector("#rating-de .rating-card").offsetWidth,
+                cardHeight: document.querySelector("#rating-de .rating-card").offsetHeight,
+                effect: document.querySelector("#rating-de").dataset.fx,
+            };
+        });
+        expect(Math.abs(badgeGeometry.gap - badgeGeometry.right)).toBeLessThan(1.1);
+        expect(Math.abs(badgeGeometry.bottom - badgeGeometry.right)).toBeLessThan(1.1);
+        expect(badgeGeometry.transform).toBe("none");
+        expect(badgeGeometry.transitionProperties.split(", ")).not.toContain("transform");
+        expect(badgeGeometry.transitionDurations.split(", ")).toContain("1s");
+        expect(badgeGeometry.cardDuration).toBe("1s");
+        expect(badgeGeometry.effect).toBe("fliph");
+
+        const master = page.locator("#ratings-enabled");
+        const deToggle = page.locator("#rating-de-enabled");
+        const usToggle = page.locator("#rating-us-enabled");
+        await master.uncheck();
+        await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
+        await expect(page.locator("#rating-us")).not.toHaveClass(/show/);
+        await expect(page.locator("#rating-de")).toHaveCSS("max-width", "0px");
+        await master.check();
+        await expect(page.locator("#rating-de")).toHaveClass(/show/);
+        await expect(page.locator("#rating-us")).toHaveClass(/show/);
+        const enteringBadge = await page.locator("#rating-de").evaluate((slot) => ({
+            cardWidth: slot.querySelector(".rating-card").offsetWidth,
+            cardHeight: slot.querySelector(".rating-card").offsetHeight,
+            cardTransform: getComputedStyle(slot.querySelector(".rating-card")).transform,
+            effect: slot.dataset.fx,
+        }));
+        expect(Math.abs(enteringBadge.cardWidth - badgeGeometry.cardWidth)).toBeLessThan(1.1);
+        expect(Math.abs(enteringBadge.cardHeight - badgeGeometry.cardHeight)).toBeLessThan(1.1);
+        expect(enteringBadge.effect).toBe("fliph");
+        expect(enteringBadge.cardTransform).not.toBe("none");
+        await usToggle.uncheck();
+        await expect(page.locator("#rating-de")).toHaveClass(/show/);
+        await expect(page.locator("#rating-us")).not.toHaveClass(/show/);
+        await usToggle.check();
+        await expect(page.locator("#rating-us")).toHaveClass(/show/);
+        await deToggle.uncheck();
+        await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
+        await expect(page.locator("#rating-us")).toHaveClass(/show/);
+        await deToggle.check();
+        await expect(page.locator("#rating-de")).toHaveClass(/show/);
 
         await expect.poll(() => resolverRequests.some((request) =>
             request.album === "Game Of Thrones"), { timeout: 10000 }).toBe(true);
@@ -635,6 +704,18 @@ test.describe("the deployed player page", () => {
         await expect(badges).toBeHidden();
         await expect(stageAudio).toHaveCSS("opacity", "0");
 
+        // Re-enabling ratings is a fresh listener action and gets the same complete
+        // ten-second reveal as a new track, even though the certification is retained.
+        const ratingsToggle = page.locator("#ratings-enabled");
+        await ratingsToggle.uncheck();
+        await ratingsToggle.check();
+        await expect(badges).toHaveClass(/track-intro/);
+        await expect(badges).toHaveCSS("opacity", "1");
+        await page.waitForTimeout(10100);
+        await expect(badges).not.toHaveClass(/track-intro/);
+        await expect(badges).toHaveCSS("opacity", "0");
+
+        await stage.scrollIntoViewIfNeeded();
         const box = await stage.boundingBox();
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await expect(badges).toHaveCSS("opacity", "1");

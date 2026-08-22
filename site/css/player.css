@@ -320,9 +320,10 @@
    card, so a flip turns the already-attached next badge over exactly like the cover. */
 .rating-badges {
     --rating-size: clamp(3rem, 8vw, 4.25rem);
+    --rating-gap: .7rem;
     position: absolute;
-    top: .7rem;
-    right: .7rem;
+    right: var(--rating-gap);
+    bottom: var(--rating-gap);
     z-index: 3;
     display: flex;
     align-items: center;
@@ -345,29 +346,32 @@
     position: relative;
     flex: 0 0 auto;
     width: var(--rating-size);
+    height: var(--rating-size);
     max-width: 0;
-    aspect-ratio: 1 / 1;
     margin-left: 0;
     overflow: clip;
     perspective: 600px;
     opacity: 0;
     visibility: hidden;
-    transform: translateY(-.25rem) scale(.94);
-    transition: opacity .35s ease, transform .35s ease, max-width .45s ease,
-                margin-left .45s ease, visibility 0s linear .45s;
+    transition: opacity var(--fade-ms, 1000ms) ease,
+                max-width var(--fade-ms, 1000ms) ease,
+                margin-left var(--fade-ms, 1000ms) ease,
+                visibility 0s linear var(--fade-ms, 1000ms);
 }
 .rating-slot.show {
     max-width: var(--rating-size);
-    margin-left: .45rem;
     overflow: visible;
     opacity: 1;
     visibility: visible;
-    transform: translateY(0) scale(1);
     transition-delay: 0s;
 }
+.rating-slot.show + .rating-slot.show { margin-left: var(--rating-gap); }
 .rating-card {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    width: var(--rating-size);
+    height: var(--rating-size);
     transform-style: preserve-3d;
 }
 .rating-face {
@@ -467,7 +471,7 @@
 .spectrum-options input[type="range"] { min-width: 0; max-width: none; }
 .spectrum-options .note { margin-bottom: 0; }
 .stage-fs { top: .7rem; right: .7rem; }
-.stage-opts { right: .7rem; bottom: .7rem; display: none; } /* fullscreen only - embedded, the panel is right below */
+.stage-opts { top: .7rem; right: 3.8rem; display: none; } /* fullscreen only - embedded, the panel is right below */
 .stage:fullscreen .stage-opts { display: block; }
 .stage:hover .stage-button, .stage-button:focus-visible { opacity: 1; }
 @media (hover: none) { .stage-button { opacity: .6; } } /* touch: no hover, keep visible */
