@@ -17,6 +17,10 @@ certification failure returns an empty array and does not fail otherwise valid a
 Set the Vercel project's Root Directory to the repository root and add these
 environment variables for Production (and Preview when needed):
 
+The root `.vercelignore` is an allowlist for `api`, `public`, the Node dependency
+manifests and `vercel.json`; the native applications, SDKs and separately published
+website are not part of this server deployment.
+
 | Variable | Required | Purpose |
 |---|---:|---|
 | `TMDB_API_KEY` | one TMDB credential | TMDB v3 application key; a legacy v4 token stored under this name is auto-detected |
