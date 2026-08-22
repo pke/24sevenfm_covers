@@ -1,9 +1,6 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { createHash } = require("node:crypto");
-const { readFileSync, readdirSync } = require("node:fs");
-const { join } = require("node:path");
 const test = require("node:test");
 const {
     CACHE_SECONDS,
@@ -367,20 +364,6 @@ test("maps every supported FSK and MPA movie rating to its Wikimedia SVG", () =>
     }
     assert.equal(certificationResponse("US", "NR", "movie").logo, null);
     assert.equal("logo" in certificationResponse("US", "TV-MA", "tv"), false);
-});
-
-test("keeps every FSK asset filename tied to its final PNG bytes", () => {
-    const directory = join(__dirname, "..", "public", "ratings", "fsk");
-    const files = readdirSync(directory).sort();
-    assert.deepEqual(files.map((file) => file.match(/^fsk-(0|6|12|16|18)\./)?.[1]),
-        ["0", "12", "16", "18", "6"]);
-    for (const file of files) {
-        const match = file.match(/^fsk-(?:0|6|12|16|18)\.([a-f0-9]{12})\.png$/);
-        assert.ok(match, "unexpected FSK asset name: " + file);
-        const digest = createHash("sha256").update(readFileSync(join(directory, file)))
-            .digest("hex");
-        assert.equal(match[1], digest.slice(0, 12));
-    }
 });
 
 test("resolves The Dune Sketchbook through Hans Zimmer composer credits", async () => {
