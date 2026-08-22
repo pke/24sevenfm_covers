@@ -1071,16 +1071,21 @@ test("rejects invalid artist metadata before provider access", async () => {
     assert.equal(requests, 0);
 });
 
-test("accepts only canonical cover URLs from explicitly allowed hosts", () => {
+test("accepts only canonical and 40 px cover URLs from explicitly allowed hosts", () => {
     const env = { TINT_ALLOWED_HOSTS: "streamingsoundtracks.com" };
     assert.equal(trustedCoverTintUrl(
         "https://streamingsoundtracks.com/images/cover/B000FBFTCS.jpg", env),
     "https://streamingsoundtracks.com/images/cover/B000FBFTCS.jpg");
+    assert.equal(trustedCoverTintUrl(
+        "https://streamingsoundtracks.com/images/cover/040/B000FBFTCS.jpg", env),
+    "https://streamingsoundtracks.com/images/cover/040/B000FBFTCS.jpg");
     assert.equal(trustedCoverTintUrl("http://streamingsoundtracks.com/images/cover/a.jpg", env), "");
     assert.equal(trustedCoverTintUrl("https://evil.example/images/cover/a.jpg", env), "");
     assert.equal(trustedCoverTintUrl("https://streamingsoundtracks.com/admin", env), "");
     assert.equal(trustedCoverTintUrl(
         "https://streamingsoundtracks.com/images/cover/500/a.jpg", env), "");
+    assert.equal(trustedCoverTintUrl(
+        "https://streamingsoundtracks.com/images/cover/40/a.jpg", env), "");
     assert.equal(trustedCoverTintUrl(
         "https://streamingsoundtracks.com/images/cover/a.jpg?cache-bust=1", env), "");
 });

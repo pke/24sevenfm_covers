@@ -1952,6 +1952,7 @@ test.describe("the deployed player page", () => {
     });
     test("uses the server cover tint without enabling movie backdrops", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/cover-tint.jpg";
+        const thumbnail = "https://streamingsoundtracks.com/images/cover/040/cover-tint.jpg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/cover-tint.jpg";
         let tintRequests = 0, backdropRequests = 0, requestedCover = "";
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
@@ -1959,7 +1960,7 @@ test.describe("the deployed player page", () => {
             if (action === "GetQueue") return route.fulfill({ json: [] });
             return route.fulfill({ json: {
                 Album: "Cover Tint", Track: "No Movie Art", Artist: "24seven.fm",
-                CoverLink: cover, Length: 0,
+                CoverLink: cover, ThumbnailLink: thumbnail, Length: 0,
                 PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
             } });
         });
@@ -1977,7 +1978,7 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => tintRequests).toBe(1);
-        expect(requestedCover).toBe(cover);
+        expect(requestedCover).toBe(thumbnail);
         expect(backdropRequests).toBe(0);
         await expect.poll(() => page.locator("#stage").evaluate((stage) =>
              getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
@@ -1993,6 +1994,7 @@ test.describe("the deployed player page", () => {
         ].map((entry) => ({
             ...entry,
             cover: "https://" + entry.host + "/images/cover/tint-" + entry.id + ".jpg",
+            thumbnail: "https://" + entry.host + "/images/cover/040/tint-" + entry.id + ".jpg",
         }));
         const requestedCovers = [];
 
@@ -2002,7 +2004,7 @@ test.describe("the deployed player page", () => {
             const selected = stations.find((entry) => entry.host === url.hostname);
             return route.fulfill({ json: {
                 Album: "Tint " + selected.name, Track: "", Artist: "24seven.fm",
-                CoverLink: selected.cover, Length: 0,
+                CoverLink: selected.cover, ThumbnailLink: selected.thumbnail, Length: 0,
                 PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
             } });
         });
@@ -2019,9 +2021,9 @@ test.describe("the deployed player page", () => {
             if (selected.id !== "sst") {
                 await page.locator("label.seg", { hasText: selected.name }).click();
             }
-            await expect.poll(() => requestedCovers.includes(selected.cover)).toBe(true);
+            await expect.poll(() => requestedCovers.includes(selected.thumbnail)).toBe(true);
         }
-        expect(new Set(requestedCovers)).toEqual(new Set(stations.map((entry) => entry.cover)));
+        expect(new Set(requestedCovers)).toEqual(new Set(stations.map((entry) => entry.thumbnail)));
     });
     test("uses the server backdrop and tint without browser provider calls", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/arrival.svg";

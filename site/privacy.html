@@ -32,7 +32,7 @@
             <p>The Winamp plugin, the foobar2000 component, the standalone player and this website
             use no accounts, sign-ups, analytics, tracking scripts, advertising, cookies or
             telemetry. Station data, covers and audio flow directly from the station. To color the
-            web player, its canonical cover URL is also sent to this project's Vercel tint
+            web player, a station-hosted cover image URL is also sent to this project's Vercel tint
             resolver. Only if you enable movie, TV and game backdrops or the Ratings visualization
             is information about the current and next queued title sent through the media resolver,
             as detailed below. Both features are off by default.</p>
@@ -69,8 +69,8 @@
                 images, and — only if you press play — the audio stream. Those servers can see your
                 IP address, exactly as they would if you listened in any other player or visited
                 the station’s website. The browser still loads each cover directly; to color the
-                player UI, it additionally sends that canonical cover URL to this project's Vercel
-                tint resolver. Vercel necessarily processes your IP address and request metadata.
+                player UI, it additionally sends a station-hosted cover image URL to this project's
+                Vercel tint resolver. Vercel necessarily processes your IP address and request metadata.
                 The resolver fetches one size- and time-limited copy from the same station, returns
                 only three RGB values, and keeps no listening profile or request database. Successful
                 results may be cached for up to six months.</p>

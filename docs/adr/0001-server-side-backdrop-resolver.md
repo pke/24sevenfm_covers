@@ -105,8 +105,8 @@ Key points:
   a manual version number.
 - **Scope-locked, not an open proxy**: only the operations the player needs are
   exposed. `/api/tint` accepts HTTPS/443 URLs only on five exact station hosts,
-  only for the feed's `/images/cover/<file>` thumbnails, without credentials,
-  query or fragment. It
+  only for the feed's `/images/cover/<file>` and `/images/cover/040/<file>`
+  thumbnails, without credentials, query or fragment. It
   validates every redirect, MIME type, a 2 MB transfer cap, a 4 MP decode cap and
   a 4 second deadline. CORS is restricted to the site origin. This is
   what keeps it an app backend under TMDB's terms rather than sublicensed API
@@ -118,7 +118,7 @@ Key points:
 
 ## Consequences
 
-- The web player's user IP and each new canonical cover URL flow through Vercel
+- The web player's user IP and each new cover-thumbnail URL flow through Vercel
   for tint resolution. Album titles additionally flow through the resolver only
   when the off-by-default movie/TV/game-backdrop option is enabled. The privacy policy
   discloses both paths.
@@ -133,9 +133,11 @@ Key points:
 - The endpoint returns only RGB JSON; cover and backdrop images still load
   directly in the browser. The function downloads one bounded source image only
   on an edge-cache miss.
-- The feed's original 200 px CoverLink is used for tinting; the 500 px display
-  variant remains browser-only. This cuts tint-source transfer by roughly 72%
-  for a representative live cover (10.9 KB instead of 39 KB).
+- The feed's 40 px `ThumbnailLink` is preferred for tinting, with the 200 px
+  `CoverLink` as a compatibility fallback; the 500 px display variant remains
+  browser-only. A live 37-cover sample across all five stations cut tint-source
+  transfer by 95.4% (750,873 bytes to 34,264 bytes), with an average
+  post-normalization channel drift of 0.96 on the 0–255 RGB scale.
 
 ## Implementation
 

@@ -617,11 +617,11 @@ async function poll() {
         // vetoes the media-art lookup - a station ident is not a soundtrack, so its name must
         // not leak to a third party as a search. One source of truth, so the
         // logo and the veto can never disagree.
-        const tintCover = trustedCoverUrl(j.CoverLink);
-        const trustedCover = sizedCoverUrl(j.CoverLink);
-        const isStationId = !trustedCover;
-        // The feed's original CoverLink is already a 200 px thumbnail. Keep the
-        // /500/ variant for display, but send only the smaller original to /api/tint.
+        const tintCover = trustedCoverUrl(j.ThumbnailLink) || trustedCoverUrl(j.CoverLink);
+        const displayCover = sizedCoverUrl(j.CoverLink);
+        const isStationId = !displayCover;
+        // Prefer the feed's 40 px thumbnail for the whole-image colour mean. Keep
+        // CoverLink as a compatibility fallback and the /500/ variant for display.
         updateCoverTint(isStationId ? "" : tintCover);
         if (album !== currentAlbum || track !== currentTrack || artist !== currentArtist
                 || isStationId !== stationIdActive) {
@@ -639,7 +639,7 @@ async function poll() {
             title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
         setInfo(title || "—", artist);
 
-        const cover = isStationId ? station().logo : trustedCover;
+        const cover = isStationId ? station().logo : displayCover;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
         clearStatus("station");
         // Re-poll when the track should end (clamped), +1s for the server to roll over.

@@ -123,8 +123,8 @@ that host. Unsupported ratings, including US TV ratings, continue to use text ba
 ## Abuse protection
 
 `/api/tint` is deliberately not a general image fetcher. It accepts only HTTPS/443
-URLs on the exact configured station hosts, only canonical
-`/images/cover/<file>` thumbnail paths, and rejects URL credentials, query strings,
+URLs on the exact configured station hosts, only 200 px `/images/cover/<file>` or
+40 px `/images/cover/040/<file>` paths, and rejects URL credentials, query strings,
 fragments and redirects outside that same policy. Fetches have a 4 second deadline,
 2 MB transfer ceiling, supported-image MIME check and 4 MP decode ceiling. Invalid
 requests are `no-store`; successful RGB responses are cached at the edge for six
@@ -152,7 +152,7 @@ After deployment, verify a known soundtrack without printing any configured key:
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Arrival"
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Hades" --data-urlencode "media_hint=game"
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Game Of Thrones" --data-urlencode "providers=tmdb" --data-urlencode "ratings=DE,US" --data-urlencode "art=0"
-curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://streamingsoundtracks.com/images/cover/B000FBFTCS.jpg"
+curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://streamingsoundtracks.com/images/cover/040/B000FBFTCS.jpg"
 ```
 
 The responses should name a movie, TV series, or game and return a trusted TMDB,
