@@ -1,0 +1,9 @@
+# This repository also contains native Windows projects, SDKs, installers and the
+# separately deployed website. The Vercel project needs only its functions, public
+# rating assets and Node dependency manifests.
+/*
+!api
+!public
+!package.json
+!package-lock.json
+!vercel.json
