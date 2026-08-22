@@ -37,6 +37,17 @@ function strobeEnvelope(timestamp, startedAt, enabled) {
     return Math.max(flash(0, 100, 1), flash(145, 110, .72));
 }
 
+function smokeEnvelope(timestamp, startedAt, enabled, preview) {
+    if (!enabled || startedAt < 0) return 0;
+    const age = timestamp - startedAt;
+    const duration = preview ? 4800 : 1150;
+    const releaseAt = preview ? 1900 : 350;
+    if (age <= 0 || age >= duration) return 0;
+    const attack = smoothstep(age / 90);
+    const release = 1 - smoothstep((age - releaseAt) / (duration - releaseAt));
+    return attack * release;
+}
+
 function resizeCanvas(canvas, maxScale = 2) {
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return false;
@@ -274,7 +285,6 @@ function createLaserWebGlRenderer(canvas) {
             float glow = cheapGlow(distanceSquared, glowWidth);
             return core * 2.4 + glow * 0.72;
         }
-
         void main() {
             vec2 uv = gl_FragCoord.xy / u_resolution.xy;
             float aspect = u_resolution.x / u_resolution.y;
@@ -574,6 +584,142 @@ function drawCanvasLandingSpot(context, x, y, color, strength, pulse, unit,
     context.restore();
 }
 
+function createSmokeParticleSprite(dense) {
+    const sprite = document.createElement("canvas");
+    sprite.width = sprite.height = 96;
+    const context = sprite.getContext("2d");
+    if (!context) return sprite;
+    const lobes = dense
+        ? [[48, 48, 25, .72], [35, 50, 19, .44], [59, 42, 18, .38]]
+        : [[47, 49, 28, .42], [29, 50, 22, .29], [65, 47, 21, .27],
+            [40, 31, 20, .25], [55, 66, 23, .24], [27, 67, 16, .17]];
+    for (const [x, y, radius, opacity] of lobes) {
+        const gradient = context.createRadialGradient(x, y, 1, x, y, radius);
+        gradient.addColorStop(0, `rgba(248,253,255,${opacity})`);
+        gradient.addColorStop(.42, `rgba(225,245,250,${opacity * .62})`);
+        gradient.addColorStop(1, "rgba(190,225,235,0)");
+        context.fillStyle = gradient;
+        context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    }
+    return sprite;
+}
+
+function createSmokeParticleMachine(hardwareAccelerated) {
+    const softSprite = createSmokeParticleSprite(false);
+    const denseSprite = createSmokeParticleSprite(true);
+    const particles = [];
+    let burstId = 0;
+
+    // A tiny repeatable PRNG makes a burst organic without moving particles to a
+    // different random position on every frame.
+    function randomGenerator(seed) {
+        let state = (seed ^ 0x9e3779b9) >>> 0;
+        return function random() {
+            state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+            return state / 4294967296;
+        };
+    }
+
+    function emit(id, preview) {
+        particles.length = 0;
+        burstId = id;
+        const random = randomGenerator(id * 977 + (preview ? 37 : 11));
+        // The foreground pass has a deliberately small pixel budget, so a few
+        // hundred cached sprites are enough for a dense blast even on integrated GPUs.
+        const perSide = hardwareAccelerated
+            ? (preview ? 94 : 62) : (preview ? 70 : 48);
+        for (const side of [-1, 1]) {
+            for (let index = 0; index < perSide; index++) {
+                const dense = random() < .15;
+                particles.push({
+                    side,
+                    dense,
+                    delay: random() * (preview ? .72 : .36),
+                    life: dense
+                        ? (preview ? .7 + random() * .55 : .55 + random() * .4)
+                        : (preview ? 2.15 + random() * 1.9 : 1.35 + random() * 1.25),
+                    speedX: (dense ? .46 : .24) + random() * (dense ? .24 : .28),
+                    speedY: -(dense ? .1 : .035) - random() * (dense ? .2 : .16),
+                    drag: .48 + random() * .66,
+                    buoyancy: .035 + random() * (dense ? .035 : .075),
+                    nozzleX: (random() - .5) * .018,
+                    nozzleY: (random() - .5) * .065,
+                    radius: (dense ? .003 : .009) + random() * (dense ? .004 : .013),
+                    growth: (dense ? .004 : .034) + random() * (dense ? .007 : .048),
+                    turbulence: .006 + random() * .025,
+                    phase: random() * Math.PI * 2,
+                    alpha: (dense ? .42 : .15) + random() * (dense ? .26 : .2)
+                });
+            }
+        }
+    }
+
+    return {
+        clear() {
+            particles.length = 0;
+            burstId = 0;
+        },
+        draw(context, width, height, frame) {
+            if (!frame.smokeEnabled || frame.smokeBurstId <= 0) {
+                this.clear();
+                return 0;
+            }
+            if (frame.smokeBurstId !== burstId)
+                emit(frame.smokeBurstId, frame.smokePreview);
+
+            const unit = Math.min(width, height);
+            let liveParticles = 0;
+            context.save();
+            context.globalCompositeOperation = "screen";
+            for (const particle of particles) {
+                const age = frame.smokeAge - particle.delay;
+                if (age < 0 || age >= particle.life) continue;
+                liveParticles++;
+                const progress = age / particle.life;
+                const travel = (1 - Math.exp(-particle.drag * age)) / particle.drag;
+                const direction = particle.side < 0 ? 1 : -1;
+                const originX = width * (particle.side < 0 ? .012 : .988)
+                    + width * particle.nozzleX;
+                const originY = height * (.91 + particle.nozzleY);
+                const turbulence = Math.sin(age * 8 + particle.phase)
+                    * unit * particle.turbulence * smoothstep(progress * 2.4);
+                const x = originX + direction * width * particle.speedX * travel
+                    + turbulence * Math.sin(particle.phase);
+                // Horizontal nozzle momentum decays with drag; buoyancy keeps pulling
+                // the slower expanding cloud upward instead of letting it sag.
+                const y = originY + height * (particle.speedY * travel
+                    - particle.buoyancy * age * age)
+                    + turbulence * Math.cos(particle.phase);
+                const radius = unit * (particle.radius + particle.growth
+                    * smoothstep(progress));
+                const attack = smoothstep(age / .07);
+                const release = 1 - smoothstep((progress - .48) / .52);
+                const alpha = particle.alpha * attack * release;
+                if (alpha <= .002) continue;
+
+                context.globalAlpha = alpha;
+                if (particle.dense) {
+                    // Young high-speed particles stretch along the nozzle direction;
+                    // after losing velocity they round off into the surrounding cloud.
+                    const stretch = 1.05 + (1 - progress) * .8;
+                    context.save();
+                    context.translate(x, y);
+                    context.rotate(particle.side < 0 ? -.48 : Math.PI + .48);
+                    context.drawImage(denseSprite, -radius * stretch, -radius,
+                        radius * 2 * stretch, radius * 2);
+                    context.restore();
+                } else {
+                    const squash = .82 + Math.sin(particle.phase) * .12;
+                    context.drawImage(softSprite, x - radius * 1.15, y - radius * squash,
+                        radius * 2.3, radius * 2 * squash);
+                }
+            }
+            context.restore();
+            return liveParticles;
+        }
+    };
+}
+
 function createLaserCanvasRenderer(canvas) {
     const context = canvas.getContext("2d");
     if (!context) return null;
@@ -675,21 +821,29 @@ function createLaserForegroundRenderer(canvas, webglCoordinates, hardwareWebGl) 
     if (!context) return null;
     let paintedFrames = 0;
     let strobePaintedFrames = 0;
+    let smokePaintedFrames = 0;
+    const smokeParticles = createSmokeParticleMachine(hardwareWebGl);
 
     function clear() {
         context.clearRect(0, 0, canvas.width, canvas.height);
         paintedFrames = 0;
         strobePaintedFrames = 0;
+        smokePaintedFrames = 0;
+        smokeParticles.clear();
         canvas.dataset.frontBeams = "0";
         canvas.dataset.frontPaintedFrames = "0";
         canvas.dataset.strobePaintedFrames = "0";
         canvas.dataset.strobeLevel = "0";
+        canvas.dataset.smokePaintedFrames = "0";
+        canvas.dataset.smokeLevel = "0";
+        canvas.dataset.smokeParticles = "0";
     }
 
     return {
         clear,
         draw({ timestamp, mids, highs, beat, beatCount, beatAge, envelope,
-            drive, bpm, strobe }) {
+            drive, bpm, strobe, smoke, smokeAge, smokeEnabled, smokePreview,
+            smokeBurstId }) {
             const rect = canvas.getBoundingClientRect();
             const pixelBudget = hardwareWebGl ? 600000 : 280000;
             const maximumScale = hardwareWebGl ? 1.5 : .75;
@@ -740,6 +894,15 @@ function createLaserForegroundRenderer(canvas, webglCoordinates, hardwareWebGl) 
                     frontBeams++;
                 }
             }
+            const liveSmokeParticles = smokeParticles.draw(context, width, height, {
+                smokeEnabled,
+                smokePreview,
+                smokeBurstId,
+                smokeAge
+            });
+            if (liveSmokeParticles > 0) {
+                canvas.dataset.smokePaintedFrames = String(++smokePaintedFrames);
+            }
             if (strobe > .002) {
                 context.save();
                 context.globalCompositeOperation = "screen";
@@ -753,6 +916,8 @@ function createLaserForegroundRenderer(canvas, webglCoordinates, hardwareWebGl) 
             if (frontBeams > 0)
                 canvas.dataset.frontPaintedFrames = String(++paintedFrames);
             canvas.dataset.strobeLevel = strobe.toFixed(3);
+            canvas.dataset.smokeLevel = smoke.toFixed(3);
+            canvas.dataset.smokeParticles = String(liveSmokeParticles);
         }
     };
 }
@@ -778,6 +943,9 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
     let accentCount = 0;
     let strobeAt = -10000;
     let strobeCount = 0;
+    let smokeAt = -10000;
+    let smokeCount = 0;
+    let smokePreview = false;
     let drive = 0;
     let estimatedBpm = 0;
     const onsetTimes = [];
@@ -805,7 +973,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         });
     }
 
-    function detectBeat(data, timestamp, synthetic, strobeEnabled) {
+    function detectBeat(data, timestamp, synthetic, strobeEnabled, smokeEnabled) {
         // Keep the trigger down in the kick/bass region. The old wide band reached
         // well into the low mids, so vocals and synth stabs looked like random beats.
         const rawBass = averageBand(data, .003, .018);
@@ -893,6 +1061,14 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
                 strobeAt = timestamp;
                 strobeCount++;
             }
+            // Offset the jets from the strobe phrase so both effects get a readable
+            // moment instead of turning every eighth kick into an undifferentiated flash.
+            if (smokeEnabled && drive >= .42 && beatCount % 8 === 4
+                    && timestamp - smokeAt >= 2200) {
+                smokeAt = timestamp;
+                smokeCount++;
+                smokePreview = false;
+            }
             onsetTimes.push(timestamp);
             restartBeatMarker();
         } else if (accent) {
@@ -917,6 +1093,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         canvas.dataset.bpm = estimatedBpm ? String(Math.round(estimatedBpm)) : "";
         canvas.dataset.beatAccentCount = String(accentCount);
         canvas.dataset.strobeCount = String(strobeCount);
+        canvas.dataset.smokeCount = String(smokeCount);
     }
 
     function clear() {
@@ -931,6 +1108,9 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         accentCount = 0;
         strobeAt = -10000;
         strobeCount = 0;
+        smokeAt = -10000;
+        smokeCount = 0;
+        smokePreview = false;
         drive = 0;
         estimatedBpm = 0;
         onsetTimes.length = 0;
@@ -945,16 +1125,28 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         canvas.dataset.beatAccentCount = "0";
         canvas.dataset.strobeCount = "0";
         canvas.dataset.strobeLevel = "0";
+        canvas.dataset.smokeCount = "0";
+        canvas.dataset.smokeLevel = "0";
         canvas.dataset.laserMode = "calm";
         canvas.dataset.bpm = "";
         if (renderer) renderer.clear();
         if (foregroundRenderer) foregroundRenderer.clear();
     }
 
+    function trigger(effect, timestamp) {
+        if (effect !== "smoke") return false;
+        smokeAt = timestamp;
+        smokeCount++;
+        smokePreview = true;
+        canvas.dataset.smokeCount = String(smokeCount);
+        return true;
+    }
+
     canvas.dataset.renderer = renderer ? renderer.type : "none";
     canvas.dataset.rigOrigin = "ceiling";
     canvas.dataset.landingSpots = "6";
     canvas.dataset.strobePattern = "occasional-double";
+    canvas.dataset.smokePattern = "two-front-particle-emitters";
     canvas.dataset.spectrumBands = String(spectrumBands.length);
     if (foregroundCanvas) {
         foregroundCanvas.dataset.renderer = foregroundRenderer ? "canvas" : "none";
@@ -970,16 +1162,25 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
             const stage = canvas.closest(".stage");
             if (stage) stage.classList.toggle("laser-scene", active);
         },
+        trigger,
         clear,
         draw({ timestamp, frequencyData, envelope, synthetic, options }) {
             if (!renderer || !frequencyData || !frequencyData.length) return;
             canvas.dataset.audioSource = synthetic ? "ambient" : "spectrum";
             const strobeEnabled = !!(options && options.strobeEnabled);
+            const smokeEnabled = !!(options && options.smokeEnabled);
             if (!strobeEnabled) strobeAt = -10000;
-            detectBeat(frequencyData, timestamp, synthetic, strobeEnabled);
+            if (!smokeEnabled) {
+                smokeAt = -10000;
+                smokePreview = false;
+            }
+            detectBeat(frequencyData, timestamp, synthetic, strobeEnabled, smokeEnabled);
             canvas.dataset.beatCount = String(beatCount);
             const strobe = strobeEnvelope(timestamp, strobeAt, strobeEnabled);
+            const smoke = smokeEnvelope(timestamp, smokeAt, smokeEnabled, smokePreview);
             canvas.dataset.strobeLevel = strobe.toFixed(3);
+            canvas.dataset.smokeLevel = smoke.toFixed(3);
+            canvas.dataset.smokeSource = smokePreview ? "preview" : "beat";
             const renderFrame = {
                 timestamp,
                 bass,
@@ -992,6 +1193,11 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
                 drive,
                 bpm: estimatedBpm,
                 strobe,
+                smoke,
+                smokeAge: Math.max(0, (timestamp - smokeAt) / 1000),
+                smokeEnabled,
+                smokePreview,
+                smokeBurstId: smokeCount,
                 spectrumBands
             };
             renderer.draw(renderFrame);
@@ -1170,11 +1376,19 @@ export function createAudioAnalyserController({
             });
     }
 
+    function trigger(id, effect) {
+        const state = states.find(candidate => candidate.visualization.id === id);
+        if (!state || state.target !== 1 || !state.visualization.trigger) return false;
+        const triggered = state.visualization.trigger(effect, performance.now());
+        if (triggered && frame === null) frame = requestAnimationFrame(draw);
+        return triggered;
+    }
+
     document.addEventListener("visibilitychange", sync);
     if (reducedMotion.addEventListener) reducedMotion.addEventListener("change", sync);
     else if (reducedMotion.addListener) reducedMotion.addListener(sync);
 
-    return { clear, prepare, reset, sync };
+    return { clear, prepare, reset, sync, trigger };
 }
 
 export function createAudioVisualizationController({

@@ -139,6 +139,7 @@ var OPTION_DEFS = {
         effect: applyVolume },
     laserEnabled: { default: 1, coerce: boolOption, effect: applyLaserEnabled },
     strobeEnabled: { default: 0, coerce: boolOption },
+    smokeEnabled: { default: 0, coerce: boolOption, effect: applySmokeEnabled },
     spectrumEnabled: { default: 0, coerce: boolOption, effect: applySpectrumEnabled },
     spectrumBars: { default: 24, coerce: intOption(8, 64), event: "input",
         format: String, effect: resetSpectrumBars },
@@ -1915,12 +1916,14 @@ function applyStation() {
 var spectrumBarsEl = $("spectrum-bars");
 var spectrumModeEls = document.querySelectorAll('input[name="spectrum-mode"]');
 var strobeEnabledEl = $("strobe-enabled");
+var smokeEnabledEl = $("smoke-enabled");
 function syncSpectrumSettingControls() {
     spectrumBarsEl.disabled = !opts.spectrumEnabled;
     spectrumModeEls.forEach(function (input) { input.disabled = !opts.spectrumEnabled; });
 }
 function syncLaserSettingControls() {
     strobeEnabledEl.disabled = !opts.laserEnabled;
+    smokeEnabledEl.disabled = !opts.laserEnabled;
 }
 function applySpectrumEnabled() {
     syncSpectrumSettingControls();
@@ -1931,6 +1934,13 @@ function applyLaserEnabled() {
     syncLaserSettingControls();
     if (opts.laserEnabled && audioWanted) prepareSpectrum();
     syncSpectrum();
+}
+function applySmokeEnabled(enabled) {
+    // A user-initiated rising edge previews the effect immediately when the laser
+    // visualization is already live. Loading a saved true value does not call effects,
+    // so reopening the page never produces a surprise burst.
+    if (enabled && audioSpectrumController)
+        audioSpectrumController.trigger("lasers", "smoke");
 }
 function resetSpectrumBars() {
     if (audioSpectrumController) audioSpectrumController.reset("spectrum");
