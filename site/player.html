@@ -101,7 +101,7 @@
                     aria-hidden="true"></canvas>
             <canvas class="stage-spectrum" id="stage-spectrum" aria-hidden="true"
                     title="Spectrum analyzer settings"></canvas>
-            <div class="rating-badges" id="rating-badges" aria-live="polite"
+            <div class="rating-badges" id="rating-badges" aria-live="polite" aria-hidden="true"
                  aria-label="Age ratings">
                 <div class="rating-slot" id="rating-de" data-country="DE" aria-hidden="true">
                     <div class="rating-card">
@@ -208,7 +208,8 @@
                                   data-option="ratingUS"> US</label>
                 </div>
                 <p class="note">On StreamingSoundtracks, show German FSK and/or US ratings for
-                the matched movie or series. Rating badges use the selected cover transition.
+                the matched movie or series. Rating badges use the selected cover transition,
+                stay visible for ten seconds after a track change, and then behave like the stage controls.
                 Enabling this sends the current and next queued title to the resolver.</p>
             </fieldset>
 

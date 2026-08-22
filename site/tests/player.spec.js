@@ -564,6 +564,118 @@ test.describe("the deployed player page", () => {
         })).toBe(true);
         await expect(page.locator("#rating-us .rating-face").last()).toHaveText("TV-MA");
     });
+    test("fades ratings after ten idle seconds and wakes them on pointer movement", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/rating-idle.svg";
+        let secondTrack = false;
+        let firstResolverRequested = false;
+        let releaseFirstResolver;
+        const firstResolverMayFinish = new Promise((resolve) => {
+            releaseFirstResolver = resolve;
+        });
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ ratingsEnabled: 1, ratingDE: 1, ratingUS: 0,
+                tmdbBackdrops: 0, transition: 1, fadeMs: 500 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: secondTrack ? "Next Rating Movie" : "Rating Idle Movie",
+                Track: secondTrack ? "Second Cue" : "Main Title", Artist: "Idle Composer",
+                CoverLink: cover, Length: 0, PlayStart: "2026-08-20T12:00:00Z",
+                SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/cover/500/rating-idle.svg",
+            (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/tint\?/, (route) =>
+            route.fulfill({ json: { tint: [40, 50, 60] } }));
+        await page.route(/\/api\/backdrop\?/, async (route) => {
+            const next = /Next Rating Movie/.test(
+                new URL(route.request().url()).searchParams.get("album"));
+            if (!next) {
+                firstResolverRequested = true;
+                await firstResolverMayFinish;
+            }
+            return route.fulfill({ json: {
+                media: { id: next ? 11 : 10,
+                    title: next ? "Next Rating Movie" : "Rating Idle Movie", type: "movie" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+                certifications: [{ country: "DE", system: "FSK",
+                    rating: next ? "16" : "12", label: next ? "FSK 16" : "FSK 12",
+                    logo: next
+                        ? "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg"
+                        : "https://upload.wikimedia.org/wikipedia/commons/6/6e/FSK_12.svg" }],
+            } });
+        });
+        await page.route(/https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\/(?:6\/6e\/FSK_12|3\/30\/FSK_16)\.svg/,
+            (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const stage = page.locator("#stage");
+        const badges = page.locator("#rating-badges");
+        const stageAudio = page.locator("#stage-audio");
+        await expect.poll(() => firstResolverRequested).toBe(true);
+
+        // A refresh must not spend its visibility window waiting on the API. Even
+        // after ten slow seconds, the first revealed rating gets a fresh full window.
+        await page.waitForTimeout(10100);
+        await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
+        await expect(badges).not.toHaveClass(/track-intro/);
+        releaseFirstResolver();
+        await expect(page.locator("#rating-de")).toHaveClass(/show/);
+        await expect(badges).toHaveClass(/track-intro/);
+        await expect(badges).toHaveAttribute("aria-hidden", "false");
+        await expect(badges).toHaveCSS("opacity", "1");
+
+        await page.waitForTimeout(10100);
+        await expect(badges).not.toHaveClass(/track-intro/);
+        await expect(badges).toHaveCSS("opacity", "0");
+        await expect(badges).toBeHidden();
+        await expect(stageAudio).toHaveCSS("opacity", "0");
+
+        const box = await stage.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await expect(badges).toHaveCSS("opacity", "1");
+        await expect(stageAudio).toHaveCSS("opacity", "1");
+
+        // Embedded mode is hover-driven, exactly like the buttons: a stationary
+        // pointer over the stage does not invoke fullscreen's idle timeout.
+        await page.waitForTimeout(2100);
+        await expect(badges).toHaveCSS("opacity", "1");
+        await expect(stageAudio).toHaveCSS("opacity", "1");
+
+        await page.mouse.move(1, 1);
+        await expect(badges).toHaveCSS("opacity", "0");
+        await expect(stageAudio).toHaveCSS("opacity", "0");
+
+        // Fullscreen uses the same `.idle` class and two-second timer as the buttons.
+        await stage.evaluate((element) => element.requestFullscreen());
+        const fullscreenBox = await stage.boundingBox();
+        await page.mouse.move(fullscreenBox.x + fullscreenBox.width / 3,
+            fullscreenBox.y + fullscreenBox.height / 2);
+        await expect(stage).not.toHaveClass(/idle/);
+        await expect(badges).toHaveCSS("opacity", "1");
+        await expect(stageAudio).toHaveCSS("opacity", "1");
+        await expect(stage).toHaveClass(/idle/);
+        await expect(badges).toHaveCSS("opacity", "0");
+        await expect(stageAudio).toHaveCSS("opacity", "0");
+        await page.mouse.move(fullscreenBox.x + fullscreenBox.width * 2 / 3,
+            fullscreenBox.y + fullscreenBox.height / 2);
+        await expect(stage).not.toHaveClass(/idle/);
+        await expect(badges).toHaveCSS("opacity", "1");
+        await expect(stageAudio).toHaveCSS("opacity", "1");
+        await page.evaluate(() => document.exitFullscreen());
+
+        secondTrack = true;
+        await expect(page.locator("#info-title"))
+            .toContainText("Next Rating Movie - Second Cue", { timeout: 7000 });
+        await expect(page.locator("#rating-de")).toHaveAttribute("aria-label", "Germany: FSK 16");
+        await expect(badges).toHaveClass(/track-intro/);
+        await expect(badges).toHaveAttribute("aria-hidden", "false");
+        await expect(badges).toHaveCSS("opacity", "1");
+    });
     test("persists scalar controls and reapplies their effects", async ({ page }) => {
         await mockLayoutTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
