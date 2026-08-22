@@ -410,15 +410,43 @@ function makeRatingSlot(slot) {
         slot.removeAttribute("aria-label");
     }
 
+    function effectName() {
+        var effect = reducedMotion.matches ? 0 : opts.transition;
+        stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
+        return ["none", "fade", "fliph", "flipv"][effect];
+    }
+
+    function reveal(front, certification) {
+        var fx = effectName(), wasHidden = !slot.classList.contains("show");
+        if (slot.dataset.fx !== fx) {
+            slot.dataset.warp = "";
+            slot.dataset.fx = fx;
+            void slot.offsetWidth;
+            delete slot.dataset.warp;
+        }
+        // A retained badge that is being revealed again still enters through the
+        // selected cover effect. Prime the opposite face while the slot is invisible,
+        // then turn/crossfade to the requested face after the forced style flush.
+        if (wasHidden && fx !== "none") {
+            slot.dataset.warp = "";
+            slot.dataset.front = front === "a" ? "b" : "a";
+            void slot.offsetWidth;
+            delete slot.dataset.warp;
+        }
+        slot.classList.add("show");
+        void slot.offsetWidth;
+        slot.dataset.front = front;
+        slot.setAttribute("aria-hidden", "false");
+        slot.setAttribute("aria-label", certification.accessibleLabel);
+        maybeBeginRatingTrackVisibility();
+    }
+
     function show(certification, generation) {
         if (!certification) { hide(); return; }
         var nextToken = [certification.rating, certification.label,
             certification.logo || ""].join("\n");
         if (token === nextToken && slot.dataset.front) {
-            slot.classList.add("show");
-            slot.setAttribute("aria-hidden", "false");
-            slot.setAttribute("aria-label", certification.accessibleLabel);
-            maybeBeginRatingTrackVisibility();
+            reveal(slot.dataset.front, certification);
             return;
         }
 
@@ -428,21 +456,7 @@ function makeRatingSlot(slot) {
             if (version !== currentVersion || !renderIsCurrent("backdrop", generation)) return;
             setFace(back, certification, logo);
             token = nextToken;
-            var effect = reducedMotion.matches ? 0 : opts.transition;
-            stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
-            var fx = ["none", "fade", "fliph", "flipv"][effect];
-            if (slot.dataset.fx !== fx) {
-                slot.dataset.warp = "";
-                slot.dataset.fx = fx;
-                void slot.offsetWidth;
-                delete slot.dataset.warp;
-            }
-            void slot.offsetWidth;
-            slot.dataset.front = back === faces[0] ? "a" : "b";
-            slot.classList.add("show");
-            slot.setAttribute("aria-hidden", "false");
-            slot.setAttribute("aria-label", certification.accessibleLabel);
-            maybeBeginRatingTrackVisibility();
+            reveal(back === faces[0] ? "a" : "b", certification);
         };
         if (certification.logo) {
             preloadImage(certification.logo,
@@ -471,6 +485,12 @@ var ratingIntroTimer = null, ratingIntroPending = false;
 function prepareRatingTrackVisibility() {
     clearTimeout(ratingIntroTimer);
     ratingIntroPending = true;
+    ratingBadgesEl.classList.remove("track-intro");
+}
+
+function cancelRatingTrackVisibility() {
+    clearTimeout(ratingIntroTimer);
+    ratingIntroPending = false;
     ratingBadgesEl.classList.remove("track-intro");
 }
 
@@ -511,6 +531,8 @@ function syncRatingControls() {
 
 function applyRatingsEnabled() {
     syncRatingControls();
+    if (opts.ratingsEnabled) prepareRatingTrackVisibility();
+    else cancelRatingTrackVisibility();
     // Hiding is immediate state work (the CSS then performs the exit transition).
     // Do not leave a stale badge up while a replacement resolver request settles.
     renderRatingBadges(renderGenerations.backdrop);
