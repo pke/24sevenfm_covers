@@ -914,7 +914,6 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     const screenQueries = Array.isArray(options.screenQueries) && options.screenQueries.length
         ? options.screenQueries : [query];
     const requireExactScreenMatch = options.requireExactScreenMatch === true;
-    const disambiguateExactWithArtist = options.disambiguateExactWithArtist === true;
     const hint = configuredMediaHint(query, requestHint, dependencies.env);
     const wantsScreen = ratingCountries.length > 0 || (includeArt
         && providers.some((provider) => provider === "fanart" || provider === "tmdb"));
@@ -957,8 +956,8 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
         if (category === "screen") {
             // Start the exact person lookup beside the normal title lookup so the
             // conservative fallback does not add another full provider timeout. Its
-            // result is consumed when title search has no exact match, or when a
-            // season-marked album has multiple exact series with the same name.
+            // result is consumed when title search has no exact match, or when
+            // multiple movie/TV works have the same exact title.
             const personLookup = artist && !requireExactScreenMatch
                 ? searchTmdbPerson(dependencies.fetchImpl, artist,
                 dependencies.env).then((person) => ({ person }), (error) => ({ error })) : null;
@@ -992,8 +991,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 }
             }
             if (!match && !requireExactScreenMatch) match = fallbackMatch;
-            if (match && match.exact && disambiguateExactWithArtist && personLookup
-                    && match.exactMatches.length > 1) {
+            if (match && match.exact && personLookup && match.exactMatches.length > 1) {
                 const personResult = await personLookup;
                 if (personResult.error) {
                     errors.push(personResult.error);
@@ -1174,7 +1172,6 @@ function createHandler(options = {}) {
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
                     || !!starTrekSeriesAlias(titleValue),
-                disambiguateExactWithArtist: !!tvSeasonIdentity(titleValue),
             });
             const shortCache = !result.media || (includeArt && !result.backdrop);
             res.setHeader("Cache-Control", shortCache

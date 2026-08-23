@@ -339,6 +339,56 @@ test("keeps backdrop artwork available when the rating lookup fails", async () =
     });
 });
 
+test("uses the composer to disambiguate exact movie and TV titles", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [
+                { id: 95543, media_type: "tv", name: "The Rocketeer",
+                    backdrop_path: "/rocketeer-tv.jpg" },
+                { id: 10249, media_type: "movie", title: "The Rocketeer",
+                    backdrop_path: "/rocketeer-movie.jpg" },
+            ] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 153, name: "James Horner", known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/person/153/combined_credits") {
+                return response(200, { crew: [{
+                    id: 10249, media_type: "movie", title: "The Rocketeer",
+                    job: "Original Music Composer", backdrop_path: "/rocketeer-movie.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/10249/release_dates") {
+                return response(200, { results: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Rocketeer, The",
+        track: "Main Title/Takeoff",
+        artist: "James Horner",
+        providers: "tmdb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 10249, title: "The Rocketeer", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/rocketeer-movie.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+        certifications: [],
+    });
+    assert.equal(requests.includes("/3/person/153/combined_credits"), true);
+    assert.equal(requests.includes("/3/tv/95543/content_ratings"), false);
+});
+
 test("validates the requested rating countries", () => {
     assert.deepEqual(requestedRatings(undefined), []);
     assert.deepEqual(requestedRatings("de,US,DE"), ["DE", "US"]);
