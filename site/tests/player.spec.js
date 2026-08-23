@@ -936,6 +936,9 @@ test.describe("the deployed player page", () => {
             await expect(page.locator("#coming-next-artist")).toHaveText(artist);
             expect(creditRequests).toBe(0);
 
+            await stableElementRects(page, {
+                stage: "#stage", announcement: "#coming-next", button: "#fullscreen",
+            });
             const geometry = await announcement.evaluate((element) => {
                 const stage = document.querySelector("#stage").getBoundingClientRect();
                 const button = document.querySelector("#fullscreen").getBoundingClientRect();
