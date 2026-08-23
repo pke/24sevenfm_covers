@@ -441,16 +441,15 @@
 .rating-slot[data-settled] .rating-face:last-child { opacity: 0; }
 
 /* The queued-track announcement owns the upper-right corner beneath the stage
-   buttons. JS measures its natural single-line content width, then caps that value
-   at half the viewport before CSS ellipsis is allowed to take over. Width remains
-   explicit so late composer metadata and responsive resizes animate instead of snap. */
+   buttons. Its intrinsic width grows with its single-line content up to half the
+   viewport, where album and composer ellipsis take over. */
 .coming-next {
     position: absolute;
     top: 3.8rem;
     right: .7rem;
     z-index: 3;
     box-sizing: border-box;
-    width: 0;
+    width: max-content;
     max-width: min(50vw, calc(100% - 1.4rem));
     padding: .65rem .85rem;
     overflow: hidden;
@@ -463,18 +462,17 @@
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transform: translateY(-.35rem);
-    transition: opacity .25s ease, transform .25s ease, width .32s ease,
-                visibility 0s linear .32s, color .35s ease;
+    transform: translateX(calc(100% + .7rem));
+    transition: opacity .25s ease, transform .25s ease,
+                visibility 0s linear .25s, color .35s ease;
 }
 .coming-next.show {
-    width: var(--coming-next-width, 0px);
     opacity: 1;
     visibility: visible;
-    transform: translateY(0);
+    transform: translateX(0);
     transition-delay: 0s;
 }
-.coming-next-content { width: 100%; min-width: 0; overflow: hidden; }
+.coming-next-content { min-width: 0; overflow: hidden; }
 .coming-next-label,
 .coming-next-album,
 .coming-next-artist {

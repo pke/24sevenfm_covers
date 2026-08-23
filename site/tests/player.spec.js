@@ -971,7 +971,8 @@ test.describe("the deployed player page", () => {
             expect(geometry.albumOverflow).toBe(true);
             expect(geometry.textOverflow).toBe("ellipsis");
             expect(geometry.transitionProperties).toEqual(expect.arrayContaining(
-                ["opacity", "transform", "width"]));
+                ["opacity", "transform"]));
+            expect(geometry.transitionProperties).not.toContain("width");
 
             await page.locator("#stage").evaluate((element) => element.requestFullscreen());
             await expect.poll(() => page.evaluate(() =>
@@ -987,6 +988,16 @@ test.describe("the deployed player page", () => {
             await page.evaluate(() => document.exitFullscreen());
         });
     test("keeps the Coming next header complete for a short queued album", async ({ page }) => {
+        await page.addInitScript(() => {
+            const nativeSetInterval = window.setInterval.bind(window);
+            window.setInterval = (callback, delay, ...args) => {
+                if (delay === 1000 && !window.__playerTick) {
+                    window.__playerTick = () => callback(...args);
+                    return 1;
+                }
+                return nativeSetInterval(callback, delay, ...args);
+            };
+        });
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ showComingNext: 1 })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
@@ -1008,7 +1019,7 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("#coming-next")).toHaveClass(/show/);
         await expect(page.locator("#coming-next-album")).toHaveText("Super 8");
-        await stableElementRects(page, {
+        const settled = await stableElementRects(page, {
             announcement: "#coming-next", label: ".coming-next-label",
         });
         const header = await page.locator(".coming-next-label").evaluate((label) => ({
@@ -1018,6 +1029,15 @@ test.describe("the deployed player page", () => {
         }));
         expect(header.textOverflow).toBe("clip");
         expect(header.clientWidth).toBeGreaterThanOrEqual(header.scrollWidth);
+        let afterRenderTicks;
+        for (let tick = 0; tick < 3; tick++) {
+            await page.evaluate(() => window.__playerTick());
+            afterRenderTicks = await stableElementRects(page, {
+                announcement: "#coming-next",
+            });
+        }
+        expect(afterRenderTicks.announcement.width).toBeCloseTo(
+            settled.announcement.width, 5);
     });
     virtualClockTest("reveals coming next exactly as remaining time reaches ten seconds",
         async ({ page }) => {

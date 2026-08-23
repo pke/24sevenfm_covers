@@ -380,8 +380,7 @@ function makeLayer(a, b, channel) {
 var blurLayer = makeLayer($("backdropA"), $("backdropB"), "cover");
 var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), stageStatusEl = $("stage-status");
-var comingNextEl = $("coming-next"), comingNextContentEl = $("coming-next-content");
-var comingNextLabelEl = comingNextEl.querySelector(".coming-next-label");
+var comingNextEl = $("coming-next");
 var comingNextAlbumEl = $("coming-next-album"), comingNextArtistEl = $("coming-next-artist");
 var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
 var backdropRetryEl = $("backdrop-retry");
@@ -775,23 +774,9 @@ function maybeResolveNextArtist() {
     return resolveQueuedArtist(nextTrack);
 }
 
-function comingNextWidth() {
-    var style = getComputedStyle(comingNextEl);
-    var padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
-        + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
-    var natural = Math.max(
-        comingNextContentEl.scrollWidth,
-        comingNextLabelEl.scrollWidth,
-        comingNextAlbumEl.scrollWidth,
-        comingNextArtistEl.scrollWidth) + padding;
-    var available = Math.max(0, stage.getBoundingClientRect().width - 22);
-    return Math.ceil(Math.min(natural, window.innerWidth * 0.5, available));
-}
-
 function setComingNextContent() {
     comingNextAlbumEl.textContent = nextTrack ? nextTrack.displayAlbum : "";
     comingNextArtistEl.textContent = nextTrack ? nextTrack.artist : "";
-    comingNextEl.style.setProperty("--coming-next-width", comingNextWidth() + "px");
     comingNextDisplayedVersion = nextTrack ? nextTrack.version : 0;
 }
 
