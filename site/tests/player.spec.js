@@ -44,6 +44,8 @@ test.describe("the deployed player page", () => {
             "content", /^https:\/\/24covers-api\.vercel\.app\/api\/backdrop\?resolver_version=[a-f0-9]{12}$/);
         await expect(page.locator('meta[name="tint-api"]')).toHaveAttribute(
             "content", "https://24covers-api.vercel.app/api/tint");
+        await expect(page.locator('meta[name="credit-api"]')).toHaveAttribute(
+            "content", "https://24covers-api.vercel.app/api/credit");
         expect(policy).toContain("media-src https://streamingsoundtracks.com");
         expect(policy).toContain("object-src 'none'");
 
@@ -798,6 +800,7 @@ test.describe("the deployed player page", () => {
         await page.locator('label.seg:has(input[name="transition"][value="3"])').click();
         await page.locator('label.seg:has(input[name="cdsize"][value="2"])').click();
         await page.locator("#show-remaining").check();
+        await page.locator("#show-coming-next").check();
         await page.locator("#roll").check();
         await page.locator("#tmdb-on").check();
         await page.locator("#hide-cover").check();
@@ -813,7 +816,8 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player"))))
             .toMatchObject({ layout: 0, transition: 3, remainingSize: 2,
-                showRemaining: 1, roll: 1, tmdbBackdrops: 1, hideCover: 1,
+                showRemaining: 1, showComingNext: 1, roll: 1,
+                tmdbBackdrops: 1, hideCover: 1,
                 fadeMs: 1700, volume: 0.35 });
         await expect(page.locator("#stage")).toHaveClass(/layout-fill/);
         await expect(page.locator("#fade-val")).toHaveText("1.7 s");
@@ -823,6 +827,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="transition"][value="3"]')).toBeChecked();
         await expect(page.locator('input[name="cdsize"][value="2"]')).toBeChecked();
         await expect(page.locator("#show-remaining")).toBeChecked();
+        await expect(page.locator("#show-coming-next")).toBeChecked();
         await expect(page.locator("#roll")).toBeChecked();
         await expect(page.locator("#tmdb-on")).toBeChecked();
         await expect(page.locator("#hide-cover")).toBeChecked();
@@ -830,6 +835,186 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#fade-val")).toHaveText("1.7 s");
         await expect(page.locator("#volume")).toHaveValue("0.35");
     });
+    test("shows the queued album and handed-in artist for the final ten seconds",
+        async ({ page }) => {
+            const album = "A Very Long Album Name That Needs The Full Available Announcement Width Before It Is Ellipsized";
+            const artist = "A Composer With An Equally Long Credit That Must Also Be Ellipsized";
+            let creditRequests = 0;
+            await page.setViewportSize({ width: 1000, height: 760 });
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ showComingNext: 1 })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [{
+                    Album: album, Track: "Next Cue", Artist: artist,
+                    CoverLink: "", SiteLink: "",
+                }] });
+                return route.fulfill({ json: {
+                    Album: "Current Album", Track: "Current Cue", Artist: "Current Composer",
+                    CoverLink: "", Length: 12000,
+                    PlayStart: "2026-08-23T12:00:00Z",
+                    SystemTime: "2026-08-23T12:00:01Z",
+                } });
+            });
+            await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route("https://24covers-api.vercel.app/api/credit?*", (route) => {
+                creditRequests++;
+                return route.fulfill({ json: { artist: "Wrong fallback" } });
+            });
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            const announcement = page.locator("#coming-next");
+            await expect(announcement).toHaveClass(/show/, { timeout: 3000 });
+            await expect(announcement).toHaveAttribute("aria-hidden", "false");
+            await expect(page.locator("#coming-next-album")).toHaveText(album);
+            await expect(page.locator("#coming-next-artist")).toHaveText(artist);
+            expect(creditRequests).toBe(0);
+
+            const geometry = await announcement.evaluate((element) => {
+                const stage = document.querySelector("#stage").getBoundingClientRect();
+                const button = document.querySelector("#fullscreen").getBoundingClientRect();
+                const box = element.getBoundingClientRect();
+                const albumLine = document.querySelector("#coming-next-album");
+                const style = getComputedStyle(element);
+                const lineStyle = getComputedStyle(albumLine);
+                return {
+                    width: box.width,
+                    rightGap: stage.right - box.right,
+                    belowButton: box.top >= button.bottom,
+                    albumOverflow: albumLine.scrollWidth > albumLine.clientWidth,
+                    textOverflow: lineStyle.textOverflow,
+                    transitionProperties: style.transitionProperty.split(", "),
+                };
+            });
+            expect(geometry.width).toBeLessThanOrEqual(501);
+            expect(geometry.width).toBeGreaterThan(300);
+            expect(geometry.rightGap).toBeGreaterThan(5);
+            expect(geometry.rightGap).toBeLessThan(20);
+            expect(geometry.belowButton).toBe(true);
+            expect(geometry.albumOverflow).toBe(true);
+            expect(geometry.textOverflow).toBe("ellipsis");
+            expect(geometry.transitionProperties).toEqual(expect.arrayContaining(
+                ["opacity", "transform", "width"]));
+
+            await page.locator("#stage").evaluate((element) => element.requestFullscreen());
+            const fullscreenGeometry = await announcement.evaluate((element) => {
+                const stage = document.querySelector("#stage").getBoundingClientRect();
+                const box = element.getBoundingClientRect();
+                return { width: box.width, rightGap: stage.right - box.right };
+            });
+            expect(fullscreenGeometry.width).toBeLessThanOrEqual(501);
+            expect(fullscreenGeometry.rightGap).toBeGreaterThan(5);
+            expect(fullscreenGeometry.rightGap).toBeLessThan(20);
+            await page.evaluate(() => document.exitFullscreen());
+        });
+    test("fetches an album credit only when the queue omits Artist and retains text while fading",
+        async ({ page }) => {
+            let currentAlbum = "Current Album", queueAvailable = true, creditRequests = 0;
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ showComingNext: 1 })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: queueAvailable ? [{
+                    Album: "JFK (2013)", Track: "Campaigning In The South",
+                    CoverLink: "",
+                    SiteLink: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00GHJ08XC",
+                }] : [] });
+                return route.fulfill({ json: {
+                    Album: currentAlbum, Track: "Current Cue", Artist: "Current Composer",
+                    CoverLink: "", Length: 10000,
+                    PlayStart: "2026-08-23T12:00:00Z",
+                    SystemTime: "2026-08-23T12:00:05Z",
+                } });
+            });
+            await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route("https://24covers-api.vercel.app/api/credit?*", (route) => {
+                creditRequests++;
+                const url = new URL(route.request().url());
+                expect(url.searchParams.get("album")).toBe("JFK (2013)");
+                expect(url.searchParams.get("url")).toBe(
+                    "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00GHJ08XC");
+                return route.fulfill({ json: { artist: "Joel Goodman" } });
+            });
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            const announcement = page.locator("#coming-next");
+            await expect(announcement).toHaveClass(/show/);
+            await expect(page.locator("#coming-next-album")).toHaveText("JFK (2013)");
+            await expect(page.locator("#coming-next-artist")).toHaveText("Joel Goodman");
+            expect(creditRequests).toBe(1);
+
+            currentAlbum = "Following Album";
+            queueAvailable = false;
+            await page.locator('input[name="station"][value="sst"]').evaluate((input) =>
+                input.dispatchEvent(new Event("change", { bubbles: true })));
+            await expect(announcement).not.toHaveClass(/show/);
+            await expect(announcement).toHaveAttribute("aria-hidden", "true");
+            // Outgoing content must remain mounted until its opacity/width exit completes.
+            await expect(page.locator("#coming-next-album")).toHaveText("JFK (2013)");
+            await expect(page.locator("#coming-next-album")).toHaveText("", { timeout: 1500 });
+        });
+    test("disables coming-next motion when reduced motion is requested", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ showComingNext: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [{
+                Album: "Next Album", Track: "Next Cue", Artist: "Next Composer", CoverLink: "",
+            }] });
+            return route.fulfill({ json: {
+                Album: "Current Album", Track: "Current Cue", Artist: "Current Composer",
+                CoverLink: "", Length: 10000,
+                PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:05Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const announcement = page.locator("#coming-next");
+        await expect(announcement).toHaveClass(/show/);
+        expect(await announcement.evaluate((element) => ({
+            durations: getComputedStyle(element).transitionDuration.split(","),
+            animations: element.getAnimations().length,
+        }))).toEqual({ durations: ["0s"], animations: 0 });
+    });
+    test("keeps coming next off by default and skips missing-artist enrichment",
+        async ({ page }) => {
+            let creditRequests = 0;
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [{
+                    Album: "Next Album", Track: "Next Cue", CoverLink: "",
+                    SiteLink: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00NEXT",
+                }] });
+                return route.fulfill({ json: {
+                    Album: "Current Album", Track: "Current Cue", Artist: "Current Composer",
+                    CoverLink: "", Length: 10000,
+                    PlayStart: "2026-08-23T12:00:00Z",
+                    SystemTime: "2026-08-23T12:00:05Z",
+                } });
+            });
+            await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route("https://24covers-api.vercel.app/api/credit?*", (route) => {
+                creditRequests++;
+                return route.fulfill({ json: { artist: "Should not load" } });
+            });
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator("#show-coming-next")).not.toBeChecked();
+            await expect(page.locator("#coming-next")).not.toHaveClass(/show/);
+            await page.waitForTimeout(250);
+            expect(creditRequests).toBe(0);
+        });
     test("maps both flip effects to their CSS axes", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
@@ -2102,7 +2287,7 @@ test.describe("the deployed player page", () => {
         expect(resolvedTrack).toBe("Heptapod B");
         expect(resolvedArtist).toBe("Jóhann Jóhannsson");
         expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
-        expect(resolverVersion).toBe("1");
+        expect(resolverVersion).toMatch(/^[a-f0-9]{12}$/);
         expect(directProviderRequests).toBe(0);
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /arrival\.jpg/);
@@ -3442,7 +3627,7 @@ test.describe("the deployed player page", () => {
         let resolverRequests = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: "0",
-                showRemaining: "0", roll: "0", hideCover: "0" })));
+                showRemaining: "0", showComingNext: "0", roll: "0", hideCover: "0" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3463,6 +3648,7 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("#tmdb-on")).not.toBeChecked();
         await expect(page.locator("#show-remaining")).not.toBeChecked();
+        await expect(page.locator("#show-coming-next")).not.toBeChecked();
         await expect(page.locator("#roll")).not.toBeChecked();
         await expect(page.locator("#hide-cover")).not.toBeChecked();
         await page.waitForTimeout(100);

@@ -40,6 +40,7 @@
      resolver implementation. Resolver misses expire quickly and can discover later provider art. -->
 <meta name="backdrop-api" content="https://24covers-api.vercel.app/api/backdrop?resolver_version={{RESOLVER_V}}">
 <meta name="tint-api" content="https://24covers-api.vercel.app/api/tint">
+<meta name="credit-api" content="https://24covers-api.vercel.app/api/credit">
 <link rel="icon" href="img/favicon.ico">
 <link rel="author" href="humans.txt">
 <link rel="canonical" href="{{SITE_URL}}player.html">
@@ -114,6 +115,14 @@
                         <div class="rating-face"><img alt="" aria-hidden="true"><span></span></div>
                         <div class="rating-face"><img alt="" aria-hidden="true"><span></span></div>
                     </div>
+                </div>
+            </div>
+            <div class="coming-next" id="coming-next" role="status" aria-live="polite"
+                 aria-atomic="true" aria-hidden="true">
+                <div class="coming-next-content" id="coming-next-content">
+                    <div class="coming-next-label">Coming next</div>
+                    <div class="coming-next-album" id="coming-next-album"></div>
+                    <div class="coming-next-artist" id="coming-next-artist"></div>
                 </div>
             </div>
             <div class="options-overlay spectrum-options" id="spectrum-options" role="dialog"
@@ -326,6 +335,8 @@
                 <div class="row">
                     <label><input type="checkbox" id="show-remaining"
                                   data-option="showRemaining"> Show countdown</label>
+                    <label><input type="checkbox" id="show-coming-next"
+                                  data-option="showComingNext"> Show “Coming next”</label>
                     <label><input type="checkbox" id="roll" data-option="roll"> Rolling digits</label>
                     <span class="seg-group">
                         <label class="seg"><input type="radio" name="cdsize" value="0"

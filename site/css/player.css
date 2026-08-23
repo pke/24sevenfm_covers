@@ -429,6 +429,78 @@
 .rating-slot[data-settled] .rating-card { transform-style: flat; }
 .rating-slot[data-settled] .rating-face:first-child { backface-visibility: visible; }
 .rating-slot[data-settled] .rating-face:last-child { opacity: 0; }
+
+/* The queued-track announcement owns the upper-right corner beneath the stage
+   buttons. JS measures its natural single-line content width, then caps that value
+   at half the viewport before CSS ellipsis is allowed to take over. Width remains
+   explicit so late composer metadata and responsive resizes animate instead of snap. */
+.coming-next {
+    position: absolute;
+    top: 3.8rem;
+    right: .7rem;
+    z-index: 3;
+    box-sizing: border-box;
+    width: 0;
+    max-width: min(50vw, calc(100% - 1.4rem));
+    padding: .65rem .85rem;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .16);
+    border-radius: .65rem;
+    background: rgba(0, 0, 0, .62);
+    color: var(--text-inverse);
+    text-align: left;
+    text-shadow: var(--art-text-shadow);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-.35rem);
+    transition: opacity .25s ease, transform .25s ease, width .32s ease,
+                visibility 0s linear .32s, color .35s ease;
+}
+.coming-next.show {
+    width: var(--coming-next-width, 0px);
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition-delay: 0s;
+}
+.coming-next-content { width: 100%; min-width: 0; overflow: hidden; }
+.coming-next-label,
+.coming-next-album,
+.coming-next-artist {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.coming-next-label {
+    color: color-mix(in srgb, var(--player-tint) 72%, transparent);
+    font-size: clamp(.68rem, 1.4vw, .8rem);
+    font-weight: 700;
+    letter-spacing: .07em;
+    line-height: 1.15;
+    text-transform: uppercase;
+}
+.coming-next-album {
+    margin-top: .18rem;
+    font-size: clamp(.85rem, 2vw, 1.05rem);
+    font-weight: 650;
+    line-height: 1.25;
+}
+.coming-next-artist {
+    max-height: 1.25em;
+    margin-top: .08rem;
+    font-size: clamp(.78rem, 1.8vw, .95rem);
+    line-height: 1.25;
+    opacity: .82;
+    transition: max-height .2s ease, margin-top .2s ease, opacity .2s ease;
+}
+.coming-next-artist:empty {
+    max-height: 0;
+    margin-top: 0;
+    opacity: 0;
+}
 .options-overlay {
     position: absolute;
     z-index: 4;
@@ -785,7 +857,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     .stage-status, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
     .fanart-key-check span, .provider-key-help, .provider-key-status,
-    .rating-badges, .rating-slot, .rating-card, .rating-face, .rating-country-options {
+    .rating-badges, .rating-slot, .rating-card, .rating-face, .rating-country-options,
+    .coming-next, .coming-next-artist {
         transition: none !important;
     }
     .stage-lasers, .stage-lasers-front, .stage-spectrum { display: none; }

@@ -1,10 +1,13 @@
 # Vercel artwork resolvers
 
-ADR 0001 is implemented by `api/backdrop.js` and `api/tint.js`. Vercel discovers
-both as Node.js Functions and installs the root `package.json`. The backdrop API
+ADR 0001 is implemented by `api/backdrop.js` and `api/tint.js`; the web player's
+queued-credit fallback is `api/credit.js`. Vercel discovers all three as Node.js
+Functions and installs the root `package.json`. The backdrop API
 returns a selected CDN URL and RGB tint and can optionally return DE/US media
 certifications; the tint API downloads a bounded station
-cover on cache miss and returns only its RGB tint. Neither endpoint proxies image
+cover on cache miss and returns only its RGB tint. The credit API reads the public
+Open Graph title of an allowlisted station album page only when `GetQueue` omits
+`Artist`. None of the endpoints proxies image
 bytes to the browser.
 
 `ratings=DE,US` adds a `certifications` array to the response. `art=0` skips artwork
@@ -28,8 +31,9 @@ are not part of this server deployment.
 | `FANART_API_KEY` | recommended | fanart.tv project key |
 | `STEAMGRIDDB_API_KEY` | recommended for game art | key generated under SteamGridDB Preferences → API |
 | `BACKDROP_MEDIA_OVERRIDES` | optional | JSON title-to-type map (`game`, `movie`, `tv`, or `screen`) for ambiguous albums |
-| `BACKDROP_ALLOWED_ORIGINS` | yes for cross-origin use | comma-separated exact site origins, applied to both endpoints |
+| `BACKDROP_ALLOWED_ORIGINS` | yes for cross-origin use | comma-separated exact site origins, applied to all three endpoints |
 | `TINT_ALLOWED_HOSTS` | optional | exact cover hosts; defaults to the five station domains |
+| `ALBUM_CREDIT_ALLOWED_HOSTS` | optional | exact album-page hosts; defaults to the five station domains |
 
 Do not configure both TMDB variables unless there is an operational reason; the
 read token takes precedence. For the current public site, the CORS value is
@@ -107,11 +111,11 @@ station feed itself cannot prove their type.
 
 ## Site/API routing
 
-`site/player.html` points at `/api/backdrop` and `/api/tint`. The browser has no
-direct metadata-provider or pixel-reading fallback, so both routes must be
+`site/player.html` points at `/api/backdrop`, `/api/tint`, and `/api/credit`. The browser has no
+direct metadata-provider or pixel-reading fallback, so all three routes must be
 reachable. The relative URLs are correct when Vercel serves
 the rendered website and function on the same domain. If the static site remains
-on GitHub Pages, change both API meta tags to the absolute Vercel project URL and
+on GitHub Pages, change all three API meta tags to the absolute Vercel project URL and
 add that origin to the page's `connect-src` CSP. Also keep the public site origin
 in `BACKDROP_ALLOWED_ORIGINS`.
 
@@ -130,6 +134,13 @@ fragments and redirects outside that same policy. Fetches have a 4 second deadli
 requests are `no-store`; successful RGB responses are cached at the edge for six
 months.
 
+`/api/credit` is likewise not a general HTML proxy. It accepts only HTTPS/443 album
+pages on the exact configured station hosts, requires the fixed
+`/modules.php?name=Album&asin=<safe-id>` shape, rejects credentials, extra parameters,
+fragments and every redirect, and stops after 3 seconds or 256 KB. A successful
+credit is cached for six months; a page without matching Open Graph metadata is
+cached for 15 minutes.
+
 Before enabling Production, add one Vercel Firewall rate-limit rule for paths
 starting with `/api/`. A conservative starting policy for this player is 20
 requests per IP per 10-second fixed window, followed by HTTP 429. Monitor the
@@ -143,7 +154,7 @@ either control.
 Run the deterministic function tests from the repository root:
 
 ```powershell
-node --test api/backdrop.test.js
+node --test api/*.test.js
 ```
 
 After deployment, verify a known soundtrack without printing any configured key:
@@ -153,11 +164,14 @@ curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Arriva
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Hades" --data-urlencode "media_hint=game"
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Game Of Thrones" --data-urlencode "providers=tmdb" --data-urlencode "ratings=DE,US" --data-urlencode "art=0"
 curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://streamingsoundtracks.com/images/cover/040/B000FBFTCS.jpg"
+curl.exe --get "https://YOUR-DOMAIN/api/credit" --data-urlencode "album=JFK (2013)" --data-urlencode "url=https://streamingsoundtracks.com/modules.php?name=Album&asin=B00GHJ08XC"
 ```
 
 The responses should name a movie, TV series, or game and return a trusted TMDB,
 fanart.tv, or SteamGridDB image URL,
 include three tint channels, and carry a six-month `s-maxage` cache directive for
 an artwork hit. A response without a backdrop uses a 15-minute `s-maxage` instead.
-The tint response should contain only `{ "tint": [r, g, b] }`. Also verify that a
-localhost URL receives `400 invalid_image_url` without an upstream request.
+The tint response should contain only `{ "tint": [r, g, b] }`, and the credit response
+only `{ "artist": "Joel Goodman" }`. Also verify that a
+localhost image URL receives `400 invalid_image_url`, and a localhost album URL
+receives `400 invalid_album_url`, without an upstream request.

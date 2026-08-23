@@ -131,6 +131,7 @@ var OPTION_DEFS = {
     fadeMs: { default: 1000, coerce: intOption(500, 2000), event: "input",
         format: function (value) { return (value / 1000).toFixed(1) + " s"; } },
     showRemaining: { default: 0, coerce: boolOption, effect: renderCountdown },
+    showComingNext: { default: 0, coerce: boolOption, effect: applyComingNextEnabled },
     remainingSize: { default: 0, coerce: intOption(0, 2), effect: sizeStage },
     roll: { default: 0, coerce: boolOption },
     posterBlur: { default: 24, coerce: intOption(0, 200) },
@@ -176,6 +177,9 @@ var BACKDROP_API_URL = (backdropApiMeta && backdropApiMeta.getAttribute("content
 var tintApiMeta = document.querySelector('meta[name="tint-api"]');
 var TINT_API_URL = (tintApiMeta && tintApiMeta.getAttribute("content")
     || "/api/tint").trim();
+var creditApiMeta = document.querySelector('meta[name="credit-api"]');
+var CREDIT_API_URL = (creditApiMeta && creditApiMeta.getAttribute("content")
+    || "/api/credit").trim();
 const FANART_KEY_CHECK_URL = "https://webservice.fanart.tv/v3/movies/27205";
 // Local visual QA can force the retry state even while the real station is healthy.
 // The hostname guard makes the switch inert on every deployed origin.
@@ -376,6 +380,8 @@ function makeLayer(a, b, channel) {
 var blurLayer = makeLayer($("backdropA"), $("backdropB"), "cover");
 var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), stageStatusEl = $("stage-status");
+var comingNextEl = $("coming-next"), comingNextContentEl = $("coming-next-content");
+var comingNextAlbumEl = $("coming-next-album"), comingNextArtistEl = $("coming-next-artist");
 var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
 var backdropRetryEl = $("backdrop-retry");
 var audioEl = $("audio");
@@ -574,10 +580,161 @@ function applyRatingCountries() {
 
 // --- poll engine (ported from lib/coverfetch.cpp) ----------------------------
 var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 60, REQ_TIMEOUT = 20000;
+var COMING_NEXT_SECONDS = 10;
 var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
 var retryAt = 0;
 var shownUrl = "", loadingCoverUrl = "", remAnchor = -1, remAnchorAt = 0;
 var coverRetryUrl = "", coverRetryFailures = 0, coverRetryTimer = null;
+var nextTrack = null, nextTrackToken = "", nextTrackVersion = 0;
+var nextCreditRequest = null, comingNextClearTimer = null, comingNextDisplayedVersion = 0;
+
+function trustedAlbumPageUrl(raw) {
+    if (typeof raw !== "string" || !raw || /[\u0000-\u001F\u007F]/.test(raw)) return "";
+    try {
+        var url = new URL(raw);
+        var host = station().host.toLowerCase();
+        if (url.protocol !== "https:" || (url.port && url.port !== "443")
+                || url.username || url.password || url.hash
+                || url.hostname.toLowerCase() !== host || url.pathname !== "/modules.php"
+                || url.searchParams.get("name") !== "Album"
+                || !url.searchParams.get("asin")) return "";
+        return url.href;
+    } catch (error) { return ""; }
+}
+
+function cancelNextCredit(resetAttempt) {
+    if (!nextCreditRequest) return;
+    nextCreditRequest.ctl.abort();
+    clearTimeout(nextCreditRequest.kill);
+    if (resetAttempt && nextTrack
+            && nextCreditRequest.version === nextTrack.version) nextTrack.creditAttempted = false;
+    nextCreditRequest = null;
+}
+
+function nextTrackFromQueue(value) {
+    if (!value || typeof value !== "object" || value instanceof Array) return null;
+    var album = htmlDecode(value.Album).trim();
+    if (!album) return null;
+    return {
+        album: album,
+        displayAlbum: unrotateTitleArticle(album),
+        track: htmlDecode(value.Track).trim(),
+        artist: htmlDecode(value.Artist).trim(),
+        albumUrl: trustedAlbumPageUrl(value.SiteLink),
+    };
+}
+
+function setNextTrack(value) {
+    var parsed = nextTrackFromQueue(value);
+    var token = parsed ? [parsed.album, parsed.track, parsed.artist, parsed.albumUrl].join("\n") : "";
+    if (token === nextTrackToken) return;
+    cancelNextCredit(false);
+    nextTrackToken = token;
+    var version = ++nextTrackVersion;
+    nextTrack = parsed;
+    if (nextTrack) {
+        nextTrack.version = version;
+        nextTrack.creditAttempted = false;
+    }
+    renderComingNext();
+    maybeResolveNextArtist();
+}
+
+function validArtist(value) {
+    return typeof value === "string" && value.trim() && value.length <= 180
+        && !/[\u0000-\u001F\u007F]/.test(value);
+}
+
+function maybeResolveNextArtist() {
+    if (!opts.showComingNext || !nextTrack || nextTrack.artist || !nextTrack.albumUrl
+            || nextTrack.creditAttempted) return;
+    nextTrack.creditAttempted = true;
+    var tracked = nextTrack, version = tracked.version;
+    var ctl = new AbortController();
+    var request = {
+        ctl: ctl,
+        version: version,
+        kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT),
+    };
+    nextCreditRequest = request;
+    var url = new URL(CREDIT_API_URL, location.href);
+    url.searchParams.set("album", tracked.album);
+    url.searchParams.set("url", tracked.albumUrl);
+    fetch(url, { signal: ctl.signal }).then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+    }).then(function (body) {
+        if (nextCreditRequest !== request || !nextTrack || nextTrack.version !== version) return;
+        if (body && validArtist(body.artist)) {
+            nextTrack.artist = body.artist.trim();
+            renderComingNext();
+        }
+    }).catch(function () { /* album credit is best-effort; album-only remains useful */ })
+        .finally(function () {
+            clearTimeout(request.kill);
+            if (nextCreditRequest === request) nextCreditRequest = null;
+        });
+}
+
+function comingNextWidth() {
+    var style = getComputedStyle(comingNextEl);
+    var padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+        + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+    var natural = Math.max(
+        comingNextContentEl.scrollWidth,
+        comingNextAlbumEl.scrollWidth,
+        comingNextArtistEl.scrollWidth) + padding;
+    var available = Math.max(0, stage.getBoundingClientRect().width - 22);
+    return Math.ceil(Math.min(natural, window.innerWidth * 0.5, available));
+}
+
+function setComingNextContent() {
+    comingNextAlbumEl.textContent = nextTrack ? nextTrack.displayAlbum : "";
+    comingNextArtistEl.textContent = nextTrack ? nextTrack.artist : "";
+    comingNextEl.style.setProperty("--coming-next-width", comingNextWidth() + "px");
+    comingNextDisplayedVersion = nextTrack ? nextTrack.version : 0;
+}
+
+function clearComingNextContent() {
+    if (comingNextEl.classList.contains("show")) return;
+    clearTimeout(comingNextClearTimer);
+    comingNextClearTimer = null;
+    comingNextAlbumEl.textContent = "";
+    comingNextArtistEl.textContent = "";
+    comingNextDisplayedVersion = 0;
+    renderComingNext();
+}
+
+function hideComingNext() {
+    var wasShown = comingNextEl.classList.contains("show");
+    comingNextEl.classList.remove("show");
+    comingNextEl.setAttribute("aria-hidden", "true");
+    if ((!wasShown && !comingNextAlbumEl.textContent) || comingNextClearTimer) return;
+    var duration = reducedMotion.matches ? 0 : transitionTotalMs(comingNextEl);
+    if (!duration) return clearComingNextContent();
+    comingNextClearTimer = setTimeout(clearComingNextContent, duration + 50);
+}
+
+function renderComingNext() {
+    var remaining = currentRemaining();
+    var shouldShow = !!opts.showComingNext && !!nextTrack
+        && remaining >= 0 && remaining <= COMING_NEXT_SECONDS;
+    if (!shouldShow) return hideComingNext();
+    // If the queued track changed while the old card is exiting, let the old text
+    // finish its fade before mounting the replacement.
+    if (comingNextClearTimer && comingNextDisplayedVersion !== nextTrack.version) return;
+    clearTimeout(comingNextClearTimer);
+    comingNextClearTimer = null;
+    setComingNextContent();
+    comingNextEl.setAttribute("aria-hidden", "false");
+    comingNextEl.classList.add("show");
+}
+
+function applyComingNextEnabled() {
+    if (!opts.showComingNext) cancelNextCredit(true);
+    else maybeResolveNextArtist();
+    renderComingNext();
+}
 
 function resetCoverRetry(url) {
     clearTimeout(coverRetryTimer);
@@ -655,6 +812,7 @@ async function poll() {
                 || isStationId !== stationIdActive) {
             const trackChanged = album !== currentAlbum || track !== currentTrack
                 || artist !== currentArtist;
+            if (trackChanged) setNextTrack(null);
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
             if (trackChanged) prepareRatingTrackVisibility();
@@ -744,7 +902,9 @@ async function prefetchNext(ctl, generation) {
             + "/soap/FM24sevenJSON.php?action=GetQueue&_t=" + Date.now(),
             { signal: prefetchCtl.signal });
         if (!r.ok) return;
-        const next = ((await r.json()) || [])[0];
+        const queue = await r.json();
+        const next = queue instanceof Array ? queue[0] : null;
+        setNextTrack(next);
         // No entry or no trusted CoverLink (station ID or rejected URL): nothing to warm.
         const nextCover = next && sizedCoverUrl(next.CoverLink);
         if (!nextCover) return;
@@ -757,7 +917,11 @@ async function prefetchNext(ctl, generation) {
             if (art && art.url && renderIsCurrent("backdrop", generation))
                 movieLayer.prepare(art.url);
         }
-    } catch (e) { /* prefetch is best-effort */ }
+    } catch (e) {
+        // An aborted request belongs to a superseding poll/station. A real queue
+        // failure must not leave an old announcement armed for the final ten seconds.
+        if (!prefetchCtl.signal.aborted) setNextTrack(null);
+    }
     finally {
         clearTimeout(kill);
         ctl.signal.removeEventListener("abort", abortPrefetch);
@@ -1309,6 +1473,7 @@ function sizeStage() {
     // is relative to size. A fixed CSS pixel blur reads far too mild on a big stage -
     // scale it the same way: posterBlur px at 240, proportionally more at stage width.
     stage.style.setProperty("--poster-blur", (opts.posterBlur * r.width / 240) + "px");
+    if (comingNextEl.classList.contains("show") && nextTrack) setComingNextContent();
     positionSpectrumOptions();
 }
 if (window.ResizeObserver) {
@@ -1936,6 +2101,7 @@ function applyStation() {
     setMovieBackdrop(null, backdropGeneration);
     setRatings([], backdropGeneration);
     shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
+    setNextTrack(null);
     resetCoverRetry("");
     // The resolver is per-station now - always re-evaluate after a switch, even if
     // the new station plays an identically named album.
@@ -2122,6 +2288,7 @@ applyLayout();
 setInfo("Loading…", "");
 tickTimer = setInterval(function () {
     renderCountdown();
+    renderComingNext();
     renderRetryStatus();
 }, 1000);
 poll();

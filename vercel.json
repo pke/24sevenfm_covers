@@ -6,6 +6,9 @@
     },
     "api/tint.js": {
       "maxDuration": 10
+    },
+    "api/credit.js": {
+      "maxDuration": 10
     }
   }
 }

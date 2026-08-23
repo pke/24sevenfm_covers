@@ -37,6 +37,8 @@ try {
     $renderedPlayer = [IO.File]::ReadAllText((Join-Path $testOutput 'player.html'))
     Assert-Test ($renderedPlayer.Contains('http://localhost:3000/api/backdrop')) `
         'the renderer should write the local API origin directly into player.html'
+    Assert-Test ($renderedPlayer.Contains('http://localhost:3000/api/credit')) `
+        'the renderer should apply the local API origin to album-credit requests'
     $resolverHasher = [Security.Cryptography.SHA256]::Create()
     try {
         $resolverHashBytes = $resolverHasher.ComputeHash([IO.File]::ReadAllBytes(
