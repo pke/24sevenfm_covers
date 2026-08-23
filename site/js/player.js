@@ -581,13 +581,21 @@ function applyRatingCountries() {
 
 // --- poll engine (ported from lib/coverfetch.cpp) ----------------------------
 var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 60, REQ_TIMEOUT = 20000;
+var BOUNDARY_WATCH_SECONDS = 10, BOUNDARY_POLL_SECONDS = 2, BOUNDARY_GRACE_SECONDS = 15;
 var COMING_NEXT_SECONDS = 10;
 var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
-var retryAt = 0;
+var retryAt = 0, pollActive = null, lastSuccessfulPollAt = 0;
+var boundaryTrackToken = "", boundaryExpectedEndAt = 0;
 var shownUrl = "", loadingCoverUrl = "", remAnchor = -1, remAnchorAt = 0;
 var coverRetryUrl = "", coverRetryFailures = 0, coverRetryTimer = null;
 var nextTrack = null, nextTrackToken = "", nextTrackVersion = 0;
 var nextCreditRequest = null, comingNextClearTimer = null, comingNextDisplayedVersion = 0;
+var queuedTracks = [], queuedTrackStore = Object.create(null), queuedTrackStoreSize = 0;
+var queuePrefetchTimer = null, queuePrefetchRequest = null, queuePrefetchNextAt = 0;
+var queuePrefetchCursor = 0, queuePrefetchUrgent = false;
+var queueRefreshRequest = null;
+var QUEUE_PREFETCH_STAGGER_MS = 60 * 1000, QUEUED_TRACK_STORE_LIMIT = 64;
+var queueSnapshotReady = false;
 
 function trustedAlbumPageUrl(raw) {
     if (typeof raw !== "string" || !raw || /[\u0000-\u001F\u007F]/.test(raw)) return "";
@@ -607,38 +615,107 @@ function cancelNextCredit(resetAttempt) {
     if (!nextCreditRequest) return;
     nextCreditRequest.ctl.abort();
     clearTimeout(nextCreditRequest.kill);
-    if (resetAttempt && nextTrack
-            && nextCreditRequest.version === nextTrack.version) nextTrack.creditAttempted = false;
+    if (resetAttempt && nextCreditRequest.track
+            && nextCreditRequest.version === nextCreditRequest.track.version) {
+        nextCreditRequest.track.creditAttempted = false;
+        nextCreditRequest.track.creditPromise = null;
+    }
     nextCreditRequest = null;
 }
 
-function nextTrackFromQueue(value) {
+function nextTrackFromQueue(value, occurrence) {
     if (!value || typeof value !== "object" || value instanceof Array) return null;
     var album = htmlDecode(value.Album).trim();
     if (!album) return null;
+    var track = htmlDecode(value.Track).trim();
+    var artist = htmlDecode(value.Artist).trim();
+    var albumUrl = trustedAlbumPageUrl(value.SiteLink);
+    var coverUrl = sizedCoverUrl(value.CoverLink);
+    var tintUrl = trustedCoverUrl(value.ThumbnailLink) || trustedCoverUrl(value.CoverLink);
+    var queueKey = [station().host, album, track, trustedCoverUrl(value.CoverLink), albumUrl,
+        occurrence || 0].join("\n");
     return {
+        queueKey: queueKey,
         album: album,
         displayAlbum: unrotateTitleArticle(album),
-        track: htmlDecode(value.Track).trim(),
-        artist: htmlDecode(value.Artist).trim(),
-        albumUrl: trustedAlbumPageUrl(value.SiteLink),
+        track: track,
+        artist: artist,
+        artistSource: artist ? "queue" : "",
+        albumUrl: albumUrl,
+        coverUrl: coverUrl,
+        tintUrl: tintUrl,
+        lengthSeconds: Math.max(0, Math.floor((parseInt(value.Length, 10) || 0) / 1000)),
+        coverPrepared: false,
+        tintAttempted: false,
+        creditAttempted: false,
+        creditPromise: null,
+        backdropPrefetchKey: "",
+        art: null,
+        backdropImage: null,
+        lastSeen: Date.now(),
     };
 }
 
 function setNextTrack(value) {
-    var parsed = nextTrackFromQueue(value);
-    var token = parsed ? [parsed.album, parsed.track, parsed.artist, parsed.albumUrl].join("\n") : "";
-    if (token === nextTrackToken) return;
-    cancelNextCredit(false);
+    var parsed = value && value.queueKey ? value : nextTrackFromQueue(value, 0);
+    var token = parsed ? parsed.queueKey : "";
+    if (token === nextTrackToken) return nextTrack;
+    cancelNextCredit(true);
     nextTrackToken = token;
     var version = ++nextTrackVersion;
     nextTrack = parsed;
     if (nextTrack) {
         nextTrack.version = version;
-        nextTrack.creditAttempted = false;
+        if (typeof nextTrack.creditAttempted !== "boolean") nextTrack.creditAttempted = false;
+        if (!("creditPromise" in nextTrack)) nextTrack.creditPromise = null;
     }
     renderComingNext();
     maybeResolveNextArtist();
+    return nextTrack;
+}
+
+function trimQueuedTrackStore() {
+    if (queuedTrackStoreSize <= QUEUED_TRACK_STORE_LIMIT) return;
+    var active = new Set(queuedTracks.map(function (entry) { return entry.queueKey; }));
+    Object.keys(queuedTrackStore).sort(function (left, right) {
+        return queuedTrackStore[left].lastSeen - queuedTrackStore[right].lastSeen;
+    }).some(function (key) {
+        if (queuedTrackStoreSize <= QUEUED_TRACK_STORE_LIMIT) return true;
+        if (active.has(key)) return false;
+        delete queuedTrackStore[key];
+        queuedTrackStoreSize--;
+        return false;
+    });
+}
+
+function reconcileQueuedTracks(values) {
+    var occurrences = Object.create(null);
+    queuedTracks = (values instanceof Array ? values : []).map(function (value) {
+        var base = nextTrackFromQueue(value, 0);
+        if (!base) return null;
+        var occurrence = occurrences[base.queueKey] || 0;
+        occurrences[base.queueKey] = occurrence + 1;
+        var parsed = occurrence ? nextTrackFromQueue(value, occurrence) : base;
+        var entry = queuedTrackStore[parsed.queueKey];
+        if (!entry) {
+            entry = parsed;
+            queuedTrackStore[entry.queueKey] = entry;
+            queuedTrackStoreSize++;
+        } else {
+            entry.lastSeen = Date.now();
+            entry.lengthSeconds = parsed.lengthSeconds;
+            if (parsed.artist) {
+                entry.artist = parsed.artist;
+                entry.artistSource = "queue";
+            }
+        }
+        return entry;
+    }).filter(Boolean);
+    queueSnapshotReady = true;
+    setNextTrack(queuedTracks[0] || null);
+    renderComingNext();
+    trimQueuedTrackStore();
+    scheduleQueuePrefetch(true);
 }
 
 function validArtist(value) {
@@ -646,14 +723,22 @@ function validArtist(value) {
         && !/[\u0000-\u001F\u007F]/.test(value);
 }
 
-function maybeResolveNextArtist() {
-    if (!opts.showComingNext || !nextTrack || nextTrack.artist || !nextTrack.albumUrl
-            || nextTrack.creditAttempted) return;
-    nextTrack.creditAttempted = true;
-    var tracked = nextTrack, version = tracked.version;
+function queuedArtistIsNeeded() {
+    return !!opts.showComingNext
+        || (!!station().backdrop && (opts.tmdbBackdrops || opts.ratingsEnabled));
+}
+
+function resolveQueuedArtist(tracked) {
+    if (!queuedArtistIsNeeded() || !tracked || tracked.artist || !tracked.albumUrl)
+        return Promise.resolve(tracked ? tracked.artist : "");
+    if (tracked.creditPromise) return tracked.creditPromise;
+    if (tracked.creditAttempted) return Promise.resolve("");
+    tracked.creditAttempted = true;
+    var version = tracked.version;
     var ctl = new AbortController();
     var request = {
         ctl: ctl,
+        track: tracked,
         version: version,
         kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT),
     };
@@ -661,20 +746,33 @@ function maybeResolveNextArtist() {
     var url = new URL(CREDIT_API_URL, location.href);
     url.searchParams.set("album", tracked.album);
     url.searchParams.set("url", tracked.albumUrl);
-    fetch(url, { signal: ctl.signal }).then(function (response) {
+    var creditPromise;
+    creditPromise = fetch(url, { signal: ctl.signal }).then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
     }).then(function (body) {
-        if (nextCreditRequest !== request || !nextTrack || nextTrack.version !== version) return;
+        if (nextCreditRequest !== request || tracked.version !== version) return "";
         if (body && validArtist(body.artist)) {
-            nextTrack.artist = body.artist.trim();
-            renderComingNext();
+            tracked.artist = body.artist.trim();
+            tracked.artistSource = "album-page";
+            if (nextTrack === tracked) renderComingNext();
         }
-    }).catch(function () { /* album credit is best-effort; album-only remains useful */ })
+        return tracked.artist;
+    }).catch(function () {
+        if (tracked.creditPromise === creditPromise) tracked.creditAttempted = false;
+        return ""; // album credit is best-effort; album-only remains useful
+    })
         .finally(function () {
             clearTimeout(request.kill);
             if (nextCreditRequest === request) nextCreditRequest = null;
+            if (tracked.creditPromise === creditPromise) tracked.creditPromise = null;
         });
+    tracked.creditPromise = creditPromise;
+    return creditPromise;
+}
+
+function maybeResolveNextArtist() {
+    return resolveQueuedArtist(nextTrack);
 }
 
 function comingNextWidth() {
@@ -733,8 +831,9 @@ function renderComingNext() {
 }
 
 function applyComingNextEnabled() {
-    if (!opts.showComingNext) cancelNextCredit(true);
+    if (!opts.showComingNext && !queuedArtistIsNeeded()) cancelNextCredit(true);
     else maybeResolveNextArtist();
+    scheduleQueuePrefetch(true);
     renderComingNext();
 }
 
@@ -748,6 +847,34 @@ function resetCoverRetry(url) {
 function schedulePoll(seconds) {
     clearTimeout(pollTimer);
     pollTimer = setTimeout(poll, seconds * 1000);
+}
+function scheduleHealthyPoll(trackToken, lengthSeconds, remaining, timingIsValid) {
+    if (!timingIsValid || lengthSeconds <= 0) {
+        boundaryTrackToken = "";
+        boundaryExpectedEndAt = 0;
+        schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
+        return;
+    }
+    var candidateEnd = Date.now() + remaining * 1000;
+    if (trackToken !== boundaryTrackToken) {
+        boundaryTrackToken = trackToken;
+        boundaryExpectedEndAt = candidateEnd;
+    } else {
+        // A later response may lose up to one second to feed rounding or network
+        // delay. Never let that move an already-armed boundary watch backwards.
+        boundaryExpectedEndAt = Math.min(boundaryExpectedEndAt, candidateEnd);
+    }
+    var untilEnd = boundaryExpectedEndAt - Date.now();
+    var delaySeconds;
+    if (untilEnd > BOUNDARY_WATCH_SECONDS * 1000) {
+        delaySeconds = Math.max(1,
+            Math.ceil(untilEnd / 1000 - BOUNDARY_WATCH_SECONDS));
+    } else if (Date.now() <= boundaryExpectedEndAt + BOUNDARY_GRACE_SECONDS * 1000) {
+        delaySeconds = BOUNDARY_POLL_SECONDS;
+    } else {
+        delaySeconds = MIN_POLL + 1;
+    }
+    schedulePoll(Math.min(MAX_POLL, delaySeconds));
 }
 function humanDelay(seconds) {
     if (seconds >= 60) return "1 minute";
@@ -774,6 +901,7 @@ async function poll() {
     if (inflight) inflight.abort();
     const ctl = new AbortController();
     inflight = ctl;
+    pollActive = ctl;
     const kill = setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT);
     try {
         if (simulateStationFailure) throw new Error("Simulated station failure");
@@ -791,7 +919,8 @@ async function poll() {
         const lengthSec = Math.max(0, Math.floor((parseInt(j.Length, 10) || 0) / 1000));
         let elapsed = 0;
         const ps = Date.parse(j.PlayStart || ""), st = Date.parse(j.SystemTime || "");
-        if (!isNaN(ps) && !isNaN(st)) elapsed = Math.abs(st - ps) / 1000;
+        const timingIsValid = !isNaN(ps) && !isNaN(st);
+        if (timingIsValid) elapsed = Math.abs(st - ps) / 1000;
         const remaining = Math.max(0, Math.floor(lengthSec - elapsed));
         remAnchor = lengthSec > 0 ? remaining : -1;
         remAnchorAt = Date.now();
@@ -807,17 +936,26 @@ async function poll() {
         const tintCover = trustedCoverUrl(j.ThumbnailLink) || trustedCoverUrl(j.CoverLink);
         const displayCover = sizedCoverUrl(j.CoverLink);
         const isStationId = !displayCover;
+        const trackIdentityChanged = album !== currentAlbum || track !== currentTrack
+            || isStationId !== stationIdActive;
         // Prefer the feed's 40 px thumbnail for the whole-image colour mean. Keep
         // CoverLink as a compatibility fallback and the /500/ variant for display.
         updateCoverTint(isStationId ? "" : tintCover);
         if (album !== currentAlbum || track !== currentTrack || artist !== currentArtist
                 || isStationId !== stationIdActive) {
-            const trackChanged = album !== currentAlbum || track !== currentTrack
-                || artist !== currentArtist;
-            if (trackChanged) setNextTrack(null);
+            const metadataChanged = trackIdentityChanged || artist !== currentArtist;
+            if (trackIdentityChanged) {
+                setNextTrack(null);
+                // The outgoing image remains mounted while CSS fades it, but it must
+                // stop claiming the stage as soon as a different track is confirmed.
+                const staleGeneration = nextRenderGeneration("backdrop");
+                cancelBackdropRequest();
+                setMovieBackdrop(null, staleGeneration);
+                setRatings([], staleGeneration);
+            }
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
-            if (trackChanged) prepareRatingTrackVisibility();
+            if (metadataChanged) prepareRatingTrackVisibility();
             updateBackdrop();
         }
         let title = displayAlbum;
@@ -830,9 +968,11 @@ async function poll() {
         const cover = isStationId ? station().logo : displayCover;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
         clearStatus("station");
-        // Re-poll when the track should end (clamped), +1s for the server to roll over.
-        schedulePoll(Math.min(MAX_POLL, Math.max(MIN_POLL, remaining)) + 1);
-        prefetchNext(ctl, renderGenerations.backdrop); // fire-and-forget: warm the NEXT track's art meanwhile
+        lastSuccessfulPollAt = Date.now();
+        const trackToken = [album, track, isStationId ? "station" : displayCover].join("\n");
+        scheduleHealthyPoll(trackToken, lengthSec, remaining, timingIsValid);
+        if (trackIdentityChanged || !queueSnapshotReady)
+            refreshQueue(); // fire-and-forget: one snapshot per confirmed track
     } catch (e) {
         if (ctl !== inflight) return;
         updateCoverTint("");
@@ -846,7 +986,15 @@ async function poll() {
         errBackoff = errBackoff >= ERR_CAP ? ERR_RETRY : Math.min(ERR_CAP, errBackoff * 2);
     } finally {
         clearTimeout(kill);
+        if (pollActive === ctl) pollActive = null;
     }
+}
+
+function resynchronizeStationIfStale() {
+    if (document.hidden || pollActive || retryAt > 0) return;
+    if (lastSuccessfulPollAt
+            && Date.now() - lastSuccessfulPollAt < BOUNDARY_POLL_SECONDS * 1000) return;
+    poll();
 }
 
 var statusMessages = { station: "", audio: "", backdrop: "", general: "" };
@@ -884,49 +1032,164 @@ function setStatus(text, source) {
 }
 function clearStatus(source) { setStatus("", source); }
 
-// Prefetch the NEXT track from the station's queue (action=GetQueue, same CORS
-// grant as the now-playing feed; [0] is up next): warm its sized cover into the
-// browser cache, and - when backdrops or ratings are on and this station resolves them -
-// resolve its media response into the per-title cache and load any image into the retained
-// hidden movie layer. The track change can then reveal that exact decoded image rather
-// than trusting the provider's browser-cache headers. Best-effort by design: one attempt per poll, and
-// any failure just means the switch loads the way it always did. A child controller
-// keeps the request's own timeout alive after poll() clears its timer, while still
-// inheriting the poll abort so a station switch cancels stale queue work immediately.
-async function prefetchNext(ctl, generation) {
-    const prefetchCtl = new AbortController();
-    const abortPrefetch = function () { prefetchCtl.abort(); };
-    if (ctl.signal.aborted) abortPrefetch();
-    else ctl.signal.addEventListener("abort", abortPrefetch, { once: true });
-    const kill = setTimeout(abortPrefetch, REQ_TIMEOUT);
-    try {
-        const r = await fetch("https://" + station().host
-            + "/soap/FM24sevenJSON.php?action=GetQueue&_t=" + Date.now(),
-            { signal: prefetchCtl.signal });
-        if (!r.ok) return;
-        const queue = await r.json();
-        const next = queue instanceof Array ? queue[0] : null;
-        setNextTrack(next);
-        // No entry or no trusted CoverLink (station ID or rejected URL): nothing to warm.
-        const nextCover = next && sizedCoverUrl(next.CoverLink);
-        if (!nextCover) return;
-        new Image().src = nextCover;
-        // station().backdrop currently always means the screen-media resolver; if other
-        // resolver kinds ever appear, prefetching becomes their concern.
-        if ((opts.tmdbBackdrops || opts.ratingsEnabled) && station().backdrop) {
-            const art = await movieArtFor(htmlDecode(next.Album), htmlDecode(next.Track),
-                                          htmlDecode(next.Artist), generation, prefetchCtl.signal);
-            if (art && art.url && renderIsCurrent("backdrop", generation))
-                movieLayer.prepare(art.url);
-        }
-    } catch (e) {
-        // An aborted request belongs to a superseding poll/station. A real queue
-        // failure must not leave an old announcement armed for the final ten seconds.
-        if (!prefetchCtl.signal.aborted) setNextTrack(null);
+function queueBackdropPrefetchKey(entry) {
+    var providers = enabledMovieProviders();
+    var includeArt = !!opts.tmdbBackdrops && providers.length > 0;
+    return JSON.stringify([
+        includeArt ? providers : ["tmdb"],
+        providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
+        includeArt,
+        !!opts.ratingsEnabled,
+        entry && entry.artist || "",
+    ]);
+}
+
+function queuedTrackNeedsPrefetch(entry) {
+    if (!entry) return false;
+    if (entry.coverUrl && !entry.coverPrepared) return true;
+    if (entry.tintUrl && !entry.tintAttempted
+            && !Object.prototype.hasOwnProperty.call(coverTintCache, entry.tintUrl)) return true;
+    if (queuedArtistIsNeeded() && !entry.artist && entry.albumUrl && !entry.creditAttempted)
+        return true;
+    return !!station().backdrop && (opts.tmdbBackdrops || opts.ratingsEnabled)
+        && entry.backdropPrefetchKey !== queueBackdropPrefetchKey(entry);
+}
+
+function nextQueuedPrefetch() {
+    for (var offset = 0; offset < queuedTracks.length; offset++) {
+        var index = (queuePrefetchCursor + offset) % queuedTracks.length;
+        if (queuedTrackNeedsPrefetch(queuedTracks[index]))
+            return { entry: queuedTracks[index], index: index };
     }
+    return null;
+}
+
+async function prefetchQueuedTrack(entry, signal) {
+    if (entry.coverUrl && !entry.coverPrepared) {
+        entry.coverPrepared = true;
+        entry.coverImage = new Image();
+        entry.coverImage.src = entry.coverUrl;
+    }
+    var tintPromise = Promise.resolve();
+    if (entry.tintUrl && !entry.tintAttempted
+            && !Object.prototype.hasOwnProperty.call(coverTintCache, entry.tintUrl)) {
+        entry.tintAttempted = true;
+        tintPromise = serverCoverTint(entry.tintUrl, signal).then(function (tint) {
+            coverTintCache[entry.tintUrl] = tint;
+        }).catch(function () { /* current-track tint can retry independently */ });
+    }
+
+    await resolveQueuedArtist(entry);
+    if (signal.aborted) return;
+    if (station().backdrop && (opts.tmdbBackdrops || opts.ratingsEnabled)) {
+        var configKey = queueBackdropPrefetchKey(entry);
+        if (entry.backdropPrefetchKey !== configKey) {
+            entry.art = await movieArtFor(entry.album, entry.track, entry.artist,
+                null, signal);
+            if (entry.art && entry.art.url) {
+                entry.backdropImage = new Image();
+                entry.backdropImage.src = entry.art.url;
+                if (entry === nextTrack) movieLayer.prepare(entry.art.url);
+            }
+            // Successful misses are cacheable. Transport/provider failures throw and
+            // remain eligible for this minute-spaced worker to retry.
+            entry.backdropPrefetchKey = configKey;
+        }
+    }
+    await tintPromise;
+}
+
+function scheduleQueuePrefetch(prioritizeNext) {
+    if (prioritizeNext) {
+        queuePrefetchCursor = 0;
+        queuePrefetchUrgent = true;
+    }
+    if (queuePrefetchRequest) return;
+    clearTimeout(queuePrefetchTimer);
+    queuePrefetchTimer = null;
+    var candidate = nextQueuedPrefetch();
+    if (!candidate) {
+        queuePrefetchUrgent = false;
+        return;
+    }
+    var immediate = queuePrefetchUrgent && candidate.index === 0;
+    queuePrefetchUrgent = false;
+    var delay = immediate ? 0 : Math.max(0, queuePrefetchNextAt - Date.now());
+    queuePrefetchTimer = setTimeout(runQueuePrefetch, delay);
+}
+
+async function runQueuePrefetch() {
+    clearTimeout(queuePrefetchTimer);
+    queuePrefetchTimer = null;
+    var candidate = nextQueuedPrefetch();
+    if (!candidate) return;
+    var ctl = new AbortController();
+    var request = {
+        ctl: ctl,
+        entry: candidate.entry,
+        kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT),
+    };
+    queuePrefetchRequest = request;
+    try {
+        await prefetchQueuedTrack(candidate.entry, ctl.signal);
+    } catch (error) { /* queue prefetch is best-effort */ }
     finally {
-        clearTimeout(kill);
-        ctl.signal.removeEventListener("abort", abortPrefetch);
+        clearTimeout(request.kill);
+        if (queuePrefetchRequest === request) queuePrefetchRequest = null;
+        if (!queuePrefetchUrgent) {
+            var completedIndex = queuedTracks.indexOf(candidate.entry);
+            queuePrefetchCursor = completedIndex < 0 || !queuedTracks.length
+                ? 0 : (completedIndex + 1) % queuedTracks.length;
+        }
+        queuePrefetchNextAt = Date.now() + QUEUE_PREFETCH_STAGGER_MS;
+        scheduleQueuePrefetch(false);
+    }
+}
+
+function resetQueuedTracks() {
+    clearTimeout(queuePrefetchTimer);
+    queuePrefetchTimer = null;
+    if (queuePrefetchRequest) queuePrefetchRequest.ctl.abort();
+    queuePrefetchRequest = null;
+    if (queueRefreshRequest) queueRefreshRequest.ctl.abort();
+    queueRefreshRequest = null;
+    queuePrefetchNextAt = 0;
+    queuePrefetchCursor = 0;
+    queuePrefetchUrgent = false;
+    queuedTracks = [];
+    queueSnapshotReady = false;
+    setNextTrack(null);
+}
+
+// Refresh the station queue, then let one self-rescheduling worker warm its
+// covers, tints, credits and media results. The first entry is urgent; every
+// remaining entry gets its own later cacheable GET instead of one mixed-TTL batch.
+async function refreshQueue() {
+    if (queueRefreshRequest) queueRefreshRequest.ctl.abort();
+    var ctl = new AbortController();
+    var requestedHost = station().host;
+    var request = {
+        ctl: ctl,
+        host: requestedHost,
+        kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT),
+    };
+    queueRefreshRequest = request;
+    try {
+        const r = await fetch("https://" + requestedHost
+            + "/soap/FM24sevenJSON.php?action=GetQueue&_t=" + Date.now(),
+            { signal: ctl.signal });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const queue = await r.json();
+        if (queueRefreshRequest !== request || station().host !== requestedHost) return;
+        reconcileQueuedTracks(queue);
+    } catch (e) {
+        // A timeout is a real queue failure and must not leave an old announcement
+        // armed. A station switch nulls the request before aborting and is ignored.
+        if (queueRefreshRequest === request && station().host === requestedHost)
+            reconcileQueuedTracks([]);
+    } finally {
+        clearTimeout(request.kill);
+        if (queueRefreshRequest === request) queueRefreshRequest = null;
     }
 }
 
@@ -1307,7 +1570,10 @@ function requestBackdrop(cacheMode) {
     }
 }
 
-function updateBackdrop() { requestBackdrop(); }
+function updateBackdrop() {
+    requestBackdrop();
+    scheduleQueuePrefetch(true);
+}
 function retryBackdrop() { requestBackdrop("reload"); }
 
 // Resolve only through the project endpoint. The per-title cache stores misses too;
@@ -1317,27 +1583,20 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode) 
     const includeArt = !!opts.tmdbBackdrops && providers.length > 0;
     const includeRatings = !!opts.ratingsEnabled;
     const requestedProviders = includeArt ? providers : ["tmdb"];
-    if (!renderIsCurrent("backdrop", generation) || !album
+    if ((generation !== null && !renderIsCurrent("backdrop", generation)) || !album
             || (!includeArt && !includeRatings)) return null;
     const cache = movieCacheFor(requestedProviders, includeArt, includeRatings);
     const titleCacheKey = album + "\n" + track + "\n";
     const cacheKey = titleCacheKey + artist;
     if (cacheMode !== "reload" && Object.prototype.hasOwnProperty.call(cache, cacheKey))
         return cache[cacheKey];
-    // SST's queue currently omits Artist. A successful title-only prefetch is still
-    // authoritative and its already-loaded image can be reused when now-playing later
-    // supplies the composer. Do not reuse a cached miss: Artist may unlock the strict
-    // composer-credit fallback once the queued title becomes current.
-    if (cacheMode !== "reload" && artist
-            && Object.prototype.hasOwnProperty.call(cache, titleCacheKey)
-            && cache[titleCacheKey]) {
-        cache[cacheKey] = cache[titleCacheKey];
-        return cache[cacheKey];
-    }
+    // Every artistless result is provisional. Artist may turn a miss into a strict
+    // composer-credit match or disambiguate multiple exact TV titles, so the
+    // authoritative current-playing artist always receives its own resolver lookup.
 
     const art = await serverMovieArt(album, track, artist, requestedProviders,
         includeArt, includeRatings, signal, cacheMode);
-    if (!renderIsCurrent("backdrop", generation)) return null;
+    if (generation !== null && !renderIsCurrent("backdrop", generation)) return null;
     cache[cacheKey] = art;
     return art;
 }
@@ -2103,7 +2362,8 @@ function applyStation() {
     setMovieBackdrop(null, backdropGeneration);
     setRatings([], backdropGeneration);
     shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
-    setNextTrack(null);
+    resetQueuedTracks();
+    boundaryTrackToken = ""; boundaryExpectedEndAt = 0; lastSuccessfulPollAt = 0;
     resetCoverRetry("");
     // The resolver is per-station now - always re-evaluate after a switch, even if
     // the new station plays an identically named album.
@@ -2288,6 +2548,12 @@ providersEl.addEventListener("keydown", function (e) {
 // --- go ----------------------------------------------------------------------
 applyLayout();
 setInfo("Loading…", "");
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) resynchronizeStationIfStale();
+});
+window.addEventListener("focus", resynchronizeStationIfStale);
+window.addEventListener("pageshow", resynchronizeStationIfStale);
+audioEl.addEventListener("playing", resynchronizeStationIfStale);
 tickTimer = setInterval(function () {
     renderCountdown();
     renderComingNext();

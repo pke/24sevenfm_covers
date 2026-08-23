@@ -123,14 +123,16 @@ test.describe("the deployed player page", () => {
         await mockProviderTestFeed(page);
         await page.goto("/privacy.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("main")).toContainText(
-            "information about the current and next queued title");
+            "information about the current and upcoming queued titles");
+        await expect(page.locator("main")).toContainText(
+            "request failures are not cached");
         await expect(page.locator("main")).toContainText(
             "If you press Check, the browser sends it directly to fanart.tv once");
         await expect(page.locator("main")).not.toContainText("Album and Track fields");
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("fieldset:has(#tmdb-on) > p.note"))
-            .toContainText("information about the current and next queued title");
+            .toContainText("information about the current and upcoming queued titles");
     });
     test("keeps the theme toggle working when storage is unavailable", async ({ page }) => {
         await mockProviderTestFeed(page);
@@ -1108,6 +1110,111 @@ test.describe("the deployed player page", () => {
             expect(closing).toEqual({ shown: false, ariaHidden: "true", album: "JFK (2013)" });
             await expect(page.locator("#coming-next-album")).toHaveText("");
         });
+    test("shares a fetched queue credit with backdrop prefetch", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/enriched-next.svg";
+        const sizedCover = "https://streamingsoundtracks.com/images/cover/500/enriched-next.svg";
+        const albumUrl = "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00ENRICH";
+        let creditRequests = 0, backdropArtist;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ showComingNext: 1, tmdbBackdrops: 1,
+                enabledProviders: ["tmdb"] })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [{
+                Album: "Enriched Next", Track: "Next Cue", CoverLink: cover,
+                SiteLink: albumUrl,
+            }] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 10000, PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:05Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route("https://24covers-api.vercel.app/api/credit?*", (route) => {
+            creditRequests++;
+            return route.fulfill({ json: { artist: "Enriched Composer" } });
+        });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            backdropArtist = new URL(route.request().url()).searchParams.get("artist");
+            return route.fulfill({ json: {
+                media: { id: 77, title: "Enriched Next", type: "movie" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+            } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect.poll(() => creditRequests).toBe(1);
+        await expect.poll(() => backdropArtist).toBe("Enriched Composer");
+        await expect(page.locator("#coming-next-artist")).toHaveText("Enriched Composer");
+    });
+    test("rechecks queued backdrop art after a transient credit failure", async ({ page }) => {
+        let creditRequests = 0;
+        const backdropCalls = [];
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
+                tmdbBackdrops: 1, enabledProviders: ["tmdb"],
+            }));
+            const nativeSetTimeout = window.setTimeout.bind(window);
+            window.setTimeout = function (callback, delay) {
+                const args = Array.prototype.slice.call(arguments, 2);
+                return nativeSetTimeout(callback,
+                    delay >= 59000 && delay <= 60000 ? 150 : delay, ...args);
+            };
+        });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [
+                {
+                    Album: "Recovered Credit", Track: "Main Title", Artist: "", CoverLink: "",
+                    SiteLink: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B000RECOVER",
+                },
+                {
+                    Album: "Healthy Tail", Track: "End Title", Artist: "Tail Composer",
+                    CoverLink: "",
+                },
+            ] });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 3600000, PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route("https://24covers-api.vercel.app/api/credit?*", (route) => {
+            creditRequests++;
+            if (creditRequests === 1) return route.fulfill({ status: 503, json: {} });
+            return route.fulfill({ json: { artist: "Recovered Composer" } });
+        });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            backdropCalls.push({
+                album: url.searchParams.get("album"),
+                artist: url.searchParams.get("artist"),
+            });
+            return route.fulfill({ json: {
+                media: { id: 78, title: "Recovered Credit", type: "movie" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+            } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect.poll(() => creditRequests).toBe(2);
+        await expect.poll(() => backdropCalls).toEqual([
+            { album: "Recovered Credit", artist: null },
+            { album: "Healthy Tail", artist: "Tail Composer" },
+            { album: "Recovered Credit", artist: "Recovered Composer" },
+        ]);
+    });
     test("disables coming-next motion when reduced motion is requested", async ({ page }) => {
         await page.emulateMedia({ reducedMotion: "reduce" });
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
@@ -2124,10 +2231,9 @@ test.describe("the deployed player page", () => {
         for (let i = 1; i <= 10; i++) {
             await page.clock.fastForward(6001);
             await expect.poll(() => pollRequests).toBe(i + 1);
-            // prefetchNext starts only after poll() has scheduled the following poll.
-            // Waiting for that queue request prevents the next clock jump from racing
-            // the async response-processing tail of the current poll.
-            await expect.poll(() => queueRequests).toBe(i + 1);
+            // Boundary/watchdog polls only refresh queue order after a confirmed
+            // track change; an unchanged unknown-length track keeps its snapshot.
+            expect(queueRequests).toBe(1);
         }
         await expect.poll(() => coverRequests).toBe(4);
     });
@@ -2746,6 +2852,100 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(12002);
         await expect(page.locator("#status")).toHaveText(warning);
     });
+    test("checks the station before the boundary and fades stale art while replacement waits",
+        async ({ page }) => {
+            const oldCover = "https://streamingsoundtracks.com/images/cover/old-boundary.svg";
+            const newCover = "https://streamingsoundtracks.com/images/cover/new-boundary.svg";
+            const oldBackdrop = "https://image.tmdb.org/t/p/w1280/old-boundary.jpg";
+            const newBackdrop = "https://image.tmdb.org/t/p/w1280/new-boundary.jpg";
+            let nowRequests = 0, queueRequests = 0, newResolverRequested = false;
+            let releaseNewResolver;
+            const newResolverMayFinish = new Promise((resolve) => { releaseNewResolver = resolve; });
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"],
+                    transition: 1, fadeMs: 500 })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") {
+                    queueRequests++;
+                    return route.fulfill({ json: [] });
+                }
+                nowRequests++;
+                return route.fulfill({ json: nowRequests === 1 ? {
+                    Album: "Old Boundary Movie", Track: "Old Cue", Artist: "Old Composer",
+                    CoverLink: oldCover, Length: 12000,
+                    PlayStart: "2026-08-23T12:00:00Z",
+                    SystemTime: "2026-08-23T12:00:02Z",
+                } : {
+                    Album: "New Boundary Movie", Track: "New Cue", Artist: "New Composer",
+                    CoverLink: newCover, Length: 180000,
+                    PlayStart: "2026-08-23T12:00:12Z",
+                    SystemTime: "2026-08-23T12:00:12Z",
+                } });
+            });
+            await page.route("https://streamingsoundtracks.com/images/cover/500/*.svg", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route(/\/api\/backdrop\?/, async (route) => {
+                const album = new URL(route.request().url()).searchParams.get("album");
+                if (album === "New Boundary Movie") {
+                    newResolverRequested = true;
+                    await newResolverMayFinish;
+                }
+                return route.fulfill({ json: {
+                    media: { id: album === "New Boundary Movie" ? 2 : 1,
+                        title: album, type: "movie" },
+                    backdrop: album === "New Boundary Movie" ? newBackdrop : oldBackdrop,
+                    source: "tmdb", tint: [80, 100, 120],
+                } });
+            });
+            await page.route(/https:\/\/image\.tmdb\.org\/t\/p\/w1280\/(?:old|new)-boundary\.jpg/,
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            const oldImage = page.locator(
+                `#movieA[src="${oldBackdrop}"], #movieB[src="${oldBackdrop}"]`);
+            await expect(oldImage).toHaveClass(/show/);
+
+            await expect(page.locator("#info-title"))
+                .toContainText("New Boundary Movie", { timeout: 4000 });
+            await expect.poll(() => newResolverRequested).toBe(true);
+            await expect(oldImage).not.toHaveClass(/show/);
+            await expect(oldImage).toHaveAttribute("src", oldBackdrop);
+            expect(queueRequests).toBe(2);
+
+            releaseNewResolver();
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", newBackdrop);
+        });
+    test("resynchronizes after a visible player regains focus", async ({ page }) => {
+        let album = "Before Backgrounding", nowRequests = 0;
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            nowRequests++;
+            return route.fulfill({ json: {
+                Album: album, Track: "Cue", Artist: "Composer", CoverLink: "",
+                Length: 3600000, PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#info-title")).toContainText("Before Backgrounding");
+        album = "After Backgrounding";
+        await page.waitForTimeout(2100);
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+
+        await expect.poll(() => nowRequests).toBe(2);
+        await expect(page.locator("#info-title")).toContainText("After Backgrounding");
+    });
     test("offers an explanatory cache-bypassing retry after a backdrop outage", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/retry.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/retry.svg";
@@ -3004,16 +3204,139 @@ test.describe("the deployed player page", () => {
         expect(resolvedArtist).toBe("Next Composer");
         await expect(page.locator("#status")).toHaveText("");
     });
-    test("reuses prefetched backdrop art when the queue omits the artist", async ({ page }) => {
+    test("stagger-prefetches every queued tint and backdrop through one scheduler", async ({ page }) => {
+        const albums = ["First Queued", "Second Queued", "Third Queued"];
+        const covers = albums.map((album, index) =>
+            `https://streamingsoundtracks.com/images/cover/queued-${index + 1}.svg`);
+        const tintUrls = [], backdropAlbums = [], backdropTimes = [];
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
+                tmdbBackdrops: 1, enabledProviders: ["tmdb"],
+            }));
+            const nativeSetTimeout = window.setTimeout.bind(window);
+            window.setTimeout = function (callback, delay) {
+                const args = Array.prototype.slice.call(arguments, 2);
+                return nativeSetTimeout(callback,
+                    delay >= 59000 && delay <= 60000 ? 150 : delay, ...args);
+            };
+        });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: albums.map((album, index) => ({
+                Album: album, Track: `Cue ${index + 1}`, Artist: `Composer ${index + 1}`,
+                CoverLink: covers[index],
+                ThumbnailLink: covers[index].replace("/cover/", "/cover/040/"),
+                SiteLink: "",
+            })) });
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 3600000, PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route("https://streamingsoundtracks.com/images/cover/500/*.svg", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/tint\?/, (route) => {
+            tintUrls.push(new URL(route.request().url()).searchParams.get("url"));
+            return route.fulfill({ json: { tint: [40, 50, 60] } });
+        });
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            const url = new URL(route.request().url());
+            backdropAlbums.push(url.searchParams.get("album"));
+            backdropTimes.push(Date.now());
+            return route.fulfill({ json: {
+                media: { id: backdropAlbums.length, title: backdropAlbums.at(-1), type: "movie" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+            } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => backdropAlbums).toEqual(["First Queued"]);
+        await page.waitForTimeout(75);
+        expect(backdropAlbums).toEqual(["First Queued"]);
+        await expect.poll(() => backdropAlbums).toEqual(albums);
+        await expect.poll(() => tintUrls).toHaveLength(3);
+        expect(new Set(tintUrls)).toEqual(new Set(covers.map((cover) =>
+            cover.replace("/cover/", "/cover/040/"))));
+        expect(backdropTimes[1] - backdropTimes[0]).toBeGreaterThanOrEqual(100);
+        expect(backdropTimes[2] - backdropTimes[1]).toBeGreaterThanOrEqual(100);
+    });
+    test("keeps enriched queue entries and prefetches only the new tail after a track change",
+        async ({ page }) => {
+            let current = {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 3600000, PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:00Z",
+            };
+            let queueAlbums = ["Queue A", "Queue B"], queueRequests = 0;
+            const backdropAlbums = [];
+            await page.addInitScript(() => {
+                localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
+                    tmdbBackdrops: 1, enabledProviders: ["tmdb"],
+                }));
+                const nativeSetTimeout = window.setTimeout.bind(window);
+                window.setTimeout = function (callback, delay) {
+                    const args = Array.prototype.slice.call(arguments, 2);
+                    if (delay >= 50000 && delay <= 60000) delay = 20;
+                    if (delay === 3590000) delay = 2000;
+                    return nativeSetTimeout(callback, delay, ...args);
+                };
+            });
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") {
+                    queueRequests++;
+                    return route.fulfill({ json: queueAlbums.map((album) => ({
+                        Album: album, Track: "Cue", Artist: `${album} Composer`,
+                        CoverLink: `https://streamingsoundtracks.com/images/cover/${album.slice(-1)}.svg`,
+                    })) });
+                }
+                return route.fulfill({ json: current });
+            });
+            await page.route("https://streamingsoundtracks.com/images/{logos,cover}/**", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route(/\/api\/backdrop\?/, (route) => {
+                backdropAlbums.push(new URL(route.request().url()).searchParams.get("album"));
+                return route.fulfill({ json: {
+                    media: { id: backdropAlbums.length, title: backdropAlbums.at(-1), type: "movie" },
+                    backdrop: null, source: null, tint: [255, 255, 255],
+                } });
+            });
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect.poll(() => backdropAlbums).toEqual(["Queue A", "Queue B"]);
+
+            current = {
+                Album: "Queue A", Track: "Cue", Artist: "Queue A Composer",
+                CoverLink: "https://streamingsoundtracks.com/images/cover/A.svg",
+                Length: 180000, PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:00Z",
+            };
+            queueAlbums = ["Queue B", "Queue C"];
+
+            await expect.poll(() => queueRequests).toBe(2);
+            await expect.poll(() => backdropAlbums).toEqual(["Queue A", "Queue B", "Queue C"]);
+        });
+    test("revalidates an artistless backdrop hit with the current-playing artist",
+        async ({ page }) => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/land-before-time.svg";
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/land-before-time.svg";
-        const backdrop = "https://image.tmdb.org/t/p/w1280/land-before-time.jpg";
+        const provisionalBackdrop = "https://image.tmdb.org/t/p/w1280/land-before-time-provisional.jpg";
+        const definitiveBackdrop = "https://image.tmdb.org/t/p/w1280/land-before-time-definitive.jpg";
         let current = {
             Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
             Length: 3600000, PlayStart: "2026-08-21T12:00:00Z",
             SystemTime: "2026-08-21T12:00:00Z",
         };
-        let resolverRequests = 0, backdropLoads = 0, firstArtist;
+        const artists = [];
+        let backdropLoads = 0;
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
             JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"] })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
@@ -3032,31 +3355,30 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/backdrop\?/, (route) => {
             const url = new URL(route.request().url());
-            resolverRequests++;
-            if (resolverRequests === 1) firstArtist = url.searchParams.get("artist");
+            const artist = url.searchParams.get("artist");
+            artists.push(artist);
             return route.fulfill({ json: {
                 media: { id: 12144, title: "The Land Before Time", type: "movie" },
-                backdrop, source: "tmdb", tint: [110, 150, 90],
+                backdrop: artist ? definitiveBackdrop : provisionalBackdrop,
+                source: "tmdb", tint: [110, 150, 90],
             } });
         });
-        await page.route(backdrop, (route) => {
+        await page.route(/https:\/\/image\.tmdb\.org\/t\/p\/w1280\/land-before-time-(?:provisional|definitive)\.jpg/,
+            (route) => {
             backdropLoads++;
             return route.fulfill({ status: 200, contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
-        });
+            });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect.poll(() => resolverRequests).toBe(1);
+        await expect.poll(() => artists).toEqual([null]);
         await expect.poll(() => backdropLoads).toBe(1);
-        expect(firstArtist).toBe(null);
         const preparedBackdrop = page.locator(
-            `#movieA[src="${backdrop}"], #movieB[src="${backdrop}"]`);
+            `#movieA[src="${provisionalBackdrop}"], #movieB[src="${provisionalBackdrop}"]`);
         await expect(preparedBackdrop).toHaveCount(1);
         await expect(preparedBackdrop).not.toHaveClass(/show/);
         await expect.poll(() => preparedBackdrop.evaluate((image) =>
             image.complete && image.naturalWidth > 0)).toBe(true);
-        const preparedBackdropId = await preparedBackdrop.getAttribute("id");
-
         current = {
             Album: "Land Before Time, The", Track: "The Great Migration",
             Artist: "James Horner", CoverLink: nextCover, Length: 180000,
@@ -3066,10 +3388,13 @@ test.describe("the deployed player page", () => {
             input.dispatchEvent(new Event("change", { bubbles: true })));
 
         await expect(page.locator("#info-title")).toContainText("The Land Before Time");
-        await expect(page.locator(`#${preparedBackdropId}`)).toHaveClass(/show/);
-        await page.waitForTimeout(100);
-        expect(resolverRequests).toBe(1);
-        expect(backdropLoads).toBe(1);
+        await expect.poll(() => artists).toEqual([null, "James Horner"]);
+        await expect(page.locator("#movieA.show, #movieB.show"))
+            .toHaveAttribute("src", definitiveBackdrop);
+        expect(backdropLoads).toBe(2);
+        await expect(page.locator(
+            `#movieA.show[src="${provisionalBackdrop}"], #movieB.show[src="${provisionalBackdrop}"]`))
+            .toHaveCount(0);
     });
     test("retries a prefetched title miss when now-playing supplies the artist", async ({ page }) => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/composer-fallback.svg";

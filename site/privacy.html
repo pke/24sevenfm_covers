@@ -32,10 +32,12 @@
             <p>The Winamp plugin, the foobar2000 component, the standalone player and this website
             use no accounts, sign-ups, analytics, tracking scripts, advertising, cookies or
             telemetry. Station data, covers and audio flow directly from the station. To color the
-            web player, a station-hosted cover image URL is also sent to this project's Vercel tint
-            resolver. Only if you enable movie, TV and game backdrops or the Ratings visualization
-            is information about the current and next queued title sent through the media resolver,
-            as detailed below. Both features are off by default.</p>
+            web player, station-hosted cover image URLs are also sent to this project's Vercel tint
+            resolver. If “Coming next” needs an artist omitted by the queue, the album name and its
+            station page URL are sent to this project's credit resolver. Only if you enable movie,
+            TV and game backdrops or the Ratings visualization is information about the current and
+            upcoming queued titles sent through the media resolver, as detailed below. Both media
+            features are off by default.</p>
         </div>
     </section>
 
@@ -72,14 +74,20 @@
                 player UI, it additionally sends a station-hosted cover image URL to this project's
                 Vercel tint resolver. Vercel necessarily processes your IP address and request metadata.
                 The resolver fetches one size- and time-limited copy from the same station, returns
-                only three RGB values, and keeps no listening profile or request database. Successful
-                results may be cached for up to six months.</p>
+                only three RGB values, and keeps no listening profile or request database. Queue tint
+                requests are spread over time. Successful results may be cached for up to six months.</p>
+                <p>If “Coming next” is enabled and a StreamingSoundtracks queue item omits its artist,
+                the player sends the album name and allowlisted station album-page URL to this project's
+                Vercel credit resolver. It reads only that public page's title metadata. A found artist
+                may be cached for six months; an ordinary “not found” result for 15 minutes; request
+                failures are not cached.</p>
                 <p>The <strong>off-by-default</strong> “Movie, TV &amp; game backdrops” and “Ratings” options add
-                another request. If you enable either one, the player sends information about the
-                <em>current and next queued title</em> to this project's Vercel resolver. The resolver
-                uses that information to match the movie or series. Backdrops request artwork from
-                the configured providers; Ratings requests German FSK and US certifications from
-                TMDB, while the country controls choose which badges are displayed. Official FSK
+                more requests. If you enable either one, the player sends information about the
+                <em>current and upcoming queued titles</em> to this project's Vercel resolver. Upcoming
+                requests are spread over time rather than sent as one burst. The resolver uses that
+                information to match the movie or series. Backdrops request artwork from the configured
+                providers; Ratings requests German FSK and US certifications from TMDB, while the
+                country controls choose which badges are displayed. Official FSK
                 badge images are served by this project's
                 Vercel deployment rather than loaded from FSK or TMDB.
                 Vercel necessarily processes your IP
