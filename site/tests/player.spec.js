@@ -978,6 +978,39 @@ test.describe("the deployed player page", () => {
             expect(fullscreenRightGap).toBeLessThan(20);
             await page.evaluate(() => document.exitFullscreen());
         });
+    test("keeps the Coming next header complete for a short queued album", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            JSON.stringify({ showComingNext: 1 })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [{
+                Album: "Super 8", Track: "Next Cue", CoverLink: "", SiteLink: "",
+            }] });
+            return route.fulfill({ json: {
+                Album: "Current Album", Track: "Current Cue", Artist: "Current Composer",
+                CoverLink: "", Length: 10000,
+                PlayStart: "2026-08-23T12:00:00Z",
+                SystemTime: "2026-08-23T12:00:05Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#coming-next")).toHaveClass(/show/);
+        await expect(page.locator("#coming-next-album")).toHaveText("Super 8");
+        await stableElementRects(page, {
+            announcement: "#coming-next", label: ".coming-next-label",
+        });
+        const header = await page.locator(".coming-next-label").evaluate((label) => ({
+            clientWidth: label.clientWidth,
+            scrollWidth: label.scrollWidth,
+            textOverflow: getComputedStyle(label).textOverflow,
+        }));
+        expect(header.textOverflow).toBe("clip");
+        expect(header.clientWidth).toBeGreaterThanOrEqual(header.scrollWidth);
+    });
     virtualClockTest("reveals coming next exactly as remaining time reaches ten seconds",
         async ({ page }) => {
             let queueRequests = 0;

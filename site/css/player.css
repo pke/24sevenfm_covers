@@ -470,8 +470,11 @@
 .coming-next-artist {
     display: block;
     min-width: 0;
-    overflow: hidden;
     white-space: nowrap;
+}
+.coming-next-album,
+.coming-next-artist {
+    overflow: hidden;
     text-overflow: ellipsis;
 }
 .coming-next-label {

@@ -381,6 +381,7 @@ var blurLayer = makeLayer($("backdropA"), $("backdropB"), "cover");
 var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), stageStatusEl = $("stage-status");
 var comingNextEl = $("coming-next"), comingNextContentEl = $("coming-next-content");
+var comingNextLabelEl = comingNextEl.querySelector(".coming-next-label");
 var comingNextAlbumEl = $("coming-next-album"), comingNextArtistEl = $("coming-next-artist");
 var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
 var backdropRetryEl = $("backdrop-retry");
@@ -682,6 +683,7 @@ function comingNextWidth() {
         + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
     var natural = Math.max(
         comingNextContentEl.scrollWidth,
+        comingNextLabelEl.scrollWidth,
         comingNextAlbumEl.scrollWidth,
         comingNextArtistEl.scrollWidth) + padding;
     var available = Math.max(0, stage.getBoundingClientRect().width - 22);
