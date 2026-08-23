@@ -3228,16 +3228,26 @@ test.describe("the deployed player page", () => {
         const albums = ["First Queued", "Second Queued", "Third Queued"];
         const covers = albums.map((album, index) =>
             `https://streamingsoundtracks.com/images/cover/queued-${index + 1}.svg`);
-        const tintUrls = [], backdropAlbums = [], backdropTimes = [];
+        const tintUrls = [], backdropAlbums = [];
         await page.addInitScript(() => {
             localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
                 tmdbBackdrops: 1, enabledProviders: ["tmdb"],
             }));
             const nativeSetTimeout = window.setTimeout.bind(window);
+            window.__prefetchDelays = [];
+            window.__fakePrefetchTimerId = 1000000000;
+            window.__runNextPrefetchDelay = () => {
+                const pending = window.__prefetchDelays.shift();
+                if (!pending) throw new Error("No queued prefetch delay");
+                pending.callback(...pending.args);
+            };
             window.setTimeout = function (callback, delay) {
                 const args = Array.prototype.slice.call(arguments, 2);
-                return nativeSetTimeout(callback,
-                    delay >= 59000 && delay <= 60000 ? 150 : delay, ...args);
+                if (delay >= 59000 && delay <= 60000) {
+                    window.__prefetchDelays.push({ callback, args });
+                    return ++window.__fakePrefetchTimerId;
+                }
+                return nativeSetTimeout(callback, delay, ...args);
             };
         });
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
@@ -3267,7 +3277,6 @@ test.describe("the deployed player page", () => {
         await page.route(/\/api\/backdrop\?/, (route) => {
             const url = new URL(route.request().url());
             backdropAlbums.push(url.searchParams.get("album"));
-            backdropTimes.push(Date.now());
             return route.fulfill({ json: {
                 media: { id: backdropAlbums.length, title: backdropAlbums.at(-1), type: "movie" },
                 backdrop: null, source: null, tint: [255, 255, 255],
@@ -3276,14 +3285,16 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => backdropAlbums).toEqual(["First Queued"]);
-        await page.waitForTimeout(75);
+        await expect.poll(() => page.evaluate(() => window.__prefetchDelays.length)).toBe(1);
         expect(backdropAlbums).toEqual(["First Queued"]);
+        await page.evaluate(() => window.__runNextPrefetchDelay());
+        await expect.poll(() => backdropAlbums).toEqual(albums.slice(0, 2));
+        await expect.poll(() => page.evaluate(() => window.__prefetchDelays.length)).toBe(1);
+        await page.evaluate(() => window.__runNextPrefetchDelay());
         await expect.poll(() => backdropAlbums).toEqual(albums);
         await expect.poll(() => tintUrls).toHaveLength(3);
         expect(new Set(tintUrls)).toEqual(new Set(covers.map((cover) =>
             cover.replace("/cover/", "/cover/040/"))));
-        expect(backdropTimes[1] - backdropTimes[0]).toBeGreaterThanOrEqual(100);
-        expect(backdropTimes[2] - backdropTimes[1]).toBeGreaterThanOrEqual(100);
     });
     test("keeps enriched queue entries and prefetches only the new tail after a track change",
         async ({ page }) => {
