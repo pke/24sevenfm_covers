@@ -621,7 +621,9 @@ test.describe("the deployed player page", () => {
         });
         await expect(page.locator("#rating-de")).toHaveClass(/show/);
         await expect(page.locator("#rating-us")).toHaveClass(/show/);
-        await expect(page.locator("#rating-us .rating-face").first()).toHaveClass(/has-logo/);
+        const usMovieRating = page.locator("#rating-us .rating-face").first();
+        await expect(usMovieRating).toHaveClass(/has-logo/);
+        await expect(usMovieRating).toHaveCSS("box-shadow", "none");
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
         await expect(page.locator("#rating-de")).toHaveAttribute("data-settled", "");
 
@@ -730,7 +732,11 @@ test.describe("the deployed player page", () => {
         expect(settled.faceTransform).toBe("none");
         expect(settled.faceBackface).toBe("visible");
         expect(settled.source).toContain("FSK_16.svg");
-        await expect(page.locator("#rating-us .rating-face").last()).toHaveText("TV-MA");
+        const usTvRating = page.locator("#rating-us .rating-face").last();
+        await expect(usTvRating).toHaveText("TV-MA");
+        await expect(usTvRating).toHaveCSS("border-top-width", "0px");
+        await expect(usTvRating).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        await expect(usTvRating).toHaveCSS("box-shadow", "none");
     });
     test("fades ratings after ten idle seconds and wakes them on pointer movement", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/rating-idle.svg";
