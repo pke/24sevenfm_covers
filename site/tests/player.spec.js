@@ -24,6 +24,50 @@ const JSON_URL =
 // Playwright's virtual clock prevents browser teardown on Windows; CI runs on Ubuntu.
 const virtualClockTest = process.platform === "win32" ? test.skip : test;
 
+async function stableElementRects(page, selectors, options = {}) {
+    return page.evaluate(async ({ selectors, stableFrames, maxFrames, tolerance }) => {
+        const elements = Object.fromEntries(Object.entries(selectors).map(([name, selector]) => {
+            const element = document.querySelector(selector);
+            if (!element) throw new Error(`Missing geometry fixture: ${selector}`);
+            return [name, element];
+        }));
+        const geometryTransitions = new Set([
+            "bottom", "height", "left", "margin-top", "max-height", "right", "top",
+            "transform", "width",
+        ]);
+        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+        const read = () => Object.fromEntries(Object.entries(elements).map(([name, element]) => {
+            const rect = element.getBoundingClientRect();
+            return [name, {
+                top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left,
+                width: rect.width, height: rect.height,
+            }];
+        }));
+        const same = (before, after) => Object.keys(before).every((name) =>
+            ["top", "right", "bottom", "left", "width", "height"].every((key) =>
+                Math.abs(before[name][key] - after[name][key]) <= tolerance));
+        const geometryIsAnimating = () => document.querySelector("#stage")
+            .getAnimations({ subtree: true }).some((animation) =>
+                animation.playState === "running"
+                && geometryTransitions.has(animation.transitionProperty));
+
+        let previous = null, consecutive = 0;
+        for (let frame = 0; frame < maxFrames; frame++) {
+            await nextFrame();
+            const current = read();
+            consecutive = previous && same(previous, current) ? consecutive + 1 : 0;
+            if (consecutive >= stableFrames && !geometryIsAnimating()) return current;
+            previous = current;
+        }
+        throw new Error(`Geometry did not settle within ${maxFrames} animation frames`);
+    }, {
+        selectors,
+        stableFrames: options.stableFrames || 3,
+        maxFrames: options.maxFrames || 180,
+        tolerance: options.tolerance || 0.01,
+    });
+}
+
 test.describe("the deployed player page", () => {
     test("enforces a restrictive player resource policy", async ({ page }) => {
         await mockProviderTestFeed(page);
@@ -153,6 +197,9 @@ test.describe("the deployed player page", () => {
     test("paints the OS palette and its manual inverse", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.addInitScript(() => localStorage.removeItem("theme"));
+        // This test owns the palette contract, not the separately specified crossfade.
+        // Reduced motion makes each color assertion land on a completed theme state.
+        await page.emulateMedia({ reducedMotion: "reduce" });
 
         const cases = [
             { os: "light", normal: "rgb(246, 247, 250)", inverse: "rgb(11, 13, 18)" },
@@ -166,7 +213,10 @@ test.describe("the deployed player page", () => {
 
             await expect(root).toHaveCSS("background-color", palette.normal);
             await expect(root).toHaveCSS("color-scheme", palette.os);
-            await toggle.evaluate((input) => { input.checked = true; });
+            // The native checkbox is intentionally visually hidden; click it in-page
+            // so the real change handler runs without an impossible actionability wait.
+            await toggle.evaluate((input) => input.click());
+            await expect(toggle).toBeChecked();
             await expect(root).toHaveCSS("background-color", palette.inverse);
             await expect(root).toHaveCSS("color-scheme",
                 palette.os === "light" ? "dark" : "light");
@@ -542,6 +592,27 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await page.evaluate(() => {
+            const slot = document.querySelector("#rating-de");
+            window.__ratingFlipSnapshot = null;
+            const captureSecondRatingFlip = () => {
+                const faces = Array.from(slot.querySelectorAll(".rating-face"));
+                const sources = faces.map((face) => {
+                    const image = face.querySelector("img");
+                    return image.hasAttribute("src") ? image.getAttribute("src") : "";
+                });
+                if (slot.dataset.front !== "b" || !sources[1].includes("FSK_16.svg")) return;
+                window.__ratingFlipSnapshot = {
+                    sources,
+                    backTransform: getComputedStyle(faces[1]).transform,
+                    cardTransform: getComputedStyle(slot.querySelector(".rating-card")).transform,
+                };
+                observer.disconnect();
+            };
+            const observer = new MutationObserver(captureSecondRatingFlip);
+            observer.observe(slot, { attributes: true, subtree: true });
+            captureSecondRatingFlip();
+        });
         await expect.poll(() => resolverRequests.some((request) =>
             request.album === "Age Of Adaline, The")).toBe(true);
         expect(resolverRequests.find((request) =>
@@ -631,16 +702,9 @@ test.describe("the deployed player page", () => {
 
         await expect.poll(() => resolverRequests.some((request) =>
             request.album === "Game Of Thrones"), { timeout: 10000 }).toBe(true);
-        await expect(page.locator("#rating-de")).toHaveAttribute("data-front", "b");
         await expect(page.locator("#rating-de")).toHaveAttribute("data-fx", "fliph");
-        const glued = await page.locator("#rating-de").evaluate((slot) => {
-            const faces = Array.from(slot.querySelectorAll(".rating-face"));
-            return {
-                sources: faces.map((face) => face.querySelector("img").getAttribute("src")),
-                backTransform: getComputedStyle(faces[1]).transform,
-                cardTransform: getComputedStyle(slot.querySelector(".rating-card")).transform,
-            };
-        });
+        await expect.poll(() => page.evaluate(() => !!window.__ratingFlipSnapshot)).toBe(true);
+        const glued = await page.evaluate(() => window.__ratingFlipSnapshot);
         expect(glued.sources[0]).toContain("FSK_ab_6_logo.svg");
         expect(glued.sources[1]).toContain("FSK_16.svg");
         expect(glued.backTransform).not.toBe("none");
@@ -853,7 +917,7 @@ test.describe("the deployed player page", () => {
                     Album: "Current Album", Track: "Current Cue", Artist: "Current Composer",
                     CoverLink: "", Length: 12000,
                     PlayStart: "2026-08-23T12:00:00Z",
-                    SystemTime: "2026-08-23T12:00:01Z",
+                    SystemTime: "2026-08-23T12:00:02Z",
                 } });
             });
             await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
@@ -899,15 +963,53 @@ test.describe("the deployed player page", () => {
                 ["opacity", "transform", "width"]));
 
             await page.locator("#stage").evaluate((element) => element.requestFullscreen());
-            const fullscreenGeometry = await announcement.evaluate((element) => {
-                const stage = document.querySelector("#stage").getBoundingClientRect();
-                const box = element.getBoundingClientRect();
-                return { width: box.width, rightGap: stage.right - box.right };
+            await expect.poll(() => page.evaluate(() =>
+                document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+            const fullscreenRects = await stableElementRects(page, {
+                stage: "#stage", announcement: "#coming-next",
             });
-            expect(fullscreenGeometry.width).toBeLessThanOrEqual(501);
-            expect(fullscreenGeometry.rightGap).toBeGreaterThan(5);
-            expect(fullscreenGeometry.rightGap).toBeLessThan(20);
+            const fullscreenRightGap = fullscreenRects.stage.right
+                - fullscreenRects.announcement.right;
+            expect(fullscreenRects.announcement.width).toBeLessThanOrEqual(501);
+            expect(fullscreenRightGap).toBeGreaterThan(5);
+            expect(fullscreenRightGap).toBeLessThan(20);
             await page.evaluate(() => document.exitFullscreen());
+        });
+    virtualClockTest("reveals coming next exactly as remaining time reaches ten seconds",
+        async ({ page }) => {
+            let queueRequests = 0;
+            await page.clock.install({ time: new Date("2026-08-23T12:00:00Z") });
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ showComingNext: 1 })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") {
+                    queueRequests++;
+                    return route.fulfill({ json: [{
+                        Album: "Next Album", Track: "Next Cue", Artist: "Next Composer",
+                        CoverLink: "", SiteLink: "",
+                    }] });
+                }
+                return route.fulfill({ json: {
+                    Album: "Current Album", Track: "Current Cue", Artist: "Current Composer",
+                    CoverLink: "", Length: 12000,
+                    PlayStart: "2026-08-23T12:00:00Z",
+                    SystemTime: "2026-08-23T12:00:01Z",
+                } });
+            });
+            await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect.poll(() => queueRequests).toBe(1);
+            const announcement = page.locator("#coming-next");
+            await expect(announcement).not.toHaveClass(/show/);
+
+            await page.clock.runFor(1000);
+
+            await expect(announcement).toHaveClass(/show/);
+            await expect(page.locator("#coming-next-album")).toHaveText("Next Album");
         });
     test("fetches an album credit only when the queue omits Artist and retains text while fading",
         async ({ page }) => {
@@ -949,13 +1051,20 @@ test.describe("the deployed player page", () => {
 
             currentAlbum = "Following Album";
             queueAvailable = false;
-            await page.locator('input[name="station"][value="sst"]').evaluate((input) =>
-                input.dispatchEvent(new Event("change", { bubbles: true })));
-            await expect(announcement).not.toHaveClass(/show/);
-            await expect(announcement).toHaveAttribute("aria-hidden", "true");
-            // Outgoing content must remain mounted until its opacity/width exit completes.
-            await expect(page.locator("#coming-next-album")).toHaveText("JFK (2013)");
-            await expect(page.locator("#coming-next-album")).toHaveText("", { timeout: 1500 });
+            const closing = await page.locator('input[name="station"][value="sst"]')
+                .evaluate((input) => {
+                    input.dispatchEvent(new Event("change", { bubbles: true }));
+                    const card = document.querySelector("#coming-next");
+                    return {
+                        shown: card.classList.contains("show"),
+                        ariaHidden: card.getAttribute("aria-hidden"),
+                        album: document.querySelector("#coming-next-album").textContent,
+                    };
+                });
+            // Capture the synchronous closing state in one browser turn: outgoing
+            // content stays mounted while opacity and width animate to their exit state.
+            expect(closing).toEqual({ shown: false, ariaHidden: "true", album: "JFK (2013)" });
+            await expect(page.locator("#coming-next-album")).toHaveText("");
         });
     test("disables coming-next motion when reduced motion is requested", async ({ page }) => {
         await page.emulateMedia({ reducedMotion: "reduce" });
@@ -1371,22 +1480,14 @@ test.describe("the deployed player page", () => {
             expect(rendered.runs).toBe(24);
             expect(rendered.first).toEqual(infoTint);
             const expectSpectrumClearOfInfo = async () => {
-                const readBoxes = () => page.evaluate(() => {
-                    const rect = (selector) =>
-                        document.querySelector(selector).getBoundingClientRect().toJSON();
-                    return { stage: rect("#stage"), spectrum: rect("#stage-spectrum"),
-                        cover: rect("#coverbox"), info: rect(".info") };
-                });
                 // Fullscreen changes the stage before ResizeObserver has necessarily
-                // recomputed the spectrum gap. Assert the settled geometry, not that
-                // transient frame; the same non-overlap constraints still apply.
-                await expect.poll(async () => {
-                    const boxes = await readBoxes();
-                    return boxes.spectrum.top >= boxes.cover.bottom - 1
-                        && boxes.spectrum.bottom <= boxes.info.top + 1
-                        && Math.abs(boxes.spectrum.width - boxes.cover.width) <= 1;
-                }).toBe(true);
-                const boxes = await readBoxes();
+                // recomputed the spectrum gap. Require three animation frames with
+                // unchanged boxes and no running geometry transition, then assert the
+                // exact snapshot that satisfied that condition.
+                const boxes = await stableElementRects(page, {
+                    stage: "#stage", spectrum: "#stage-spectrum",
+                    cover: "#coverbox", info: ".info",
+                });
                 expect(boxes.spectrum.left).toBeGreaterThanOrEqual(boxes.stage.left);
                 expect(boxes.spectrum.top).toBeGreaterThanOrEqual(boxes.stage.top);
                 expect(boxes.spectrum.right).toBeLessThanOrEqual(boxes.stage.right);
@@ -3349,11 +3450,12 @@ test.describe("the deployed player page", () => {
     }
 
     async function expectBalancedPoster(page) {
-        await expect.poll(async () => {
-            const metrics = await posterMetrics(page);
-            return Math.abs(metrics.topGap - metrics.lowerGap);
-        }, { timeout: 3000 }).toBeLessThan(2.5);
-        return posterMetrics(page);
+        await stableElementRects(page, {
+            stage: "#stage", cover: "#coverbox", info: ".info", countdown: "#countdown",
+        });
+        const metrics = await posterMetrics(page);
+        expect(Math.abs(metrics.topGap - metrics.lowerGap)).toBeLessThan(2.5);
+        return metrics;
     }
 
     test("animates poster info height around a fixed center and keeps the cover balanced",
@@ -3369,7 +3471,6 @@ test.describe("the deployed player page", () => {
                 const info = document.querySelector(".info");
                 const countdown = document.querySelector("#countdown");
                 const checkbox = document.querySelector("#show-remaining");
-                const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
                 const twoFrames = () => new Promise((resolve) =>
                     requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 const sample = () => {
@@ -3394,28 +3495,52 @@ test.describe("the deployed player page", () => {
                 const transitionNames = () => countdown.getAnimations()
                     .map((animation) => animation.transitionProperty)
                     .filter(Boolean);
+                const pauseCountdownAtHalf = () => countdown.getAnimations()
+                    .filter((animation) => ["max-height", "margin-top", "opacity"]
+                        .includes(animation.transitionProperty))
+                    .forEach((animation) => {
+                        const timing = animation.effect.getComputedTiming();
+                        animation.pause();
+                        animation.currentTime = Number(timing.delay || 0)
+                            + Number(timing.activeDuration || 0) * 0.5;
+                    });
+                const finishAndSettle = async () => {
+                    for (let pass = 0; pass < 8; pass++) {
+                        const running = stage.getAnimations({ subtree: true })
+                            .filter((animation) => animation.playState === "running"
+                                || animation.playState === "paused");
+                        running.forEach((animation) => animation.finish());
+                        await twoFrames();
+                        if (!stage.getAnimations({ subtree: true }).some((animation) =>
+                            animation.playState === "running"
+                            || animation.playState === "paused")) return;
+                    }
+                    throw new Error("Poster transitions did not settle");
+                };
 
                 const collapsed = sample();
                 checkbox.checked = true;
                 checkbox.dispatchEvent(new Event("change", { bubbles: true }));
                 await twoFrames();
                 const expandingTransitions = transitionNames();
-                await wait(120);
+                pauseCountdownAtHalf();
+                await twoFrames();
                 const expanding = sample();
-                await wait(420);
+                await finishAndSettle();
                 const expanded = sample();
-                await wait(550);
+                await twoFrames();
                 const expandedSettled = sample();
 
                 checkbox.checked = false;
                 checkbox.dispatchEvent(new Event("change", { bubbles: true }));
                 await twoFrames();
                 const collapsingTransitions = transitionNames();
-                await wait(120);
+                pauseCountdownAtHalf();
+                await twoFrames();
                 const collapsing = sample();
-                await wait(420);
+                await finishAndSettle();
                 const collapsedEnd = sample();
-                await wait(550);
+                await twoFrames();
                 const collapsedSettled = sample();
 
                 return {
