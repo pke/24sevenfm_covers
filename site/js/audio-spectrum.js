@@ -118,82 +118,247 @@ function calmLaserTarget(timestamp, index, bpm) {
     };
 }
 
+const ANALYZER_MODE_TRANSITION_MS = 320;
+
 export function createSpectrumVisualization({ canvas, tintElement }) {
     const context = canvas.getContext("2d");
+    const outgoingCanvas = document.createElement("canvas");
+    const outgoingContext = outgoingCanvas.getContext("2d");
     let peaks = [];
+    let renderedSignature = "";
+    let renderedType = "";
+    let outgoingType = "";
+    let transitionStarted = -1;
+    let oscilloscopeGain = 1;
+
+    function finishTransition() {
+        transitionStarted = -1;
+        outgoingType = "";
+        outgoingCanvas.width = outgoingCanvas.height = 0;
+        canvas.dataset.modeTransition = "idle";
+        delete canvas.dataset.outgoingAnalyzer;
+    }
 
     function clear() {
         peaks = [];
+        oscilloscopeGain = 1;
+        renderedSignature = renderedType = "";
+        finishTransition();
         if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+        delete canvas.dataset.analyzerType;
+        delete canvas.dataset.oscilloscopeStyle;
+        delete canvas.dataset.oscilloscopeGain;
+        delete canvas.dataset.oscilloscopeWindowSamples;
+        delete canvas.dataset.timeDomainSamples;
+    }
+
+    function beginTransition(timestamp) {
+        if (!outgoingContext || !canvas.width || !canvas.height) return;
+        outgoingCanvas.width = canvas.width;
+        outgoingCanvas.height = canvas.height;
+        outgoingContext.clearRect(0, 0, outgoingCanvas.width, outgoingCanvas.height);
+        outgoingContext.drawImage(canvas, 0, 0);
+        outgoingType = renderedType;
+        transitionStarted = timestamp;
+        canvas.dataset.modeTransition = "crossfading";
+        if (outgoingType) canvas.dataset.outgoingAnalyzer = outgoingType;
+    }
+
+    function analyzerSignature(options) {
+        return [
+            options.analyzerType,
+            options.spectrumMode,
+            options.spectrumBars,
+            options.oscilloscopeStyle
+        ].join(":");
+    }
+
+    function drawSpectrum(frequencyData, envelope, releasing, options, width, height) {
+        const bars = Math.min(options.spectrumBars, frequencyData.length);
+        const blockGap = Math.max(1, Math.round(width / 220));
+        const gap = width >= bars * 2 + blockGap * (bars - 1) ? blockGap : 0;
+        const barWidth = Math.max(1,
+            Math.floor((width - gap * (bars - 1)) / bars));
+        const plotWidth = barWidth * bars + gap * (bars - 1);
+        const plotLeft = Math.max(0, Math.floor((width - plotWidth) * 0.5));
+        const usableHeight = height - Math.max(3, Math.round(height * .08));
+        const gradient = context.createLinearGradient(0, height, 0, 0);
+        let tint = null;
+        if (options.spectrumMode === "tinted") {
+            tint = rgbFromElement(tintElement);
+            gradient.addColorStop(0, rgba(tint, .24));
+            gradient.addColorStop(.58, rgba(tint, .48));
+            gradient.addColorStop(.8, rgba(tint, .72));
+            gradient.addColorStop(1, rgba(tint, 1));
+        } else {
+            gradient.addColorStop(0, "#36ed64");
+            gradient.addColorStop(.58, "#6df052");
+            gradient.addColorStop(.8, "#ffd43b");
+            gradient.addColorStop(1, "#ff4b55");
+        }
+        context.fillStyle = gradient;
+
+        for (let i = 0; i < bars; i++) {
+            const position = bars === 1 ? 0 : i / (bars - 1);
+            const bin = Math.min(frequencyData.length - 1,
+                Math.floor(Math.pow(position, 1.65) * (frequencyData.length - 1)));
+            let barHeight = Math.floor(
+                (frequencyData[bin] / 255) * usableHeight * envelope);
+            const segment = blockGap * 3;
+            barHeight = Math.floor(barHeight / segment) * segment;
+            const x = plotLeft + Math.round(i * (barWidth + gap));
+            context.fillRect(x, height - barHeight, barWidth, barHeight);
+            const peak = peaks[i] || 0;
+            peaks[i] = releasing
+                ? Math.min(peak || barHeight, barHeight)
+                : barHeight >= peak
+                    ? barHeight : Math.max(0, peak - Math.max(1, height * .06));
+        }
+
+        // Horizontal cuts give the compact analyzer its blocky Winamp texture.
+        for (let y = height - blockGap * 2; y > 0; y -= blockGap * 3)
+            context.clearRect(0, y, width, blockGap);
+        for (let i = 0; i < bars; i++) {
+            const peakHeight = peaks[i];
+            if (peakHeight <= 0) continue;
+            const ratio = peakHeight / usableHeight;
+            context.fillStyle = tint
+                ? rgba(tint, Math.min(1, .45 + ratio * .55))
+                : ratio > .8 ? "#ff6269" : ratio > .58 ? "#ffe163" : "#8aff79";
+            context.fillRect(plotLeft + Math.round(i * (barWidth + gap)),
+                Math.max(0, height - peakHeight - blockGap), barWidth, blockGap);
+        }
+    }
+
+    function drawOscilloscope(timeDomainData, envelope, options, width, height) {
+        if (!timeDomainData || !timeDomainData.length) return;
+        const tint = options.spectrumMode === "tinted"
+            ? rgbFromElement(tintElement) : [54, 237, 100];
+        const center = height * .5;
+        // A full 1024-sample buffer is visually cramped in this wide, shallow strip.
+        // Winamp's scope read more clearly because it showed a shorter instant of the
+        // waveform. Keep the analyser resolution for beat plugins, but draw only the
+        // leading half here and derive automatic gain from its RMS energy.
+        const windowSamples = Math.min(512, timeDomainData.length);
+        let sumSquares = 0;
+        for (let index = 0; index < windowSamples; index++) {
+            const sample = timeDomainData[index] - 128;
+            sumSquares += sample * sample;
+        }
+        const rms = Math.sqrt(sumSquares / Math.max(1, windowSamples));
+        const targetGain = Math.min(7, Math.max(1, 42 / Math.max(1, rms)));
+        oscilloscopeGain += (targetGain - oscilloscopeGain)
+            * (targetGain < oscilloscopeGain ? .24 : .07);
+        const amplitude = height * .44 * envelope * oscilloscopeGain;
+        const denseSampleCount = Math.max(64, Math.floor(width * .5));
+        const dotSampleCount = Math.max(24, Math.min(48, Math.floor(width / 12)));
+        const sampleCount = Math.min(windowSamples,
+            options.oscilloscopeStyle === "dots" ? dotSampleCount : denseSampleCount);
+        const sourceStep = (windowSamples - 1) / Math.max(1, sampleCount - 1);
+        const xStep = width / Math.max(1, sampleCount - 1);
+        const lineWidth = Math.max(1, Math.round(height * .026));
+        const point = index => ({
+            x: index * xStep,
+            y: Math.max(lineWidth, Math.min(height - lineWidth,
+                center + ((timeDomainData[Math.round(index * sourceStep)] - 128) / 128)
+                    * amplitude))
+        });
+
+        context.lineWidth = lineWidth;
+        context.lineJoin = "round";
+        context.lineCap = options.oscilloscopeStyle === "dots" ? "butt" : "round";
+        context.strokeStyle = rgba(tint, 1);
+        context.fillStyle = rgba(tint, 1);
+
+        if (options.oscilloscopeStyle === "dots") {
+            const radius = Math.max(2, height * .038);
+            context.beginPath();
+            for (let index = 0; index < sampleCount; index++) {
+                const current = point(index);
+                context.moveTo(current.x + radius, current.y);
+                context.arc(current.x, current.y, radius, 0, Math.PI * 2);
+            }
+            context.fill();
+            return;
+        }
+
+        context.beginPath();
+        if (options.oscilloscopeStyle === "filled") context.moveTo(0, center);
+        for (let index = 0; index < sampleCount; index++) {
+            const current = point(index);
+            if (index === 0 && options.oscilloscopeStyle !== "filled")
+                context.moveTo(current.x, current.y);
+            else context.lineTo(current.x, current.y);
+        }
+        if (options.oscilloscopeStyle === "filled") {
+            context.lineTo(width, center);
+            context.closePath();
+            context.fillStyle = rgba(tint, .62);
+            context.fill();
+        }
+        context.stroke();
     }
 
     return {
         id: "spectrum",
         enabled(options) { return !!options.spectrumEnabled; },
+        needsTimeDomainData(options) { return options.analyzerType === "oscilloscope"; },
         setActive(active) { canvas.classList.toggle("active", active); },
         clear,
         reset() { peaks = []; },
-        draw({ frequencyData, envelope, releasing, options }) {
+        draw({ timestamp, frequencyData, timeDomainData, envelope, releasing, options }) {
             if (!context || !frequencyData || !frequencyData.length) return;
+            const type = options.analyzerType === "oscilloscope"
+                ? "oscilloscope" : "spectrum";
+            const signature = analyzerSignature(options);
+            // Capture the old pixels before resizeCanvas changes the backing-store
+            // dimensions (which clears it). Mode changes intentionally animate the
+            // canvas height, so the retained outgoing frame must survive that resize.
+            if (renderedSignature && renderedSignature !== signature) beginTransition(timestamp);
             if (resizeCanvas(canvas)) peaks = [];
+            if (renderedType && renderedType !== type) peaks = [];
+            renderedSignature = signature;
+            renderedType = type;
+
+            let progress = 1;
+            if (transitionStarted >= 0) {
+                progress = smoothstep((timestamp - transitionStarted)
+                    / ANALYZER_MODE_TRANSITION_MS);
+                if (progress >= 1) finishTransition();
+            }
 
             const width = canvas.width;
             const height = canvas.height;
-            const bars = Math.min(options.spectrumBars, frequencyData.length);
-            const blockGap = Math.max(1, Math.round(width / 220));
-            const gap = width >= bars * 2 + blockGap * (bars - 1) ? blockGap : 0;
-            const barWidth = Math.max(1,
-                Math.floor((width - gap * (bars - 1)) / bars));
-            const plotWidth = barWidth * bars + gap * (bars - 1);
-            const plotLeft = Math.max(0, Math.floor((width - plotWidth) * 0.5));
-            const usableHeight = height - Math.max(3, Math.round(height * .08));
-            const gradient = context.createLinearGradient(0, height, 0, 0);
-            let tint = null;
-            if (options.spectrumMode === "tinted") {
-                tint = rgbFromElement(tintElement);
-                gradient.addColorStop(0, rgba(tint, .24));
-                gradient.addColorStop(.58, rgba(tint, .48));
-                gradient.addColorStop(.8, rgba(tint, .72));
-                gradient.addColorStop(1, rgba(tint, 1));
-            } else {
-                gradient.addColorStop(0, "#36ed64");
-                gradient.addColorStop(.58, "#6df052");
-                gradient.addColorStop(.8, "#ffd43b");
-                gradient.addColorStop(1, "#ff4b55");
-            }
             context.clearRect(0, 0, width, height);
-            context.fillStyle = gradient;
+            context.save();
+            context.globalAlpha = progress;
+            if (type === "oscilloscope")
+                drawOscilloscope(timeDomainData, envelope, options, width, height);
+            else drawSpectrum(frequencyData, envelope, releasing, options, width, height);
+            context.restore();
 
-            for (let i = 0; i < bars; i++) {
-                const position = bars === 1 ? 0 : i / (bars - 1);
-                const bin = Math.min(frequencyData.length - 1,
-                    Math.floor(Math.pow(position, 1.65) * (frequencyData.length - 1)));
-                let barHeight = Math.floor(
-                    (frequencyData[bin] / 255) * usableHeight * envelope);
-                const segment = blockGap * 3;
-                barHeight = Math.floor(barHeight / segment) * segment;
-                const x = plotLeft + Math.round(i * (barWidth + gap));
-                context.fillRect(x, height - barHeight, barWidth, barHeight);
-                const peak = peaks[i] || 0;
-                peaks[i] = releasing
-                    ? Math.min(peak || barHeight, barHeight)
-                    : barHeight >= peak
-                        ? barHeight : Math.max(0, peak - Math.max(1, height * .06));
+            if (transitionStarted >= 0 && outgoingCanvas.width) {
+                context.save();
+                context.globalAlpha = (1 - progress) * envelope;
+                context.drawImage(outgoingCanvas, 0, 0, width, height);
+                context.restore();
             }
 
-            // Horizontal cuts give the compact analyzer its blocky Winamp texture.
-            for (let y = height - blockGap * 2; y > 0; y -= blockGap * 3)
-                context.clearRect(0, y, width, blockGap);
-            for (let i = 0; i < bars; i++) {
-                const peakHeight = peaks[i];
-                if (peakHeight <= 0) continue;
-                const ratio = peakHeight / usableHeight;
-                context.fillStyle = tint
-                    ? rgba(tint, Math.min(1, .45 + ratio * .55))
-                    : ratio > .8 ? "#ff6269" : ratio > .58 ? "#ffe163" : "#8aff79";
-                context.fillRect(plotLeft + Math.round(i * (barWidth + gap)),
-                    Math.max(0, height - peakHeight - blockGap), barWidth, blockGap);
+            canvas.dataset.analyzerType = type;
+            if (type === "oscilloscope") {
+                canvas.dataset.oscilloscopeStyle = options.oscilloscopeStyle;
+                canvas.dataset.oscilloscopeGain = oscilloscopeGain.toFixed(2);
+                canvas.dataset.oscilloscopeWindowSamples = String(Math.min(512,
+                    timeDomainData ? timeDomainData.length : 0));
+                canvas.dataset.timeDomainSamples = String(timeDomainData
+                    ? timeDomainData.length : 0);
+            } else {
+                delete canvas.dataset.oscilloscopeStyle;
+                delete canvas.dataset.oscilloscopeGain;
+                delete canvas.dataset.oscilloscopeWindowSamples;
+                delete canvas.dataset.timeDomainSamples;
             }
+            if (transitionStarted < 0) canvas.dataset.modeTransition = "idle";
         }
     };
 }
@@ -1227,6 +1392,7 @@ export function createAudioAnalyserController({
     let source = null;
     let analyser = null;
     let frequencyData = null;
+    let timeDomainData = null;
     let usesSyntheticData = false;
     let frame = null;
     let lastFrame = 0;
@@ -1273,13 +1439,22 @@ export function createAudioAnalyserController({
             return;
         }
         lastFrame = timestamp;
+        const options = getOptions();
         if (states.some(state => state.target === 1)) {
             if (usesSyntheticData) fillSyntheticData(frequencyData, timestamp);
             else analyser.getByteFrequencyData(frequencyData);
+            const needsTimeDomainData = states.some(state => state.target === 1
+                && state.visualization.needsTimeDomainData
+                && state.visualization.needsTimeDomainData(options));
+            if (needsTimeDomainData && timeDomainData) {
+                if (!usesSyntheticData && analyser
+                        && typeof analyser.getByteTimeDomainData === "function")
+                    analyser.getByteTimeDomainData(timeDomainData);
+                else timeDomainData.fill(128);
+            }
         }
 
         let keepDrawing = false;
-        const options = getOptions();
         states.forEach(state => {
             const done = updateEnvelope(state, timestamp);
             if (state.target === 0 && done) {
@@ -1290,6 +1465,7 @@ export function createAudioAnalyserController({
                 state.visualization.draw({
                     timestamp,
                     frequencyData,
+                    timeDomainData,
                     envelope: state.envelope,
                     releasing: state.target === 0,
                     synthetic: usesSyntheticData,
@@ -1333,6 +1509,7 @@ export function createAudioAnalyserController({
                 return false;
             usesSyntheticData = true;
             if (!frequencyData) frequencyData = new Uint8Array(128);
+            if (!timeDomainData) timeDomainData = new Uint8Array(256);
             return true;
         }
         if (!analyser && !usesSyntheticData) {
@@ -1348,12 +1525,15 @@ export function createAudioAnalyserController({
                 source.connect(analyser);
                 analyser.connect(audioContext.destination);
                 frequencyData = new Uint8Array(analyser.frequencyBinCount);
+                timeDomainData = new Uint8Array(analyser.fftSize
+                    || analyser.frequencyBinCount * 2);
             } catch (error) {
-                audioContext = source = analyser = frequencyData = null;
+                audioContext = source = analyser = frequencyData = timeDomainData = null;
                 if (!enabledStates.some(state => state.visualization.supportsSyntheticData))
                     return false;
                 usesSyntheticData = true;
                 frequencyData = new Uint8Array(128);
+                timeDomainData = new Uint8Array(256);
                 return true;
             }
         }

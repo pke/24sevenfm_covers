@@ -338,7 +338,7 @@ test.describe("the deployed player page", () => {
 
             await page.locator("#audio-toggle").click();
             await expect(page.locator("#status"))
-                .toHaveText("Audio controls failed to load - try again.");
+                .toHaveText("Audio controls failed to load – try again.");
             await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "false");
             expect(moduleUrls).toHaveLength(1);
 
@@ -379,7 +379,7 @@ test.describe("the deployed player page", () => {
             await expect(stageAudio).toHaveCSS("background-color", canvasBackground);
             await expect(stageAudio).toHaveAttribute("aria-label", "Stop audio");
             await expect(panelAudio).toHaveAttribute("aria-pressed", "true");
-            await expect(panelAudio).toHaveText("? Stop audio");
+            await expect(panelAudio).toHaveText("⏸ Stop audio");
 
             await panelAudio.click();
             await expect(stageAudio).toHaveAttribute("aria-pressed", "false");
@@ -464,6 +464,13 @@ test.describe("the deployed player page", () => {
         const lasers = page.locator("#laser-enabled");
         const strobe = page.locator("#strobe-enabled");
         const smoke = page.locator("#smoke-enabled");
+        const spectrumType = page.locator('input[name="analyzer-type"][value="spectrum"]');
+        const oscilloscopeType = page.locator(
+            'input[name="analyzer-type"][value="oscilloscope"]');
+        const scopeLine = page.locator(
+            'input[name="oscilloscope-style"][value="line"]');
+        const scopeDots = page.locator(
+            'input[name="oscilloscope-style"][value="dots"]');
         await expect(lasers).toBeChecked();
         await expect(strobe).not.toBeChecked();
         await expect(strobe).toBeEnabled();
@@ -474,6 +481,11 @@ test.describe("the deployed player page", () => {
         await expect(bars).toHaveAttribute("step", "8");
         await expect(bars).toBeDisabled();
         await expect(page.locator("#spectrum-bars-val")).toHaveText("24");
+        await expect(spectrumType).toBeChecked();
+        await expect(spectrumType).toBeDisabled();
+        await expect(oscilloscopeType).toBeDisabled();
+        await expect(scopeLine).toBeChecked();
+        await expect(scopeLine).toBeDisabled();
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
 
         await enabled.check();
@@ -483,10 +495,16 @@ test.describe("the deployed player page", () => {
         await expect(strobe).toBeDisabled();
         await expect(smoke).toBeDisabled();
         await expect(bars).toBeEnabled();
+        await expect(spectrumType).toBeEnabled();
+        await expect(oscilloscopeType).toBeEnabled();
         await bars.evaluate((input) => {
             input.value = "48";
             input.dispatchEvent(new Event("input", { bubbles: true }));
         });
+        await page.locator("label.seg", { hasText: "Oscilloscope" }).click();
+        await expect(bars).toBeDisabled();
+        await expect(scopeLine).toBeEnabled();
+        await page.locator("label.seg", { hasText: "Dots" }).click();
         await page.locator("label.seg", { hasText: "Legacy" }).click();
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
 
@@ -498,7 +516,10 @@ test.describe("the deployed player page", () => {
         await expect(smoke).toBeDisabled();
         await expect(enabled).toBeChecked();
         await expect(bars).toHaveValue("48");
+        await expect(bars).toBeDisabled();
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
+        await expect(oscilloscopeType).toBeChecked();
+        await expect(scopeDots).toBeChecked();
         await expect(page.locator('input[name="spectrum-mode"][value="legacy"]')).toBeChecked();
     });
     test("keeps ratings opt-in while preserving the DE and US choices", async ({ page }) => {
@@ -714,7 +735,7 @@ test.describe("the deployed player page", () => {
         expect(glued.backTransform).not.toBe("none");
         // The SVG may use the 3D card while it is visibly flipping, but must be
         // normalized back onto the untransformed front face afterwards. Leaving the
-        // two 180� layers composed indefinitely makes Chromium rasterize it softly.
+        // two 180° layers composed indefinitely makes Chromium rasterize it softly.
         await expect.poll(() => page.locator("#rating-de").getAttribute("data-front"),
             { timeout: 3000 }).toBe("a");
         await expect(page.locator("#rating-de")).toHaveAttribute("data-settled", "");
@@ -1438,9 +1459,9 @@ test.describe("the deployed player page", () => {
         await check.click();
         await expect(check).toBeDisabled();
         await expect(check).toHaveAccessibleName("Checking fanart.tv personal key");
-        await expect(check).toHaveText(".");
+        await expect(check).toHaveText("…");
         releaseFanartResponse();
-        await expect(check).toHaveText("V");
+        await expect(check).toHaveText("✓");
         await expect(check).toHaveClass(/success/);
         await expect(check).toHaveAccessibleName(
             /Recheck fanart\.tv personal key; successfully checked on \d{4}-\d{2}-\d{2}/);
@@ -1489,14 +1510,14 @@ test.describe("the deployed player page", () => {
         expect(transition).toEqual({ opacity: true, height: true });
 
         await check.click();
-        await expect(check).toHaveText("V");
+        await expect(check).toHaveText("✓");
         await expect(status).toBeHidden();
         expect(requests).toBe(2);
 
         await key.fill("another-client-key");
         await check.click();
         await expect(status).toBeVisible();
-        await expect(status).toHaveText("Couldn't check the personal key right now.");
+        await expect(status).toHaveText("Couldn’t check the personal key right now.");
         await expect(check).toBeEnabled();
         expect(requests).toBe(3);
     });
@@ -1520,7 +1541,7 @@ test.describe("the deployed player page", () => {
         const key = page.locator("#fanart-key");
         const check = page.locator("#fanart-key-check");
         await expect(key).toHaveValue("persisted-client-key");
-        await expect(check).toHaveText("V");
+        await expect(check).toHaveText("✓");
         await expect(check).toHaveClass(/success/);
         await expect(check).toBeEnabled();
         await expect(check).toHaveAccessibleName(
@@ -1531,8 +1552,8 @@ test.describe("the deployed player page", () => {
 
         await check.click();
         await expect(page.locator("#fanart-key-status")).toHaveText(
-            "Couldn't check the personal key right now.");
-        await expect(check).toHaveText("V");
+            "Couldn’t check the personal key right now.");
+        await expect(check).toHaveText("✓");
         await expect(check).toBeEnabled();
         expect(await page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
@@ -1545,7 +1566,7 @@ test.describe("the deployed player page", () => {
             .toBe(0);
 
         await check.click();
-        await expect(check).toHaveText("V");
+        await expect(check).toHaveText("✓");
         await expect.poll(() => page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
             .toBeGreaterThan(verifiedAt);
@@ -1747,6 +1768,99 @@ test.describe("the deployed player page", () => {
             await expect(spectrum).not.toHaveClass(/active/);
             await expect(spectrum).toHaveCSS("display", "none");
             await page.locator("#audio-toggle").click();
+        });
+    test("renders Winamp oscilloscope styles from time-domain audio and crossfades modes",
+        async ({ page }) => {
+            const pageErrors = [];
+            page.on("pageerror", (error) => pageErrors.push(String(error)));
+            await page.addInitScript(() => {
+                window.__frequencyReads = 0;
+                window.__timeDomainReads = 0;
+                class FakeAudioNode { connect() {} }
+                class FakeAnalyser extends FakeAudioNode {
+                    constructor() {
+                        super();
+                        this.frequencyBinCount = 64;
+                    }
+                    getByteFrequencyData(data) {
+                        window.__frequencyReads++;
+                        data.fill(176);
+                    }
+                    getByteTimeDomainData(data) {
+                        window.__timeDomainReads++;
+                        for (let index = 0; index < data.length; index++) {
+                            data[index] = 128 + Math.round(Math.sin(
+                                index * Math.PI * 8 / data.length
+                                + window.__timeDomainReads * .08) * 82);
+                        }
+                    }
+                }
+                window.AudioContext = class {
+                    constructor() {
+                        this.destination = {};
+                        this.state = "running";
+                    }
+                    createAnalyser() { return new FakeAnalyser(); }
+                    createMediaElementSource() { return new FakeAudioNode(); }
+                    resume() { return Promise.resolve(); }
+                };
+                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await mockProviderTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+            const audio = page.locator("#audio");
+            const analyzer = page.locator("#stage-spectrum");
+            await page.locator("#spectrum-enabled").check();
+            await page.locator("#stage-audio").click();
+            await audio.dispatchEvent("playing");
+            await expect(analyzer).toHaveAttribute("data-analyzer-type", "spectrum");
+            await expect.poll(() => page.evaluate(() => window.__frequencyReads))
+                .toBeGreaterThan(0);
+
+            await page.locator("label.seg", { hasText: "Oscilloscope" }).click();
+            await expect(analyzer).toHaveAttribute("data-mode-transition", "crossfading");
+            await expect(analyzer).toHaveAttribute("data-outgoing-analyzer", "spectrum");
+            await expect(analyzer).toHaveAttribute("data-analyzer-type", "oscilloscope");
+            await expect.poll(() => page.evaluate(() => window.__timeDomainReads))
+                .toBeGreaterThan(0);
+            await expect(analyzer).toHaveAttribute("data-time-domain-samples", "1024");
+            await expect(analyzer).toHaveAttribute("data-oscilloscope-window-samples", "512");
+            await expect(analyzer).toHaveAttribute("data-mode-transition", "idle");
+            await expect(analyzer).not.toHaveAttribute("data-outgoing-analyzer");
+
+            const scopeBoxes = await stableElementRects(page, {
+                scope: "#stage-spectrum", cover: "#coverbox", info: ".info",
+            });
+            expect(scopeBoxes.scope.height).toBeGreaterThan(48);
+            expect(scopeBoxes.scope.top).toBeGreaterThanOrEqual(scopeBoxes.cover.bottom - 1);
+            expect(scopeBoxes.scope.bottom).toBeLessThanOrEqual(scopeBoxes.info.top + 1);
+
+            const waveform = await analyzer.evaluate((canvas) => {
+                const data = canvas.getContext("2d")
+                    .getImageData(0, 0, canvas.width, canvas.height).data;
+                const center = Math.floor(canvas.height / 2);
+                let above = false, below = false;
+                for (let y = 0; y < canvas.height; y++) {
+                    for (let x = 0; x < canvas.width; x++) {
+                        if (!data[(y * canvas.width + x) * 4 + 3]) continue;
+                        if (y < center - 2) above = true;
+                        if (y > center + 2) below = true;
+                    }
+                }
+                return { above, below };
+            });
+            expect(waveform).toEqual({ above: true, below: true });
+
+            await page.locator("label.seg", { hasText: "Dots" }).click();
+            await expect(analyzer).toHaveAttribute("data-oscilloscope-style", "dots");
+            await expect(analyzer).toHaveAttribute("data-mode-transition", "crossfading");
+            await expect(analyzer).toHaveAttribute("data-mode-transition", "idle");
+            await page.locator("label.seg", { hasText: "Filled" }).click();
+            await expect(analyzer).toHaveAttribute("data-oscilloscope-style", "filled");
+            expect(pageErrors).toEqual([]);
         });
 
     test("runs the 80s laser plugin from the shared analyser and fades it between stations",
@@ -2000,7 +2114,7 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        const retryPattern = /Station not responding\s+Retrying in (?:\d+ seconds?|1 minute)./;
+        const retryPattern = /Station not responding\s+Retrying in (?:\d+ seconds?|1 minute)…/;
         await expect(page.locator("#status")).toHaveText(retryPattern);
         const coverStatus = page.locator("#stage-status");
         await expect(coverStatus).toBeVisible();
@@ -2022,7 +2136,7 @@ test.describe("the deployed player page", () => {
         await expect(front).toHaveAttribute("src", /streamingsoundtracks\.com\/images\/logos\//);
         expect(await front.evaluate((img) => getComputedStyle(img).filter)).toContain("grayscale(1)");
         await expect.poll(() => pollRequests, { timeout: 10000 }).toBe(2);
-        await expect(page.locator("#info-title")).toHaveText("Loading.");
+        await expect(page.locator("#info-title")).toHaveText("Loading…");
         expect(logoRequested).toBe(true);
     });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
@@ -2521,7 +2635,7 @@ test.describe("the deployed player page", () => {
             if (action === "GetQueue") return route.fulfill({ json: [] });
             return route.fulfill({ json: {
                 Album: "Arrival (Original Motion Picture Soundtrack)", Track: "Heptapod B",
-                Artist: "J�hann J�hannsson", CoverLink: cover, Length: 0,
+                Artist: "Jóhann Jóhannsson", CoverLink: cover, Length: 0,
                 PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
             } });
         });
@@ -2555,7 +2669,7 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => resolverRequests).toBe(1);
         expect(resolvedAlbum).toBe("Arrival (Original Motion Picture Soundtrack)");
         expect(resolvedTrack).toBe("Heptapod B");
-        expect(resolvedArtist).toBe("J�hann J�hannsson");
+        expect(resolvedArtist).toBe("Jóhann Jóhannsson");
         expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
         expect(resolverVersion).toMatch(/^[a-f0-9]{12}$/);
         expect(directProviderRequests).toBe(0);
@@ -3017,7 +3131,7 @@ test.describe("the deployed player page", () => {
         const error = page.locator("#backdrop-error");
         const retry = page.locator("#backdrop-retry");
         await expect(error).toBeVisible();
-        await expect(error).toContainText("Backdrop artwork couldn't be loaded.");
+        await expect(error).toContainText("Backdrop artwork couldn’t be loaded.");
         await expect(retry).toHaveText("Retry");
         await expect(retry).toBeEnabled();
         const transitionProperties = await error.evaluate((element) =>
@@ -3025,7 +3139,7 @@ test.describe("the deployed player page", () => {
         expect(transitionProperties).toEqual(expect.arrayContaining(["opacity", "max-height"]));
 
         await retry.click();
-        await expect(error).toContainText("Loading backdrop artwork.");
+        await expect(error).toContainText("Loading backdrop artwork…");
         await expect(retry).toBeDisabled();
         expect(await page.evaluate(() => window.backdropFetchCacheModes))
             .toEqual(["default", "reload"]);
@@ -3033,7 +3147,7 @@ test.describe("the deployed player page", () => {
         releaseRetry();
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", backdrop);
         await expect(error).toBeHidden();
-        await expect(error).toContainText("Loading backdrop artwork. Retry");
+        await expect(error).toContainText("Loading backdrop artwork… Retry");
         await expect(page.locator("#status")).toHaveText("");
         expect(resolverRequests).toBe(2);
     });
@@ -4194,6 +4308,8 @@ test.describe("the deployed player page", () => {
                 remainingSize: 99,
                 spectrumBars: 999,
                 spectrumMode: "unknown",
+                analyzerType: "unknown",
+                oscilloscopeStyle: "unknown",
                 fanartKey: 42,
                 providerOrder: ["unknown", "tmdb"],
             })));
@@ -4208,6 +4324,10 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="cdsize"][value="2"]')).toBeChecked();
         await expect(page.locator("#spectrum-bars")).toHaveValue("64");
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
+        await expect(page.locator(
+            'input[name="analyzer-type"][value="spectrum"]')).toBeChecked();
+        await expect(page.locator(
+            'input[name="oscilloscope-style"][value="line"]')).toBeChecked();
         await expect(page.locator("#fanart-key")).toHaveValue("");
         expect(await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider)))
@@ -4326,7 +4446,7 @@ test.describe("the deployed player page", () => {
 
         await page.locator("#audio").dispatchEvent("playing");
         await page.locator("#audio").dispatchEvent("waiting");
-        await expect(page.locator("#status")).toHaveText("Audio interrupted - reconnecting.");
+        await expect(page.locator("#status")).toHaveText("Audio interrupted – reconnecting…");
         expect(await page.evaluate(() => window.__plays.length)).toBe(1);
 
         await expect.poll(() => page.evaluate(() => window.__plays.length)).toBe(2);
@@ -4457,7 +4577,7 @@ test.describe("the deployed player page", () => {
             .poll(() => front.evaluate((img) => img.naturalWidth), { timeout: 30000 })
             .toBeGreaterThan(0);
 
-        await expect(page.locator("#info-title")).not.toHaveText(/Loading|^-$/, { timeout: 30000 });
+        await expect(page.locator("#info-title")).not.toHaveText(/Loading|^—$/, { timeout: 30000 });
         expect(errors, "page must run without JS errors").toEqual([]);
     });
 

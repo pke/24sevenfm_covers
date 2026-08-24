@@ -142,10 +142,15 @@ var OPTION_DEFS = {
     strobeEnabled: { default: 0, coerce: boolOption },
     smokeEnabled: { default: 0, coerce: boolOption, effect: applySmokeEnabled },
     spectrumEnabled: { default: 0, coerce: boolOption, effect: applySpectrumEnabled },
+    analyzerType: { default: "spectrum",
+        coerce: enumOption(["spectrum", "oscilloscope"], "spectrum"),
+        effect: applyAnalyzerType },
     spectrumBars: { default: 24, coerce: intOption(8, 64), event: "input",
         format: String, effect: resetSpectrumBars },
     spectrumMode: { default: "tinted", coerce: enumOption(["legacy", "tinted"], "tinted"),
-        effect: clearSpectrum },
+        effect: syncSpectrum },
+    oscilloscopeStyle: { default: "line",
+        coerce: enumOption(["line", "dots", "filled"], "line"), effect: syncSpectrum },
     // Ratings are independently opt-in because they use the same title resolver as
     // backdrops. Country choices remain selected while the master switch is off.
     ratingsEnabled: { default: 0, coerce: boolOption, effect: applyRatingsEnabled },
@@ -461,7 +466,7 @@ function makeRatingSlot(slot) {
             var settleVersion = version;
             // Once the visible flip has completed, keep or copy the new SVG on the
             // flat front face and reset both 3D rotations in a transition-free frame.
-            // Keeping an SVG in two permanent 180� GPU layers makes it look rasterized.
+            // Keeping an SVG in two permanent 180° GPU layers makes it look rasterized.
             settleTimer = setTimeout(function () {
                 if (version !== settleVersion || (slot.dataset.front !== "b"
                         && slot.dataset.front !== "a")
@@ -868,7 +873,7 @@ function humanDelay(seconds) {
 function renderRetryStatus() {
     if (retryAt <= 0) return;
     var seconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
-    setStatus("Station not responding\nRetrying in " + humanDelay(seconds) + ".", "station");
+    setStatus("Station not responding\nRetrying in " + humanDelay(seconds) + "…", "station");
 }
 function scheduleRetry(seconds) {
     retryAt = Date.now() + seconds * 1000;
@@ -882,7 +887,7 @@ async function poll() {
     pollTimer = null;
     var wasRetry = retryAt > 0;
     retryAt = 0;
-    if (wasRetry) setStatus("Contacting station.", "station");
+    if (wasRetry) setStatus("Contacting station…", "station");
     if (inflight) inflight.abort();
     const ctl = new AbortController();
     inflight = ctl;
@@ -948,7 +953,7 @@ async function poll() {
         else if (track) title = track;
         if (title && lengthSec > 0)
             title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
-        setInfo(title || "-", artist);
+        setInfo(title || "—", artist);
 
         const cover = isStationId ? station().logo : displayCover;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
@@ -1216,8 +1221,8 @@ function showCover(url) {
         if (coverBox.dataset.fx !== fx) {
             // A CHANGE of effect must teleport into the new parked poses, never
             // animate: with the flip freshly active, the back buffer would still be
-            // ANIMATING toward its 90� park when the front flip retargets it to 0� -
-            // a 0�0� no-op, and the new cover just pops in statically. One
+            // ANIMATING toward its 90° park when the front flip retargets it to 0° -
+            // a 0°→0° no-op, and the new cover just pops in statically. One
             // transition-less flush (data-warp) commits the poses instantly.
             coverBox.dataset.warp = "";
             coverBox.dataset.fx = fx;
@@ -1536,10 +1541,10 @@ function setMovieBackdrop(art, generation) {
 
 function setBackdropErrorState(state) {
     if (state === "error") {
-        backdropErrorTextEl.textContent = "Backdrop artwork couldn't be loaded.";
+        backdropErrorTextEl.textContent = "Backdrop artwork couldn’t be loaded.";
         backdropRetryEl.disabled = false;
     } else if (state === "retrying") {
-        backdropErrorTextEl.textContent = "Loading backdrop artwork.";
+        backdropErrorTextEl.textContent = "Loading backdrop artwork…";
         backdropRetryEl.disabled = true;
     }
     backdropErrorEl.classList.toggle("show", !!state);
@@ -1551,7 +1556,7 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
     if (cacheMode === "reload" && opts.tmdbBackdrops) {
-        setStatus("Loading backdrop artwork.", "backdrop");
+        setStatus("Loading backdrop artwork…", "backdrop");
         setBackdropErrorState("retrying");
     } else {
         clearStatus("backdrop");
@@ -1728,8 +1733,14 @@ function sizeStage() {
     // square by both dimensions without breaking the aspect ratio on portrait
     // screens), leaving room below for the info box in poster layout. Because it is
     // sized off the stage, fullscreen scales everything with no extra rules.
+    // The taller oscilloscope borrows a small amount of the poster cover's vertical
+    // budget. A four-percent cover reduction creates a readable scope strip without
+    // moving the title box or letting either element overlap it.
+    var expandedOscilloscope = opts.spectrumEnabled
+        && opts.analyzerType === "oscilloscope";
+    var posterCoverFraction = expandedOscilloscope ? 0.555 : 0.58;
     var side = opts.layout === 1
-        ? Math.min(r.height * 0.58, r.width * 0.86)
+        ? Math.min(r.height * posterCoverFraction, r.width * 0.86)
         : Math.min(r.height * 0.96, r.width * 0.96);
     coverBox.style.width = side + "px";
     coverBox.style.height = side + "px";
@@ -1753,11 +1764,26 @@ function sizeStage() {
     var infoRect = document.querySelector(".info").getBoundingClientRect();
     var infoHeight = infoRect.height;
     var coverShift = opts.layout === 1 ? r.height * 0.07 - infoHeight * 0.25 : 0;
+    // Lift the slightly smaller cover as the scope expands. Its top has ample room in
+    // the 72% artwork row; spending that room here creates a true 60px waveform lane
+    // instead of squeezing the requested height back down to the old 48px strip.
+    if (opts.layout === 1 && expandedOscilloscope)
+        coverShift -= Math.min(16, r.height * 0.03);
     stage.style.setProperty("--cover-shift", coverShift + "px");
     if (opts.layout === 1) {
         var coverBottom = r.height * 0.36 + coverShift + side * 0.5;
         var infoTop = infoRect.top - r.top;
+        var availableAnalyzerHeight = Math.max(32, infoTop - coverBottom - 4);
+        var desiredAnalyzerHeight = opts.analyzerType === "oscilloscope"
+            ? Math.min(72, Math.max(56, side * 0.22))
+            : Math.min(48, Math.max(32, r.height * 0.075));
+        stage.style.setProperty("--analyzer-height",
+            Math.min(desiredAnalyzerHeight, availableAnalyzerHeight) + "px");
         stage.style.setProperty("--spectrum-top", ((coverBottom + infoTop) * 0.5) + "px");
+    } else {
+        stage.style.setProperty("--analyzer-height", (opts.analyzerType === "oscilloscope"
+            ? Math.min(72, Math.max(56, side * 0.22))
+            : Math.min(48, Math.max(32, r.height * 0.075))) + "px");
     }
     // The D2D pass blurs at a ~240px working resolution and upscales, so its strength
     // is relative to size. A fixed CSS pixel blur reads far too mild on a big stage -
@@ -1815,7 +1841,7 @@ function scheduleAudioReconnect() {
     var delay = AUDIO_RETRY_DELAYS[Math.min(audioRetryAttempt, AUDIO_RETRY_DELAYS.length - 1)];
     audioRetryAttempt++;
     var generation = audioGeneration;
-    setStatus("Audio interrupted - reconnecting.", "audio");
+    setStatus("Audio interrupted – reconnecting…", "audio");
     audioRetryTimer = setTimeout(function () {
         audioRetryTimer = null;
         if (!audioWanted || generation !== audioGeneration) return;
@@ -1869,7 +1895,7 @@ function startAudio(stopOnPlayFailure) {
             scheduleAudioReconnect();
             return;
         }
-        setStatus("Your browser refused to play the stream - use the playlist links below.", "audio");
+        setStatus("Your browser refused to play the stream – use the playlist links below.", "audio");
         setAudio(false);
     });
 }
@@ -1893,11 +1919,11 @@ function setAudio(on) {
     var pressed = on ? "true" : "false";
     var action = on ? "Stop audio" : "Play audio";
     audioBtn.setAttribute("aria-pressed", pressed);
-    audioBtn.textContent = on ? "? Stop audio" : "? Play audio";
+    audioBtn.textContent = on ? "⏸ Stop audio" : "▶ Play audio";
     stageAudioBtn.setAttribute("aria-pressed", pressed);
     stageAudioBtn.setAttribute("aria-label", action);
     stageAudioBtn.title = action;
-    stageAudioBtn.textContent = on ? "?" : "?";
+    stageAudioBtn.textContent = on ? "⏸" : "▶";
 }
 function audioSpectrumModuleUrl() {
     var url = new URL("audio-spectrum.js", PLAYER_SCRIPT_URL);
@@ -1949,7 +1975,7 @@ function toggleAudio() {
     loadAudioSpectrumModule().catch(function () {
         if (!audioWanted) return;
         setAudio(false);
-        setStatus("Audio controls failed to load - try again.", "audio");
+        setStatus("Audio controls failed to load – try again.", "audio");
     });
 }
 audioEl.addEventListener("playing", function () {
@@ -1983,7 +2009,7 @@ audioEl.addEventListener("error", scheduleAudioReconnect);
 audioEl.addEventListener("ended", scheduleAudioReconnect);
 window.addEventListener("online", function () {
     if (!audioWanted || (audioRetryTimer === null && audioStallTimer === null)) return;
-    setStatus("Audio interrupted - reconnecting.", "audio");
+    setStatus("Audio interrupted – reconnecting…", "audio");
     startAudio(false);
 });
 audioBtn.addEventListener("click", function () {
@@ -2013,7 +2039,7 @@ $("fullscreen").addEventListener("click", toggleFullscreen);
 
 // --- fullscreen options overlay ----------------------------------------------
 // Only descendants of the fullscreen element are rendered, so the options panel
-// below the stage is unreachable there. The ? button MOVES the real panel into an
+// below the stage is unreachable there. The ⋯ button MOVES the real panel into an
 // overlay inside the stage - moving (not copying) keeps every binding and value,
 // and there is exactly one panel to keep in sync.
 // Two panels move: the station picker (above the stage) and the main options panel
@@ -2161,7 +2187,7 @@ document.addEventListener("pointerdown", function (e) {
 // Light dismiss: pressing anywhere outside the panel closes it, like a native
 // popover. pointerdown, not click - a slider drag that starts inside the panel and
 // ends outside must not dismiss, and pointerdown judges by where the press BEGAN.
-// The ? button is excluded: its own handler is the toggle, and handling the same
+// The ⋯ button is excluded: its own handler is the toggle, and handling the same
 // press twice would reopen what was just closed. (Esc needs nothing here - it exits
 // fullscreen, and the fullscreenchange handler already closes the panel.)
 stage.addEventListener("pointerdown", function (e) {
@@ -2170,7 +2196,7 @@ stage.addEventListener("pointerdown", function (e) {
     setOptionsOverlay(false);
 });
 
-// In fullscreen the chrome (?/?, ?, ?, and the cursor) fades out after 2s without pointer
+// In fullscreen the chrome (▶/⏸, ⛶, ⋯, and the cursor) fades out after 2s without pointer
 // movement and comes back on the next move - :hover can't express "idle" when the
 // stage covers the whole screen. After their guaranteed ten-second track window,
 // rating badges follow this same `.idle` state through CSS.
@@ -2247,7 +2273,7 @@ let fanartKeyStatusTimer = null;
 let fanartKeyCheckButtonState = "idle";
 
 function setFanartKeyCheckButton(state) {
-    const labels = { idle: "Check", checking: ".", success: "V" };
+    const labels = { idle: "Check", checking: "…", success: "✓" };
     const verificationText = opts.fanartKeyVerifiedAt
         ? "successfully checked on "
             + new Date(opts.fanartKeyVerifiedAt).toISOString().slice(0, 10)
@@ -2353,7 +2379,7 @@ async function checkFanartKey() {
                 || generation !== fanartKeyCheckGeneration) return;
         fanartKeyCheckController = null;
         setFanartKeyCheckButton(previousVerification ? "success" : "idle");
-        showFanartKeyError("Couldn't check the personal key right now.");
+        showFanartKeyError("Couldn’t check the personal key right now.");
     }
 }
 
@@ -2397,7 +2423,7 @@ function applyStation() {
     // The resolver is per-station now - always re-evaluate after a switch, even if
     // the new station plays an identically named album.
     currentAlbum = ""; currentTrack = ""; currentArtist = "";
-    setInfo("Loading.", "");
+    setInfo("Loading…", "");
     setStatus("");
     if (audioWanted) setAudio(true); // retune the stream
     poll();
@@ -2405,11 +2431,31 @@ function applyStation() {
 
 var spectrumBarsEl = $("spectrum-bars");
 var spectrumModeEls = document.querySelectorAll('input[name="spectrum-mode"]');
+var analyzerTypeEls = document.querySelectorAll('input[name="analyzer-type"]');
+var oscilloscopeStyleEls = document.querySelectorAll('input[name="oscilloscope-style"]');
+var analyzerTypeSettingEl = $("analyzer-type-setting");
+var spectrumBarsSettingEl = $("spectrum-bars-setting");
+var oscilloscopeStyleSettingEl = $("oscilloscope-style-setting");
+var analyzerColorSettingEl = $("analyzer-color-setting");
 var strobeEnabledEl = $("strobe-enabled");
 var smokeEnabledEl = $("smoke-enabled");
+function setVisualizationSettingEnabled(element, enabled) {
+    element.classList.toggle("disabled", !enabled);
+    element.setAttribute("aria-disabled", enabled ? "false" : "true");
+}
 function syncSpectrumSettingControls() {
-    spectrumBarsEl.disabled = !opts.spectrumEnabled;
-    spectrumModeEls.forEach(function (input) { input.disabled = !opts.spectrumEnabled; });
+    var enabled = !!opts.spectrumEnabled;
+    var spectrum = opts.analyzerType === "spectrum";
+    spectrumBarsEl.disabled = !enabled || !spectrum;
+    analyzerTypeEls.forEach(function (input) { input.disabled = !enabled; });
+    spectrumModeEls.forEach(function (input) { input.disabled = !enabled; });
+    oscilloscopeStyleEls.forEach(function (input) {
+        input.disabled = !enabled || spectrum;
+    });
+    setVisualizationSettingEnabled(analyzerTypeSettingEl, enabled);
+    setVisualizationSettingEnabled(spectrumBarsSettingEl, enabled && spectrum);
+    setVisualizationSettingEnabled(oscilloscopeStyleSettingEl, enabled && !spectrum);
+    setVisualizationSettingEnabled(analyzerColorSettingEl, enabled);
 }
 function syncLaserSettingControls() {
     strobeEnabledEl.disabled = !opts.laserEnabled;
@@ -2417,7 +2463,13 @@ function syncLaserSettingControls() {
 }
 function applySpectrumEnabled() {
     syncSpectrumSettingControls();
+    sizeStage();
     if (opts.spectrumEnabled && audioWanted) prepareSpectrum();
+    syncSpectrum();
+}
+function applyAnalyzerType() {
+    syncSpectrumSettingControls();
+    sizeStage();
     syncSpectrum();
 }
 function applyLaserEnabled() {
@@ -2451,7 +2503,7 @@ syncRatingControls();
 // order stays the single source of truth, read back on release. Pointer events also
 // make this work on touch (the grip's touch-action:none stops scrolling). The same
 // button supports arrow/Home/End moves with its position announced to assistive tech.
-// The ? grip is the only handle: the row also holds a key input, and a drag must not
+// The ⠿ grip is the only handle: the row also holds a key input, and a drag must not
 // fight text selection there.
 var providersEl = $("providers");
 backdropRetryEl.addEventListener("click", retryBackdrop);
@@ -2576,7 +2628,7 @@ providersEl.addEventListener("keydown", function (e) {
 
 // --- go ----------------------------------------------------------------------
 applyLayout();
-setInfo("Loading.", "");
+setInfo("Loading…", "");
 document.addEventListener("visibilitychange", function () {
     if (!document.hidden) resynchronizeStationIfStale();
 });
