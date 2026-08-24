@@ -138,6 +138,10 @@ var OPTION_DEFS = {
     borderRadius: { default: 45, coerce: intOption(0, 500) },
     volume: { default: 0.8, coerce: floatOption(0.8, 0, 1), event: "input",
         effect: applyVolume },
+    milkdropEnabled: { default: 0, coerce: boolOption, effect: applyMilkdropEnabled },
+    milkdropPreset: { default: "auto",
+        coerce: enumOption(["auto", "aurora", "mandala", "tunnel"], "auto"),
+        effect: syncSpectrum },
     laserEnabled: { default: 1, coerce: boolOption, effect: applyLaserEnabled },
     strobeEnabled: { default: 0, coerce: boolOption },
     smokeEnabled: { default: 0, coerce: boolOption, effect: applySmokeEnabled },
@@ -1800,7 +1804,8 @@ if (window.ResizeObserver) {
 
 // --- audio -------------------------------------------------------------------
 var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio");
-var spectrumEl = $("stage-spectrum"), laserEl = $("stage-lasers");
+var spectrumEl = $("stage-spectrum"), milkdropEl = $("stage-milkdrop");
+var laserEl = $("stage-lasers");
 var laserFrontEl = $("stage-lasers-front");
 var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
 var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
@@ -1940,6 +1945,7 @@ function loadAudioSpectrumModule() {
             audioSpectrumController = module.createAudioVisualizationController({
                 audioElement: audioEl,
                 spectrumElement: spectrumEl,
+                milkdropElement: milkdropEl,
                 laserElement: laserEl,
                 laserForegroundElement: laserFrontEl,
                 infoElement: document.querySelector(".info"),
@@ -1953,7 +1959,7 @@ function loadAudioSpectrumModule() {
                     || typeof audioSpectrumController.sync !== "function")
                 throw new Error("Invalid audio spectrum controller");
             // The shared analyser may be needed by any plugin (the 80s laser show is
-            // on by default), not only by the compact spectrum plugin.
+            // on by default), not only by the compact analyzer or MilkDrop scene.
             if (audioWanted) audioSpectrumController.prepare();
             audioSpectrumController.sync();
             return audioSpectrumController;
@@ -2437,6 +2443,8 @@ var analyzerTypeSettingEl = $("analyzer-type-setting");
 var spectrumBarsSettingEl = $("spectrum-bars-setting");
 var oscilloscopeStyleSettingEl = $("oscilloscope-style-setting");
 var analyzerColorSettingEl = $("analyzer-color-setting");
+var milkdropPresetEls = document.querySelectorAll('input[name="milkdrop-preset"]');
+var milkdropPresetSettingEl = $("milkdrop-preset-setting");
 var strobeEnabledEl = $("strobe-enabled");
 var smokeEnabledEl = $("smoke-enabled");
 function setVisualizationSettingEnabled(element, enabled) {
@@ -2458,8 +2466,14 @@ function syncSpectrumSettingControls() {
     setVisualizationSettingEnabled(analyzerColorSettingEl, enabled);
 }
 function syncLaserSettingControls() {
-    strobeEnabledEl.disabled = !opts.laserEnabled;
-    smokeEnabledEl.disabled = !opts.laserEnabled;
+    var enabled = !!opts.laserEnabled && !opts.milkdropEnabled;
+    strobeEnabledEl.disabled = !enabled;
+    smokeEnabledEl.disabled = !enabled;
+}
+function syncMilkdropSettingControls() {
+    var enabled = !!opts.milkdropEnabled;
+    milkdropPresetEls.forEach(function (input) { input.disabled = !enabled; });
+    setVisualizationSettingEnabled(milkdropPresetSettingEl, enabled);
 }
 function applySpectrumEnabled() {
     syncSpectrumSettingControls();
@@ -2470,6 +2484,12 @@ function applySpectrumEnabled() {
 function applyAnalyzerType() {
     syncSpectrumSettingControls();
     sizeStage();
+    syncSpectrum();
+}
+function applyMilkdropEnabled() {
+    syncMilkdropSettingControls();
+    syncLaserSettingControls();
+    if (opts.milkdropEnabled && audioWanted) prepareSpectrum();
     syncSpectrum();
 }
 function applyLaserEnabled() {
@@ -2490,6 +2510,7 @@ function resetSpectrumBars() {
 bindOptionControls();
 restoreFanartKeyCheck();
 syncSpectrumSettingControls();
+syncMilkdropSettingControls();
 syncLaserSettingControls();
 syncRatingControls();
 

@@ -88,6 +88,7 @@
             <img class="backdrop" id="backdropB" alt="" aria-hidden="true">
             <img class="backdrop backdrop-movie" id="movieA" alt="" aria-hidden="true">
             <img class="backdrop backdrop-movie" id="movieB" alt="" aria-hidden="true">
+            <canvas class="stage-milkdrop" id="stage-milkdrop" aria-hidden="true"></canvas>
             <canvas class="stage-lasers" id="stage-lasers" aria-hidden="true"></canvas>
             <div class="coverbox" id="coverbox">
                 <div class="card"><!-- one rigid card: in the flip effects the two
@@ -126,7 +127,7 @@
                 </div>
             </div>
             <div class="options-overlay spectrum-options" id="spectrum-options" role="dialog"
-                 aria-label="Spectrum analyzer settings" hidden></div>
+                 aria-label="Audio visualization settings" hidden></div>
             <div class="info">
                 <div class="t" id="info-title">Loading…</div>
                 <div class="a" id="info-artist"></div>
@@ -174,6 +175,26 @@
 
             <fieldset id="spectrum-settings">
                 <legend>Visualizations</legend>
+                <div class="row">
+                    <label><input type="checkbox" id="milkdrop-enabled"
+                                  data-option="milkdropEnabled"> MilkDrop scene</label>
+                </div>
+                <div class="seg-group control-gap visualization-setting"
+                     id="milkdrop-preset-setting" role="group" aria-label="MilkDrop preset">
+                    <label class="seg"><input type="radio" name="milkdrop-preset" value="auto"
+                                               data-option="milkdropPreset"><span>Auto</span></label>
+                    <label class="seg"><input type="radio" name="milkdrop-preset" value="aurora"
+                                               data-option="milkdropPreset"><span>Aurora</span></label>
+                    <label class="seg"><input type="radio" name="milkdrop-preset" value="mandala"
+                                               data-option="milkdropPreset"><span>Mandala</span></label>
+                    <label class="seg"><input type="radio" name="milkdrop-preset" value="tunnel"
+                                               data-option="milkdropPreset"><span>Tunnel</span></label>
+                </div>
+                <p class="note">A fullscreen-ready feedback scene with kaleidoscopic waveforms,
+                spectrum geometry and beat-driven color. Auto changes preset every 18 seconds;
+                manual changes crossfade without clearing the outgoing scene. MilkDrop takes over
+                the stage while enabled, temporarily pausing the station-specific 80s laser show.
+                It is disabled when your system requests reduced motion.</p>
                 <div class="row">
                     <label><input type="checkbox" id="laser-enabled"
                                   data-option="laserEnabled"> 80s laser show</label>

@@ -6,6 +6,8 @@
 // or animation loop. That keeps future station-specific scenes cheap to add while
 // the media element remains the one source of truth for playback.
 
+import { createMilkdropVisualization } from "./milkdrop.js";
+
 const ENVELOPE_MS = 400;
 
 function smoothstep(value) {
@@ -1320,7 +1322,10 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
     return {
         id: "lasers",
         supportsSyntheticData: true,
-        enabled(options) { return !!options.laserEnabled && options.station === "1980s"; },
+        enabled(options) {
+            return !!options.laserEnabled && !options.milkdropEnabled
+                && options.station === "1980s";
+        },
         setActive(active) {
             canvas.classList.toggle("active", active);
             if (foregroundCanvas) foregroundCanvas.classList.toggle("active", active);
@@ -1397,7 +1402,7 @@ export function createAudioAnalyserController({
     let frame = null;
     let lastFrame = 0;
 
-    function fillSyntheticData(data, timestamp) {
+    function fillSyntheticData(data, timeData, timestamp) {
         const beat = .5 + Math.sin(timestamp * .0042) * .3
             + Math.sin(timestamp * .00137) * .2;
         for (let index = 0; index < data.length; index++) {
@@ -1406,6 +1411,14 @@ export function createAudioAnalyserController({
             const ripple = .5 + .5 * Math.sin(timestamp * .0021 + index * .19);
             data[index] = Math.round(255 * Math.min(1,
                 (.16 + beat * .42 + ripple * .2) * rolloff));
+        }
+        if (timeData) {
+            for (let index = 0; index < timeData.length; index++) {
+                const position = index / timeData.length;
+                timeData[index] = Math.round(128
+                    + Math.sin(position * Math.PI * 6 + timestamp * .0011) * 24
+                    + Math.sin(position * Math.PI * 14 - timestamp * .0007) * 9);
+            }
         }
     }
 
@@ -1441,7 +1454,7 @@ export function createAudioAnalyserController({
         lastFrame = timestamp;
         const options = getOptions();
         if (states.some(state => state.target === 1)) {
-            if (usesSyntheticData) fillSyntheticData(frequencyData, timestamp);
+            if (usesSyntheticData) fillSyntheticData(frequencyData, timeDomainData, timestamp);
             else analyser.getByteFrequencyData(frequencyData);
             const needsTimeDomainData = states.some(state => state.target === 1
                 && state.visualization.needsTimeDomainData
@@ -1574,6 +1587,7 @@ export function createAudioAnalyserController({
 export function createAudioVisualizationController({
     audioElement,
     spectrumElement,
+    milkdropElement,
     laserElement,
     laserForegroundElement,
     infoElement,
@@ -1590,6 +1604,7 @@ export function createAudioVisualizationController({
         reducedMotion,
         visualizations: [
             createSpectrumVisualization({ canvas: spectrumElement, tintElement: infoElement }),
+            createMilkdropVisualization({ canvas: milkdropElement, tintElement: infoElement }),
             createLaserVisualization({
                 canvas: laserElement,
                 foregroundCanvas: laserForegroundElement

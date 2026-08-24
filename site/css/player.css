@@ -251,6 +251,7 @@
     transition: opacity .35s ease;
 }
 .stage-audio { left: .7rem; bottom: .7rem; }
+.stage-milkdrop,
 .stage-lasers,
 .stage-lasers-front {
     position: absolute;
@@ -261,6 +262,17 @@
     visibility: hidden;
     pointer-events: none;
     transition: opacity .5s ease, visibility 0s linear .5s;
+}
+.stage-milkdrop {
+    z-index: 1;
+    opacity: 0;
+    background: transparent;
+    transition: opacity .65s ease, visibility 0s linear .65s;
+}
+.stage-milkdrop.active {
+    opacity: .96;
+    visibility: visible;
+    transition-delay: 0s;
 }
 .stage-lasers {
     /* Same layer as the cover, but earlier in the DOM: the black club scene hides
@@ -287,6 +299,18 @@
     pointer-events: none;
     transition: opacity .5s ease, visibility 0s linear .5s;
 }
+.stage.milkdrop-scene .backdrop {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .65s ease, visibility 0s linear .65s;
+}
+.stage.milkdrop-scene .coverbox {
+    transform: scale(.74);
+}
+.stage.layout-poster.milkdrop-scene .coverbox {
+    transform: translateY(var(--cover-shift, 0px)) scale(.74);
+}
 .stage-spectrum {
     position: absolute;
     left: .7rem;
@@ -311,6 +335,9 @@
     transition-delay: 0s;
 }
 .stage.laser-scene .stage-spectrum {
+    width: var(--cover-depth-side, var(--cover-side, 12rem));
+}
+.stage.milkdrop-scene .stage-spectrum {
     width: var(--cover-depth-side, var(--cover-side, 12rem));
 }
 .layout-poster .stage-spectrum {
@@ -874,7 +901,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 
 @media (prefers-reduced-motion: reduce) {
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
-    .stage-button, .stage-lasers, .stage-lasers-front, .stage-spectrum,
+    .stage-button, .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum,
     .stage-status, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
     .fanart-key-check span, .provider-key-help, .provider-key-status,
@@ -882,6 +909,6 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     .coming-next, .coming-next-artist, .visualization-setting, .seg span {
         transition: none !important;
     }
-    .stage-lasers, .stage-lasers-front, .stage-spectrum { display: none; }
+    .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum { display: none; }
     /* digit rolling is skipped in JS when reduced motion is set */
 }

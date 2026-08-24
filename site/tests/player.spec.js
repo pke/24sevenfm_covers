@@ -462,6 +462,7 @@ test.describe("the deployed player page", () => {
         const bars = page.locator("#spectrum-bars");
         const enabled = page.locator("#spectrum-enabled");
         const lasers = page.locator("#laser-enabled");
+        const milkdrop = page.locator("#milkdrop-enabled");
         const strobe = page.locator("#strobe-enabled");
         const smoke = page.locator("#smoke-enabled");
         const spectrumType = page.locator('input[name="analyzer-type"][value="spectrum"]');
@@ -471,7 +472,14 @@ test.describe("the deployed player page", () => {
             'input[name="oscilloscope-style"][value="line"]');
         const scopeDots = page.locator(
             'input[name="oscilloscope-style"][value="dots"]');
+        const milkdropAuto = page.locator(
+            'input[name="milkdrop-preset"][value="auto"]');
+        const milkdropMandala = page.locator(
+            'input[name="milkdrop-preset"][value="mandala"]');
         await expect(lasers).toBeChecked();
+        await expect(milkdrop).not.toBeChecked();
+        await expect(milkdropAuto).toBeChecked();
+        await expect(milkdropAuto).toBeDisabled();
         await expect(strobe).not.toBeChecked();
         await expect(strobe).toBeEnabled();
         await expect(smoke).not.toBeChecked();
@@ -505,11 +513,16 @@ test.describe("the deployed player page", () => {
         await expect(bars).toBeDisabled();
         await expect(scopeLine).toBeEnabled();
         await page.locator("label.seg", { hasText: "Dots" }).click();
+        await milkdrop.check();
+        await expect(milkdropAuto).toBeEnabled();
+        await page.locator("label.seg", { hasText: "Mandala" }).click();
         await page.locator("label.seg", { hasText: "Legacy" }).click();
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await expect(lasers).not.toBeChecked();
+        await expect(milkdrop).toBeChecked();
+        await expect(milkdropMandala).toBeChecked();
         await expect(strobe).toBeChecked();
         await expect(strobe).toBeDisabled();
         await expect(smoke).toBeChecked();
@@ -1861,6 +1874,146 @@ test.describe("the deployed player page", () => {
             await page.locator("label.seg", { hasText: "Filled" }).click();
             await expect(analyzer).toHaveAttribute("data-oscilloscope-style", "filled");
             expect(pageErrors).toEqual([]);
+        });
+
+    test("renders a shared-analyser MilkDrop scene and crossfades curated presets",
+        async ({ page }) => {
+            const pageErrors = [];
+            page.on("pageerror", (error) => pageErrors.push(String(error)));
+            await page.addInitScript(() => {
+                window.__milkdropAudioContexts = 0;
+                window.__milkdropFrequencyReads = 0;
+                window.__milkdropTimeReads = 0;
+                class FakeAudioNode { connect() {} }
+                class FakeAnalyser extends FakeAudioNode {
+                    constructor() {
+                        super();
+                        this.frequencyBinCount = 128;
+                    }
+                    getByteFrequencyData(data) {
+                        window.__milkdropFrequencyReads++;
+                        const beat = window.__milkdropFrequencyReads % 8 === 0;
+                        for (let index = 0; index < data.length; index++) {
+                            const rolloff = 1 - index / data.length;
+                            data[index] = Math.round((beat ? 220 : 84) * rolloff
+                                + (index % 7) * 3);
+                        }
+                    }
+                    getByteTimeDomainData(data) {
+                        window.__milkdropTimeReads++;
+                        for (let index = 0; index < data.length; index++) {
+                            data[index] = 128 + Math.round(
+                                Math.sin(index * Math.PI * 12 / data.length
+                                    + window.__milkdropTimeReads * .1) * 72
+                                + Math.sin(index * Math.PI * 5 / data.length) * 18);
+                        }
+                    }
+                }
+                window.AudioContext = class {
+                    constructor() {
+                        window.__milkdropAudioContexts++;
+                        this.destination = {};
+                        this.state = "running";
+                    }
+                    createAnalyser() { return new FakeAnalyser(); }
+                    createMediaElementSource() { return new FakeAudioNode(); }
+                    resume() { return Promise.resolve(); }
+                };
+                HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+                HTMLMediaElement.prototype.pause = function () {};
+                HTMLMediaElement.prototype.load = function () {};
+            });
+            await page.route("https://1980s.fm/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: "MilkDrop Test", Track: "Feedback", Artist: "24seven.fm",
+                    CoverLink: "", Length: 0,
+                    PlayStart: "2026-08-13T12:00:00Z",
+                    SystemTime: "2026-08-13T12:00:00Z",
+                } });
+            });
+            await page.route("https://1980s.fm/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.goto("/player.html?station=1980s", { waitUntil: "domcontentloaded" });
+
+            const audio = page.locator("#audio");
+            const milkdrop = page.locator("#stage-milkdrop");
+            const lasers = page.locator("#stage-lasers");
+            const stage = page.locator("#stage");
+            await page.locator("#stage-audio").click();
+            await audio.dispatchEvent("playing");
+            await expect(lasers).toHaveClass(/active/);
+
+            await page.locator("#milkdrop-enabled").check();
+            await expect(milkdrop).toHaveClass(/active/);
+            await expect(stage).toHaveClass(/milkdrop-scene/);
+            await expect(lasers).not.toHaveClass(/active/);
+            await expect(page.locator("#strobe-enabled")).toBeDisabled();
+            await expect(page.locator("#smoke-enabled")).toBeDisabled();
+            await expect(milkdrop).toHaveAttribute("data-renderer", "canvas2d-feedback");
+            await expect(milkdrop).toHaveAttribute("data-audio-source", "analyser");
+            await expect(milkdrop).toHaveAttribute("data-preset", "aurora");
+            await expect.poll(() => milkdrop.getAttribute("data-frame")
+                .then(Number)).toBeGreaterThan(3);
+            await expect.poll(() => milkdrop.evaluate((canvas) =>
+                canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height)
+                    .data.some(Boolean))).toBe(true);
+            expect(await page.evaluate(() => window.__milkdropAudioContexts)).toBe(1);
+            await expect.poll(() => page.evaluate(() => window.__milkdropTimeReads))
+                .toBeGreaterThan(0);
+            await expect.poll(() => milkdrop.getAttribute("data-beat-count")
+                .then(Number)).toBeGreaterThan(0);
+            await expect.poll(() => milkdrop.getAttribute("data-beat-hue-target")
+                .then(Number)).toBeGreaterThan(50);
+            const beatHue = await milkdrop.getAttribute("data-beat-hue").then(Number);
+            const beatHueTarget = await milkdrop.getAttribute("data-beat-hue-target")
+                .then(Number);
+            expect(beatHue).toBeGreaterThan(0);
+            expect(beatHue).not.toBe(beatHueTarget);
+
+            const readsBefore = await page.evaluate(() => ({
+                frequency: window.__milkdropFrequencyReads,
+                time: window.__milkdropTimeReads,
+            }));
+            await page.waitForTimeout(180);
+            const readsAfter = await page.evaluate(() => ({
+                frequency: window.__milkdropFrequencyReads,
+                time: window.__milkdropTimeReads,
+            }));
+            expect(readsAfter.frequency - readsBefore.frequency)
+                .toBe(readsAfter.time - readsBefore.time);
+
+            await page.locator("label.seg", { hasText: "Mandala" }).click();
+            await expect(milkdrop).toHaveAttribute("data-preset", "mandala");
+            await expect(milkdrop).toHaveAttribute("data-preset-transition", "crossfading");
+            await expect(milkdrop).toHaveAttribute("data-outgoing-preset", "aurora");
+            await expect(milkdrop).toHaveAttribute("data-preset-transition", "idle");
+            await expect(milkdrop).not.toHaveAttribute("data-outgoing-preset");
+
+            await page.locator("#fullscreen").click();
+            await expect.poll(() => page.evaluate(() =>
+                document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+            const fullscreenBoxes = await stableElementRects(page, {
+                stage: "#stage", milkdrop: "#stage-milkdrop",
+            });
+            for (const edge of ["top", "right", "bottom", "left"])
+                expect(Math.abs(fullscreenBoxes.stage[edge] - fullscreenBoxes.milkdrop[edge]))
+                    .toBeLessThanOrEqual(1);
+            const renderSize = await milkdrop.evaluate((canvas) => ({
+                width: canvas.width, height: canvas.height,
+            }));
+            expect(renderSize.width).toBeLessThanOrEqual(1280);
+            expect(renderSize.height).toBeLessThanOrEqual(720);
+            await page.evaluate(() => document.exitFullscreen());
+
+            await page.emulateMedia({ reducedMotion: "reduce" });
+            await expect(milkdrop).not.toHaveClass(/active/);
+            await expect(milkdrop).toHaveCSS("display", "none");
+            await expect(stage).not.toHaveClass(/milkdrop-scene/);
+            expect(pageErrors).toEqual([]);
+            await page.locator("#audio-toggle").click();
         });
 
     test("runs the 80s laser plugin from the shared analyser and fades it between stations",
@@ -4310,6 +4463,7 @@ test.describe("the deployed player page", () => {
                 spectrumMode: "unknown",
                 analyzerType: "unknown",
                 oscilloscopeStyle: "unknown",
+                milkdropPreset: "unknown",
                 fanartKey: 42,
                 providerOrder: ["unknown", "tmdb"],
             })));
@@ -4328,6 +4482,8 @@ test.describe("the deployed player page", () => {
             'input[name="analyzer-type"][value="spectrum"]')).toBeChecked();
         await expect(page.locator(
             'input[name="oscilloscope-style"][value="line"]')).toBeChecked();
+        await expect(page.locator(
+            'input[name="milkdrop-preset"][value="auto"]')).toBeChecked();
         await expect(page.locator("#fanart-key")).toHaveValue("");
         expect(await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider)))
