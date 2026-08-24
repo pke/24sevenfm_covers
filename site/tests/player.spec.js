@@ -2643,6 +2643,79 @@ test.describe("the deployed player page", () => {
         await expect(stage).not.toHaveClass(/no-cover/);
     });
 
+    test("keeps an outgoing hidden cover suppressed until the next track cover is ready",
+        async ({ page }) => {
+            const oldCover = "https://streamingsoundtracks.com/images/cover/hidden-old.svg";
+            const oldSized = "https://streamingsoundtracks.com/images/cover/500/hidden-old.svg";
+            const nextCover = "https://streamingsoundtracks.com/images/cover/hidden-next.svg";
+            const nextSized = "https://streamingsoundtracks.com/images/cover/500/hidden-next.svg";
+            const oldBackdrop = "https://image.tmdb.org/t/p/w1280/hidden-old.jpg";
+            let current = {
+                Album: "Old backdrop movie", Track: "Finale", Artist: "Old Composer",
+                CoverLink: oldCover, Length: 180000,
+                PlayStart: "2026-08-24T12:00:00Z", SystemTime: "2026-08-24T12:00:00Z",
+            };
+            let nextImageRoute = null;
+            const resolverAlbums = [];
+
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"], hideCover: 1 })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [{
+                    Album: "Next without backdrop", Track: "Opening", Artist: "Next Composer",
+                    CoverLink: nextCover,
+                }] });
+                return route.fulfill({ json: current });
+            });
+            await page.route(oldSized, (route) => route.fulfill({ status: 200,
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(nextSized, (route) => { nextImageRoute = route; });
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [20, 40, 60] } }));
+            await page.route(/\/api\/backdrop\?/, (route) => {
+                const album = new URL(route.request().url()).searchParams.get("album");
+                resolverAlbums.push(album);
+                return route.fulfill({ json: album === "Old backdrop movie" ? {
+                    media: { id: 1, title: album, type: "movie" },
+                    backdrop: oldBackdrop, source: "tmdb", tint: [100, 120, 140],
+                } : {
+                    media: null, backdrop: null, source: null, tint: [255, 255, 255],
+                } });
+            });
+            await page.route(oldBackdrop, (route) => route.fulfill({ status: 200,
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            const stage = page.locator("#stage");
+            const front = page.locator(
+                '.coverbox[data-front="a"] img:first-of-type, .coverbox[data-front="b"] img:last-of-type');
+            await expect(stage).toHaveClass(/no-cover/);
+            await expect(front).toHaveAttribute("src", oldSized);
+            await expect.poll(() => resolverAlbums).toContain("Next without backdrop");
+            await expect.poll(() => !!nextImageRoute).toBe(true);
+
+            current = {
+                Album: "Next without backdrop", Track: "Opening", Artist: "Next Composer",
+                CoverLink: nextCover, Length: 180000,
+                PlayStart: "2026-08-24T12:03:00Z", SystemTime: "2026-08-24T12:03:00Z",
+            };
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+            await expect(page.locator("#info-title")).toContainText("Next without backdrop");
+            await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
+            await expect(stage).toHaveClass(/no-cover/);
+            await expect(front).toHaveAttribute("src", oldSized);
+            await expect(page.locator("#coverbox")).toHaveCSS("opacity", "0");
+
+            await nextImageRoute.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+            await expect(front).toHaveAttribute("src", nextSized);
+            await expect(stage).not.toHaveClass(/no-cover/);
+        });
+
     test("ignores a resolver result after movie backdrops are disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/race.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/race.svg";

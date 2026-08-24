@@ -942,6 +942,10 @@ async function poll() {
             const metadataChanged = trackIdentityChanged || artist !== currentArtist;
             if (trackIdentityChanged) {
                 setNextTrack(null);
+                // If the outgoing movie backdrop hid its cover, keep that cover
+                // suppressed while a backdrop miss fades away. showCover() releases
+                // the hold only after the destination cover owns the front buffer.
+                coverHiddenUntilCoverReady = stage.classList.contains("no-cover");
             }
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
@@ -961,6 +965,12 @@ async function poll() {
 
         const cover = isStationId ? station().logo : displayCover;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
+        else if (trackIdentityChanged && cover === shownUrl && coverHiddenUntilCoverReady) {
+            // The next cue can legitimately reuse an album cover. It is already the
+            // destination image, so there is no pending buffer swap to release us.
+            coverHiddenUntilCoverReady = false;
+            updateCoverVisibility();
+        }
         clearStatus("station");
         lastSuccessfulPollAt = Date.now();
         const trackToken = [album, track, isStationId ? "station" : displayCover].join("\n");
@@ -1237,10 +1247,10 @@ function showCover(url) {
         // property change under an active transition, not on one applied after it.
         void coverBox.offsetWidth;
         coverBox.dataset.front = (back === imgA) ? "a" : "b";
-        // A station switch can begin while SST's cover is hidden behind a media
-        // backdrop. Keep that old cover suppressed until this destination image has
-        // replaced it, then let the coverbox fade back in with the new station's art.
-        coverHiddenForStationSwitch = false;
+        // A track or station switch can begin while the cover is hidden behind a
+        // media backdrop. Keep the old cover suppressed until this destination image
+        // has replaced it, then let the coverbox fade back in with the new art.
+        coverHiddenUntilCoverReady = false;
         updateCoverVisibility();
     }, function () {
         if (!renderIsCurrent("cover", generation)) return;
@@ -1269,7 +1279,7 @@ function showCover(url) {
 // player must never be worse off for having it enabled.
 var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a screen backdrop is currently visible (drives hide-cover)
-var coverHiddenForStationSwitch = false;
+var coverHiddenUntilCoverReady = false;
 function newMovieCache() { return Object.create(null); }
 var movieCaches = Object.create(null);
 var backdropRequest = null;
@@ -1297,11 +1307,11 @@ function cancelBackdropRequest() {
 }
 
 // Experimental: while a media backdrop is showing, the cover can step aside and let
-// the backdrop be the star. Only ever active when there IS a backdrop - no match, no
-// key, or feature off always brings the cover back.
+// the backdrop be the star. A handoff hold can briefly outlive that backdrop so its
+// hidden, outgoing cover cannot leak through before the destination cover is ready.
 function updateCoverVisibility() {
     stage.classList.toggle("no-cover",
-        !!(coverHiddenForStationSwitch || (opts.hideCover && movieShown)));
+        !!(coverHiddenUntilCoverReady || (opts.hideCover && movieShown)));
 }
 var currentAlbum = "", currentTrack = "", currentArtist = "", stationIdActive = false;
 
@@ -2415,7 +2425,7 @@ function applyStation() {
     // If a media backdrop currently owns the stage, clearing it below must not expose
     // SST's still-buffered cover. showCover() releases this hold only after the new
     // station cover (or logo) has loaded and become the front buffer.
-    coverHiddenForStationSwitch = stage.classList.contains("no-cover");
+    coverHiddenUntilCoverReady = stage.classList.contains("no-cover");
     nextRenderGeneration("cover"); // invalidate image loads before the new poll returns
     updateCoverTint("");
     const backdropGeneration = nextRenderGeneration("backdrop");
