@@ -7,7 +7,8 @@ param(
     [int]$SitePort = 8099,
     [ValidateRange(1, 65535)]
     [int]$ApiPort = 3000,
-    [switch]$NoRender
+    [switch]$NoRender,
+    [switch]$NoVercelDebug
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,18 +37,29 @@ if ($vercel) {
 } else {
     throw 'Vercel CLI unavailable: install vercel, pnpm, or npm/npx first.'
 }
+$apiArguments += '--no-color'
+if (-not $NoVercelDebug) { $apiArguments += '--debug' }
 
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$logDirectory = [IO.Path]::GetFullPath((Join-Path $tempRoot ("24covers-vercel-" + [guid]::NewGuid())))
-if (-not $logDirectory.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Could not create a safe temporary log directory.'
+$runtimeDirectory = [IO.Path]::GetFullPath((Join-Path $tempRoot ("24covers-vercel-" + [guid]::NewGuid())))
+if (-not $runtimeDirectory.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Could not create a safe temporary runtime directory.'
 }
+$vercelDirectory = [IO.Path]::GetFullPath((Join-Path $root '.vercel'))
+$logRoot = [IO.Path]::GetFullPath((Join-Path $vercelDirectory 'logs'))
+if (-not $logRoot.StartsWith(($vercelDirectory + [IO.Path]::DirectorySeparatorChar),
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Could not create a safe Vercel log directory.'
+}
+$logDirectory = Join-Path $logRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + "-$ApiPort-" +
+    [guid]::NewGuid().ToString('N').Substring(0, 8))
 $apiProcess = $null
 try {
-    New-Item -ItemType Directory -Path $logDirectory | Out-Null
+    New-Item -ItemType Directory -Path $runtimeDirectory | Out-Null
+    New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
     $stdoutLog = Join-Path $logDirectory 'stdout.log'
     $stderrLog = Join-Path $logDirectory 'stderr.log'
-    $apiWorkspace = Join-Path $logDirectory 'project'
+    $apiWorkspace = Join-Path $runtimeDirectory 'project'
     New-Item -ItemType Directory -Path $apiWorkspace | Out-Null
     Copy-Item (Join-Path $root 'api') $apiWorkspace -Recurse
     $publicDirectory = Join-Path $root 'public'
@@ -66,7 +78,7 @@ try {
     $apiEnvironmentKeys = @(
         'TMDB_API_KEY', 'TMDB_READ_TOKEN', 'TMDB_API_TOKEN', 'FANART_API_KEY',
         'STEAMGRIDDB_API_KEY', 'BACKDROP_MEDIA_OVERRIDES', 'TINT_ALLOWED_HOSTS',
-        'BACKDROP_ALLOWED_ORIGINS'
+        'BACKDROP_ALLOWED_ORIGINS', 'BACKDROP_DEBUG_LOG'
     )
     $previousEnvironment = @{}
     foreach ($key in $apiEnvironmentKeys) {
@@ -86,6 +98,8 @@ try {
         }
     }
     [Environment]::SetEnvironmentVariable('BACKDROP_ALLOWED_ORIGINS', $siteOrigin, 'Process')
+    [Environment]::SetEnvironmentVariable('BACKDROP_DEBUG_LOG',
+        $(if ($NoVercelDebug) { '0' } else { '1' }), 'Process')
     try {
         $apiProcess = Start-Process -FilePath $apiExecutable -ArgumentList $apiArguments `
             -WorkingDirectory $apiWorkspace -WindowStyle Hidden -PassThru `
@@ -136,6 +150,7 @@ try {
     }
 
     Write-Host "Local Vercel API ready at $apiOrigin" -ForegroundColor Cyan
+    Write-Host "Vercel logs: $logDirectory" -ForegroundColor DarkCyan
     & (Join-Path $root 'installer\serve_site.ps1') -Port $SitePort `
         -NoRender:$NoRender -ApiOrigin $apiOrigin
 } finally {
@@ -143,5 +158,5 @@ try {
         try { $apiProcess.Kill($true) } catch { $apiProcess.Kill() }
         $apiProcess.WaitForExit()
     }
-    Remove-Item -LiteralPath $logDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $runtimeDirectory -Recurse -Force -ErrorAction SilentlyContinue
 }

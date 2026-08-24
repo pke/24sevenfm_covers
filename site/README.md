@@ -100,6 +100,11 @@ falls back to `pnpm dlx`/`npx`, then keeps both servers running until Ctrl+C:
 pwsh -File start_test_server.ps1
 ```
 
+The launcher enables Vercel CLI debug output and structured backdrop-provider timing
+by default. Each run keeps `stdout.log` and `stderr.log` in a new session directory
+below `.vercel/logs/`; the exact path is printed after startup. Pass
+`-NoVercelDebug` to disable both debug streams.
+
 The local site server watches `site\` recursively. After a short debounce, every
 source edit is rendered into `www\` automatically; reloading port 8099 therefore
 always uses the latest source without restarting either server.

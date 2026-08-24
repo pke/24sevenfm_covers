@@ -1,11 +1,15 @@
 "use strict";
 
+const { AsyncLocalStorage } = require("node:async_hooks");
+
 const CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
 const MISS_CACHE_SECONDS = 15 * 60;
 // A TV result may need TMDB search, external IDs, fanart, and a tint thumbnail in
-// sequence. Keep each leg short enough that all four fit under the 15 s function
-// and 20 s client deadlines even when every upstream stalls.
+// sequence. Keep each leg short enough that the common four-stage path remains
+// inside the 20 s client deadline even when every upstream stalls.
 const PROVIDER_TIMEOUT_MS = 3000;
+const debugLogContext = new AsyncLocalStorage();
+let debugRequestSequence = 0;
 const MAX_TINT_IMAGE_BYTES = 2 * 1024 * 1024;
 const MAX_TINT_IMAGE_PIXELS = 4 * 1000 * 1000;
 const MAX_TINT_URL_LENGTH = 512;
@@ -26,6 +30,53 @@ function cacheControl(browserSeconds, sharedSeconds = CACHE_SECONDS, staleSecond
         + ", stale-while-revalidate=" + staleSeconds;
 }
 const WHITE_TINT = Object.freeze([255, 255, 255]);
+
+function debugLoggingEnabled(env) {
+    return /^(?:1|true|yes|on)$/i.test(String(env && env.BACKDROP_DEBUG_LOG || "").trim());
+}
+
+function debugRequestId() {
+    debugRequestSequence = (debugRequestSequence + 1) % Number.MAX_SAFE_INTEGER;
+    return process.pid + "-" + Date.now().toString(36) + "-" + debugRequestSequence.toString(36);
+}
+
+function safeDebugUrl(raw) {
+    try {
+        const url = new URL(String(raw));
+        for (const key of ["api_key", "client_key"]) {
+            if (url.searchParams.has(key)) url.searchParams.set(key, "[redacted]");
+        }
+        return url.href;
+    } catch (error) {
+        return "invalid-url";
+    }
+}
+
+function debugLog(level, event, details = {}) {
+    const context = debugLogContext.getStore() || {};
+    if (!debugLoggingEnabled(context.env || process.env)) return;
+    const entry = {
+        timestamp: new Date().toISOString(),
+        event,
+        request_id: context.requestId || null,
+        ...details,
+    };
+    const writer = level === "error" ? console.error
+        : level === "warn" ? console.warn : console.log;
+    writer("[backdrop] " + JSON.stringify(entry));
+}
+
+function debugRequestQuery(req) {
+    const query = req && req.query && typeof req.query === "object" ? req.query : {};
+    const result = {};
+    for (const key of ["resolver_version", "album", "track", "title", "artist", "providers",
+        "ratings", "media_hint", "art"]) {
+        const value = query[key];
+        if (typeof value === "string") result[key] = value.slice(0, 300);
+        else if (Array.isArray(value)) result[key] = value.map((part) => String(part).slice(0, 300));
+    }
+    return result;
+}
 const FSK_LOGOS = Object.freeze({
     "0": "https://upload.wikimedia.org/wikipedia/commons/1/17/FSK_0.svg",
     "6": "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg",
@@ -404,6 +455,9 @@ function configuredMediaHint(query, requestHint, env) {
 }
 
 async function fetchJson(fetchImpl, url, init, provider) {
+    const startedAt = Date.now();
+    const loggedUrl = safeDebugUrl(url);
+    debugLog("info", "provider.request", { provider, url: loggedUrl });
     let response;
     try {
         response = await fetchImpl(url, {
@@ -411,8 +465,21 @@ async function fetchJson(fetchImpl, url, init, provider) {
             signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
         });
     } catch (error) {
+        debugLog("warn", "provider.failure", {
+            provider,
+            url: loggedUrl,
+            duration_ms: Date.now() - startedAt,
+            error_name: error && error.name || "Error",
+            error_message: error && error.message || "request failed",
+        });
         throw new ResolverError(provider + "_unavailable", 502, provider + " request failed");
     }
+    debugLog("info", "provider.response", {
+        provider,
+        url: loggedUrl,
+        status: response.status,
+        duration_ms: Date.now() - startedAt,
+    });
     if (response.status === 401 || response.status === 403) {
         throw new ResolverError(provider + "_authentication", 502, provider + " rejected the configured key");
     }
@@ -425,6 +492,12 @@ async function fetchJson(fetchImpl, url, init, provider) {
     try {
         return await response.json();
     } catch (error) {
+        debugLog("warn", "provider.invalid_json", {
+            provider,
+            url: loggedUrl,
+            status: response.status,
+            duration_ms: Date.now() - startedAt,
+        });
         throw new ResolverError(provider + "_response", 502, provider + " returned invalid JSON");
     }
 }
@@ -673,10 +746,18 @@ function tintPreviewUrl(source, backdrop, tmdbPath) {
 
 async function defaultTintForImage(fetchImpl, url) {
     if (!url) return [...WHITE_TINT];
+    const startedAt = Date.now();
+    const loggedUrl = safeDebugUrl(url);
+    debugLog("info", "tint.request", { url: loggedUrl });
     try {
         const response = await fetchImpl(url, {
             headers: { "Accept": "image/*", "User-Agent": "24sevenfm-covers-backdrop-resolver/1.0" },
             signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+        });
+        debugLog("info", "tint.response", {
+            url: loggedUrl,
+            status: response.status,
+            duration_ms: Date.now() - startedAt,
         });
         if (!response.ok) return [...WHITE_TINT];
         const declaredSize = Number(response.headers.get("content-length") || 0);
@@ -688,8 +769,19 @@ async function defaultTintForImage(fetchImpl, url) {
         const sharp = require("sharp");
         const stats = await sharp(bytes, { limitInputPixels: MAX_TINT_IMAGE_PIXELS })
             .toColourspace("srgb").stats();
+        debugLog("info", "tint.decoded", {
+            url: loggedUrl,
+            bytes: bytes.length,
+            duration_ms: Date.now() - startedAt,
+        });
         return tintFromMeans(stats.channels.slice(0, 3).map((channel) => channel.mean));
     } catch (error) {
+        debugLog("warn", "tint.failure", {
+            url: loggedUrl,
+            duration_ms: Date.now() - startedAt,
+            error_name: error && error.name || "Error",
+            error_message: error && error.message || "request failed",
+        });
         // Artwork is still useful when tint decoding fails; white is the safe UI fallback.
         return [...WHITE_TINT];
     }
@@ -1109,7 +1201,30 @@ function createHandler(options = {}) {
     const tintForImage = options.tintForImage
         || ((url) => defaultTintForImage(fetchImpl, url));
 
-    return async function backdropHandler(req, res) {
+    async function handleBackdropRequest(req, res) {
+        const startedAt = Date.now();
+        let responseFinished = false;
+        debugLog("info", "request.start", {
+            method: req && req.method,
+            query: debugRequestQuery(req),
+        });
+        if (res && typeof res.once === "function") {
+            res.once("finish", () => {
+                responseFinished = true;
+                debugLog("info", "request.finish", {
+                    status: res.statusCode,
+                    duration_ms: Date.now() - startedAt,
+                });
+            });
+            res.once("close", () => {
+                if (!responseFinished) {
+                    debugLog("warn", "request.closed", {
+                        status: res.statusCode,
+                        duration_ms: Date.now() - startedAt,
+                    });
+                }
+            });
+        }
         res.setHeader("Vary", "Origin");
         res.setHeader("X-Content-Type-Options", "nosniff");
         const origin = req.headers && req.headers.origin;
@@ -1174,17 +1289,36 @@ function createHandler(options = {}) {
                     || !!starTrekSeriesAlias(titleValue),
             });
             const shortCache = !result.media || (includeArt && !result.backdrop);
+            debugLog("info", "request.resolved", {
+                duration_ms: Date.now() - startedAt,
+                media: result.media,
+                source: result.source,
+                has_backdrop: !!result.backdrop,
+            });
             res.setHeader("Cache-Control", shortCache
                 ? cacheControl(MISS_CACHE_SECONDS, MISS_CACHE_SECONDS, 60)
                 : cacheControl(CACHE_SECONDS));
             return sendJson(res, 200, result);
         } catch (error) {
             const known = error instanceof ResolverError;
+            debugLog("error", "request.error", {
+                duration_ms: Date.now() - startedAt,
+                status: known ? error.status : 500,
+                error_code: known ? error.code : "internal_error",
+                error_name: error && error.name || "Error",
+                error_message: error && error.message || "request failed",
+                stack: error && error.stack || null,
+            });
             res.setHeader("Cache-Control", "no-store");
             return sendJson(res, known ? error.status : 500, {
                 error: known ? error.code : "internal_error",
             });
         }
+    }
+
+    return function backdropHandler(req, res) {
+        const context = { env, requestId: debugRequestId() };
+        return debugLogContext.run(context, () => handleBackdropRequest(req, res));
     };
 }
 
