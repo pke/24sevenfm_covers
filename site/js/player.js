@@ -461,7 +461,7 @@ function makeRatingSlot(slot) {
             var settleVersion = version;
             // Once the visible flip has completed, keep or copy the new SVG on the
             // flat front face and reset both 3D rotations in a transition-free frame.
-            // Keeping an SVG in two permanent 180° GPU layers makes it look rasterized.
+            // Keeping an SVG in two permanent 180� GPU layers makes it look rasterized.
             settleTimer = setTimeout(function () {
                 if (version !== settleVersion || (slot.dataset.front !== "b"
                         && slot.dataset.front !== "a")
@@ -868,7 +868,7 @@ function humanDelay(seconds) {
 function renderRetryStatus() {
     if (retryAt <= 0) return;
     var seconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
-    setStatus("Station not responding\nRetrying in " + humanDelay(seconds) + "…", "station");
+    setStatus("Station not responding\nRetrying in " + humanDelay(seconds) + ".", "station");
 }
 function scheduleRetry(seconds) {
     retryAt = Date.now() + seconds * 1000;
@@ -882,7 +882,7 @@ async function poll() {
     pollTimer = null;
     var wasRetry = retryAt > 0;
     retryAt = 0;
-    if (wasRetry) setStatus("Contacting station…", "station");
+    if (wasRetry) setStatus("Contacting station.", "station");
     if (inflight) inflight.abort();
     const ctl = new AbortController();
     inflight = ctl;
@@ -923,6 +923,8 @@ async function poll() {
         const isStationId = !displayCover;
         const trackIdentityChanged = album !== currentAlbum || track !== currentTrack
             || isStationId !== stationIdActive;
+        const prefetchedArt = trackIdentityChanged && !isStationId
+            ? prefetchedArtForNowPlaying(album, track, displayCover) : undefined;
         // Prefer the feed's 40 px thumbnail for the whole-image colour mean. Keep
         // CoverLink as a compatibility fallback and the /500/ variant for display.
         updateCoverTint(isStationId ? "" : tintCover);
@@ -931,24 +933,22 @@ async function poll() {
             const metadataChanged = trackIdentityChanged || artist !== currentArtist;
             if (trackIdentityChanged) {
                 setNextTrack(null);
-                // The outgoing image remains mounted while CSS fades it, but it must
-                // stop claiming the stage as soon as a different track is confirmed.
-                const staleGeneration = nextRenderGeneration("backdrop");
-                cancelBackdropRequest();
-                setMovieBackdrop(null, staleGeneration);
-                setRatings([], staleGeneration);
             }
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
             if (metadataChanged) prepareRatingTrackVisibility();
-            updateBackdrop();
+            // Promote the prepared queue result in the same generation that starts
+            // current-track revalidation. With no valid result, null clears the old
+            // track through the normal fade before the resolver response arrives.
+            if (trackIdentityChanged) updateBackdrop(prefetchedArt || null);
+            else updateBackdrop();
         }
         let title = displayAlbum;
         if (displayAlbum && track) title = displayAlbum + " - " + track;
         else if (track) title = track;
         if (title && lengthSec > 0)
             title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
-        setInfo(title || "—", artist);
+        setInfo(title || "-", artist);
 
         const cover = isStationId ? station().logo : displayCover;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
@@ -1027,6 +1027,20 @@ function queueBackdropPrefetchKey(entry) {
         !!opts.ratingsEnabled,
         entry && entry.artist || "",
     ]);
+}
+
+// A queue entry is only safe to promote when it is still the announced next track
+// and its resolver result belongs to the current provider/rating configuration.
+// Artist deliberately is not part of the identity check: the queue credit can be
+// absent or provisional, while now-playing supplies the authoritative credit. Show
+// the prepared result immediately, then let the regular resolver revalidate it.
+function prefetchedArtForNowPlaying(album, track, coverUrl) {
+    var entry = nextTrack;
+    if (!entry || entry.album !== album || entry.track !== track
+            || (entry.coverUrl && coverUrl && entry.coverUrl !== coverUrl)
+            || entry.backdropPrefetchKey !== queueBackdropPrefetchKey(entry))
+        return undefined;
+    return entry.art;
 }
 
 function queuedTrackNeedsPrefetch(entry) {
@@ -1202,8 +1216,8 @@ function showCover(url) {
         if (coverBox.dataset.fx !== fx) {
             // A CHANGE of effect must teleport into the new parked poses, never
             // animate: with the flip freshly active, the back buffer would still be
-            // ANIMATING toward its 90° park when the front flip retargets it to 0° -
-            // a 0°→0° no-op, and the new cover just pops in statically. One
+            // ANIMATING toward its 90� park when the front flip retargets it to 0� -
+            // a 0�0� no-op, and the new cover just pops in statically. One
             // transition-less flush (data-warp) commits the poses instantly.
             coverBox.dataset.warp = "";
             coverBox.dataset.fx = fx;
@@ -1482,6 +1496,19 @@ function setPlayerTint(tint) {
         "rgb(" + rgb[0] + ", " + rgb[1] + ", " + rgb[2] + ")");
 }
 
+function mergeMovieArt(authoritative, fallback) {
+    if (!authoritative) return fallback || null;
+    if (!fallback) return authoritative;
+    var hasAuthoritativeBackdrop = !!authoritative.url;
+    return {
+        url: authoritative.url || fallback.url,
+        tint: hasAuthoritativeBackdrop ? authoritative.tint : fallback.tint,
+        source: hasAuthoritativeBackdrop ? authoritative.source : fallback.source,
+        certifications: authoritative.certifications && authoritative.certifications.length
+            ? authoritative.certifications : fallback.certifications || [],
+    };
+}
+
 function setMovieBackdrop(art, generation) {
     if (!renderIsCurrent("backdrop", generation)) return;
     if (!art || !art.url) {
@@ -1509,21 +1536,22 @@ function setMovieBackdrop(art, generation) {
 
 function setBackdropErrorState(state) {
     if (state === "error") {
-        backdropErrorTextEl.textContent = "Backdrop artwork couldn’t be loaded.";
+        backdropErrorTextEl.textContent = "Backdrop artwork couldn't be loaded.";
         backdropRetryEl.disabled = false;
     } else if (state === "retrying") {
-        backdropErrorTextEl.textContent = "Loading backdrop artwork…";
+        backdropErrorTextEl.textContent = "Loading backdrop artwork.";
         backdropRetryEl.disabled = true;
     }
     backdropErrorEl.classList.toggle("show", !!state);
     backdropErrorEl.setAttribute("aria-hidden", state ? "false" : "true");
 }
 
-function requestBackdrop(cacheMode) {
+function requestBackdrop(cacheMode, prefetchedArt) {
+    const hasPrefetchedResult = arguments.length > 1;
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
     if (cacheMode === "reload" && opts.tmdbBackdrops) {
-        setStatus("Loading backdrop artwork…", "backdrop");
+        setStatus("Loading backdrop artwork.", "backdrop");
         setBackdropErrorState("retrying");
     } else {
         clearStatus("backdrop");
@@ -1542,21 +1570,27 @@ function requestBackdrop(cacheMode) {
         setRatings([], generation);
         return;
     } // no media source
+    if (hasPrefetchedResult) {
+        setMovieBackdrop(opts.tmdbBackdrops ? prefetchedArt : null, generation);
+        setRatings(prefetchedArt && prefetchedArt.certifications || [], generation);
+    }
     const ctl = new AbortController();
     const request = {
         ctl: ctl,
         kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT)
     };
     backdropRequest = request;
-    Promise.resolve(resolver(generation, ctl.signal, cacheMode)).then(settled, settled);
+    Promise.resolve(resolver(generation, ctl.signal, cacheMode,
+        hasPrefetchedResult ? prefetchedArt : undefined)).then(settled, settled);
     function settled() {
         clearTimeout(request.kill);
         if (backdropRequest === request) backdropRequest = null;
     }
 }
 
-function updateBackdrop() {
-    requestBackdrop();
+function updateBackdrop(prefetchedArt) {
+    if (arguments.length) requestBackdrop(undefined, prefetchedArt);
+    else requestBackdrop();
     scheduleQueuePrefetch(true);
 }
 function retryBackdrop() { requestBackdrop("reload"); }
@@ -1586,18 +1620,28 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode) 
     return art;
 }
 
-async function resolveMovieBackdrop(generation, signal, cacheMode) {
+async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt) {
     if (!renderIsCurrent("backdrop", generation)) return;
     try {
         const art = await movieArtFor(currentAlbum, currentTrack, currentArtist, generation, signal,
             cacheMode);
         if (!renderIsCurrent("backdrop", generation)) return;
+        const renderedArt = mergeMovieArt(art, prefetchedArt);
         clearStatus("backdrop");
         setBackdropErrorState("");
-        setMovieBackdrop(opts.tmdbBackdrops ? art : null, generation);
-        setRatings(art && art.certifications || [], generation);
+        setMovieBackdrop(opts.tmdbBackdrops ? renderedArt : null, generation);
+        setRatings(renderedArt && renderedArt.certifications || [], generation);
     } catch (e) {
         if (!renderIsCurrent("backdrop", generation)) return;
+        if (prefetchedArt) {
+            // Queue artwork is already validated and visible. A best-effort refinement
+            // must never turn that successful state back into the cover or empty badges.
+            clearStatus("backdrop");
+            setBackdropErrorState("");
+            setMovieBackdrop(opts.tmdbBackdrops ? prefetchedArt : null, generation);
+            setRatings(prefetchedArt.certifications || [], generation);
+            return;
+        }
         if (opts.tmdbBackdrops
                 && (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError"))) {
             setStatus("Backdrop service is currently unavailable.", "backdrop");
@@ -1771,7 +1815,7 @@ function scheduleAudioReconnect() {
     var delay = AUDIO_RETRY_DELAYS[Math.min(audioRetryAttempt, AUDIO_RETRY_DELAYS.length - 1)];
     audioRetryAttempt++;
     var generation = audioGeneration;
-    setStatus("Audio interrupted – reconnecting…", "audio");
+    setStatus("Audio interrupted - reconnecting.", "audio");
     audioRetryTimer = setTimeout(function () {
         audioRetryTimer = null;
         if (!audioWanted || generation !== audioGeneration) return;
@@ -1825,7 +1869,7 @@ function startAudio(stopOnPlayFailure) {
             scheduleAudioReconnect();
             return;
         }
-        setStatus("Your browser refused to play the stream – use the playlist links below.", "audio");
+        setStatus("Your browser refused to play the stream - use the playlist links below.", "audio");
         setAudio(false);
     });
 }
@@ -1849,11 +1893,11 @@ function setAudio(on) {
     var pressed = on ? "true" : "false";
     var action = on ? "Stop audio" : "Play audio";
     audioBtn.setAttribute("aria-pressed", pressed);
-    audioBtn.textContent = on ? "⏸ Stop audio" : "▶ Play audio";
+    audioBtn.textContent = on ? "? Stop audio" : "? Play audio";
     stageAudioBtn.setAttribute("aria-pressed", pressed);
     stageAudioBtn.setAttribute("aria-label", action);
     stageAudioBtn.title = action;
-    stageAudioBtn.textContent = on ? "⏸" : "▶";
+    stageAudioBtn.textContent = on ? "?" : "?";
 }
 function audioSpectrumModuleUrl() {
     var url = new URL("audio-spectrum.js", PLAYER_SCRIPT_URL);
@@ -1905,7 +1949,7 @@ function toggleAudio() {
     loadAudioSpectrumModule().catch(function () {
         if (!audioWanted) return;
         setAudio(false);
-        setStatus("Audio controls failed to load – try again.", "audio");
+        setStatus("Audio controls failed to load - try again.", "audio");
     });
 }
 audioEl.addEventListener("playing", function () {
@@ -1939,7 +1983,7 @@ audioEl.addEventListener("error", scheduleAudioReconnect);
 audioEl.addEventListener("ended", scheduleAudioReconnect);
 window.addEventListener("online", function () {
     if (!audioWanted || (audioRetryTimer === null && audioStallTimer === null)) return;
-    setStatus("Audio interrupted – reconnecting…", "audio");
+    setStatus("Audio interrupted - reconnecting.", "audio");
     startAudio(false);
 });
 audioBtn.addEventListener("click", function () {
@@ -1969,7 +2013,7 @@ $("fullscreen").addEventListener("click", toggleFullscreen);
 
 // --- fullscreen options overlay ----------------------------------------------
 // Only descendants of the fullscreen element are rendered, so the options panel
-// below the stage is unreachable there. The ⋯ button MOVES the real panel into an
+// below the stage is unreachable there. The ? button MOVES the real panel into an
 // overlay inside the stage - moving (not copying) keeps every binding and value,
 // and there is exactly one panel to keep in sync.
 // Two panels move: the station picker (above the stage) and the main options panel
@@ -2117,7 +2161,7 @@ document.addEventListener("pointerdown", function (e) {
 // Light dismiss: pressing anywhere outside the panel closes it, like a native
 // popover. pointerdown, not click - a slider drag that starts inside the panel and
 // ends outside must not dismiss, and pointerdown judges by where the press BEGAN.
-// The ⋯ button is excluded: its own handler is the toggle, and handling the same
+// The ? button is excluded: its own handler is the toggle, and handling the same
 // press twice would reopen what was just closed. (Esc needs nothing here - it exits
 // fullscreen, and the fullscreenchange handler already closes the panel.)
 stage.addEventListener("pointerdown", function (e) {
@@ -2126,7 +2170,7 @@ stage.addEventListener("pointerdown", function (e) {
     setOptionsOverlay(false);
 });
 
-// In fullscreen the chrome (▶/⏸, ⛶, ⋯, and the cursor) fades out after 2s without pointer
+// In fullscreen the chrome (?/?, ?, ?, and the cursor) fades out after 2s without pointer
 // movement and comes back on the next move - :hover can't express "idle" when the
 // stage covers the whole screen. After their guaranteed ten-second track window,
 // rating badges follow this same `.idle` state through CSS.
@@ -2203,7 +2247,7 @@ let fanartKeyStatusTimer = null;
 let fanartKeyCheckButtonState = "idle";
 
 function setFanartKeyCheckButton(state) {
-    const labels = { idle: "Check", checking: "…", success: "✓" };
+    const labels = { idle: "Check", checking: ".", success: "V" };
     const verificationText = opts.fanartKeyVerifiedAt
         ? "successfully checked on "
             + new Date(opts.fanartKeyVerifiedAt).toISOString().slice(0, 10)
@@ -2309,7 +2353,7 @@ async function checkFanartKey() {
                 || generation !== fanartKeyCheckGeneration) return;
         fanartKeyCheckController = null;
         setFanartKeyCheckButton(previousVerification ? "success" : "idle");
-        showFanartKeyError("Couldn’t check the personal key right now.");
+        showFanartKeyError("Couldn't check the personal key right now.");
     }
 }
 
@@ -2353,7 +2397,7 @@ function applyStation() {
     // The resolver is per-station now - always re-evaluate after a switch, even if
     // the new station plays an identically named album.
     currentAlbum = ""; currentTrack = ""; currentArtist = "";
-    setInfo("Loading…", "");
+    setInfo("Loading.", "");
     setStatus("");
     if (audioWanted) setAudio(true); // retune the stream
     poll();
@@ -2407,7 +2451,7 @@ syncRatingControls();
 // order stays the single source of truth, read back on release. Pointer events also
 // make this work on touch (the grip's touch-action:none stops scrolling). The same
 // button supports arrow/Home/End moves with its position announced to assistive tech.
-// The ⠿ grip is the only handle: the row also holds a key input, and a drag must not
+// The ? grip is the only handle: the row also holds a key input, and a drag must not
 // fight text selection there.
 var providersEl = $("providers");
 backdropRetryEl.addEventListener("click", retryBackdrop);
@@ -2532,7 +2576,7 @@ providersEl.addEventListener("keydown", function (e) {
 
 // --- go ----------------------------------------------------------------------
 applyLayout();
-setInfo("Loading…", "");
+setInfo("Loading.", "");
 document.addEventListener("visibilitychange", function () {
     if (!document.hidden) resynchronizeStationIfStale();
 });

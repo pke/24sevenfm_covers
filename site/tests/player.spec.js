@@ -338,7 +338,7 @@ test.describe("the deployed player page", () => {
 
             await page.locator("#audio-toggle").click();
             await expect(page.locator("#status"))
-                .toHaveText("Audio controls failed to load – try again.");
+                .toHaveText("Audio controls failed to load - try again.");
             await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "false");
             expect(moduleUrls).toHaveLength(1);
 
@@ -379,7 +379,7 @@ test.describe("the deployed player page", () => {
             await expect(stageAudio).toHaveCSS("background-color", canvasBackground);
             await expect(stageAudio).toHaveAttribute("aria-label", "Stop audio");
             await expect(panelAudio).toHaveAttribute("aria-pressed", "true");
-            await expect(panelAudio).toHaveText("⏸ Stop audio");
+            await expect(panelAudio).toHaveText("? Stop audio");
 
             await panelAudio.click();
             await expect(stageAudio).toHaveAttribute("aria-pressed", "false");
@@ -714,7 +714,7 @@ test.describe("the deployed player page", () => {
         expect(glued.backTransform).not.toBe("none");
         // The SVG may use the 3D card while it is visibly flipping, but must be
         // normalized back onto the untransformed front face afterwards. Leaving the
-        // two 180° layers composed indefinitely makes Chromium rasterize it softly.
+        // two 180� layers composed indefinitely makes Chromium rasterize it softly.
         await expect.poll(() => page.locator("#rating-de").getAttribute("data-front"),
             { timeout: 3000 }).toBe("a");
         await expect(page.locator("#rating-de")).toHaveAttribute("data-settled", "");
@@ -1438,9 +1438,9 @@ test.describe("the deployed player page", () => {
         await check.click();
         await expect(check).toBeDisabled();
         await expect(check).toHaveAccessibleName("Checking fanart.tv personal key");
-        await expect(check).toHaveText("…");
+        await expect(check).toHaveText(".");
         releaseFanartResponse();
-        await expect(check).toHaveText("✓");
+        await expect(check).toHaveText("V");
         await expect(check).toHaveClass(/success/);
         await expect(check).toHaveAccessibleName(
             /Recheck fanart\.tv personal key; successfully checked on \d{4}-\d{2}-\d{2}/);
@@ -1489,14 +1489,14 @@ test.describe("the deployed player page", () => {
         expect(transition).toEqual({ opacity: true, height: true });
 
         await check.click();
-        await expect(check).toHaveText("✓");
+        await expect(check).toHaveText("V");
         await expect(status).toBeHidden();
         expect(requests).toBe(2);
 
         await key.fill("another-client-key");
         await check.click();
         await expect(status).toBeVisible();
-        await expect(status).toHaveText("Couldn’t check the personal key right now.");
+        await expect(status).toHaveText("Couldn't check the personal key right now.");
         await expect(check).toBeEnabled();
         expect(requests).toBe(3);
     });
@@ -1520,7 +1520,7 @@ test.describe("the deployed player page", () => {
         const key = page.locator("#fanart-key");
         const check = page.locator("#fanart-key-check");
         await expect(key).toHaveValue("persisted-client-key");
-        await expect(check).toHaveText("✓");
+        await expect(check).toHaveText("V");
         await expect(check).toHaveClass(/success/);
         await expect(check).toBeEnabled();
         await expect(check).toHaveAccessibleName(
@@ -1531,8 +1531,8 @@ test.describe("the deployed player page", () => {
 
         await check.click();
         await expect(page.locator("#fanart-key-status")).toHaveText(
-            "Couldn’t check the personal key right now.");
-        await expect(check).toHaveText("✓");
+            "Couldn't check the personal key right now.");
+        await expect(check).toHaveText("V");
         await expect(check).toBeEnabled();
         expect(await page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
@@ -1545,7 +1545,7 @@ test.describe("the deployed player page", () => {
             .toBe(0);
 
         await check.click();
-        await expect(check).toHaveText("✓");
+        await expect(check).toHaveText("V");
         await expect.poll(() => page.evaluate(() =>
             JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
             .toBeGreaterThan(verifiedAt);
@@ -1748,6 +1748,7 @@ test.describe("the deployed player page", () => {
             await expect(spectrum).toHaveCSS("display", "none");
             await page.locator("#audio-toggle").click();
         });
+
     test("runs the 80s laser plugin from the shared analyser and fades it between stations",
         async ({ page }) => {
             const pageErrors = [];
@@ -1999,7 +2000,7 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        const retryPattern = /Station not responding\s+Retrying in (?:\d+ seconds?|1 minute)…/;
+        const retryPattern = /Station not responding\s+Retrying in (?:\d+ seconds?|1 minute)./;
         await expect(page.locator("#status")).toHaveText(retryPattern);
         const coverStatus = page.locator("#stage-status");
         await expect(coverStatus).toBeVisible();
@@ -2021,7 +2022,7 @@ test.describe("the deployed player page", () => {
         await expect(front).toHaveAttribute("src", /streamingsoundtracks\.com\/images\/logos\//);
         expect(await front.evaluate((img) => getComputedStyle(img).filter)).toContain("grayscale(1)");
         await expect.poll(() => pollRequests, { timeout: 10000 }).toBe(2);
-        await expect(page.locator("#info-title")).toHaveText("Loading…");
+        await expect(page.locator("#info-title")).toHaveText("Loading.");
         expect(logoRequested).toBe(true);
     });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
@@ -2520,7 +2521,7 @@ test.describe("the deployed player page", () => {
             if (action === "GetQueue") return route.fulfill({ json: [] });
             return route.fulfill({ json: {
                 Album: "Arrival (Original Motion Picture Soundtrack)", Track: "Heptapod B",
-                Artist: "Jóhann Jóhannsson", CoverLink: cover, Length: 0,
+                Artist: "J�hann J�hannsson", CoverLink: cover, Length: 0,
                 PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
             } });
         });
@@ -2554,7 +2555,7 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => resolverRequests).toBe(1);
         expect(resolvedAlbum).toBe("Arrival (Original Motion Picture Soundtrack)");
         expect(resolvedTrack).toBe("Heptapod B");
-        expect(resolvedArtist).toBe("Jóhann Jóhannsson");
+        expect(resolvedArtist).toBe("J�hann J�hannsson");
         expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
         expect(resolverVersion).toMatch(/^[a-f0-9]{12}$/);
         expect(directProviderRequests).toBe(0);
@@ -3016,7 +3017,7 @@ test.describe("the deployed player page", () => {
         const error = page.locator("#backdrop-error");
         const retry = page.locator("#backdrop-retry");
         await expect(error).toBeVisible();
-        await expect(error).toContainText("Backdrop artwork couldn’t be loaded.");
+        await expect(error).toContainText("Backdrop artwork couldn't be loaded.");
         await expect(retry).toHaveText("Retry");
         await expect(retry).toBeEnabled();
         const transitionProperties = await error.evaluate((element) =>
@@ -3024,7 +3025,7 @@ test.describe("the deployed player page", () => {
         expect(transitionProperties).toEqual(expect.arrayContaining(["opacity", "max-height"]));
 
         await retry.click();
-        await expect(error).toContainText("Loading backdrop artwork…");
+        await expect(error).toContainText("Loading backdrop artwork.");
         await expect(retry).toBeDisabled();
         expect(await page.evaluate(() => window.backdropFetchCacheModes))
             .toEqual(["default", "reload"]);
@@ -3032,7 +3033,7 @@ test.describe("the deployed player page", () => {
         releaseRetry();
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", backdrop);
         await expect(error).toBeHidden();
-        await expect(error).toContainText("Loading backdrop artwork… Retry");
+        await expect(error).toContainText("Loading backdrop artwork. Retry");
         await expect(page.locator("#status")).toHaveText("");
         expect(resolverRequests).toBe(2);
     });
@@ -3313,7 +3314,6 @@ test.describe("the deployed player page", () => {
                 window.setTimeout = function (callback, delay) {
                     const args = Array.prototype.slice.call(arguments, 2);
                     if (delay >= 50000 && delay <= 60000) delay = 20;
-                    if (delay === 3590000) delay = 2000;
                     return nativeSetTimeout(callback, delay, ...args);
                 };
             });
@@ -3352,6 +3352,8 @@ test.describe("the deployed player page", () => {
             };
             queueAlbums = ["Queue B", "Queue C"];
 
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
             await expect.poll(() => queueRequests).toBe(2);
             await expect.poll(() => backdropAlbums).toEqual(["Queue A", "Queue B", "Queue C"]);
         });
@@ -3427,6 +3429,100 @@ test.describe("the deployed player page", () => {
             `#movieA.show[src="${provisionalBackdrop}"], #movieB.show[src="${provisionalBackdrop}"]`))
             .toHaveCount(0);
     });
+    test("shows and keeps prefetched backdrop and rating through empty revalidation",
+        async ({ page }) => {
+            const cover = "https://streamingsoundtracks.com/images/cover/promoted.svg";
+            const sizedCover = "https://streamingsoundtracks.com/images/cover/500/promoted.svg";
+            const prefetchedBackdrop = "https://image.tmdb.org/t/p/w1280/promoted-prefetch.jpg";
+            let current = {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "",
+                Length: 3600000, PlayStart: "2026-08-24T00:00:00Z",
+                SystemTime: "2026-08-24T00:00:00Z",
+            };
+            const resolverArtists = [];
+            let releaseDefinitive;
+            const definitiveMayFinish = new Promise((resolve) => { releaseDefinitive = resolve; });
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+                JSON.stringify({ tmdbBackdrops: 1, ratingsEnabled: 1,
+                    enabledProviders: ["tmdb"] })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+                (route) => {
+                    const action = new URL(route.request().url()).searchParams.get("action");
+                    if (action === "GetQueue") return route.fulfill({ json:
+                        current.Album === "Station ID" ? [{
+                            Album: "Promoted Movie", Track: "Opening Cue",
+                            Artist: "Queued Composer", CoverLink: cover,
+                        }] : [] });
+                    return route.fulfill({ json: current });
+                });
+            await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route(/\/api\/backdrop\?/, async (route) => {
+                const artist = new URL(route.request().url()).searchParams.get("artist");
+                resolverArtists.push(artist);
+                if (artist === "Authoritative Composer") await definitiveMayFinish;
+                const definitive = artist === "Authoritative Composer";
+                return route.fulfill({ json: {
+                    media: definitive ? null
+                        : { id: 88, title: "Promoted Movie", type: "movie" },
+                    backdrop: definitive ? null : prefetchedBackdrop,
+                    source: definitive ? null : "tmdb",
+                    tint: definitive ? [255, 255, 255] : [60, 70, 80],
+                    certifications: definitive ? [] : [{ country: "DE", system: "FSK",
+                        rating: "12", label: "FSK 12",
+                        logo: "https://upload.wikimedia.org/wikipedia/commons/6/6e/FSK_12.svg" }],
+                } });
+            });
+            await page.route(prefetchedBackdrop,
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+            await page.route("https://upload.wikimedia.org/wikipedia/commons/6/6e/FSK_12.svg",
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect.poll(() => resolverArtists).toEqual(["Queued Composer"]);
+            const preparedBackdrop = page.locator(
+                `#movieA[src="${prefetchedBackdrop}"], #movieB[src="${prefetchedBackdrop}"]`);
+            await expect(preparedBackdrop).toHaveCount(1);
+            await expect.poll(() => preparedBackdrop.evaluate((image) =>
+                image.complete && image.naturalWidth > 0)).toBe(true);
+
+            current = {
+                Album: "Promoted Movie", Track: "Opening Cue", Artist: "Authoritative Composer",
+                CoverLink: cover, Length: 180000, PlayStart: "2026-08-24T00:00:00Z",
+                SystemTime: "2026-08-24T00:00:00Z",
+            };
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+            await expect.poll(() => resolverArtists)
+                .toEqual(["Queued Composer", "Authoritative Composer"]);
+
+            // The authoritative lookup is still blocked: these are necessarily the
+            // promoted queue result rather than a fast second response.
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", prefetchedBackdrop);
+            await expect(page.locator("#rating-de")).toHaveClass(/show/);
+            await expect(page.locator("#rating-de")).toContainText("FSK 12");
+
+            const emptyResponse = page.waitForResponse((response) =>
+                response.url().includes("/api/backdrop?")
+                && new URL(response.url()).searchParams.get("artist")
+                    === "Authoritative Composer");
+            releaseDefinitive();
+            await emptyResponse;
+            await page.waitForTimeout(100);
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", prefetchedBackdrop);
+            await expect(page.locator("#rating-de")).toHaveClass(/show/);
+            await expect(page.locator("#rating-de")).toContainText("FSK 12");
+        });
     test("retries a prefetched title miss when now-playing supplies the artist", async ({ page }) => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/composer-fallback.svg";
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/composer-fallback.svg";
@@ -4230,7 +4326,7 @@ test.describe("the deployed player page", () => {
 
         await page.locator("#audio").dispatchEvent("playing");
         await page.locator("#audio").dispatchEvent("waiting");
-        await expect(page.locator("#status")).toHaveText("Audio interrupted – reconnecting…");
+        await expect(page.locator("#status")).toHaveText("Audio interrupted - reconnecting.");
         expect(await page.evaluate(() => window.__plays.length)).toBe(1);
 
         await expect.poll(() => page.evaluate(() => window.__plays.length)).toBe(2);
@@ -4361,7 +4457,7 @@ test.describe("the deployed player page", () => {
             .poll(() => front.evaluate((img) => img.naturalWidth), { timeout: 30000 })
             .toBeGreaterThan(0);
 
-        await expect(page.locator("#info-title")).not.toHaveText(/Loading|^—$/, { timeout: 30000 });
+        await expect(page.locator("#info-title")).not.toHaveText(/Loading|^-$/, { timeout: 30000 });
         expect(errors, "page must run without JS errors").toEqual([]);
     });
 
