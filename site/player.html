@@ -103,6 +103,11 @@
                     aria-hidden="true"></canvas>
             <canvas class="stage-spectrum" id="stage-spectrum" aria-hidden="true"
                     title="Audio analyzer settings"></canvas>
+            <output class="stage-bpm" id="stage-bpm" aria-hidden="true"
+                    aria-label="Estimating tempo" data-bpm="">
+                <span class="stage-bpm-value" id="stage-bpm-value">—</span>
+                <span class="stage-bpm-unit">BPM</span>
+            </output>
             <div class="rating-badges" id="rating-badges" aria-live="polite" aria-hidden="true"
                  aria-label="Age ratings">
                 <div class="rating-slot" id="rating-de" data-country="DE" aria-hidden="true">
@@ -216,6 +221,10 @@
                 <div class="row">
                     <label><input type="checkbox" id="spectrum-enabled"
                                   data-option="spectrumEnabled"> Show analyzer</label>
+                </div>
+                <div class="row">
+                    <label><input type="checkbox" id="bpm-enabled"
+                                  data-option="bpmEnabled"> Show BPM</label>
                 </div>
                 <div class="seg-group control-gap visualization-setting" id="analyzer-type-setting"
                      role="group" aria-label="Analyzer type">

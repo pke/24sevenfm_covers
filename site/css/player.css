@@ -346,6 +346,59 @@
     transform: translate(-50%, -50%);
 }
 
+/* The optional tempo readout occupies the otherwise-clear upper-left corner. Keep
+   a steady three-character value column so a changing estimate never
+   nudges the BPM label, and retain the last value while the whole badge fades out. */
+.stage-bpm {
+    position: absolute;
+    left: .7rem;
+    top: .7rem;
+    z-index: 3;
+    display: flex;
+    align-items: baseline;
+    gap: .38rem;
+    box-sizing: border-box;
+    min-width: 5.6rem;
+    margin: 0;
+    padding: .45rem .65rem;
+    border: 1px solid rgba(255, 255, 255, .16);
+    border-radius: .65rem;
+    background: rgba(0, 0, 0, .62);
+    color: var(--text-inverse);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    text-shadow: var(--art-text-shadow);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-.25rem) scale(.97);
+    transition: opacity .3s ease, transform .3s ease, top .4s ease,
+                visibility 0s linear .3s;
+}
+.stage-bpm.active {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+    transition-delay: 0s;
+}
+.stage-bpm-value {
+    min-width: 3ch;
+    font-size: clamp(1.05rem, 2.4vw, 1.35rem);
+    font-weight: 750;
+    text-align: right;
+}
+.stage-bpm-unit {
+    font-size: clamp(.62rem, 1.3vw, .72rem);
+    font-weight: 700;
+    letter-spacing: .08em;
+    opacity: .72;
+}
+/* Fill layout puts the optional compact analyzer in this same corner. When both
+   displays are active, animate the tempo badge just below its rendered height. */
+.stage.layout-fill .stage-spectrum.active + .stage-bpm {
+    top: calc(1.15rem + var(--analyzer-height, clamp(2rem, 7.5vh, 3rem)));
+}
+
 /* Movie/series ratings sit in two retained slots. Each slot is a real double-sided
    card, so a flip turns the already-attached next badge over exactly like the cover. */
 .rating-badges {
@@ -902,6 +955,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 @media (prefers-reduced-motion: reduce) {
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
     .stage-button, .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum,
+    .stage-bpm,
     .stage-status, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
     .fanart-key-check span, .provider-key-help, .provider-key-status,

@@ -1,14 +1,22 @@
 // Shared Web Audio analyser + small visualization plugins.
 //
-// The controller owns the media source, reads the analyser once per frame, and
-// hands that immutable frame to each enabled visualization. A plugin only needs
-// `enabled`, `draw`, `clear`, and `setActive`; it never creates another AudioContext
-// or animation loop. That keeps future station-specific scenes cheap to add while
-// the media element remains the one source of truth for playback.
+// The controller owns the media source, reads the analyser once per frame, and writes
+// the current facts to a controller-local blackboard shared by enabled visualizations.
+// A plugin only needs `enabled`, `draw`, `clear`, and `setActive`; it never creates
+// another AudioContext, animation loop, or listener subscription. That keeps future
+// station-specific scenes cheap to add while playback remains the one source of truth.
 
 import { createMilkdropVisualization } from "./milkdrop.js";
 
 const ENVELOPE_MS = 400;
+export const ANALYSER_FACTS = Object.freeze({
+    timestamp: "frame.timestamp",
+    frequencyData: "analyser.frequencyData",
+    timeDomainData: "analyser.timeDomainData",
+    synthetic: "analyser.synthetic",
+    tempoAnalysis: "tempo.analysis",
+    bpm: "tempo.bpm"
+});
 
 function smoothstep(value) {
     const progress = Math.min(1, Math.max(0, value));
@@ -304,11 +312,18 @@ export function createSpectrumVisualization({ canvas, tintElement }) {
     return {
         id: "spectrum",
         enabled(options) { return !!options.spectrumEnabled; },
-        needsTimeDomainData(options) { return options.analyzerType === "oscilloscope"; },
+        needs(options) {
+            return options.analyzerType === "oscilloscope"
+                ? [ANALYSER_FACTS.frequencyData, ANALYSER_FACTS.timeDomainData]
+                : [ANALYSER_FACTS.frequencyData];
+        },
         setActive(active) { canvas.classList.toggle("active", active); },
         clear,
         reset() { peaks = []; },
-        draw({ timestamp, frequencyData, timeDomainData, envelope, releasing, options }) {
+        draw({ blackboard, envelope, releasing, options }) {
+            const timestamp = blackboard.get(ANALYSER_FACTS.timestamp);
+            const frequencyData = blackboard.get(ANALYSER_FACTS.frequencyData);
+            const timeDomainData = blackboard.get(ANALYSER_FACTS.timeDomainData);
             if (!context || !frequencyData || !frequencyData.length) return;
             const type = options.analyzerType === "oscilloscope"
                 ? "oscilloscope" : "spectrum";
@@ -1089,13 +1104,7 @@ function createLaserForegroundRenderer(canvas, webglCoordinates, hardwareWebGl) 
     };
 }
 
-export function createLaserVisualization({ canvas, foregroundCanvas }) {
-    // WebGL is the browser equivalent of OpenGL. The 2D renderer is deliberately a
-    // compatibility path; both consume the same adaptive beat detector below.
-    const renderer = createLaserWebGlRenderer(canvas) || createLaserCanvasRenderer(canvas);
-    const foregroundRenderer = createLaserForegroundRenderer(foregroundCanvas,
-        !!renderer && renderer.type === "webgl",
-        !!renderer && renderer.type === "webgl" && renderer.gpuTier === "hardware");
+export function createTempoAnalysisProducer() {
     let bass = 0;
     let mids = 0;
     let highs = 0;
@@ -1108,18 +1117,13 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
     let beatAt = -10000;
     let accentAt = -10000;
     let accentCount = 0;
-    let strobeAt = -10000;
-    let strobeCount = 0;
-    let smokeAt = -10000;
-    let smokeCount = 0;
-    let smokePreview = false;
     let drive = 0;
     let estimatedBpm = 0;
+    let frames = 0;
     const onsetTimes = [];
     const beatIntervals = [];
-    let frames = 0;
-    let beatFrame = null;
     const spectrumBands = new Float32Array(32);
+    const analysis = { spectrumBands };
 
     function averageBand(data, from, to) {
         const start = Math.max(1, Math.floor(data.length * from));
@@ -1129,20 +1133,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         return total / ((end - start) * 255);
     }
 
-    function restartBeatMarker() {
-        canvas.classList.remove("beat");
-        // Restart the beat marker without forcing layout. Accents use the same marker
-        // so CSS-driven additions can react to both primary and double hits.
-        if (beatFrame !== null) cancelAnimationFrame(beatFrame);
-        beatFrame = requestAnimationFrame(() => {
-            beatFrame = null;
-            if (canvas.classList.contains("active")) canvas.classList.add("beat");
-        });
-    }
-
-    function detectBeat(data, timestamp, synthetic, strobeEnabled, smokeEnabled) {
-        // Keep the trigger down in the kick/bass region. The old wide band reached
-        // well into the low mids, so vocals and synth stabs looked like random beats.
+    function processFrame(data, timestamp, synthetic) {
         const rawBass = averageBand(data, .003, .018);
         const rawMids = averageBand(data, .018, .2);
         const rawHighs = averageBand(data, .2, .72);
@@ -1154,9 +1145,6 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
             const from = Math.pow(band / spectrumBands.length, 1.72) * .82;
             const to = Math.pow((band + 1) / spectrumBands.length, 1.72) * .82;
             const value = averageBand(data, from, Math.max(to, from + .006));
-            // The compact analyzer already feels immediate because it consumes the
-            // shared analyser values directly. Keep the wall's band averaging, but
-            // avoid a visibly sluggish second smoothing pass—especially on release.
             const speed = value > spectrumBands[band] ? .8 : .58;
             spectrumBands[band] += (value - spectrumBands[band]) * speed;
         }
@@ -1184,11 +1172,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
 
         let onset = false;
         let accent = false;
-        if (synthetic) {
-            // With no real analyser there is no honest beat information. Stay in
-            // Slow Dance mode instead of inventing a metronome for the lasers.
-            onset = false;
-        } else if (frames > 4) {
+        if (!synthetic && frames > 4) {
             const bassThreshold = .012 + Math.sqrt(Math.max(.0001, bassVariance)) * 1.05;
             const fluxThreshold = .003 + fluxMean * 1.35;
             const bassScore = Math.max(0, deviation) / bassThreshold;
@@ -1197,8 +1181,6 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
             const onsetScore = bassScore * .82 + fluxScore * .36;
             onset = sinceBeat > 240 && rawBass > .08
                 && bassScore > .62 && fluxScore > .55 && onsetScore > 1.15;
-            // A strong transient inside the BPM refractory window is a double-hit,
-            // not a new tempo sample. Give it visual energy without moving beatAt.
             accent = !onset && sinceBeat >= 80 && sinceBeat <= 240
                 && timestamp - accentAt >= 80 && rawBass > .09
                 && bassScore > .72 && fluxScore > .64 && onsetScore > 1.28;
@@ -1220,31 +1202,11 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
             beatAt = timestamp;
             accentAt = timestamp;
             beatCount++;
-            // One restrained double flash per eight-beat phrase. Requiring an
-            // established rhythmic drive prevents ballads and detector warm-up from
-            // producing an isolated surprise flash.
-            if (strobeEnabled && drive >= .42 && beatCount % 8 === 0
-                    && timestamp - strobeAt >= 1800) {
-                strobeAt = timestamp;
-                strobeCount++;
-            }
-            // Offset the jets from the strobe phrase so both effects get a readable
-            // moment instead of turning every eighth kick into an undifferentiated flash.
-            if (smokeEnabled && drive >= .42 && beatCount % 8 === 4
-                    && timestamp - smokeAt >= 2200) {
-                smokeAt = timestamp;
-                smokeCount++;
-                smokePreview = false;
-            }
             onsetTimes.push(timestamp);
-            restartBeatMarker();
         } else if (accent) {
             accentAt = timestamp;
             accentCount++;
-            // Stack the double-hit on the still-decaying primary pulse. Values above
-            // one deliberately overdrive the beam halo and diffraction for the accent.
             beat = Math.min(1.7, Math.max(1, beat + .65));
-            restartBeatMarker();
         } else {
             const beatPeriod = estimatedBpm ? 60000 / estimatedBpm : 500;
             const release = Math.max(140, Math.min(320, beatPeriod * .42));
@@ -1256,34 +1218,83 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
             && timestamp - beatAt < 1500;
         drive += ((rhythmic ? 1 : 0) - drive) * (rhythmic ? .18 : .035);
         if (drive < .001) drive = 0;
-        canvas.dataset.laserMode = drive >= .42 ? "beat" : "calm";
-        canvas.dataset.bpm = estimatedBpm ? String(Math.round(estimatedBpm)) : "";
-        canvas.dataset.beatAccentCount = String(accentCount);
-        canvas.dataset.strobeCount = String(strobeCount);
-        canvas.dataset.smokeCount = String(smokeCount);
+    }
+
+    return {
+        id: "tempo-analysis",
+        needs: [ANALYSER_FACTS.timestamp, ANALYSER_FACTS.frequencyData,
+            ANALYSER_FACTS.synthetic],
+        provides: [ANALYSER_FACTS.tempoAnalysis, ANALYSER_FACTS.bpm],
+        process(blackboard) {
+            const timestamp = blackboard.get(ANALYSER_FACTS.timestamp);
+            const data = blackboard.get(ANALYSER_FACTS.frequencyData);
+            const synthetic = !!blackboard.get(ANALYSER_FACTS.synthetic);
+            if (!data || !data.length) return;
+            processFrame(data, timestamp, synthetic);
+            Object.assign(analysis, {
+                timestamp, synthetic, bass, mids, highs, beat, beatCount,
+                beatAge: Math.max(0, timestamp - beatAt), accentCount,
+                drive, bpm: estimatedBpm
+            });
+            blackboard.set(ANALYSER_FACTS.tempoAnalysis, analysis);
+            blackboard.set(ANALYSER_FACTS.bpm, estimatedBpm || 0);
+        },
+        reset(blackboard) {
+            bass = mids = highs = bassMean = 0;
+            bassVariance = .0025;
+            fluxMean = .01;
+            previousBins = null;
+            beat = 0;
+            beatCount = 1;
+            beatAt = accentAt = -10000;
+            accentCount = 0;
+            drive = estimatedBpm = 0;
+            frames = 0;
+            onsetTimes.length = beatIntervals.length = 0;
+            spectrumBands.fill(0);
+            blackboard.delete(ANALYSER_FACTS.tempoAnalysis);
+            blackboard.delete(ANALYSER_FACTS.bpm);
+        }
+    };
+}
+
+export function createLaserVisualization({ canvas, foregroundCanvas }) {
+    // Rendering is a pure blackboard consumer. Beat and tempo analysis belongs to
+    // createTempoAnalysisProducer and only runs while a consumer demands its facts.
+    const renderer = createLaserWebGlRenderer(canvas) || createLaserCanvasRenderer(canvas);
+    const foregroundRenderer = createLaserForegroundRenderer(foregroundCanvas,
+        !!renderer && renderer.type === "webgl",
+        !!renderer && renderer.type === "webgl" && renderer.gpuTier === "hardware");
+    let lastBeatCount = 1;
+    let lastAccentCount = 0;
+    let hasAnalysisFrame = false;
+    let strobeAt = -10000;
+    let strobeCount = 0;
+    let smokeAt = -10000;
+    let smokeCount = 0;
+    let smokePreview = false;
+    let beatFrame = null;
+
+    function restartBeatMarker() {
+        canvas.classList.remove("beat");
+        // Restart the beat marker without forcing layout. Accents use the same marker
+        // so CSS-driven additions can react to both primary and double hits.
+        if (beatFrame !== null) cancelAnimationFrame(beatFrame);
+        beatFrame = requestAnimationFrame(() => {
+            beatFrame = null;
+            if (canvas.classList.contains("active")) canvas.classList.add("beat");
+        });
     }
 
     function clear() {
-        bass = mids = highs = bassMean = 0;
-        bassVariance = .0025;
-        fluxMean = .01;
-        previousBins = null;
-        beat = 0;
-        beatCount = 1;
-        beatAt = -10000;
-        accentAt = -10000;
-        accentCount = 0;
+        lastBeatCount = 1;
+        lastAccentCount = 0;
+        hasAnalysisFrame = false;
         strobeAt = -10000;
         strobeCount = 0;
         smokeAt = -10000;
         smokeCount = 0;
         smokePreview = false;
-        drive = 0;
-        estimatedBpm = 0;
-        onsetTimes.length = 0;
-        beatIntervals.length = 0;
-        frames = 0;
-        spectrumBands.fill(0);
         if (beatFrame !== null) cancelAnimationFrame(beatFrame);
         beatFrame = null;
         canvas.classList.remove("beat");
@@ -1314,13 +1325,14 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
     canvas.dataset.landingSpots = "6";
     canvas.dataset.strobePattern = "occasional-double";
     canvas.dataset.smokePattern = "two-front-particle-emitters";
-    canvas.dataset.spectrumBands = String(spectrumBands.length);
+    canvas.dataset.spectrumBands = "32";
     if (foregroundCanvas) {
         foregroundCanvas.dataset.renderer = foregroundRenderer ? "canvas" : "none";
         foregroundCanvas.dataset.rigOrigin = "ceiling";
     }
     return {
         id: "lasers",
+        needs: [ANALYSER_FACTS.tempoAnalysis],
         supportsSyntheticData: true,
         enabled(options) {
             return !!options.laserEnabled && !options.milkdropEnabled
@@ -1334,8 +1346,11 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         },
         trigger,
         clear,
-        draw({ timestamp, frequencyData, envelope, synthetic, options }) {
-            if (!renderer || !frequencyData || !frequencyData.length) return;
+        draw({ blackboard, envelope, options }) {
+            const analysis = blackboard.get(ANALYSER_FACTS.tempoAnalysis);
+            if (!renderer || !analysis) return;
+            const { timestamp, synthetic, bass, mids, highs, beat, beatCount,
+                beatAge, accentCount, drive, bpm, spectrumBands } = analysis;
             canvas.dataset.audioSource = synthetic ? "ambient" : "spectrum";
             const strobeEnabled = !!(options && options.strobeEnabled);
             const smokeEnabled = !!(options && options.smokeEnabled);
@@ -1344,8 +1359,37 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
                 smokeAt = -10000;
                 smokePreview = false;
             }
-            detectBeat(frequencyData, timestamp, synthetic, strobeEnabled, smokeEnabled);
+
+            if (!hasAnalysisFrame) {
+                lastBeatCount = beatCount;
+                lastAccentCount = accentCount;
+                hasAnalysisFrame = true;
+            } else {
+                if (beatCount > lastBeatCount) {
+                    restartBeatMarker();
+                    if (strobeEnabled && drive >= .42 && beatCount % 8 === 0
+                            && timestamp - strobeAt >= 1800) {
+                        strobeAt = timestamp;
+                        strobeCount++;
+                    }
+                    if (smokeEnabled && drive >= .42 && beatCount % 8 === 4
+                            && timestamp - smokeAt >= 2200) {
+                        smokeAt = timestamp;
+                        smokeCount++;
+                        smokePreview = false;
+                    }
+                }
+                if (accentCount > lastAccentCount) restartBeatMarker();
+                lastBeatCount = beatCount;
+                lastAccentCount = accentCount;
+            }
+
             canvas.dataset.beatCount = String(beatCount);
+            canvas.dataset.beatAccentCount = String(accentCount);
+            canvas.dataset.laserMode = drive >= .42 ? "beat" : "calm";
+            canvas.dataset.bpm = bpm ? String(Math.round(bpm)) : "";
+            canvas.dataset.strobeCount = String(strobeCount);
+            canvas.dataset.smokeCount = String(smokeCount);
             const strobe = strobeEnvelope(timestamp, strobeAt, strobeEnabled);
             const smoke = smokeEnvelope(timestamp, smokeAt, smokeEnabled, smokePreview);
             canvas.dataset.strobeLevel = strobe.toFixed(3);
@@ -1358,10 +1402,10 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
                 highs,
                 beat,
                 beatCount,
-                beatAge: Math.max(0, timestamp - beatAt),
+                beatAge,
                 envelope,
                 drive,
-                bpm: estimatedBpm,
+                bpm,
                 strobe,
                 smoke,
                 smokeAge: Math.max(0, (timestamp - smokeAt) / 1000),
@@ -1377,15 +1421,73 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
     };
 }
 
+export function createBpmVisualization({ element }) {
+    let displayedBpm = "";
+    let clearTimer = null;
+
+    function render(value) {
+        if (!element) return;
+        const rounded = value ? String(Math.round(value)) : "";
+        if (rounded === displayedBpm) return;
+        displayedBpm = rounded;
+        element.dataset.bpm = rounded;
+        const valueElement = element.querySelector(".stage-bpm-value");
+        if (valueElement) valueElement.textContent = rounded || "—";
+        element.classList.toggle("has-value", !!rounded);
+        element.setAttribute("aria-label", rounded
+            ? `${rounded} beats per minute`
+            : "Estimating tempo");
+    }
+
+    return {
+        id: "bpm",
+        needs: [ANALYSER_FACTS.bpm],
+        supportsSyntheticData: true,
+        enabled(options) {
+            return !!options.bpmEnabled;
+        },
+        setActive(active) {
+            if (!element) return;
+            clearTimeout(clearTimer);
+            clearTimer = null;
+            element.classList.toggle("active", active);
+            element.setAttribute("aria-hidden", active ? "false" : "true");
+            if (active) {
+                // Each entrance starts honestly while the producer gathers samples.
+                render(0);
+            } else {
+                // Retain outgoing content until the badge's opacity transition ends.
+                clearTimer = setTimeout(() => {
+                    clearTimer = null;
+                    render(0);
+                }, 300);
+            }
+        },
+        clear() {
+            // setActive(false) owns delayed content cleanup so exits stay visible.
+        },
+        draw({ blackboard }) {
+            render(blackboard ? blackboard.get(ANALYSER_FACTS.bpm) || 0 : 0);
+        }
+    };
+}
+
 export function createAudioAnalyserController({
     audioElement,
     getOptions,
     isAudioWanted,
     hasAudioPlayed,
     reducedMotion,
-    visualizations
+    visualizations,
+    producers = []
 }) {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    const sourceFacts = new Set([
+        ANALYSER_FACTS.timestamp,
+        ANALYSER_FACTS.frequencyData,
+        ANALYSER_FACTS.timeDomainData,
+        ANALYSER_FACTS.synthetic
+    ]);
     const states = visualizations.map(visualization => ({
         visualization,
         envelope: 0,
@@ -1393,6 +1495,51 @@ export function createAudioAnalyserController({
         target: 0,
         started: 0
     }));
+    const producerByFact = new Map();
+    producers.forEach(producer => {
+        if (!producer.id || typeof producer.process !== "function"
+                || !Array.isArray(producer.provides) || !producer.provides.length)
+            throw new Error("Invalid analyser producer");
+        producer.provides.forEach(fact => {
+            if (producerByFact.has(fact))
+                throw new Error(`Duplicate analyser fact provider: ${fact}`);
+            producerByFact.set(fact, producer);
+        });
+    });
+    producers.forEach(producer => {
+        (producer.needs || []).forEach(fact => {
+            if (!sourceFacts.has(fact) && !producerByFact.has(fact))
+                throw new Error(`Missing analyser fact provider: ${fact}`);
+        });
+    });
+    visualizations.forEach(visualization => {
+        if (!Array.isArray(visualization.needs)) return;
+        visualization.needs.forEach(fact => {
+            if (!sourceFacts.has(fact) && !producerByFact.has(fact))
+                throw new Error(`Missing analyser fact provider: ${fact}`);
+        });
+    });
+    const validatedProducers = new Set();
+    const validatingProducers = new Set();
+    function validateProducer(producer) {
+        if (validatedProducers.has(producer)) return;
+        if (validatingProducers.has(producer))
+            throw new Error(`Cyclic analyser fact dependency: ${producer.id}`);
+        validatingProducers.add(producer);
+        (producer.needs || []).forEach(fact => {
+            const dependency = producerByFact.get(fact);
+            if (dependency) validateProducer(dependency);
+        });
+        validatingProducers.delete(producer);
+        validatedProducers.add(producer);
+    }
+    producers.forEach(validateProducer);
+
+    // The blackboard is one controller-local frame snapshot. Consumers declare facts;
+    // producers are activated by the transitive closure of that demand, never by
+    // subscribe/unsubscribe side effects.
+    const blackboard = new Map();
+    let activeProducers = new Set();
     let audioContext = null;
     let source = null;
     let analyser = null;
@@ -1405,12 +1552,14 @@ export function createAudioAnalyserController({
     function fillSyntheticData(data, timeData, timestamp) {
         const beat = .5 + Math.sin(timestamp * .0042) * .3
             + Math.sin(timestamp * .00137) * .2;
-        for (let index = 0; index < data.length; index++) {
-            const position = index / data.length;
-            const rolloff = Math.pow(1 - position, .72);
-            const ripple = .5 + .5 * Math.sin(timestamp * .0021 + index * .19);
-            data[index] = Math.round(255 * Math.min(1,
-                (.16 + beat * .42 + ripple * .2) * rolloff));
+        if (data) {
+            for (let index = 0; index < data.length; index++) {
+                const position = index / data.length;
+                const rolloff = Math.pow(1 - position, .72);
+                const ripple = .5 + .5 * Math.sin(timestamp * .0021 + index * .19);
+                data[index] = Math.round(255 * Math.min(1,
+                    (.16 + beat * .42 + ripple * .2) * rolloff));
+            }
         }
         if (timeData) {
             for (let index = 0; index < timeData.length; index++) {
@@ -1420,6 +1569,60 @@ export function createAudioAnalyserController({
                     + Math.sin(position * Math.PI * 14 - timestamp * .0007) * 9);
             }
         }
+    }
+
+    function componentNeeds(component, options) {
+        const needs = typeof component.needs === "function"
+            ? component.needs(options) : component.needs || [];
+        if (!Array.isArray(needs))
+            throw new Error(`Invalid analyser fact requirements: ${component.id}`);
+        return needs;
+    }
+
+    function resolveDemand(consumerStates, options) {
+        const facts = new Set();
+        const orderedProducers = [];
+        const resolved = new Set();
+        const resolving = new Set();
+
+        function requireFact(fact) {
+            facts.add(fact);
+            if (sourceFacts.has(fact)) return;
+            const producer = producerByFact.get(fact);
+            if (!producer) throw new Error(`Missing analyser fact provider: ${fact}`);
+            if (resolved.has(producer)) return;
+            if (resolving.has(producer))
+                throw new Error(`Cyclic analyser fact dependency: ${producer.id}`);
+            resolving.add(producer);
+            (producer.needs || []).forEach(requireFact);
+            resolving.delete(producer);
+            resolved.add(producer);
+            orderedProducers.push(producer);
+        }
+
+        consumerStates.forEach(state =>
+            componentNeeds(state.visualization, options).forEach(requireFact));
+        return { facts, producers: orderedProducers };
+    }
+
+    function syncProducerLifecycle(requiredProducers) {
+        const required = new Set(requiredProducers);
+        activeProducers.forEach(producer => {
+            if (!required.has(producer) && producer.reset) producer.reset(blackboard);
+        });
+        required.forEach(producer => {
+            if (!activeProducers.has(producer) && producer.start)
+                producer.start(blackboard);
+        });
+        activeProducers = required;
+    }
+
+    function stopProducers() {
+        activeProducers.forEach(producer => {
+            if (producer.reset) producer.reset(blackboard);
+        });
+        activeProducers.clear();
+        sourceFacts.forEach(fact => blackboard.delete(fact));
     }
 
     function updateEnvelope(state, timestamp) {
@@ -1441,7 +1644,7 @@ export function createAudioAnalyserController({
 
     function stopState(state) {
         state.envelope = state.from = state.target = 0;
-        state.visualization.clear();
+        state.visualization.clear(blackboard);
         state.visualization.setActive(false);
     }
 
@@ -1453,20 +1656,7 @@ export function createAudioAnalyserController({
         }
         lastFrame = timestamp;
         const options = getOptions();
-        if (states.some(state => state.target === 1)) {
-            if (usesSyntheticData) fillSyntheticData(frequencyData, timeDomainData, timestamp);
-            else analyser.getByteFrequencyData(frequencyData);
-            const needsTimeDomainData = states.some(state => state.target === 1
-                && state.visualization.needsTimeDomainData
-                && state.visualization.needsTimeDomainData(options));
-            if (needsTimeDomainData && timeDomainData) {
-                if (!usesSyntheticData && analyser
-                        && typeof analyser.getByteTimeDomainData === "function")
-                    analyser.getByteTimeDomainData(timeDomainData);
-                else timeDomainData.fill(128);
-            }
-        }
-
+        const drawStates = [];
         let keepDrawing = false;
         states.forEach(state => {
             const done = updateEnvelope(state, timestamp);
@@ -1474,19 +1664,39 @@ export function createAudioAnalyserController({
                 stopState(state);
                 return;
             }
-            if (state.envelope > 0) {
-                state.visualization.draw({
-                    timestamp,
-                    frequencyData,
-                    timeDomainData,
-                    envelope: state.envelope,
-                    releasing: state.target === 0,
-                    synthetic: usesSyntheticData,
-                    options
-                });
-                keepDrawing = true;
-            }
-            if (!done) keepDrawing = true;
+            if (state.envelope > 0) drawStates.push(state);
+            if (state.envelope > 0 || !done) keepDrawing = true;
+        });
+
+        const demand = resolveDemand(drawStates, options);
+        syncProducerLifecycle(demand.producers);
+        blackboard.set(ANALYSER_FACTS.timestamp, timestamp);
+        blackboard.set(ANALYSER_FACTS.synthetic, usesSyntheticData);
+        const needsFrequency = demand.facts.has(ANALYSER_FACTS.frequencyData);
+        const needsTimeDomain = demand.facts.has(ANALYSER_FACTS.timeDomainData);
+        if (usesSyntheticData && (needsFrequency || needsTimeDomain)) {
+            fillSyntheticData(needsFrequency ? frequencyData : null,
+                needsTimeDomain ? timeDomainData : null, timestamp);
+        } else {
+            if (needsFrequency && analyser) analyser.getByteFrequencyData(frequencyData);
+            if (needsTimeDomain && analyser
+                    && typeof analyser.getByteTimeDomainData === "function")
+                analyser.getByteTimeDomainData(timeDomainData);
+        }
+        if (needsFrequency) blackboard.set(ANALYSER_FACTS.frequencyData, frequencyData);
+        else blackboard.delete(ANALYSER_FACTS.frequencyData);
+        if (needsTimeDomain) blackboard.set(ANALYSER_FACTS.timeDomainData, timeDomainData);
+        else blackboard.delete(ANALYSER_FACTS.timeDomainData);
+
+        demand.producers.forEach(producer => producer.process(blackboard));
+
+        drawStates.forEach(state => {
+            state.visualization.draw({
+                blackboard,
+                envelope: state.envelope,
+                releasing: state.target === 0,
+                options
+            });
         });
         if (keepDrawing) frame = requestAnimationFrame(draw);
     }
@@ -1494,6 +1704,13 @@ export function createAudioAnalyserController({
     function sync() {
         const now = performance.now();
         const options = getOptions();
+        if (reducedMotion.matches || document.hidden) {
+            states.forEach(stopState);
+            stopProducers();
+            if (frame !== null) cancelAnimationFrame(frame);
+            frame = null;
+            return;
+        }
         const canRun = !!(isAudioWanted() && hasAudioPlayed() && frequencyData
             && !document.hidden && !reducedMotion.matches);
         let needsFrame = false;
@@ -1510,13 +1727,15 @@ export function createAudioAnalyserController({
         }
         if (frame !== null) cancelAnimationFrame(frame);
         frame = null;
-        if (reducedMotion.matches || document.hidden) states.forEach(stopState);
+        stopProducers();
     }
 
     function prepare() {
         const options = getOptions();
         const enabledStates = states.filter(state => state.visualization.enabled(options));
         if (!enabledStates.length || reducedMotion.matches) return false;
+        const demand = resolveDemand(enabledStates, options);
+        if (![...demand.facts].some(fact => sourceFacts.has(fact))) return false;
         if (!AudioContextCtor) {
             if (!enabledStates.some(state => state.visualization.supportsSyntheticData))
                 return false;
@@ -1529,9 +1748,9 @@ export function createAudioAnalyserController({
             try {
                 audioContext = new AudioContextCtor();
                 analyser = audioContext.createAnalyser();
-                // The laser beat detector needs enough low-frequency resolution to
-                // separate kick/bass onsets from the mids. Plugins smooth their own
-                // bands, so keep analyser smoothing light enough to preserve attacks.
+                // The shared tempo producer needs enough low-frequency resolution to
+                // separate kick/bass onsets from the mids. Consumers smooth their own
+                // presentation, so keep analyser smoothing light enough to preserve attacks.
                 analyser.fftSize = 1024;
                 analyser.smoothingTimeConstant = .32;
                 source = audioContext.createMediaElementSource(audioElement);
@@ -1559,7 +1778,7 @@ export function createAudioAnalyserController({
 
     function clear(id) {
         states.filter(state => !id || state.visualization.id === id)
-            .forEach(state => state.visualization.clear());
+            .forEach(state => state.visualization.clear(blackboard));
     }
 
     function reset(id) {
@@ -1581,7 +1800,7 @@ export function createAudioAnalyserController({
     if (reducedMotion.addEventListener) reducedMotion.addEventListener("change", sync);
     else if (reducedMotion.addListener) reducedMotion.addListener(sync);
 
-    return { clear, prepare, reset, sync, trigger };
+    return { blackboard, clear, prepare, reset, sync, trigger };
 }
 
 export function createAudioVisualizationController({
@@ -1590,6 +1809,7 @@ export function createAudioVisualizationController({
     milkdropElement,
     laserElement,
     laserForegroundElement,
+    bpmElement,
     infoElement,
     getOptions,
     isAudioWanted,
@@ -1602,13 +1822,19 @@ export function createAudioVisualizationController({
         isAudioWanted,
         hasAudioPlayed,
         reducedMotion,
+        producers: [createTempoAnalysisProducer()],
         visualizations: [
             createSpectrumVisualization({ canvas: spectrumElement, tintElement: infoElement }),
-            createMilkdropVisualization({ canvas: milkdropElement, tintElement: infoElement }),
+            createMilkdropVisualization({
+                canvas: milkdropElement,
+                tintElement: infoElement,
+                facts: ANALYSER_FACTS
+            }),
             createLaserVisualization({
                 canvas: laserElement,
                 foregroundCanvas: laserForegroundElement
-            })
+            }),
+            createBpmVisualization({ element: bpmElement })
         ]
     });
 }

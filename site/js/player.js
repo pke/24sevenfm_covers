@@ -146,6 +146,7 @@ var OPTION_DEFS = {
     strobeEnabled: { default: 0, coerce: boolOption },
     smokeEnabled: { default: 0, coerce: boolOption, effect: applySmokeEnabled },
     spectrumEnabled: { default: 0, coerce: boolOption, effect: applySpectrumEnabled },
+    bpmEnabled: { default: 0, coerce: boolOption, effect: applyBpmEnabled },
     analyzerType: { default: "spectrum",
         coerce: enumOption(["spectrum", "oscilloscope"], "spectrum"),
         effect: applyAnalyzerType },
@@ -1817,6 +1818,7 @@ var audioBtn = $("audio-toggle"), stageAudioBtn = $("stage-audio");
 var spectrumEl = $("stage-spectrum"), milkdropEl = $("stage-milkdrop");
 var laserEl = $("stage-lasers");
 var laserFrontEl = $("stage-lasers-front");
+var bpmEl = $("stage-bpm");
 var audioGeneration = 0, audioWanted = false, audioHasPlayed = false;
 var audioRetryTimer = null, audioStallTimer = null, audioWatchdogTimer = null;
 var audioRetryAttempt = 0, audioLastProgressTime = 0;
@@ -1958,6 +1960,7 @@ function loadAudioSpectrumModule() {
                 milkdropElement: milkdropEl,
                 laserElement: laserEl,
                 laserForegroundElement: laserFrontEl,
+                bpmElement: bpmEl,
                 infoElement: document.querySelector(".info"),
                 getOptions: () => opts,
                 isAudioWanted: () => audioWanted,
@@ -2489,6 +2492,10 @@ function applySpectrumEnabled() {
     syncSpectrumSettingControls();
     sizeStage();
     if (opts.spectrumEnabled && audioWanted) prepareSpectrum();
+    syncSpectrum();
+}
+function applyBpmEnabled() {
+    if (opts.bpmEnabled && audioWanted) prepareSpectrum();
     syncSpectrum();
 }
 function applyAnalyzerType() {

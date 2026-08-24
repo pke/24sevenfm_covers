@@ -350,6 +350,183 @@ test.describe("the deployed player page", () => {
             expect(new URL(moduleUrls[1]).searchParams.get("retry")).toBe("1");
             expect(pageErrors).toEqual([]);
         });
+    test("runs analyser producers only for declarative blackboard demand",
+        async ({ page }) => {
+            await mockProviderTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+            const result = await page.evaluate(async () => {
+                const module = await import("/js/audio-spectrum.js?blackboard-contract-test");
+                const { ANALYSER_FACTS, createAudioAnalyserController } = module;
+                const telemetry = {
+                    frequencyReads: 0,
+                    timeReads: 0,
+                    processes: 0,
+                    resets: 0,
+                    draws: { first: 0, second: 0, time: 0 }
+                };
+                class FakeNode { connect() {} }
+                class FakeAnalyser extends FakeNode {
+                    constructor() {
+                        super();
+                        this.frequencyBinCount = 64;
+                        this.fftSize = 128;
+                    }
+                    getByteFrequencyData(data) {
+                        telemetry.frequencyReads++;
+                        data.fill(96);
+                    }
+                    getByteTimeDomainData(data) {
+                        telemetry.timeReads++;
+                        data.fill(128);
+                    }
+                }
+                const PreviousAudioContext = window.AudioContext;
+                window.AudioContext = class {
+                    constructor() {
+                        this.destination = {};
+                        this.state = "running";
+                    }
+                    createAnalyser() { return new FakeAnalyser(); }
+                    createMediaElementSource() { return new FakeNode(); }
+                    resume() { return Promise.resolve(); }
+                };
+                const options = { first: true, second: true, time: false };
+                const reducedMotion = { matches: false, addEventListener() {} };
+                const audio = document.createElement("audio");
+                const wait = milliseconds => new Promise(resolve =>
+                    setTimeout(resolve, milliseconds));
+                const snapshot = () => JSON.parse(JSON.stringify(telemetry));
+                const derivedFact = "test.derived";
+                const derivedConsumer = id => ({
+                    id,
+                    needs: [derivedFact],
+                    enabled(current) { return current[id]; },
+                    setActive() {},
+                    clear() {},
+                    draw({ blackboard }) {
+                        if (!blackboard.has(derivedFact))
+                            throw new Error("Missing derived blackboard fact");
+                        telemetry.draws[id]++;
+                    }
+                });
+                const timeConsumer = {
+                    id: "time",
+                    needs: [ANALYSER_FACTS.timeDomainData],
+                    enabled(current) { return current.time; },
+                    setActive() {},
+                    clear() {},
+                    draw({ blackboard }) {
+                        if (!blackboard.has(ANALYSER_FACTS.timeDomainData))
+                            throw new Error("Missing time-domain blackboard fact");
+                        telemetry.draws.time++;
+                    }
+                };
+                const producer = {
+                    id: "test-producer",
+                    needs: [ANALYSER_FACTS.frequencyData],
+                    provides: [derivedFact],
+                    process(blackboard) {
+                        telemetry.processes++;
+                        blackboard.set(derivedFact, telemetry.processes);
+                    },
+                    reset(blackboard) {
+                        telemetry.resets++;
+                        blackboard.delete(derivedFact);
+                    }
+                };
+                const controllerArgs = {
+                    audioElement: audio,
+                    getOptions: () => options,
+                    isAudioWanted: () => true,
+                    hasAudioPlayed: () => true,
+                    reducedMotion,
+                    producers: [producer],
+                    visualizations: [derivedConsumer("first"),
+                        derivedConsumer("second"), timeConsumer]
+                };
+                const controller = createAudioAnalyserController(controllerArgs);
+                controller.prepare();
+                controller.sync();
+                await wait(180);
+                const both = snapshot();
+
+                options.first = false;
+                controller.sync();
+                await wait(500);
+                const one = snapshot();
+
+                options.second = false;
+                controller.sync();
+                const beforeRelease = snapshot();
+                await wait(120);
+                const releasing = snapshot();
+                await wait(500);
+                const stopped = snapshot();
+                await wait(120);
+                const stable = snapshot();
+
+                options.time = true;
+                controller.sync();
+                await wait(180);
+                const timeOnly = snapshot();
+                options.time = false;
+                controller.sync();
+                await wait(500);
+
+                function constructionError(producers) {
+                    try {
+                        createAudioAnalyserController({
+                            ...controllerArgs, producers, visualizations: []
+                        });
+                        return "";
+                    } catch (error) {
+                        return String(error.message || error);
+                    }
+                }
+                const duplicate = constructionError([
+                    { id: "a", provides: ["duplicate"], process() {} },
+                    { id: "b", provides: ["duplicate"], process() {} }
+                ]);
+                const cyclic = constructionError([
+                    { id: "a", needs: ["cycle.b"], provides: ["cycle.a"], process() {} },
+                    { id: "b", needs: ["cycle.a"], provides: ["cycle.b"], process() {} }
+                ]);
+                let missing = "";
+                try {
+                    createAudioAnalyserController({
+                        ...controllerArgs,
+                        producers: [],
+                        visualizations: [{ id: "missing", needs: ["missing.fact"] }]
+                    });
+                } catch (error) {
+                    missing = String(error.message || error);
+                }
+                window.AudioContext = PreviousAudioContext;
+                return { both, one, beforeRelease, releasing, stopped, stable,
+                    timeOnly, duplicate, cyclic, missing };
+            });
+
+            expect(result.both.frequencyReads).toBeGreaterThan(0);
+            expect(result.both.processes).toBe(result.both.frequencyReads);
+            expect(result.both.draws.first).toBeGreaterThan(0);
+            expect(result.both.draws.second).toBeGreaterThan(0);
+            expect(result.both.processes).toBeLessThan(
+                result.both.draws.first + result.both.draws.second);
+            expect(result.both.timeReads).toBe(0);
+            expect(result.one.frequencyReads).toBeGreaterThan(result.both.frequencyReads);
+            expect(result.one.resets).toBe(0);
+            expect(result.releasing.frequencyReads)
+                .toBeGreaterThan(result.beforeRelease.frequencyReads);
+            expect(result.stopped.resets).toBe(1);
+            expect(result.stable.frequencyReads).toBe(result.stopped.frequencyReads);
+            expect(result.stable.processes).toBe(result.stopped.processes);
+            expect(result.timeOnly.timeReads).toBeGreaterThan(result.stable.timeReads);
+            expect(result.timeOnly.frequencyReads).toBe(result.stable.frequencyReads);
+            expect(result.duplicate).toContain("Duplicate analyser fact provider");
+            expect(result.cyclic).toContain("Cyclic analyser fact dependency");
+            expect(result.missing).toContain("Missing analyser fact provider");
+        });
     test("reveals the canvas audio control and keeps both audio buttons in sync",
         async ({ page }) => {
             await page.addInitScript(() => {
@@ -461,6 +638,7 @@ test.describe("the deployed player page", () => {
 
         const bars = page.locator("#spectrum-bars");
         const enabled = page.locator("#spectrum-enabled");
+        const bpm = page.locator("#bpm-enabled");
         const lasers = page.locator("#laser-enabled");
         const milkdrop = page.locator("#milkdrop-enabled");
         const strobe = page.locator("#strobe-enabled");
@@ -485,6 +663,7 @@ test.describe("the deployed player page", () => {
         await expect(smoke).not.toBeChecked();
         await expect(smoke).toBeEnabled();
         await expect(enabled).not.toBeChecked();
+        await expect(bpm).not.toBeChecked();
         await expect(bars).toHaveValue("24");
         await expect(bars).toHaveAttribute("step", "8");
         await expect(bars).toBeDisabled();
@@ -497,6 +676,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
 
         await enabled.check();
+        await bpm.check();
         await strobe.check();
         await smoke.check();
         await lasers.uncheck();
@@ -528,6 +708,7 @@ test.describe("the deployed player page", () => {
         await expect(smoke).toBeChecked();
         await expect(smoke).toBeDisabled();
         await expect(enabled).toBeChecked();
+        await expect(bpm).toBeChecked();
         await expect(bars).toHaveValue("48");
         await expect(bars).toBeDisabled();
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
@@ -2077,6 +2258,8 @@ test.describe("the deployed player page", () => {
             const lasers = page.locator("#stage-lasers");
             const frontLasers = page.locator("#stage-lasers-front");
             const spectrum = page.locator("#stage-spectrum");
+            const bpmDisplay = page.locator("#stage-bpm");
+            const bpmEnabled = page.locator("#bpm-enabled");
             await expect(page.locator("#laser-enabled")).toBeChecked();
             const strobe = page.locator("#strobe-enabled");
             await expect(strobe).not.toBeChecked();
@@ -2092,6 +2275,11 @@ test.describe("the deployed player page", () => {
             await audio.dispatchEvent("playing");
             await expect(lasers).toHaveClass(/active/);
             await expect(frontLasers).toHaveClass(/active/);
+            await expect(bpmDisplay).not.toHaveClass(/active/);
+            await bpmEnabled.check();
+            await expect(bpmDisplay).toHaveClass(/active/);
+            await expect(bpmDisplay).toHaveCSS("opacity", "1");
+            await expect(bpmDisplay).toHaveAttribute("aria-hidden", "false");
             await expect(lasers).toHaveCSS("opacity", "1");
             await expect(frontLasers).toHaveCSS("opacity", "1");
             await expect(lasers).toHaveCSS("background-color", "rgb(0, 0, 0)");
@@ -2149,6 +2337,12 @@ test.describe("the deployed player page", () => {
             await expect.poll(async () => Number(
                 await lasers.getAttribute("data-bpm"))).toBeGreaterThanOrEqual(80);
             expect(Number(await lasers.getAttribute("data-bpm"))).toBeLessThanOrEqual(160);
+            await expect.poll(() => bpmDisplay.evaluate((display) => {
+                const bpm = Number(display.dataset.bpm);
+                return bpm >= 80 && bpm <= 160
+                    && display.querySelector(".stage-bpm-value").textContent === String(bpm)
+                    && display.getAttribute("aria-label") === `${bpm} beats per minute`;
+            })).toBe(true);
             expect(pageErrors).toEqual([]);
             await expect.poll(() => laserHasPixels(lasers)).toBe(true);
             const renderSurface = await lasers.evaluate((canvas) => ({
@@ -2204,10 +2398,22 @@ test.describe("the deployed player page", () => {
             await expect(spectrum).toHaveClass(/active/);
             await expect(lasers).not.toHaveClass(/active/);
             await expect(frontLasers).not.toHaveClass(/active/);
+            await expect(bpmDisplay).toHaveClass(/active/);
+            await expect(bpmDisplay).toHaveCSS("opacity", "1");
+            await expect(bpmDisplay).toHaveAttribute("aria-hidden", "false");
             await expect(page.locator("#stage")).not.toHaveClass(/laser-scene/);
             await expect.poll(spectrumCoverWidthDelta).toBeLessThanOrEqual(1);
             await expect.poll(() => laserHasPixels(lasers)).toBe(false);
             await expect.poll(() => laserHasPixels(frontLasers)).toBe(false);
+
+            const bpmReleaseStartedWhileMounted = await bpmEnabled.evaluate((input) => {
+                input.click();
+                return document.querySelector("#stage-bpm").classList.contains("active");
+            });
+            expect(bpmReleaseStartedWhileMounted).toBe(true);
+            await expect(bpmDisplay).not.toHaveClass(/active/);
+            await expect(bpmDisplay).toHaveCSS("opacity", "0");
+            await expect(bpmDisplay).toHaveAttribute("aria-hidden", "true");
 
             await page.emulateMedia({ reducedMotion: "reduce" });
             await expect(lasers).toHaveCSS("display", "none");
@@ -2241,6 +2447,8 @@ test.describe("the deployed player page", () => {
 
             const audio = page.locator("#audio");
             const lasers = page.locator("#stage-lasers");
+            const bpmDisplay = page.locator("#stage-bpm");
+            await page.locator("#bpm-enabled").check();
             await page.locator("#audio-toggle").click();
             await audio.dispatchEvent("playing");
             await expect(lasers).toHaveClass(/active/);
@@ -2248,6 +2456,10 @@ test.describe("the deployed player page", () => {
             await expect(lasers).toHaveAttribute("data-audio-source", "ambient");
             await expect(lasers).toHaveAttribute("data-laser-mode", "calm");
             await expect(lasers).toHaveAttribute("data-bpm", "");
+            await expect(bpmDisplay).toHaveClass(/active/);
+            await expect(bpmDisplay).toHaveAttribute("data-bpm", "");
+            await expect(bpmDisplay.locator(".stage-bpm-value")).toHaveText("—");
+            await expect(bpmDisplay).toHaveAttribute("aria-label", "Estimating tempo");
             await expect.poll(() => laserHasPixels(lasers)).toBe(true);
             expect(await page.evaluate(() => typeof window.AudioContext)).toBe("undefined");
             await page.locator("#audio-toggle").click();

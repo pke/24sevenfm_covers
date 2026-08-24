@@ -84,7 +84,7 @@ function copySurface(source) {
     return copy;
 }
 
-export function createMilkdropVisualization({ canvas, tintElement }) {
+export function createMilkdropVisualization({ canvas, tintElement, facts }) {
     const context = canvas.getContext("2d", { alpha: true });
     const feedbackCanvas = document.createElement("canvas");
     const feedbackContext = feedbackCanvas.getContext("2d", { alpha: true });
@@ -335,14 +335,18 @@ export function createMilkdropVisualization({ canvas, tintElement }) {
         id: "milkdrop",
         supportsSyntheticData: true,
         enabled(options) { return !!options.milkdropEnabled; },
-        needsTimeDomainData() { return true; },
+        needs: [facts.frequencyData, facts.timeDomainData],
         setActive(active) {
             canvas.classList.toggle("active", active);
             const stage = canvas.closest(".stage");
             if (stage) stage.classList.toggle("milkdrop-scene", active);
         },
         clear,
-        draw({ timestamp, frequencyData, timeDomainData, envelope, synthetic, options }) {
+        draw({ blackboard, envelope, options }) {
+            const timestamp = blackboard.get(facts.timestamp);
+            const frequencyData = blackboard.get(facts.frequencyData);
+            const timeDomainData = blackboard.get(facts.timeDomainData);
+            const synthetic = blackboard.get(facts.synthetic);
             if (!context || !feedbackContext || !frequencyData || !frequencyData.length
                     || !timeDomainData || !timeDomainData.length) return;
             resize();
