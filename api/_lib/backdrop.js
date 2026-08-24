@@ -1190,6 +1190,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
 }
 
 function sendJson(res, status, body) {
+    debugLog("info", "response.body", { status, body });
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(body));

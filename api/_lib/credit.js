@@ -1,8 +1,12 @@
 "use strict";
 
+const { AsyncLocalStorage } = require("node:async_hooks");
+
 const CREDIT_CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
 const CREDIT_MISS_CACHE_SECONDS = 15 * 60;
 const CREDIT_TIMEOUT_MS = 3000;
+const debugLogContext = new AsyncLocalStorage();
+let debugRequestSequence = 0;
 const MAX_ALBUM_PAGE_BYTES = 256 * 1024;
 const MAX_ALBUM_URL_LENGTH = 512;
 const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
@@ -14,6 +18,30 @@ const DEFAULT_ALBUM_HOSTS = Object.freeze([
     "entranced.fm",
 ]);
 const SAFE_ALBUM_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+function debugLoggingEnabled(env) {
+    return /^(?:1|true|yes|on)$/i.test(String(env && env.BACKDROP_DEBUG_LOG || "").trim());
+}
+
+function debugRequestId() {
+    debugRequestSequence = (debugRequestSequence + 1) % Number.MAX_SAFE_INTEGER;
+    return process.pid + "-" + Date.now().toString(36) + "-credit-"
+        + debugRequestSequence.toString(36);
+}
+
+function debugLog(level, event, details = {}) {
+    const context = debugLogContext.getStore() || {};
+    if (!debugLoggingEnabled(context.env || process.env)) return;
+    const entry = {
+        timestamp: new Date().toISOString(),
+        event,
+        request_id: context.requestId || null,
+        ...details,
+    };
+    const writer = level === "error" ? console.error
+        : level === "warn" ? console.warn : console.log;
+    writer("[credit] " + JSON.stringify(entry));
+}
 
 class CreditError extends Error {
     constructor(code, status) {
@@ -129,13 +157,32 @@ async function albumPageBytes(response) {
 }
 
 async function fetchAlbumArtist(fetchImpl, url, album) {
-    const response = await fetchImpl(url, {
-        redirect: "manual",
-        headers: {
-            "Accept": "text/html",
-            "User-Agent": "24sevenfm-covers-album-credit/1.0",
-        },
-        signal: AbortSignal.timeout(CREDIT_TIMEOUT_MS),
+    const startedAt = Date.now();
+    debugLog("info", "upstream.request", { url });
+    let response;
+    try {
+        response = await fetchImpl(url, {
+            redirect: "manual",
+            headers: {
+                "Accept": "text/html",
+                "User-Agent": "24sevenfm-covers-album-credit/1.0",
+            },
+            signal: AbortSignal.timeout(CREDIT_TIMEOUT_MS),
+        });
+    } catch (error) {
+        debugLog("warn", "upstream.failure", {
+            url,
+            duration_ms: Date.now() - startedAt,
+            error_name: error && error.name || "Error",
+            error_message: error && error.message || "request failed",
+        });
+        throw error;
+    }
+    debugLog("info", "upstream.response", {
+        url,
+        status: response.status,
+        content_type: responseHeader(response, "content-type"),
+        duration_ms: Date.now() - startedAt,
     });
     if (response.status >= 300 && response.status < 400)
         throw new CreditError("album_redirect_not_allowed", 502);
@@ -144,6 +191,11 @@ async function fetchAlbumArtist(fetchImpl, url, album) {
     if (!contentType.startsWith("text/html"))
         throw new CreditError("invalid_album_page", 502);
     const bytes = await albumPageBytes(response);
+    debugLog("info", "upstream.body", {
+        url,
+        bytes: bytes.length,
+        duration_ms: Date.now() - startedAt,
+    });
     const charset = /charset\s*=\s*([^;\s]+)/i.exec(contentType);
     const requestedEncoding = charset && charset[1].replace(/["']/g, "").toLowerCase();
     const encoding = requestedEncoding === "iso-8859-1" ? "windows-1252" : "utf-8";
@@ -151,6 +203,7 @@ async function fetchAlbumArtist(fetchImpl, url, album) {
 }
 
 function sendJson(res, status, body) {
+    debugLog("info", "response.body", { status, body });
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.end(JSON.stringify(body));
@@ -159,7 +212,12 @@ function sendJson(res, status, body) {
 function createCreditHandler(options = {}) {
     const env = options.env || process.env;
     const fetchImpl = options.fetchImpl || globalThis.fetch;
-    return async function creditHandler(req, res) {
+    async function handleCreditRequest(req, res) {
+        debugLog("info", "request.start", {
+            method: req && req.method,
+            album: req && req.query && req.query.album,
+            url: req && req.query && req.query.url,
+        });
         res.setHeader("Vary", "Origin");
         res.setHeader("X-Content-Type-Options", "nosniff");
         const origin = req.headers && req.headers.origin;
@@ -199,6 +257,18 @@ function createCreditHandler(options = {}) {
                 error: known ? error.code : "album_page_unavailable",
             });
         }
+    }
+
+    return function creditHandler(req, res) {
+        const context = { env, requestId: debugRequestId(), startedAt: Date.now() };
+        return debugLogContext.run(context, async () => {
+            const result = await handleCreditRequest(req, res);
+            debugLog("info", "request.complete", {
+                status: res.statusCode,
+                duration_ms: Date.now() - context.startedAt,
+            });
+            return result;
+        });
     };
 }
 
