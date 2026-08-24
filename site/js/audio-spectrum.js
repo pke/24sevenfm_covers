@@ -1258,7 +1258,7 @@ export function createTempoAnalysisProducer() {
     };
 }
 
-export function createLaserVisualization({ canvas, foregroundCanvas }) {
+export function createLaserVisualization({ canvas, foregroundCanvas, hasCapability }) {
     // Rendering is a pure blackboard consumer. Beat and tempo analysis belongs to
     // createTempoAnalysisProducer and only runs while a consumer demands its facts.
     const renderer = createLaserWebGlRenderer(canvas) || createLaserCanvasRenderer(canvas);
@@ -1336,7 +1336,7 @@ export function createLaserVisualization({ canvas, foregroundCanvas }) {
         supportsSyntheticData: true,
         enabled(options) {
             return !!options.laserEnabled && !options.milkdropEnabled
-                && options.station === "1980s";
+                && !!hasCapability("lasers");
         },
         setActive(active) {
             canvas.classList.toggle("active", active);
@@ -1812,6 +1812,7 @@ export function createAudioVisualizationController({
     bpmElement,
     infoElement,
     getOptions,
+    hasCapability,
     isAudioWanted,
     hasAudioPlayed,
     reducedMotion
@@ -1832,7 +1833,8 @@ export function createAudioVisualizationController({
             }),
             createLaserVisualization({
                 canvas: laserElement,
-                foregroundCanvas: laserForegroundElement
+                foregroundCanvas: laserForegroundElement,
+                hasCapability
             }),
             createBpmVisualization({ element: bpmElement })
         ]

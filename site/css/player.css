@@ -673,9 +673,71 @@
 
 /* --- controls ------------------------------------------------------------------- */
 .player-section { border-top: 0; }
-.controls { display: grid; gap: 1rem; margin-top: 1.5rem; }
+.controls { margin-top: 1.5rem; }
 /* The station picker block sits ABOVE the stage: its gap belongs below it. */
 .controls-top { margin: 0 0 1rem; }
+.settings-scope + .settings-scope { margin-top: 1.5rem; }
+.settings-scope > h3 {
+    margin: 0 0 .75rem;
+    color: var(--text);
+    font-size: 1rem;
+}
+.settings-scope > h3 span { color: var(--text-dim); font-weight: 600; }
+.settings-subheading {
+    margin: .2rem 0 .55rem;
+    font-size: .95rem;
+}
+.settings-subheading:not(:first-of-type) { margin-top: 1.15rem; }
+.all-stations-grid { display: grid; gap: 1rem; }
+.station-context-host {
+    position: relative;
+    overflow: hidden;
+    transition: height .35s ease;
+}
+.station-context-panel {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    opacity: 1;
+    transition: opacity .25s ease;
+}
+.station-context-panel[hidden] { display: none; }
+.station-context-host.transitioning .station-context-panel {
+    position: absolute;
+    inset: 0 0 auto;
+}
+.station-context-host.transitioning .context-incoming { opacity: 0; }
+.station-context-host.transitioning.swapping .context-incoming { opacity: 1; }
+.station-context-host.transitioning.swapping .context-outgoing { opacity: 0; }
+.station-context-empty {
+    min-height: 5rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: .9rem;
+    background: var(--bg-card);
+    color: var(--text-dim);
+}
+.station-context-empty p { margin: 0; }
+.share-status {
+    max-height: 0;
+    margin: 0;
+    overflow: hidden;
+    color: var(--text-dim);
+    font-size: .9rem;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-.2rem);
+    transition: opacity .2s ease, transform .2s ease, max-height .25s ease,
+                margin-top .25s ease, visibility 0s linear .25s;
+}
+.share-status.show {
+    max-height: 2rem;
+    margin-top: .55rem;
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition-delay: 0s;
+}
 .controls fieldset {
     border: 1px solid var(--line);
     border-radius: .9rem;
@@ -945,12 +1007,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 
 /* --- wider screens --------------------------------------------------------------- */
 @media (min-width: 760px) {
-    .controls { grid-template-columns: 1fr 1fr; }
-    .controls fieldset.wide { grid-column: 1 / -1; }
+    .all-stations-grid { grid-template-columns: 1fr 1fr; }
+    .all-stations-grid fieldset.wide { grid-column: 1 / -1; }
 }
 /* Inside the fullscreen overlay the panel is ~440px, whatever the viewport says -
    AFTER the media query so equal specificity resolves by source order. */
-.fs-options .controls { grid-template-columns: 1fr; margin-top: 0; }
+.fs-options .controls { margin-top: 0; }
+.fs-options .all-stations-grid { grid-template-columns: 1fr; }
 
 @media (prefers-reduced-motion: reduce) {
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
@@ -960,7 +1023,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
     .fanart-key-check span, .provider-key-help, .provider-key-status,
     .rating-badges, .rating-slot, .rating-card, .rating-face, .rating-country-options,
-    .coming-next, .coming-next-artist, .visualization-setting, .seg span {
+    .coming-next, .coming-next-artist, .visualization-setting, .seg span,
+    .station-context-host, .station-context-panel, .share-status {
         transition: none !important;
     }
     .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum { display: none; }

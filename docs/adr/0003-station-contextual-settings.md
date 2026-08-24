@@ -18,7 +18,7 @@ The relevant scopes are:
 | 80s laser show and its strobe/smoke options | 1980s.FM only |
 | Spectrum analyzer and its configuration | All stations |
 | Cover transition and duration | All stations |
-| Remaining time, rolling digits and “Coming next” | All stations |
+| Remaining-time mode and size; “Coming next” as an independent option | All stations |
 
 The current `Visualizations` fieldset mixes the all-station analyzer with the
 1980s-only laser show and the StreamingSoundtracks-only ratings. The separate
@@ -77,7 +77,8 @@ stable all-station area. This includes at least:
   including their dependent configuration;
 - layout;
 - cover transition and transition duration;
-- remaining time, rolling digits and “Coming next”.
+- remaining-time mode and size;
+- “Coming next” as an independent option.
 
 The all-station area must not be rebuilt, moved within the grid or temporarily
 disabled merely because the station changes. A station switch changes the
@@ -117,6 +118,51 @@ Station-specific option values remain ordinary persisted preferences:
 
 This is one global preference value per feature with station-scoped applicability,
 not a separate settings profile for every station.
+
+### Sparse semantic settings and share URLs
+
+Persisted settings use short semantic values instead of a Boolean master key plus
+a second key that explains how the enabled feature should render. Optional feature
+keys are sparse: when a feature is off, its key is absent rather than set to
+`false`, `0` or the string `off`.
+
+The web settings covered by this regrouping use these canonical values:
+
+| Key | Value while enabled | Meaning when absent |
+| --- | --- | --- |
+| `remaining` | `countdown` or `rolldown` | Remaining time is off |
+| `comingNext` | `true` | “Coming next” is off |
+| `sstBackdrops` | Ordered, non-empty provider ID list | SST backdrops are off |
+| `sstRatings` | Non-empty country ID list | SST ratings are off |
+
+Dependent presentation values remain independent so disabling their feature does
+not erase the user's last configuration. In particular, `remainingSize` remains
+stored as `small`, `medium` or `large` when `remaining` is removed, and `sstCover`
+may retain `show` or `hide` while SST backdrops are unavailable or disabled. The
+optional `fanartKey` also remains independent and browser-local.
+
+The previous `showRemaining`/`roll`, `showComingNext`,
+`tmdbBackdrops`/`enabledProviders`/`providerOrder`, `hideCover`, and
+`ratingsEnabled`/country-Boolean shapes are read once as a compatibility migration
+and saved back in the canonical schema. The runtime consumes only the canonical
+values after loading.
+
+The current canonical, non-secret settings are always serialized into the address
+bar. A plain player route first loads the browser-local preferences and compatible
+legacy URL overrides, then immediately replaces its current history entry with the
+equivalent canonical `preset=1` URL. Every subsequent station or settings change
+updates both persistence and that URL with `history.replaceState`; it does not add a
+history entry per interaction. Unrelated query parameters and the fragment remain
+intact. The copy-link control is therefore a convenience for copying the already
+shareable current experience, not a separate serialization mode.
+
+A URL marked with `preset=1` starts from application defaults rather than the
+recipient's local preferences, then applies the serialized keys; omitted optional
+feature keys are therefore reliably off. This makes a compact URL reproduce the
+sender's experience without filling it with explicit false values. `fanartKey` and
+any future credential or private value are never serialized. Applying a shared
+preset does not silently overwrite the recipient's saved preferences merely by
+opening the link.
 
 ### Motion and retained content
 
@@ -170,8 +216,9 @@ order above.
 - The contextual area changes height substantially between StreamingSoundtracks,
   1980s.FM and the empty state, so retained crossfades and height animation are
   functional requirements rather than optional polish.
-- Existing local-storage keys and defaults can remain compatible; the decision
-  changes presentation and authoritative availability, not the persistence schema.
+- Existing local-storage values are migrated into the sparse semantic schema. The
+  preference meaning remains compatible, but obsolete Boolean/master keys are not
+  written again.
 - Notes can become shorter because they explain feature behavior and privacy rather
   than carrying the primary burden of communicating station scope.
 
@@ -185,6 +232,13 @@ Automated browser coverage should verify:
 - spectrum, transition and remaining-time values survive every station switch and
   remain effective on every station;
 - hidden station-specific values survive a switch away and back;
+- disabling an optional feature removes its key without removing dependent settings
+  such as `remainingSize`;
+- the address bar is immediately canonicalized and stays synchronized after every
+  station or settings change without growing browser history;
+- its `preset=1` URL reproduces the sparse non-secret settings from defaults, does not
+  read or overwrite saved recipient preferences merely by opening, and never includes
+  `fanartKey`;
 - the outgoing panel is still rendered during its fade, the host height interpolates
   rather than snapping, and rapid switching ends on the final station;
 - reduced-motion mode removes or shortens the visual transition without breaking
@@ -214,5 +268,6 @@ Automated browser coverage should verify:
 
 ## Implementation status
 
-Decision accepted; the settings regrouping and shared capability model have not yet
-been implemented as part of this ADR.
+Implemented in the web player on 2026-08-24. The deterministic local browser suite
+passes 93 tests; 16 live-contract or platform-specific timing tests are intentionally
+skipped in local mode.

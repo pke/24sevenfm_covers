@@ -163,154 +163,15 @@
         <p class="visually-hidden" id="status" aria-live="polite"></p>
 
         <div class="controls">
-            <fieldset>
-                <legend>Audio</legend>
-                <div class="row">
-                    <button class="btn-player" id="audio-toggle" aria-pressed="false">▶ Play audio</button>
-                    <label for="volume">Volume</label>
-                    <input type="range" id="volume" data-option="volume"
-                           min="0" max="1" step="0.05" value="0.8">
-                </div>
-                <p class="note">Audio is optional — leave it off to use the page as a silent
-                cover display next to your own player. Streams are AAC; if your browser can't
-                play them, use the <a href="https://streamingsoundtracks.com/listen.pls">playlist
-                files</a> in a media player instead.</p>
-                <audio id="audio" crossorigin="anonymous" preload="none"></audio>
-            </fieldset>
-
-            <fieldset id="spectrum-settings">
-                <legend>Visualizations</legend>
-                <div class="row">
-                    <label><input type="checkbox" id="milkdrop-enabled"
-                                  data-option="milkdropEnabled"> MilkDrop scene</label>
-                </div>
-                <div class="seg-group control-gap visualization-setting"
-                     id="milkdrop-preset-setting" role="group" aria-label="MilkDrop preset">
-                    <label class="seg"><input type="radio" name="milkdrop-preset" value="auto"
-                                               data-option="milkdropPreset"><span>Auto</span></label>
-                    <label class="seg"><input type="radio" name="milkdrop-preset" value="aurora"
-                                               data-option="milkdropPreset"><span>Aurora</span></label>
-                    <label class="seg"><input type="radio" name="milkdrop-preset" value="mandala"
-                                               data-option="milkdropPreset"><span>Mandala</span></label>
-                    <label class="seg"><input type="radio" name="milkdrop-preset" value="tunnel"
-                                               data-option="milkdropPreset"><span>Tunnel</span></label>
-                </div>
-                <p class="note">A fullscreen-ready feedback scene with kaleidoscopic waveforms,
-                spectrum geometry and beat-driven color. Auto changes preset every 18 seconds;
-                manual changes crossfade without clearing the outgoing scene. MilkDrop takes over
-                the stage while enabled, temporarily pausing the station-specific 80s laser show.
-                It is disabled when your system requests reduced motion.</p>
-                <div class="row">
-                    <label><input type="checkbox" id="laser-enabled"
-                                  data-option="laserEnabled"> 80s laser show</label>
-                    <label><input type="checkbox" id="strobe-enabled"
-                                  data-option="strobeEnabled"
-                                  aria-describedby="strobe-warning"> Occasional beat strobe</label>
-                    <label><input type="checkbox" id="smoke-enabled"
-                                  data-option="smokeEnabled"> CO₂ side bursts</label>
-                </div>
-                <p class="note" id="strobe-warning">On 1980s.FM, a WebGL neon dance floor, a 32-band spectrum
-                wall, laser snaps and diffraction bursts follow stable kicks and their
-                estimated BPM. Beat-light songs ease into a quieter floor with slowly
-                circling laser patterns. Browsers without Web Audio use that calm mode too.
-                The optional strobe adds occasional double flashes on strong phrase beats;
-                leave it off if you are sensitive to flashing lights. Motion and flashes are
-                disabled when your system requests reduced motion. Optional CO₂ particle bursts
-                fire inward from the front corners, then billow upward instead of adding a
-                permanent fog layer.</p>
-                <div class="row">
-                    <label><input type="checkbox" id="spectrum-enabled"
-                                  data-option="spectrumEnabled"> Show analyzer</label>
-                </div>
-                <div class="row">
-                    <label><input type="checkbox" id="bpm-enabled"
-                                  data-option="bpmEnabled"> Show BPM</label>
-                </div>
-                <div class="seg-group control-gap visualization-setting" id="analyzer-type-setting"
-                     role="group" aria-label="Analyzer type">
-                    <label class="seg"><input type="radio" name="analyzer-type" value="spectrum"
-                                               data-option="analyzerType"><span>Spectrum</span></label>
-                    <label class="seg"><input type="radio" name="analyzer-type" value="oscilloscope"
-                                               data-option="analyzerType"><span>Oscilloscope</span></label>
-                </div>
-                <div class="row visualization-setting" id="spectrum-bars-setting">
-                    <label for="spectrum-bars">Bars</label>
-                    <input type="range" id="spectrum-bars" data-option="spectrumBars"
-                           data-output="spectrum-bars-val" min="8" max="64" step="8" value="24">
-                    <output id="spectrum-bars-val" for="spectrum-bars">24</output>
-                </div>
-                <div class="seg-group control-gap visualization-setting"
-                     id="oscilloscope-style-setting" role="group" aria-label="Oscilloscope style">
-                    <label class="seg"><input type="radio" name="oscilloscope-style" value="line"
-                                               data-option="oscilloscopeStyle"><span>Line</span></label>
-                    <label class="seg"><input type="radio" name="oscilloscope-style" value="dots"
-                                               data-option="oscilloscopeStyle"><span>Dots</span></label>
-                    <label class="seg"><input type="radio" name="oscilloscope-style" value="filled"
-                                               data-option="oscilloscopeStyle"><span>Filled</span></label>
-                </div>
-                <div class="seg-group control-gap visualization-setting" id="analyzer-color-setting"
-                     role="group" aria-label="Analyzer color">
-                    <label class="seg"><input type="radio" name="spectrum-mode" value="legacy"
-                                               data-option="spectrumMode"><span>Legacy</span></label>
-                    <label class="seg"><input type="radio" name="spectrum-mode" value="tinted"
-                                               data-option="spectrumMode"><span>Tinted</span></label>
-                </div>
-                <div class="row control-gap">
-                    <label><input type="checkbox" id="ratings-enabled" data-option="ratingsEnabled"
-                                  aria-controls="rating-country-options" aria-expanded="false">
-                        Ratings</label>
-                </div>
-                <div class="rating-country-options" id="rating-country-options" aria-hidden="true">
-                    <span>Show</span>
-                    <label><input type="checkbox" id="rating-de-enabled"
-                                  data-option="ratingDE"> DE</label>
-                    <label><input type="checkbox" id="rating-us-enabled"
-                                  data-option="ratingUS"> US</label>
-                </div>
-                <p class="note">On StreamingSoundtracks, show German FSK and/or US ratings for
-                the matched movie or series. Rating badges use the selected cover transition,
-                stay visible for ten seconds after a track change, and then behave like the stage controls.
-                Enabling this sends the current and upcoming queued titles to the resolver.</p>
-            </fieldset>
-
-            <fieldset>
-                <legend>Layout</legend>
-                <div class="seg-group">
-                    <label class="seg"><input type="radio" name="layout" value="0"
-                                               data-option="layout"><span>Fill</span></label>
-                    <label class="seg"><input type="radio" name="layout" value="1"
-                                               data-option="layout"><span>Poster</span></label>
-                </div>
-                <p class="note">Fullscreen: the ⛶ button on the cover, or double-click it — like
-                the apps.</p>
-            </fieldset>
-
-            <fieldset>
-                <legend>Transition</legend>
-                <div class="seg-group">
-                    <label class="seg"><input type="radio" name="transition" value="0"
-                                               data-option="transition"><span>None</span></label>
-                    <label class="seg"><input type="radio" name="transition" value="1"
-                                               data-option="transition"><span>Crossfade</span></label>
-                    <label class="seg"><input type="radio" name="transition" value="2"
-                                               data-option="transition"><span>Flip horizontal</span></label>
-                    <label class="seg"><input type="radio" name="transition" value="3"
-                                               data-option="transition"><span>Flip vertical</span></label>
-                </div>
-                <div class="row control-gap">
-                    <label for="fade">Duration</label>
-                    <input type="range" id="fade" data-option="fadeMs" data-output="fade-val"
-                           min="500" max="2000" step="100">
-                    <span id="fade-val"></span>
-                </div>
-            </fieldset>
-
-            <fieldset class="wide">
-                <legend>Experimental</legend>
-                <div class="row">
-                    <label><input type="checkbox" id="tmdb-on" data-option="tmdbBackdrops">
-                        Movie, TV &amp; game backdrops</label>
-                </div>
+            <section class="settings-scope station-settings" aria-labelledby="station-settings-heading">
+                <h3 id="station-settings-heading">For this station:
+                    <span id="station-settings-name">StreamingSoundtracks</span></h3>
+                <div class="station-context-host" id="station-context-host"
+                     aria-live="polite" aria-atomic="false">
+                    <fieldset class="station-context-panel" id="station-context-sst"
+                              data-capability="soundtrackMedia">
+                <legend>Soundtrack artwork and ratings</legend>
+                <h4 class="settings-subheading">Movie, TV &amp; game backdrops</h4>
                 <!-- Art providers by priority: drag ⠿ or focus it and use arrow keys;
                      player.js sorts these to the saved order. The topmost ENABLED provider that has
                      art for the matched work wins; the others are fallback. TMDB searches movie/TV
@@ -358,12 +219,12 @@
                     <button type="button" id="backdrop-retry">Retry</button>
                 </div>
                 <div class="row provider-followup">
-                    <label><input type="checkbox" id="hide-cover" data-option="hideCover">
+                    <label><input type="checkbox" id="hide-cover" data-option="sstCover">
                     Hide the cover while a movie,
                     TV, or game backdrop is shown</label>
                 </div>
                 <p class="note">In poster layout, a movie, TV-series, or game backdrop replaces the
-                blurred cover — matched by soundtrack title, so it fits soundtrack stations best. No key is
+                blurred cover — matched by the StreamingSoundtracks title. No key is
                 required from listeners: this site's resolver searches TMDB and SteamGridDB and prefers
                 curated, usually textless fanart.tv art for screen works. A
                 fanart.tv personal key can unlock
@@ -375,26 +236,212 @@
                 this site's resolver for matching. Upcoming requests are spread over time — see the
                 <a href="privacy.html">privacy policy</a>.
                 Artwork-provider credits appear in the footer below.</p>
-            </fieldset>
-
-            <fieldset class="wide">
-                <legend>Remaining time</legend>
-                <div class="row">
-                    <label><input type="checkbox" id="show-remaining"
-                                  data-option="showRemaining"> Show countdown</label>
-                    <label><input type="checkbox" id="show-coming-next"
-                                  data-option="showComingNext"> Show “Coming next”</label>
-                    <label><input type="checkbox" id="roll" data-option="roll"> Rolling digits</label>
-                    <span class="seg-group">
-                        <label class="seg"><input type="radio" name="cdsize" value="0"
-                                                   data-option="remainingSize"><span>Small</span></label>
-                        <label class="seg"><input type="radio" name="cdsize" value="1"
-                                                   data-option="remainingSize"><span>Medium</span></label>
-                        <label class="seg"><input type="radio" name="cdsize" value="2"
-                                                   data-option="remainingSize"><span>Large</span></label>
-                    </span>
+                <h4 class="settings-subheading">Ratings</h4>
+                <div class="rating-country-options enabled" id="rating-country-options"
+                     aria-label="Rating countries">
+                    <span>Show</span>
+                    <label><input type="checkbox" id="rating-de-enabled"> DE</label>
+                    <label><input type="checkbox" id="rating-us-enabled"> US</label>
                 </div>
-            </fieldset>
+                <p class="note">Show German FSK and/or US ratings for the matched movie or
+                series. Rating badges use the selected cover transition, stay visible for ten
+                seconds after a track change, and then behave like the stage controls. Enabling
+                this sends the current and upcoming queued titles to the resolver.</p>
+                    </fieldset>
+
+                    <fieldset class="station-context-panel" id="station-context-1980s"
+                              data-capability="lasers" hidden inert aria-hidden="true">
+                        <legend>80s laser show</legend>
+                        <div class="row">
+                            <label><input type="checkbox" id="laser-enabled"
+                                          data-option="laserEnabled"> Enable laser show</label>
+                            <label><input type="checkbox" id="strobe-enabled"
+                                          data-option="strobeEnabled"
+                                          aria-describedby="strobe-warning"> Occasional beat strobe</label>
+                            <label><input type="checkbox" id="smoke-enabled"
+                                          data-option="smokeEnabled"> CO₂ side bursts</label>
+                        </div>
+                        <p class="note" id="strobe-warning">A WebGL neon dance floor, a 32-band
+                        spectrum wall, laser snaps and diffraction bursts follow stable kicks and
+                        their estimated BPM. Beat-light songs ease into a quieter floor with slowly
+                        circling laser patterns. Browsers without Web Audio use that calm mode too.
+                        The optional strobe adds occasional double flashes on strong phrase beats;
+                        leave it off if you are sensitive to flashing lights. Motion and flashes are
+                        disabled when your system requests reduced motion. Optional CO₂ particle
+                        bursts fire inward from the front corners, then billow upward.</p>
+                    </fieldset>
+
+                    <div class="station-context-panel station-context-empty" id="station-context-adagio"
+                         data-station="adagio" hidden inert aria-hidden="true">
+                        <p>Adagio.FM has no station-specific visual effects.</p>
+                    </div>
+                    <div class="station-context-panel station-context-empty" id="station-context-death"
+                         data-station="death" hidden inert aria-hidden="true">
+                        <p>Death.FM has no station-specific visual effects.</p>
+                    </div>
+                    <div class="station-context-panel station-context-empty" id="station-context-entranced"
+                         data-station="entranced" hidden inert aria-hidden="true">
+                        <p>Entranced.FM has no station-specific visual effects.</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="settings-scope all-stations-settings"
+                     aria-labelledby="all-stations-settings-heading">
+                <h3 id="all-stations-settings-heading">For all stations</h3>
+                <div class="all-stations-grid">
+                    <fieldset>
+                        <legend>Audio</legend>
+                        <div class="row">
+                            <button class="btn-player" id="audio-toggle" aria-pressed="false">▶ Play audio</button>
+                            <label for="volume">Volume</label>
+                            <input type="range" id="volume" data-option="volume"
+                                   min="0" max="1" step="0.05" value="0.8">
+                        </div>
+                        <p class="note">Audio is optional — leave it off to use the page as a silent
+                        cover display next to your own player. Streams are AAC; if your browser can't
+                        play them, use the <a href="https://streamingsoundtracks.com/listen.pls">playlist
+                        files</a> in a media player instead.</p>
+                        <audio id="audio" crossorigin="anonymous" preload="none"></audio>
+                    </fieldset>
+
+                    <fieldset id="spectrum-settings">
+                        <legend>Visualizations</legend>
+                        <div class="row">
+                            <label><input type="checkbox" id="milkdrop-enabled"
+                                          data-option="milkdropEnabled"> MilkDrop scene</label>
+                        </div>
+                        <div class="seg-group control-gap visualization-setting"
+                             id="milkdrop-preset-setting" role="group" aria-label="MilkDrop preset">
+                            <label class="seg"><input type="radio" name="milkdrop-preset" value="auto"
+                                                       data-option="milkdropPreset"><span>Auto</span></label>
+                            <label class="seg"><input type="radio" name="milkdrop-preset" value="aurora"
+                                                       data-option="milkdropPreset"><span>Aurora</span></label>
+                            <label class="seg"><input type="radio" name="milkdrop-preset" value="mandala"
+                                                       data-option="milkdropPreset"><span>Mandala</span></label>
+                            <label class="seg"><input type="radio" name="milkdrop-preset" value="tunnel"
+                                                       data-option="milkdropPreset"><span>Tunnel</span></label>
+                        </div>
+                        <p class="note">A fullscreen-ready feedback scene with kaleidoscopic
+                        waveforms, spectrum geometry and beat-driven color. Auto changes preset
+                        every 18 seconds; manual changes crossfade without clearing the outgoing
+                        scene. MilkDrop temporarily pauses the station-specific 80s laser show.
+                        It is disabled when your system requests reduced motion.</p>
+                        <div class="row">
+                            <label><input type="checkbox" id="spectrum-enabled"
+                                          data-option="spectrumEnabled"> Show analyzer</label>
+                        </div>
+                        <div class="row">
+                            <label><input type="checkbox" id="bpm-enabled"
+                                          data-option="bpmEnabled"> Show BPM</label>
+                        </div>
+                        <div class="seg-group control-gap visualization-setting" id="analyzer-type-setting"
+                             role="group" aria-label="Analyzer type">
+                            <label class="seg"><input type="radio" name="analyzer-type" value="spectrum"
+                                                       data-option="analyzerType"><span>Spectrum</span></label>
+                            <label class="seg"><input type="radio" name="analyzer-type" value="oscilloscope"
+                                                       data-option="analyzerType"><span>Oscilloscope</span></label>
+                        </div>
+                        <div class="row visualization-setting" id="spectrum-bars-setting">
+                            <label for="spectrum-bars">Bars</label>
+                            <input type="range" id="spectrum-bars" data-option="spectrumBars"
+                                   data-output="spectrum-bars-val" min="8" max="64" step="8" value="24">
+                            <output id="spectrum-bars-val" for="spectrum-bars">24</output>
+                        </div>
+                        <div class="seg-group control-gap visualization-setting"
+                             id="oscilloscope-style-setting" role="group" aria-label="Oscilloscope style">
+                            <label class="seg"><input type="radio" name="oscilloscope-style" value="line"
+                                                       data-option="oscilloscopeStyle"><span>Line</span></label>
+                            <label class="seg"><input type="radio" name="oscilloscope-style" value="dots"
+                                                       data-option="oscilloscopeStyle"><span>Dots</span></label>
+                            <label class="seg"><input type="radio" name="oscilloscope-style" value="filled"
+                                                       data-option="oscilloscopeStyle"><span>Filled</span></label>
+                        </div>
+                        <div class="seg-group control-gap visualization-setting" id="analyzer-color-setting"
+                             role="group" aria-label="Analyzer color">
+                            <label class="seg"><input type="radio" name="spectrum-mode" value="legacy"
+                                                       data-option="spectrumMode"><span>Legacy</span></label>
+                            <label class="seg"><input type="radio" name="spectrum-mode" value="tinted"
+                                                       data-option="spectrumMode"><span>Tinted</span></label>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Layout</legend>
+                        <div class="seg-group">
+                            <label class="seg"><input type="radio" name="layout" value="0"
+                                                       data-option="layout"><span>Fill</span></label>
+                            <label class="seg"><input type="radio" name="layout" value="1"
+                                                       data-option="layout"><span>Poster</span></label>
+                        </div>
+                        <p class="note">Fullscreen: the ⛶ button on the cover, or double-click it — like
+                        the apps.</p>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Transition</legend>
+                        <div class="seg-group">
+                            <label class="seg"><input type="radio" name="transition" value="0"
+                                                       data-option="transition"><span>None</span></label>
+                            <label class="seg"><input type="radio" name="transition" value="1"
+                                                       data-option="transition"><span>Crossfade</span></label>
+                            <label class="seg"><input type="radio" name="transition" value="2"
+                                                       data-option="transition"><span>Flip horizontal</span></label>
+                            <label class="seg"><input type="radio" name="transition" value="3"
+                                                       data-option="transition"><span>Flip vertical</span></label>
+                        </div>
+                        <div class="row control-gap">
+                            <label for="fade">Duration</label>
+                            <input type="range" id="fade" data-option="fadeMs" data-output="fade-val"
+                                   min="500" max="2000" step="100">
+                            <span id="fade-val"></span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Remaining time</legend>
+                        <div class="seg-group" role="group" aria-label="Remaining-time display">
+                            <label class="seg"><input type="radio" name="remaining" value=""
+                                                       data-option="remaining"><span>Off</span></label>
+                            <label class="seg"><input type="radio" name="remaining" value="countdown"
+                                                       data-option="remaining"><span>Countdown</span></label>
+                            <label class="seg"><input type="radio" name="remaining" value="rolldown"
+                                                       data-option="remaining"><span>Rolldown</span></label>
+                        </div>
+                        <div class="row control-gap">
+                            <span>Size</span>
+                            <span class="seg-group" role="group" aria-label="Remaining-time size">
+                                <label class="seg"><input type="radio" name="cdsize" value="small"
+                                                           data-option="remainingSize"><span>Small</span></label>
+                                <label class="seg"><input type="radio" name="cdsize" value="medium"
+                                                           data-option="remainingSize"><span>Medium</span></label>
+                                <label class="seg"><input type="radio" name="cdsize" value="large"
+                                                           data-option="remainingSize"><span>Large</span></label>
+                            </span>
+                        </div>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Coming next</legend>
+                        <div class="row">
+                            <label><input type="checkbox" id="show-coming-next"
+                                          data-option="comingNext"> Show the upcoming track</label>
+                        </div>
+                        <p class="note">Appears shortly before the current track ends. If a queued
+                        credit is missing, the player may ask this site's album-credit resolver.</p>
+                    </fieldset>
+
+                    <fieldset class="wide">
+                        <legend>Share setup</legend>
+                        <button class="btn-player" type="button" id="share-settings">
+                            Copy settings link</button>
+                        <p class="share-status" id="share-settings-status" role="status"
+                           aria-live="polite"></p>
+                        <p class="note">The link contains this station and the non-secret player
+                        settings. Your optional fanart.tv personal key is never included.</p>
+                    </fieldset>
+                </div>
+            </section>
         </div>
 
         <p class="note">Options are saved in your browser (local storage, this site only — see the

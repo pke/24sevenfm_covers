@@ -21,18 +21,21 @@ var PLAYER_SCRIPT_URL = new URL(document.currentScript.src, document.baseURI);
 // filenames are wildly inconsistent per station and NOT guessable - each URL below was
 // verified live (the "500x500" variants the stations' own og:image tags reference are
 // 404 across the board, so only the 200x200 set is real).
-// `backdrop` holds the station's backdrop resolver - the function that turns its
-// current track into background art. Only SST resolves movies - it is (and stays)
-// the only soundtrack station; the other stations play regular albums, whose
-// names would only produce false movie matches. A future station plugs in its own
-// resolver function here without touching the engine.
+// Capabilities are the shared station-scope contract for both the settings UI and
+// runtime behavior. Options themselves remain one persisted preference set; a
+// capability only says where a feature may be configured and run.
+var CAPABILITY_SOUNDTRACK_MEDIA = "soundtrackMedia";
+var CAPABILITY_LASERS = "lasers";
+var NO_STATION_CAPABILITIES = Object.freeze({});
 var STATIONS = [
     { 
         id: "sst",       
         name: "StreamingSoundtracks", 
         host: "streamingsoundtracks.com", 
         desc: "Movie scores, TV themes, anime & game music", 
-        backdrop: resolveMovieBackdrop, 
+        capabilities: Object.freeze({
+            soundtrackMedia: Object.freeze({ resolver: resolveMovieBackdrop })
+        }),
         logo: "https://streamingsoundtracks.com/images/logos/logo-sst-v200x200.png" 
     },
     { 
@@ -40,24 +43,28 @@ var STATIONS = [
         name: "1980s.FM",             
         host: "1980s.fm",                 
         desc: "1980s pop, rock & new wave",                  
+        capabilities: Object.freeze({ lasers: true }),
         logo: "https://1980s.fm/images/logos/1980s_logo-200x200.png" },
     { 
         id: "adagio",    
         name: "Adagio.FM",
         host: "adagio.fm",                
         desc: "Classical & ambient",                         
+        capabilities: NO_STATION_CAPABILITIES,
         logo: "https://adagio.fm/images/logos/logo-afm-200x200.png" },
     { 
         id: "death",     
         name: "Death.FM",             
         host: "death.fm",                 
         desc: "Extreme & underground metal",                 
+        capabilities: NO_STATION_CAPABILITIES,
         logo: "https://death.fm/images/logos/logo-dfm-200x200.png" },
     { 
         id: "entranced", 
         name: "Entranced.FM",         
         host: "entranced.fm",             
         desc: "Trance, ambient & electronic",                
+        capabilities: NO_STATION_CAPABILITIES,
         logo: "https://entranced.fm/images/logos/logo-efm-g200x200.png" 
     }
 ];
@@ -87,6 +94,12 @@ function boolOption(value) {
 function enumOption(allowed, fallback) {
     return function (value) { return allowed.indexOf(value) >= 0 ? value : fallback; };
 }
+function optionalEnumOption(allowed) {
+    return function (value) { return allowed.indexOf(value) >= 0 ? value : undefined; };
+}
+function optionalTrueOption(value) {
+    return boolOption(value) ? true : undefined;
+}
 function orderedIdsOption(known) {
     return function (value) {
         var valid = (value instanceof Array) && value.length > 0
@@ -104,6 +117,22 @@ function enabledIdsOption(known) {
     return value => {
         if (!Array.isArray(value)) return known.slice();
         return known.filter(id => value.indexOf(id) >= 0);
+    };
+}
+function orderedSubsetOption(known) {
+    return function (value) {
+        if (!Array.isArray(value) || !value.length
+                || !value.every(function (id, index, values) {
+                    return known.indexOf(id) >= 0 && values.indexOf(id) === index;
+                })) return undefined;
+        return value.slice();
+    };
+}
+function knownIdsOption(known) {
+    return function (value) {
+        if (!Array.isArray(value)) return undefined;
+        var selected = known.filter(function (id) { return value.indexOf(id) >= 0; });
+        return selected.length ? selected : undefined;
     };
 }
 
@@ -130,10 +159,14 @@ var OPTION_DEFS = {
     transition: { default: 1, coerce: intOption(0, 3) },
     fadeMs: { default: 1000, coerce: intOption(500, 2000), event: "input",
         format: function (value) { return (value / 1000).toFixed(1) + " s"; } },
-    showRemaining: { default: 0, coerce: boolOption, effect: renderCountdown },
-    showComingNext: { default: 0, coerce: boolOption, effect: applyComingNextEnabled },
-    remainingSize: { default: 0, coerce: intOption(0, 2), effect: sizeStage },
-    roll: { default: 0, coerce: boolOption },
+    // Optional feature keys are absent while disabled. Their dependent presentation
+    // values remain ordinary settings so toggling a feature does not erase them.
+    remaining: { optional: true, coerce: optionalEnumOption(["countdown", "rolldown"]),
+        effect: renderCountdown },
+    comingNext: { optional: true, coerce: optionalTrueOption,
+        effect: applyComingNextEnabled },
+    remainingSize: { default: "small",
+        coerce: enumOption(["small", "medium", "large"], "small"), effect: sizeStage },
     posterBlur: { default: 24, coerce: intOption(0, 200) },
     borderRadius: { default: 45, coerce: intOption(0, 500) },
     volume: { default: 0.8, coerce: floatOption(0.8, 0, 1), event: "input",
@@ -156,17 +189,14 @@ var OPTION_DEFS = {
         effect: syncSpectrum },
     oscilloscopeStyle: { default: "line",
         coerce: enumOption(["line", "dots", "filled"], "line"), effect: syncSpectrum },
-    // Ratings are independently opt-in because they use the same title resolver as
-    // backdrops. Country choices remain selected while the master switch is off.
-    ratingsEnabled: { default: 0, coerce: boolOption, effect: applyRatingsEnabled },
-    ratingDE: { default: 1, coerce: boolOption, effect: applyRatingCountries },
-    ratingUS: { default: 1, coerce: boolOption, effect: applyRatingCountries },
-    // Experimental film/TV/game backdrops stay OFF by default because enabling them sends
-    // current/next soundtrack titles through the project resolver. fanart's optional
-    // personal client key can unlock fresher art through that same resolver.
-    // providerOrder is the art priority (first enabled provider with art wins), while
-    // enabledProviders contains the IDs whose checkbox is active.
-    tmdbBackdrops: { default: 0, coerce: boolOption, effect: updateBackdrop },
+    // SST media features encode activation and configuration in one sparse value:
+    // an ordered provider list for backdrops and a country list for ratings.
+    sstBackdrops: { optional: true, coerce: orderedSubsetOption(PROVIDER_ORDER) },
+    sstRatings: { optional: true, coerce: knownIdsOption(["DE", "US"]) },
+    sstCover: { default: "show", coerce: enumOption(["show", "hide"], "show"),
+        fromControl: function (checked) { return checked ? "hide" : "show"; },
+        checked: function (value) { return value === "hide"; },
+        effect: updateCoverVisibility },
     fanartKey: { default: "", coerce: function (value) {
         return (typeof value === "string") ? value.trim() : "";
     }, effect: updateBackdrop },
@@ -175,12 +205,7 @@ var OPTION_DEFS = {
         return Number.isSafeInteger(timestamp) && timestamp > 0
             && timestamp <= 8640000000000000 ? timestamp : 0;
     } },
-    enabledProviders: { default: PROVIDER_ORDER, coerce: enabledIdsOption(PROVIDER_ORDER) },
-    providerOrder: { default: PROVIDER_ORDER, coerce: orderedIdsOption(PROVIDER_ORDER) },
-    // Hide the cover when backdrop is available
-    hideCover: { default: 0, coerce: boolOption, effect: updateCoverVisibility }
 };
-var opts = loadOpts();
 var backdropApiMeta = document.querySelector('meta[name="backdrop-api"]');
 var BACKDROP_API_URL = (backdropApiMeta && backdropApiMeta.getAttribute("content")
     || "/api/backdrop").trim();
@@ -196,42 +221,191 @@ const FANART_KEY_CHECK_URL = "https://webservice.fanart.tv/v3/movies/27205";
 var simulateStationFailure = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
     && new URLSearchParams(location.search).has("simulateStationFailure");
 
-function loadOpts() {
-    var o = {};
-    for (var k in OPTION_DEFS) {
-        var fallback = OPTION_DEFS[k].default;
-        o[k] = fallback instanceof Array ? fallback.slice() : fallback;
+var LEGACY_OPTION_KEYS = [
+    "showRemaining", "roll", "showComingNext", "tmdbBackdrops",
+    "enabledProviders", "providerOrder", "hideCover", "ratingsEnabled",
+    "ratingDE", "ratingUS"
+];
+function migrateStoredOptions(saved) {
+    var owns = function (key) { return Object.prototype.hasOwnProperty.call(saved, key); };
+    var migrated = LEGACY_OPTION_KEYS.some(owns);
+    if (!owns("remaining") && boolOption(saved.showRemaining))
+        saved.remaining = boolOption(saved.roll) ? "rolldown" : "countdown";
+    if (typeof saved.remainingSize === "number" || /^\d+$/.test(saved.remainingSize || "")) {
+        saved.remainingSize = ["small", "medium", "large"][
+            intOption(0, 2)(saved.remainingSize)];
+        migrated = true;
     }
-    try {
-        var saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-        if (!saved || typeof saved !== "object" || saved instanceof Array) saved = {};
-        for (var s in saved) if (s in o) o[s] = saved[s];
-    } catch (e) { /* corrupt storage -> defaults */ }
+    if (!owns("comingNext") && boolOption(saved.showComingNext)) saved.comingNext = true;
+    if (!owns("sstBackdrops") && boolOption(saved.tmdbBackdrops)) {
+        var oldOrder = orderedIdsOption(PROVIDER_ORDER)(saved.providerOrder);
+        var oldEnabled = enabledIdsOption(PROVIDER_ORDER)(saved.enabledProviders);
+        var providers = oldOrder.filter(function (id) { return oldEnabled.indexOf(id) >= 0; });
+        if (providers.length) saved.sstBackdrops = providers;
+    }
+    if (!owns("sstCover") && boolOption(saved.hideCover)) saved.sstCover = "hide";
+    if (!owns("sstRatings") && boolOption(saved.ratingsEnabled)) {
+        var ratings = [];
+        if (!owns("ratingDE") || boolOption(saved.ratingDE)) ratings.push("DE");
+        if (!owns("ratingUS") || boolOption(saved.ratingUS)) ratings.push("US");
+        if (ratings.length) saved.sstRatings = ratings;
+    }
+    LEGACY_OPTION_KEYS.forEach(function (key) { delete saved[key]; });
+    return migrated;
+}
+
+function defaultOptions() {
+    var defaults = {};
+    for (var key in OPTION_DEFS) {
+        if (!Object.prototype.hasOwnProperty.call(OPTION_DEFS[key], "default")) continue;
+        var fallback = OPTION_DEFS[key].default;
+        if (fallback !== undefined)
+            defaults[key] = fallback instanceof Array ? fallback.slice() : fallback;
+    }
+    return defaults;
+}
+function applyPresetOptions(options, params) {
+    var set = function (key, value) {
+        var coerced = OPTION_DEFS[key].coerce(value);
+        if (coerced === undefined && OPTION_DEFS[key].optional) delete options[key];
+        else options[key] = coerced;
+    };
+    var booleanParam = function (key, param) {
+        if (params.has(param)) set(key, params.get(param));
+    };
+    if (params.has("station")) set("station", params.get("station"));
+    if (params.has("layout"))
+        set("layout", params.get("layout") === "fill" ? 0 : 1);
+    if (params.has("transition")) {
+        var transitions = { none: 0, crossfade: 1, flipHorizontal: 2, flipVertical: 3 };
+        if (Object.prototype.hasOwnProperty.call(transitions, params.get("transition")))
+            set("transition", transitions[params.get("transition")]);
+    }
+    if (params.has("fade")) set("fadeMs", params.get("fade"));
+    if (params.has("remaining")) set("remaining", params.get("remaining"));
+    if (params.has("remainingSize")) set("remainingSize", params.get("remainingSize"));
+    booleanParam("comingNext", "comingNext");
+    if (params.has("volume")) set("volume", params.get("volume"));
+    if (params.has("milkdrop")) {
+        set("milkdropEnabled", 1);
+        set("milkdropPreset", params.get("milkdrop"));
+    }
+    booleanParam("laserEnabled", "laser");
+    booleanParam("strobeEnabled", "strobe");
+    booleanParam("smokeEnabled", "smoke");
+    booleanParam("bpmEnabled", "bpm");
+    if (params.has("analyzer")) {
+        var analyzer = params.get("analyzer");
+        if (analyzer === "spectrum" || analyzer === "oscilloscope") {
+            set("spectrumEnabled", 1);
+            set("analyzerType", analyzer);
+        }
+    }
+    if (params.has("bars")) set("spectrumBars", params.get("bars"));
+    if (params.has("color")) set("spectrumMode", params.get("color"));
+    if (params.has("scope")) set("oscilloscopeStyle", params.get("scope"));
+    if (params.has("sstBackdrops"))
+        set("sstBackdrops", params.get("sstBackdrops").split(",").filter(Boolean));
+    if (params.has("sstCover")) set("sstCover", params.get("sstCover"));
+    if (params.has("sstRatings"))
+        set("sstRatings", params.get("sstRatings").split(",").filter(Boolean));
+    if (params.has("blur")) set("posterBlur", params.get("blur"));
+    if (params.has("radius")) set("borderRadius", params.get("radius"));
+}
+
+function loadOpts() {
+    var o = defaultOptions();
+    var p = new URLSearchParams(location.search);
+    var preset = p.get("preset") === "1";
+    var saved = {}, migrated = false;
+    if (!preset) {
+        try {
+            saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+            if (!saved || typeof saved !== "object" || saved instanceof Array) saved = {};
+            migrated = migrateStoredOptions(saved);
+            for (var s in saved) if (s in OPTION_DEFS) o[s] = saved[s];
+        } catch (e) { /* corrupt storage -> defaults */ }
+    }
     // Coercion is defined beside each default, so storage migration and first-load
     // behavior cannot drift into separate lists as settings are added.
-    for (var key in OPTION_DEFS) o[key] = OPTION_DEFS[key].coerce(o[key]);
-    // URL parameters override: ?station=death for sharable links, plus the two
-    // hidden settings, exactly the set the INI hides from the UI.
-    var p = new URLSearchParams(location.search);
-    if (p.has("station") && stationIndex(p.get("station")) >= 0) o.station = p.get("station");
-    if (p.has("posterBlur")) o.posterBlur = OPTION_DEFS.posterBlur.coerce(p.get("posterBlur"));
-    if (p.has("borderRadius"))
-        o.borderRadius = OPTION_DEFS.borderRadius.coerce(p.get("borderRadius"));
+    for (var key in OPTION_DEFS) {
+        var value = OPTION_DEFS[key].coerce(o[key]);
+        if (value === undefined && OPTION_DEFS[key].optional) delete o[key];
+        else o[key] = value;
+    }
+    if (migrated && !preset) {
+        try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); }
+        catch (e) { /* private mode: session-only */ }
+    }
+    // A marked share URL is a complete preset: defaults plus its sparse keys, never
+    // the recipient's unrelated local preferences. Ordinary URLs keep the legacy
+    // station and hidden-layout overrides for backwards compatibility.
+    if (preset) applyPresetOptions(o, p);
+    else {
+        if (p.has("station") && stationIndex(p.get("station")) >= 0) o.station = p.get("station");
+        if (p.has("posterBlur")) o.posterBlur = OPTION_DEFS.posterBlur.coerce(p.get("posterBlur"));
+        if (p.has("borderRadius"))
+            o.borderRadius = OPTION_DEFS.borderRadius.coerce(p.get("borderRadius"));
+    }
     return o;
 }
+var opts = loadOpts();
 function saveOpts() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(opts)); } catch (e) { /* private mode: session-only */ }
+    syncSettingsUrl();
 }
 function stationIndex(id) {
     for (var i = 0; i < STATIONS.length; i++) if (STATIONS[i].id === id) return i;
     return -1;
 }
-function syncStationUrl() {
-    var url = new URL(location.href);
-    if (url.searchParams.get("station") === opts.station) return;
-    url.searchParams.set("station", opts.station);
-    history.replaceState(history.state, "", url);
+var SETTINGS_URL_KEYS = [
+    "preset", "station", "layout", "transition", "fade", "remaining",
+    "remainingSize", "comingNext", "volume", "milkdrop", "laser", "strobe",
+    "smoke", "bpm", "analyzer", "bars", "color", "scope", "sstBackdrops", "sstCover",
+    "sstRatings", "blur", "radius", "posterBlur", "borderRadius"
+];
+function writeSettingsUrl(url) {
+    var params = url.searchParams;
+    var transitions = ["none", "crossfade", "flipHorizontal", "flipVertical"];
+    SETTINGS_URL_KEYS.forEach(function (key) { params.delete(key); });
+    params.set("preset", "1");
+    params.set("station", opts.station);
+    if (opts.layout !== 1) params.set("layout", "fill");
+    if (opts.transition !== 1) params.set("transition", transitions[opts.transition]);
+    if (opts.fadeMs !== 1000) params.set("fade", String(opts.fadeMs));
+    if (opts.remaining) params.set("remaining", opts.remaining);
+    if (opts.remainingSize !== "small") params.set("remainingSize", opts.remainingSize);
+    if (opts.comingNext) params.set("comingNext", "1");
+    if (opts.volume !== 0.8) params.set("volume", String(opts.volume));
+    if (opts.milkdropEnabled) params.set("milkdrop", opts.milkdropPreset);
+    if (!opts.laserEnabled) params.set("laser", "0");
+    if (opts.strobeEnabled) params.set("strobe", "1");
+    if (opts.smokeEnabled) params.set("smoke", "1");
+    if (opts.bpmEnabled) params.set("bpm", "1");
+    if (opts.spectrumEnabled) params.set("analyzer", opts.analyzerType);
+    if (opts.spectrumBars !== 24) params.set("bars", String(opts.spectrumBars));
+    if (opts.spectrumMode !== "tinted") params.set("color", opts.spectrumMode);
+    if (opts.oscilloscopeStyle !== "line") params.set("scope", opts.oscilloscopeStyle);
+    if (opts.sstBackdrops) params.set("sstBackdrops", opts.sstBackdrops.join(","));
+    if (opts.sstCover !== "show") params.set("sstCover", opts.sstCover);
+    if (opts.sstRatings) params.set("sstRatings", opts.sstRatings.join(","));
+    if (opts.posterBlur !== 24) params.set("blur", String(opts.posterBlur));
+    if (opts.borderRadius !== 45) params.set("radius", String(opts.borderRadius));
+    return url;
 }
+function settingsShareUrl() {
+    return writeSettingsUrl(new URL(location.pathname, location.origin));
+}
+function syncSettingsUrl() {
+    // Keep the address bar as the canonical, shareable non-secret state. Preserve
+    // unrelated parameters (for diagnostics or campaigns) and the hash, but replace
+    // every managed setting so stale URL values cannot survive a control change.
+    var url = writeSettingsUrl(new URL(location.href));
+    if (url.href === location.href) return;
+    try { history.replaceState(history.state, "", url); }
+    catch (error) { /* sandboxed/opaque documents may not be allowed to rewrite their URL */ }
+}
+syncSettingsUrl();
 
 // The feed stores track text HTML-encoded ("R&amp;B", "&#039;") - decode it for
 // display, like lib/coverfetch.cpp's htmlDecode. DOMParser never executes anything,
@@ -254,6 +428,13 @@ function unrotateTitleArticle(title) {
 }
 
 function station() { return STATIONS[stationIndex(opts.station)]; }
+function stationCapability(name, selectedStation) {
+    var selected = selectedStation || station();
+    return selected && selected.capabilities && selected.capabilities[name] || null;
+}
+function stationSupports(name, selectedStation) {
+    return !!stationCapability(name, selectedStation);
+}
 
 // CoverLink is controlled by the station feed. Keep image requests on the selected
 // station's HTTPS origin (or a real subdomain), matching the native clients' trust
@@ -554,8 +735,13 @@ function renderRatingBadges(generation) {
         ratings[certification.country] = certification;
         return ratings;
     }, Object.create(null));
-    ratingSlots.DE.show(opts.ratingsEnabled && opts.ratingDE ? byCountry.DE : null, generation);
-    ratingSlots.US.show(opts.ratingsEnabled && opts.ratingUS ? byCountry.US : null, generation);
+    var available = stationSupports(CAPABILITY_SOUNDTRACK_MEDIA);
+    ratingSlots.DE.show(available && opts.sstRatings
+            && opts.sstRatings.indexOf("DE") >= 0
+        ? byCountry.DE : null, generation);
+    ratingSlots.US.show(available && opts.sstRatings
+            && opts.sstRatings.indexOf("US") >= 0
+        ? byCountry.US : null, generation);
 }
 
 function setRatings(certifications, generation) {
@@ -565,28 +751,31 @@ function setRatings(certifications, generation) {
 }
 
 function syncRatingControls() {
-    var countries = $("rating-country-options"), master = $("ratings-enabled");
-    countries.classList.toggle("enabled", !!opts.ratingsEnabled);
-    countries.setAttribute("aria-hidden", opts.ratingsEnabled ? "false" : "true");
-    master.setAttribute("aria-expanded", opts.ratingsEnabled ? "true" : "false");
-    [$("rating-de-enabled"), $("rating-us-enabled")].forEach(function (control) {
-        control.disabled = !opts.ratingsEnabled;
-    });
+    $("rating-de-enabled").checked = !!opts.sstRatings
+        && opts.sstRatings.indexOf("DE") >= 0;
+    $("rating-us-enabled").checked = !!opts.sstRatings
+        && opts.sstRatings.indexOf("US") >= 0;
 }
 
-function applyRatingsEnabled() {
+function commitRatingCountries() {
+    var wasEnabled = !!opts.sstRatings;
+    var ratings = [
+        $("rating-de-enabled").checked ? "DE" : "",
+        $("rating-us-enabled").checked ? "US" : ""
+    ].filter(Boolean);
+    if (ratings.length) opts.sstRatings = ratings;
+    else delete opts.sstRatings;
+    saveOpts();
     syncRatingControls();
-    if (opts.ratingsEnabled) prepareRatingTrackVisibility();
-    else cancelRatingTrackVisibility();
+    if (opts.sstRatings && !wasEnabled) prepareRatingTrackVisibility();
+    else if (!opts.sstRatings) cancelRatingTrackVisibility();
     // Hiding is immediate state work (the CSS then performs the exit transition).
     // Do not leave a stale badge up while a replacement resolver request settles.
     renderRatingBadges(renderGenerations.backdrop);
     updateBackdrop();
 }
-
-function applyRatingCountries() {
-    renderRatingBadges(renderGenerations.backdrop);
-}
+$("rating-de-enabled").addEventListener("change", commitRatingCountries);
+$("rating-us-enabled").addEventListener("change", commitRatingCountries);
 
 // --- poll engine (ported from lib/coverfetch.cpp) ----------------------------
 var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 60, REQ_TIMEOUT = 20000;
@@ -733,8 +922,9 @@ function validArtist(value) {
 }
 
 function queuedArtistIsNeeded() {
-    return !!opts.showComingNext
-        || (!!station().backdrop && (opts.tmdbBackdrops || opts.ratingsEnabled));
+    return !!opts.comingNext
+        || (stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
+            && (!!opts.sstBackdrops || !!opts.sstRatings));
 }
 
 function resolveQueuedArtist(tracked) {
@@ -812,7 +1002,7 @@ function hideComingNext() {
 
 function renderComingNext() {
     var remaining = currentRemaining();
-    var shouldShow = !!opts.showComingNext && !!nextTrack
+    var shouldShow = !!opts.comingNext && !!nextTrack
         && remaining >= 0 && remaining <= COMING_NEXT_SECONDS;
     if (!shouldShow) return hideComingNext();
     // If the queued track changed while the old card is exiting, let the old text
@@ -826,7 +1016,7 @@ function renderComingNext() {
 }
 
 function applyComingNextEnabled() {
-    if (!opts.showComingNext && !queuedArtistIsNeeded()) cancelNextCredit(true);
+    if (!opts.comingNext && !queuedArtistIsNeeded()) cancelNextCredit(true);
     else maybeResolveNextArtist();
     scheduleQueuePrefetch(true);
     renderComingNext();
@@ -1039,12 +1229,12 @@ function clearStatus(source) { setStatus("", source); }
 
 function queueBackdropPrefetchKey(entry) {
     var providers = enabledMovieProviders();
-    var includeArt = !!opts.tmdbBackdrops && providers.length > 0;
+    var includeArt = providers.length > 0;
     return JSON.stringify([
         includeArt ? providers : ["tmdb"],
         providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
         includeArt,
-        !!opts.ratingsEnabled,
+        !!opts.sstRatings,
         entry && entry.artist || "",
     ]);
 }
@@ -1070,7 +1260,8 @@ function queuedTrackNeedsPrefetch(entry) {
             && !Object.prototype.hasOwnProperty.call(coverTintCache, entry.tintUrl)) return true;
     if (queuedArtistIsNeeded() && !entry.artist && entry.albumUrl && !entry.creditAttempted)
         return true;
-    return !!station().backdrop && (opts.tmdbBackdrops || opts.ratingsEnabled)
+    return stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
+        && (opts.sstBackdrops || opts.sstRatings)
         && entry.backdropPrefetchKey !== queueBackdropPrefetchKey(entry);
 }
 
@@ -1100,7 +1291,8 @@ async function prefetchQueuedTrack(entry, signal) {
 
     await resolveQueuedArtist(entry);
     if (signal.aborted) return;
-    if (station().backdrop && (opts.tmdbBackdrops || opts.ratingsEnabled)) {
+    if (stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
+            && (opts.sstBackdrops || opts.sstRatings)) {
         var configKey = queueBackdropPrefetchKey(entry);
         if (entry.backdropPrefetchKey !== configKey) {
             entry.art = await movieArtFor(entry.album, entry.track, entry.artist,
@@ -1312,7 +1504,7 @@ function cancelBackdropRequest() {
 // hidden, outgoing cover cannot leak through before the destination cover is ready.
 function updateCoverVisibility() {
     stage.classList.toggle("no-cover",
-        !!(coverHiddenUntilCoverReady || (opts.hideCover && movieShown)));
+        !!(coverHiddenUntilCoverReady || (opts.sstCover === "hide" && movieShown)));
 }
 var currentAlbum = "", currentTrack = "", currentArtist = "", stationIdActive = false;
 
@@ -1334,8 +1526,9 @@ async function fetchResolverJson(url, signal, cacheMode) {
 }
 
 function enabledMovieProviders() {
-    return opts.providerOrder.filter(id =>
-        ART_PROVIDER_BY_ID[id] && opts.enabledProviders.indexOf(id) >= 0);
+    return (opts.sstBackdrops || []).filter(function (id) {
+        return !!ART_PROVIDER_BY_ID[id];
+    });
 }
 
 function trustedResolvedBackdrop(raw, source) {
@@ -1570,7 +1763,7 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     const hasPrefetchedResult = arguments.length > 1;
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
-    if (cacheMode === "reload" && opts.tmdbBackdrops) {
+    if (cacheMode === "reload" && opts.sstBackdrops) {
         setStatus("Loading backdrop artwork…", "backdrop");
         setBackdropErrorState("retrying");
     } else {
@@ -1579,19 +1772,19 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     }
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
-    if (stationIdActive || (!opts.tmdbBackdrops && !opts.ratingsEnabled)) {
+    if (stationIdActive || (!opts.sstBackdrops && !opts.sstRatings)) {
         setMovieBackdrop(null, generation);
         setRatings([], generation);
         return;
     }
-    const resolver = station().backdrop;
-    if (!resolver) {
+    const mediaCapability = stationCapability(CAPABILITY_SOUNDTRACK_MEDIA);
+    if (!mediaCapability || typeof mediaCapability.resolver !== "function") {
         setMovieBackdrop(null, generation);
         setRatings([], generation);
         return;
     } // no media source
     if (hasPrefetchedResult) {
-        setMovieBackdrop(opts.tmdbBackdrops ? prefetchedArt : null, generation);
+        setMovieBackdrop(opts.sstBackdrops ? prefetchedArt : null, generation);
         setRatings(prefetchedArt && prefetchedArt.certifications || [], generation);
     }
     const ctl = new AbortController();
@@ -1600,7 +1793,7 @@ function requestBackdrop(cacheMode, prefetchedArt) {
         kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT)
     };
     backdropRequest = request;
-    Promise.resolve(resolver(generation, ctl.signal, cacheMode,
+    Promise.resolve(mediaCapability.resolver(generation, ctl.signal, cacheMode,
         hasPrefetchedResult ? prefetchedArt : undefined)).then(settled, settled);
     function settled() {
         clearTimeout(request.kill);
@@ -1619,8 +1812,8 @@ function retryBackdrop() { requestBackdrop("reload"); }
 // endpoint failures stay uncached so a later poll or option change can retry.
 async function movieArtFor(album, track, artist, generation, signal, cacheMode) {
     const providers = enabledMovieProviders();
-    const includeArt = !!opts.tmdbBackdrops && providers.length > 0;
-    const includeRatings = !!opts.ratingsEnabled;
+    const includeArt = providers.length > 0;
+    const includeRatings = !!opts.sstRatings;
     const requestedProviders = includeArt ? providers : ["tmdb"];
     if ((generation !== null && !renderIsCurrent("backdrop", generation)) || !album
             || (!includeArt && !includeRatings)) return null;
@@ -1649,7 +1842,7 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
         const renderedArt = mergeMovieArt(art, prefetchedArt);
         clearStatus("backdrop");
         setBackdropErrorState("");
-        setMovieBackdrop(opts.tmdbBackdrops ? renderedArt : null, generation);
+        setMovieBackdrop(opts.sstBackdrops ? renderedArt : null, generation);
         setRatings(renderedArt && renderedArt.certifications || [], generation);
     } catch (e) {
         if (!renderIsCurrent("backdrop", generation)) return;
@@ -1658,11 +1851,11 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
             // must never turn that successful state back into the cover or empty badges.
             clearStatus("backdrop");
             setBackdropErrorState("");
-            setMovieBackdrop(opts.tmdbBackdrops ? prefetchedArt : null, generation);
+            setMovieBackdrop(opts.sstBackdrops ? prefetchedArt : null, generation);
             setRatings(prefetchedArt.certifications || [], generation);
             return;
         }
-        if (opts.tmdbBackdrops
+        if (opts.sstBackdrops
                 && (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError"))) {
             setStatus("Backdrop service is currently unavailable.", "backdrop");
             setBackdropErrorState("error");
@@ -1684,7 +1877,7 @@ function currentRemaining() {
 }
 function fmt(s) { return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
 function renderCountdown() {
-    var rem = opts.showRemaining ? currentRemaining() : -1;
+    var rem = opts.remaining ? currentRemaining() : -1;
     cdEl.classList.toggle("hidden", rem < 0);
     if (rem < 0) { cells = []; cdEl.textContent = ""; return; }
     var text = fmt(rem);
@@ -1707,7 +1900,10 @@ function renderCountdown() {
         var c = cells[k], ch = text[k];
         if (c.ch === ch) continue;
         c.ch = ch;
-        if (!opts.roll || reducedMotion.matches || !c.cur.animate) { c.cur.textContent = ch; continue; }
+        if (opts.remaining !== "rolldown" || reducedMotion.matches || !c.cur.animate) {
+            c.cur.textContent = ch;
+            continue;
+        }
         // Rolling digit via the Web Animations API: a ghost of the OLD digit slides up
         // and out while the real cell, already holding the NEW digit, slides in from
         // below. Animations can't leave residual styles behind, which is what broke the
@@ -1771,7 +1967,7 @@ function sizeStage() {
     stage.style.setProperty("--cover-radius", (side * opts.borderRadius / 1000) + "px");
     stage.style.setProperty("--title-size", Math.max(16, side * 0.072) + "px");
     stage.style.setProperty("--artist-size", Math.max(13, side * 0.058) + "px");
-    var cdFrac = [0.048, 0.062, 0.08][opts.remainingSize];
+    var cdFrac = { small: 0.048, medium: 0.062, large: 0.08 }[opts.remainingSize];
     stage.style.setProperty("--cd-size", Math.max(12, side * cdFrac) + "px");
     // The grid fixes the info box's center. Re-center the cover in the space above
     // the box's visible top edge; when the box grows, CSS animates this small shift.
@@ -1963,6 +2159,7 @@ function loadAudioSpectrumModule() {
                 bpmElement: bpmEl,
                 infoElement: document.querySelector(".info"),
                 getOptions: () => opts,
+                hasCapability: (name) => stationSupports(name),
                 isAudioWanted: () => audioWanted,
                 hasAudioPlayed: () => audioHasPlayed,
                 reducedMotion: reducedMotion
@@ -2242,8 +2439,11 @@ document.addEventListener("fullscreenchange", function () {
 function syncOptionControls(key) {
     var def = OPTION_DEFS[key], value = opts[key];
     document.querySelectorAll('[data-option="' + key + '"]').forEach(function (control) {
-        if (control.type === "checkbox") control.checked = !!value;
-        else if (control.type === "radio") control.checked = control.value === String(value);
+        if (control.type === "checkbox")
+            control.checked = def.checked ? def.checked(value) : !!value;
+        else if (control.type === "radio")
+            control.checked = control.value === String(value)
+                || (value === undefined && control.value === "");
         else control.value = value;
         var outputId = control.getAttribute("data-output");
         if (outputId && def.format) $(outputId).textContent = def.format(value);
@@ -2257,7 +2457,10 @@ function handleOptionControl(event) {
     if (event.type !== (def.event || "change")) return;
     if (control.type === "radio" && !control.checked) return;
     var raw = control.type === "checkbox" ? control.checked : control.value;
-    opts[key] = def.coerce(raw);
+    if (def.fromControl) raw = def.fromControl(raw, control);
+    var value = def.coerce(raw);
+    if (value === undefined && def.optional) delete opts[key];
+    else opts[key] = value;
     syncOptionControls(key);
     saveOpts();
     if (def.effect) def.effect(opts[key], control);
@@ -2420,11 +2623,97 @@ fanartKeyCheckElement.addEventListener("click", checkFanartKey);
         box.appendChild(label);
     });
 })();
+
+var stationContextHost = $("station-context-host");
+var stationContextName = $("station-settings-name");
+var stationContextPanels = Array.prototype.slice.call(
+    stationContextHost.querySelectorAll(".station-context-panel"));
+var activeStationContextPanel = null;
+var stationContextFrame = null, stationContextTimer = null;
+var stationContextGeneration = 0;
+
+function contextPanelFor(selectedStation) {
+    for (var i = 0; i < stationContextPanels.length; i++) {
+        var panel = stationContextPanels[i];
+        if (panel.dataset.capability
+                && stationSupports(panel.dataset.capability, selectedStation)) return panel;
+        if (panel.dataset.station === selectedStation.id) return panel;
+    }
+    throw new Error("Missing contextual settings for station: " + selectedStation.id);
+}
+function setContextPanelSemantics(panel, active) {
+    panel.setAttribute("aria-hidden", active ? "false" : "true");
+    if (active) panel.removeAttribute("inert");
+    else panel.setAttribute("inert", "");
+}
+function settleStationContext(panel) {
+    cancelAnimationFrame(stationContextFrame);
+    clearTimeout(stationContextTimer);
+    stationContextFrame = stationContextTimer = null;
+    stationContextHost.classList.remove("transitioning", "swapping");
+    stationContextHost.style.height = "";
+    stationContextPanels.forEach(function (candidate) {
+        candidate.classList.remove("context-incoming", "context-outgoing");
+        var selected = candidate === panel;
+        candidate.hidden = !selected;
+        setContextPanelSemantics(candidate, selected);
+    });
+}
+function syncStationContext(animate) {
+    var selectedStation = station();
+    var nextPanel = contextPanelFor(selectedStation);
+    stationContextName.textContent = selectedStation.name;
+    stationContextHost.setAttribute("aria-label", "Settings for " + selectedStation.name);
+
+    var interruptedHeight = stationContextHost.classList.contains("transitioning")
+        ? stationContextHost.getBoundingClientRect().height : 0;
+    settleStationContext(activeStationContextPanel);
+    if (!activeStationContextPanel || activeStationContextPanel === nextPanel
+            || animate === false || reducedMotion.matches) {
+        activeStationContextPanel = nextPanel;
+        settleStationContext(nextPanel);
+        return;
+    }
+
+    var outgoingPanel = activeStationContextPanel;
+    var generation = ++stationContextGeneration;
+    var startHeight = interruptedHeight || outgoingPanel.getBoundingClientRect().height;
+    activeStationContextPanel = nextPanel;
+    nextPanel.hidden = false;
+    setContextPanelSemantics(outgoingPanel, false);
+    setContextPanelSemantics(nextPanel, true);
+    outgoingPanel.classList.add("context-outgoing");
+    nextPanel.classList.add("context-incoming");
+    stationContextHost.style.height = startHeight + "px";
+    stationContextHost.classList.add("transitioning");
+    var targetHeight = nextPanel.getBoundingClientRect().height;
+    void stationContextHost.offsetHeight;
+
+    stationContextFrame = requestAnimationFrame(function () {
+        stationContextFrame = null;
+        if (generation !== stationContextGeneration) return;
+        stationContextHost.style.height = targetHeight + "px";
+        stationContextHost.classList.add("swapping");
+        var duration = Math.max(
+            transitionTotalMs(stationContextHost),
+            transitionTotalMs(outgoingPanel),
+            transitionTotalMs(nextPanel));
+        stationContextTimer = setTimeout(function () {
+            if (generation !== stationContextGeneration) return;
+            settleStationContext(nextPanel);
+        }, duration + 50);
+    });
+}
+syncStationContext(false);
+
 function applyStation() {
-    // Keep the shareable URL on the station the player is actually showing. Replace
-    // the current history entry so trying several stations does not make Back step
-    // through every radio-button click; unrelated parameters and the hash survive.
-    syncStationUrl();
+    // Most station changes pass through saveOpts(); keep this sync here as well so
+    // programmatic station changes cannot leave the address bar stale.
+    syncSettingsUrl();
+    syncStationContext(true);
+    // Station-specific visualizations consume the same capability model as the
+    // contextual UI, so a switch also releases any now-unavailable scene.
+    syncSpectrum();
     // If a media backdrop currently owns the stage, clearing it below must not expose
     // SST's still-buffered cover. showCover() releases this hold only after the new
     // station cover (or logo) has loaded and become the front buffer.
@@ -2531,6 +2820,50 @@ syncMilkdropSettingControls();
 syncLaserSettingControls();
 syncRatingControls();
 
+var shareSettingsButton = $("share-settings");
+var shareSettingsStatus = $("share-settings-status");
+var shareStatusTimer = null, shareStatusClearTimer = null;
+function copyTextFallback(value) {
+    var field = document.createElement("textarea");
+    field.value = value;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    var copied = false;
+    try { copied = document.execCommand("copy"); } catch (error) { /* report below */ }
+    field.remove();
+    return copied;
+}
+function showShareStatus(message) {
+    clearTimeout(shareStatusTimer);
+    clearTimeout(shareStatusClearTimer);
+    shareSettingsStatus.textContent = message;
+    requestAnimationFrame(function () { shareSettingsStatus.classList.add("show"); });
+    shareStatusTimer = setTimeout(function () {
+        shareSettingsStatus.classList.remove("show");
+        var duration = reducedMotion.matches ? 0 : transitionTotalMs(shareSettingsStatus);
+        shareStatusClearTimer = setTimeout(function () {
+            shareSettingsStatus.textContent = "";
+        }, duration + 50);
+    }, 2400);
+}
+shareSettingsButton.addEventListener("click", async function () {
+    var value = settingsShareUrl().href;
+    var copied = false;
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(value);
+            copied = true;
+        } catch (error) { /* fall through to the selection-based copy path */ }
+    }
+    if (!copied) copied = copyTextFallback(value);
+    showShareStatus(copied
+        ? "Settings link copied."
+        : "Couldn’t copy the settings link in this browser.");
+});
+
 // --- provider priority: pointer + keyboard ------------------------------------
 // Pointer-based, NOT native HTML5 DnD: the native API renders a translucent
 // snapshot beside a text-drag cursor and the real row stays put - it cannot make
@@ -2545,7 +2878,10 @@ syncRatingControls();
 // fight text selection there.
 var providersEl = $("providers");
 backdropRetryEl.addEventListener("click", retryBackdrop);
-opts.providerOrder.forEach(function (id) {
+var providerDomOrder = (opts.sstBackdrops || []).concat(PROVIDER_ORDER.filter(function (id) {
+    return !opts.sstBackdrops || opts.sstBackdrops.indexOf(id) < 0;
+}));
+providerDomOrder.forEach(function (id) {
     var row = providersEl.querySelector('[data-provider="' + id + '"]');
     if (!row) throw new Error("Missing artwork provider control: " + id);
     providersEl.appendChild(row);
@@ -2566,30 +2902,24 @@ function syncProviderHandles(moved) {
         + (rows.indexOf(moved) + 1) + " of " + rows.length + ".";
 }
 function commitProviderOrder(moved) {
-    opts.providerOrder = Array.prototype.map.call(providersEl.children, function (li) {
-        return li.dataset.provider;
-    });
+    var providers = Array.prototype.filter.call(providersEl.children, function (li) {
+        return li.querySelector('input[type="checkbox"]').checked;
+    }).map(function (li) { return li.dataset.provider; });
+    if (providers.length) opts.sstBackdrops = providers;
+    else delete opts.sstBackdrops;
     saveOpts();
     updateBackdrop();
     syncProviderHandles(moved);
 }
 syncProviderHandles();
-// One generic wiring for every provider row: the checkbox IS the provider's
-// enabled property (getter/setter over its backing option) - a new provider row
-// needs no handler code of its own.
+// The checked rows, in DOM order, are the complete sparse sstBackdrops value.
+// With no checked row the key is absent and resolver work is disabled.
 Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function (li) {
     var provider = ART_PROVIDER_BY_ID[li.dataset.provider];
     if (!provider) throw new Error("Unknown artwork provider control: " + li.dataset.provider);
     var box = li.querySelector('input[type="checkbox"]');
-    box.checked = opts.enabledProviders.indexOf(provider.id) >= 0;
-    box.addEventListener("change", function () {
-        opts.enabledProviders = PROVIDER_ORDER.filter(id => {
-            return id === provider.id
-                ? box.checked : opts.enabledProviders.indexOf(id) >= 0;
-        });
-        saveOpts();
-        updateBackdrop();
-    });
+    box.checked = !!opts.sstBackdrops && opts.sstBackdrops.indexOf(provider.id) >= 0;
+    box.addEventListener("change", function () { commitProviderOrder(); });
 });
 providersEl.addEventListener("keydown", function (e) {
     var grip = e.target.closest(".grip");
