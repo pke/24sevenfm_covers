@@ -68,6 +68,25 @@ async function stableElementRects(page, selectors, options = {}) {
     });
 }
 
+async function openSettingsTab(page, name) {
+    const tab = name === "Station"
+        ? page.locator("#settings-tab-station")
+        : page.getByRole("tab", { name, exact: true });
+    await tab.click();
+    await expect(tab).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(`#${await tab.getAttribute("aria-controls")}`)).toBeVisible();
+}
+
+async function openBackdropSettings(page) {
+    await openSettingsTab(page, "Station");
+    const enabled = page.locator("#backdrops-enabled");
+    if (!await enabled.isChecked()) await enabled.check();
+    await expect(page.locator("#backdrop-options")).toHaveAttribute("aria-hidden", "false");
+    await page.locator("#backdrop-options").evaluate((element) => Promise.all(
+        element.getAnimations({ subtree: true }).map((animation) =>
+            animation.finished.catch(() => undefined))));
+}
+
 test.describe("the deployed player page", () => {
     test("enforces a restrictive player resource policy", async ({ page }) => {
         await mockProviderTestFeed(page);
@@ -131,8 +150,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("main")).not.toContainText("Album and Track fields");
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect(page.locator("#station-context-sst > p.note").first())
-            .toContainText("information about the current and upcoming queued titles");
+        await expect(page.locator(".controls .note")).toHaveCount(0);
     });
     test("keeps the theme toggle working when storage is unavailable", async ({ page }) => {
         await mockProviderTestFeed(page);
@@ -292,6 +310,7 @@ test.describe("the deployed player page", () => {
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
             expect(moduleRequests).toEqual([]);
+            await openSettingsTab(page, "Visualizations");
             await page.locator("#spectrum-enabled").check();
             expect(moduleRequests).toEqual([]);
 
@@ -685,11 +704,13 @@ test.describe("the deployed player page", () => {
         await expect(scopeLine).toBeDisabled();
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
 
-        await enabled.check();
-        await bpm.check();
+        await openSettingsTab(page, "Station");
         await strobe.check();
         await smoke.check();
         await lasers.uncheck();
+        await openSettingsTab(page, "Visualizations");
+        await enabled.check();
+        await bpm.check();
         await expect(strobe).toBeDisabled();
         await expect(smoke).toBeDisabled();
         await expect(bars).toBeEnabled();
@@ -699,6 +720,7 @@ test.describe("the deployed player page", () => {
             input.value = "48";
             input.dispatchEvent(new Event("input", { bubbles: true }));
         });
+        await page.locator("label.seg", { hasText: "Legacy" }).click();
         await page.locator("label.seg", { hasText: "Oscilloscope" }).click();
         await expect(bars).toBeDisabled();
         await expect(scopeLine).toBeEnabled();
@@ -706,7 +728,6 @@ test.describe("the deployed player page", () => {
         await milkdrop.check();
         await expect(milkdropAuto).toBeEnabled();
         await page.locator("label.seg", { hasText: "Mandala" }).click();
-        await page.locator("label.seg", { hasText: "Legacy" }).click();
         await expect(page.locator("#spectrum-bars-val")).toHaveText("48");
 
         await page.reload({ waitUntil: "domcontentloaded" });
@@ -726,34 +747,42 @@ test.describe("the deployed player page", () => {
         await expect(scopeDots).toBeChecked();
         await expect(page.locator('input[name="spectrum-mode"][value="legacy"]')).toBeChecked();
     });
-    test("uses the selected rating countries as the sparse opt-in value", async ({ page }) => {
+    test("persists the ratings switch independently from its country options", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
+        await openSettingsTab(page, "Station");
+        const master = page.locator("#ratings-enabled");
+        const options = page.locator("#rating-options");
         const countries = page.locator("#rating-country-options");
         const de = page.locator("#rating-de-enabled");
         const us = page.locator("#rating-us-enabled");
+        await expect(master).not.toBeChecked();
+        await expect(master).toHaveAttribute("aria-expanded", "false");
+        await expect(options).toHaveAttribute("aria-hidden", "true");
+        await expect(countries).toBeHidden();
+        await master.check();
+        await expect(options).toHaveAttribute("aria-hidden", "false");
         await expect(countries).toBeVisible();
-        await expect(de).toBeEnabled();
-        await expect(us).toBeEnabled();
-        await expect(de).not.toBeChecked();
-        await expect(us).not.toBeChecked();
-
-        await de.check();
-        await us.check();
+        await expect(de).toBeChecked();
+        await expect(us).toBeChecked();
         await us.uncheck();
         await expect(de).toBeChecked();
         await expect(us).not.toBeChecked();
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).sstRatings))
-            .toEqual(["DE"]);
-        await de.uncheck();
-        await expect.poll(() => page.evaluate(() => Object.prototype.hasOwnProperty.call(
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")), "sstRatings")))
-            .toBe(false);
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).sstRatings))
+            .toEqual({ enabled: true, options: { countries: ["DE"] } });
+        await master.uncheck();
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).sstRatings))
+            .toEqual({ enabled: false, options: { countries: ["DE"] } });
+        await expect(options).toHaveAttribute("aria-hidden", "true");
 
         await page.reload({ waitUntil: "domcontentloaded" });
-        await expect(de).not.toBeChecked();
+        await openSettingsTab(page, "Station");
+        await expect(master).not.toBeChecked();
+        await master.check();
+        await expect(de).toBeChecked();
         await expect(us).not.toBeChecked();
     });
     test("resolves ratings without artwork, flips the next logos, and settles SVGs flat", async ({ page }) => {
@@ -763,8 +792,9 @@ test.describe("the deployed player page", () => {
         ];
         let nowPlayingRequests = 0;
         const resolverRequests = [];
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ sstRatings: ["DE", "US"], transition: 2, fadeMs: 1000 })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstRatings: { enabled: true, options: { countries: ["DE", "US"] } },
+                transition: { enabled: true, options: { style: 2, durationMs: 1000 } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -894,6 +924,7 @@ test.describe("the deployed player page", () => {
         expect(badgeGeometry.backOpacity).toBe("0");
         expect(badgeGeometry.effect).toBe("fliph");
 
+        await openSettingsTab(page, "Station");
         const deToggle = page.locator("#rating-de-enabled");
         const usToggle = page.locator("#rating-us-enabled");
         await deToggle.uncheck();
@@ -970,8 +1001,9 @@ test.describe("the deployed player page", () => {
         const firstResolverMayFinish = new Promise((resolve) => {
             releaseFirstResolver = resolve;
         });
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ sstRatings: ["DE"], transition: 1, fadeMs: 500 })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstRatings: { enabled: true, options: { countries: ["DE"] } },
+                transition: { enabled: true, options: { style: 1, durationMs: 500 } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -1034,7 +1066,8 @@ test.describe("the deployed player page", () => {
 
         // Re-enabling ratings is a fresh listener action and gets the same complete
         // ten-second reveal as a new track, even though the certification is retained.
-        const ratingsToggle = page.locator("#rating-de-enabled");
+        await openSettingsTab(page, "Station");
+        const ratingsToggle = page.locator("#ratings-enabled");
         await ratingsToggle.uncheck();
         await ratingsToggle.check();
         await expect(badges).toHaveClass(/track-intro/);
@@ -1091,11 +1124,10 @@ test.describe("the deployed player page", () => {
 
         await page.locator('label.seg:has(input[name="layout"][value="0"])').click();
         await page.locator('label.seg:has(input[name="transition"][value="3"])').click();
+        await page.locator("#remaining-time-enabled").check();
         await page.locator('label.seg:has(input[name="cdsize"][value="large"])').click();
         await page.locator('label.seg:has(input[name="remaining"][value="rolldown"])').click();
         await page.locator("#show-coming-next").check();
-        await page.locator("#tmdbart-on").check();
-        await page.locator("#hide-cover").check();
         await page.locator("#fade").evaluate((input) => {
             input.value = "1700";
             input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1104,18 +1136,26 @@ test.describe("the deployed player page", () => {
             input.value = "0.35";
             input.dispatchEvent(new Event("input", { bubbles: true }));
         });
+        await openBackdropSettings(page);
+        await page.locator("#fanart-on").uncheck();
+        await page.locator("#steamgriddb-on").uncheck();
+        await page.locator("#hide-cover").check();
 
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player"))))
-            .toMatchObject({ layout: 0, transition: 3, remainingSize: "large",
-                remaining: "rolldown", comingNext: true,
-                sstBackdrops: ["tmdb"], sstCover: "hide",
-                fadeMs: 1700, volume: 0.35 });
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2"))))
+            .toMatchObject({ layout: 0,
+                transition: { enabled: true, options: { style: 3, durationMs: 1700 } },
+                remainingTime: { enabled: true,
+                    options: { mode: "rolldown", size: "large" } },
+                comingNext: true,
+                sstBackdrops: { enabled: true,
+                    options: { providers: ["tmdb"], cover: "hide" } },
+                volume: 0.35 });
         await expect.poll(() => Object.fromEntries(new URL(page.url()).searchParams))
             .toMatchObject({ preset: "1", station: "sst", layout: "fill",
                 transition: "flipVertical", fade: "1700", remaining: "rolldown",
                 remainingSize: "large", comingNext: "1", volume: "0.35",
-                sstBackdrops: "tmdb", sstCover: "hide" });
+                sstBackdrops: "1", sstBackdropProviders: "tmdb" });
         expect(new URL(page.url()).searchParams.has("fanartKey")).toBe(false);
         await expect(page.locator("#stage")).toHaveClass(/layout-fill/);
         await expect(page.locator("#fade-val")).toHaveText("1.7 s");
@@ -1126,24 +1166,23 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="cdsize"][value="large"]')).toBeChecked();
         await expect(page.locator('input[name="remaining"][value="rolldown"]')).toBeChecked();
         await expect(page.locator("#show-coming-next")).toBeChecked();
+        await expect(page.locator("#backdrops-enabled")).toBeChecked();
         await expect(page.locator("#tmdbart-on")).toBeChecked();
         await expect(page.locator("#hide-cover")).toBeChecked();
         await expect(page.locator("#fade")).toHaveValue("1700");
         await expect(page.locator("#fade-val")).toHaveText("1.7 s");
         await expect(page.locator("#volume")).toHaveValue("0.35");
 
-        await page.locator('label.seg:has(input[name="remaining"][value=""])').click();
+        await page.locator("#remaining-time-enabled").uncheck();
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player"))))
-            .toMatchObject({ remainingSize: "large" });
-        expect(await page.evaluate(() => Object.prototype.hasOwnProperty.call(
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")), "remaining")))
-            .toBe(false);
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2"))))
+            .toMatchObject({ remainingTime: { enabled: false,
+                options: { mode: "rolldown", size: "large" } } });
         expect(new URL(page.url()).searchParams.has("remaining")).toBe(false);
         expect(new URL(page.url()).searchParams.get("remainingSize")).toBe("large");
 
         await page.reload({ waitUntil: "domcontentloaded" });
-        await expect(page.locator('input[name="remaining"][value=""]')).toBeChecked();
+        await expect(page.locator("#remaining-time-enabled")).not.toBeChecked();
         await expect(page.locator('input[name="cdsize"][value="large"]')).toBeChecked();
     });
     test("shows the queued album and handed-in artist for the final ten seconds",
@@ -1152,7 +1191,7 @@ test.describe("the deployed player page", () => {
             const artist = "A Composer With An Equally Long Credit That Must Also Be Ellipsized";
             let creditRequests = 0;
             await page.setViewportSize({ width: 1000, height: 760 });
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
                 JSON.stringify({ comingNext: true })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
@@ -1237,7 +1276,7 @@ test.describe("the deployed player page", () => {
                 return nativeSetInterval(callback, delay, ...args);
             };
         });
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
             JSON.stringify({ comingNext: true })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -1282,7 +1321,7 @@ test.describe("the deployed player page", () => {
         async ({ page }) => {
             let queueRequests = 0;
             await page.clock.install({ time: new Date("2026-08-23T12:00:00Z") });
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
                 JSON.stringify({ comingNext: true })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
@@ -1317,7 +1356,7 @@ test.describe("the deployed player page", () => {
     test("fetches an album credit only when the queue omits Artist and retains text while fading",
         async ({ page }) => {
             let currentAlbum = "Current Album", queueAvailable = true, creditRequests = 0;
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
                 JSON.stringify({ comingNext: true })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
@@ -1374,8 +1413,8 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/enriched-next.svg";
         const albumUrl = "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00ENRICH";
         let creditRequests = 0, backdropArtist;
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ comingNext: true, sstBackdrops: ["tmdb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ comingNext: true, sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [{
@@ -1416,8 +1455,8 @@ test.describe("the deployed player page", () => {
         let creditRequests = 0;
         const backdropCalls = [];
         await page.addInitScript(() => {
-            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                tmdbBackdrops: 1, enabledProviders: ["tmdb"],
+            localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } },
             }));
             const nativeSetTimeout = window.setTimeout.bind(window);
             window.setTimeout = function (callback, delay) {
@@ -1475,7 +1514,7 @@ test.describe("the deployed player page", () => {
     });
     test("disables coming-next motion when reduced motion is requested", async ({ page }) => {
         await page.emulateMedia({ reducedMotion: "reduce" });
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
             JSON.stringify({ comingNext: true })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -1558,6 +1597,46 @@ test.describe("the deployed player page", () => {
         }
         expect(transforms[0].card).not.toBe(transforms[1].card);
     });
+    test("uses compact master switches and previews the selected transition", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await mockProviderTestFeed(page);
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator('.transition-choice span')).toHaveText([
+            "Crossfade", "Flip horizontal", "Flip vertical",
+        ]);
+        await expect(page.locator('input[name="transition"][value="0"]')).toHaveCount(0);
+        await expect(page.locator('input[name="remaining"][value=""]')).toHaveCount(0);
+        await expect(page.locator("#transitions-enabled + span")).toHaveText("Transitions");
+        await expect(page.locator("#remaining-time-enabled + span"))
+            .toHaveText("Remaining time");
+
+        const horizontal = page.locator(
+            'label.transition-choice:has(input[value="2"])');
+        await horizontal.locator("span").evaluate((element) => {
+            window.__transitionPreviewStarts = 0;
+            element.addEventListener("animationstart", () => {
+                window.__transitionPreviewStarts++;
+            });
+        });
+        await horizontal.click();
+        await expect(horizontal.locator("span")).toHaveClass(/preview-flip-horizontal/);
+        expect(await horizontal.locator("span").evaluate((element) =>
+            element.getAnimations().map((animation) => animation.animationName)))
+            .toContain("settings-preview-flip-horizontal");
+        await expect.poll(() => page.evaluate(() => window.__transitionPreviewStarts)).toBe(1);
+        await horizontal.click();
+        await expect.poll(() => page.evaluate(() => window.__transitionPreviewStarts)).toBe(2);
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).transition))
+            .toEqual({ enabled: true, options: { style: 2, durationMs: 1000 } });
+
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        const vertical = page.locator('label.transition-choice:has(input[value="3"])');
+        await vertical.click();
+        expect(await vertical.locator("span").evaluate((element) =>
+            element.getAnimations().length)).toBe(0);
+    });
     test("binds generated station controls through the option schema", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.route("https://death.fm/soap/FM24sevenJSON.php?*", (route) => {
@@ -1580,10 +1659,10 @@ test.describe("the deployed player page", () => {
             inputs.map((input) => input.dataset.option))).toEqual(Array(5).fill("station"));
         await page.locator('label.seg:has(input[value="death"])').click();
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).station)).toBe("death");
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).station)).toBe("death");
         await expect(page.locator('input[name="station"][value="death"]')).toBeChecked();
     });
-    test("drives retained contextual settings from station capabilities", async ({ page }) => {
+    test("shows the Station tab only for stations with contextual settings", async ({ page }) => {
         await page.emulateMedia({ reducedMotion: "no-preference" });
         await page.route(/https:\/\/(streamingsoundtracks\.com|1980s\.fm|adagio\.fm|death\.fm|entranced\.fm)\/soap\/FM24sevenJSON\.php\?/,
             (route) => {
@@ -1600,104 +1679,92 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#station-settings-heading"))
-            .toHaveText(/For this station:\s*StreamingSoundtracks/);
+        const commonTab = page.getByRole("tab", { name: "Common", exact: true });
+        const stationTab = page.locator("#settings-tab-station");
+        const visualizationsTab = page.getByRole(
+            "tab", { name: "Visualizations", exact: true });
+        await expect(page.getByRole("tab")).toHaveCount(3);
+        await expect(stationTab).toHaveText("SST");
+        await expect(commonTab).toHaveAttribute("aria-selected", "true");
+        await expect(page.locator("#settings-panel-common")).toBeVisible();
+        await expect(page.locator("#settings-panel-station")).toBeHidden();
+        await visualizationsTab.focus();
+        await visualizationsTab.press("Home");
+        await expect(commonTab).toBeFocused();
+
+        await openSettingsTab(page, "Station");
+        await expect(page.locator("#station-tab-name")).toHaveText("SST");
         await expect(page.locator("#station-context-sst")).toBeVisible();
         await expect(page.locator("#station-context-1980s")).toBeHidden();
-        await page.locator("#tmdbart-on").check();
-        await page.locator("#rating-de-enabled").check();
-        await page.locator(
-            'label.seg:has(input[name="remaining"][value="rolldown"])').click();
-        await page.locator(
-            'label.seg:has(input[name="cdsize"][value="large"])').click();
-        await page.evaluate(() => {
-            window.__stableAllStationGrid = document.querySelector(".all-stations-grid");
-            window.__stableSpectrumSettings = document.querySelector("#spectrum-settings");
-        });
+        await page.locator("#backdrops-enabled").check();
+        await page.locator("#ratings-enabled").check();
+        await page.locator("#rating-us-enabled").uncheck();
 
-        const transition = await page.locator('input[name="station"][value="1980s"]')
+        const removal = await page.locator('input[name="station"][value="death"]')
             .evaluate(async (input) => {
-                const host = document.querySelector("#station-context-host");
-                const outgoing = document.querySelector("#station-context-sst");
-                const incoming = document.querySelector("#station-context-1980s");
-                const startHeight = host.getBoundingClientRect().height;
+                const stationTab = document.querySelector("#settings-tab-station");
+                const stationPanel = document.querySelector("#settings-panel-station");
+                const commonPanel = document.querySelector("#settings-panel-common");
                 input.checked = true;
                 input.dispatchEvent(new Event("change", { bubbles: true }));
-                const synchronous = {
-                    outgoingHidden: outgoing.hidden,
-                    outgoingInert: outgoing.hasAttribute("inert"),
-                    incomingHidden: incoming.hidden,
-                    incomingInert: incoming.hasAttribute("inert"),
-                };
                 await new Promise((resolve) => requestAnimationFrame(() =>
                     requestAnimationFrame(resolve)));
-                await new Promise((resolve) => setTimeout(resolve, 70));
                 return {
-                    startHeight,
-                    hostHeight: host.getBoundingClientRect().height,
-                    targetHeight: incoming.getBoundingClientRect().height,
-                    heightAnimating: host.getAnimations().some((animation) =>
-                        animation.playState === "running"
-                        && animation.transitionProperty === "height"),
-                    outgoingHidden: outgoing.hidden,
-                    incomingHidden: incoming.hidden,
-                    synchronous,
+                    tabHidden: stationTab.hidden,
+                    tabExiting: stationTab.classList.contains("tab-exiting"),
+                    stationPanelHidden: stationPanel.hidden,
+                    stationPanelInert: stationPanel.hasAttribute("inert"),
+                    commonPanelHidden: commonPanel.hidden,
+                    commonPanelInert: commonPanel.hasAttribute("inert"),
                 };
             });
-        expect(transition.synchronous).toEqual({
-            outgoingHidden: false, outgoingInert: true,
-            incomingHidden: false, incomingInert: false,
+        expect(removal).toEqual({
+            tabHidden: false,
+            tabExiting: true,
+            stationPanelHidden: false,
+            stationPanelInert: true,
+            commonPanelHidden: false,
+            commonPanelInert: false,
         });
-        expect(transition.outgoingHidden).toBe(false);
-        expect(transition.incomingHidden).toBe(false);
-        expect(transition.heightAnimating).toBe(true);
-        expect(Math.abs(transition.hostHeight - transition.startHeight)).toBeGreaterThan(.1);
-        expect(transition.hostHeight).toBeGreaterThan(
-            Math.min(transition.startHeight, transition.targetHeight));
-        expect(transition.hostHeight).toBeLessThan(
-            Math.max(transition.startHeight, transition.targetHeight));
-        await expect(page.locator("#station-context-sst")).toBeHidden();
-        await expect(page.locator("#station-context-1980s")).toBeVisible();
-        await expect(page.locator("#station-settings-heading"))
-            .toHaveText(/For this station:\s*1980s\.FM/);
+        await expect(stationTab).toBeHidden();
+        await expect(commonTab).toHaveAttribute("aria-selected", "true");
+        await expect(page.locator("#settings-panel-common")).toBeVisible();
+        await expect(page.locator("#settings-panel-station")).toBeHidden();
+        await expect(page.locator("#station-context-death")).toHaveCount(0);
 
-        await page.evaluate(() => {
-            for (const id of ["death", "entranced", "adagio"]) {
-                const input = document.querySelector(`input[name="station"][value="${id}"]`);
-                input.checked = true;
-                input.dispatchEvent(new Event("change", { bubbles: true }));
-            }
-        });
-        await expect(page.locator("#station-settings-heading"))
-            .toHaveText(/For this station:\s*Adagio\.FM/);
-        await expect(page.locator("#station-context-adagio")).toBeVisible();
-        await expect(page.locator(".station-context-panel:not([inert]):not([hidden])"))
-            .toHaveCount(1);
-        expect(await page.evaluate(() =>
-            window.__stableAllStationGrid === document.querySelector(".all-stations-grid")
-            && window.__stableSpectrumSettings === document.querySelector("#spectrum-settings")))
-            .toBe(true);
-        await expect(page.locator('input[name="remaining"][value="rolldown"]')).toBeChecked();
-        await expect(page.locator('input[name="cdsize"][value="large"]')).toBeChecked();
+        await page.locator('label.seg:has(input[name="station"][value="1980s"])').click();
+        await expect(stationTab).toBeVisible();
+        await expect(stationTab).toHaveText("1980s.FM");
+        await openSettingsTab(page, "Station");
+        await expect(page.locator("#station-context-1980s")).toBeVisible();
+        await expect(stationTab).not.toHaveClass(/tab-entering|tab-exiting/);
 
         await page.emulateMedia({ reducedMotion: "reduce" });
         await page.locator(
-            'label.seg:has(input[name="station"][value="sst"])').click();
+            'label.seg:has(input[name="station"][value="adagio"])').click();
+        await expect(stationTab).toBeHidden();
+        await expect(page.locator("#settings-panel-common")).toBeVisible();
+        await expect(page.locator("#settings-tab-host")).not.toHaveClass(/transitioning/);
+        await page.locator('label.seg:has(input[name="station"][value="sst"])').click();
+        await expect(stationTab).toBeVisible();
+        await openSettingsTab(page, "Station");
         await expect(page.locator("#station-context-sst")).toBeVisible();
-        await expect(page.locator("#station-context-adagio")).toBeHidden();
         await expect(page.locator("#station-context-host")).not.toHaveClass(/transitioning/);
-        await expect(page.locator("#tmdbart-on")).toBeChecked();
+        await expect(page.locator("#backdrops-enabled")).toBeChecked();
+        await expect(page.locator("#ratings-enabled")).toBeChecked();
         await expect(page.locator("#rating-de-enabled")).toBeChecked();
+        await expect(page.locator("#rating-us-enabled")).not.toBeChecked();
 
         await page.setViewportSize({ width: 390, height: 760 });
         expect(await page.evaluate(() => document.documentElement.scrollWidth
             <= document.documentElement.clientWidth)).toBe(true);
     });
     test("binds the fanart personal key through the option schema", async ({ page }) => {
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
             JSON.stringify({ fanartKey: "initial-key" })));
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
 
         const key = page.locator("#fanart-key");
         await expect(key).toHaveAttribute("data-option", "fanartKey");
@@ -1706,12 +1773,13 @@ test.describe("the deployed player page", () => {
         await key.dispatchEvent("change");
         await expect(key).toHaveValue("updated-key");
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKey))
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).fanartKey))
             .toBe("updated-key");
     });
     test("offers personal-key help below an empty fanart field", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
 
         const provider = page.locator('.provider[data-provider="fanart"]');
         const key = provider.locator("#fanart-key");
@@ -1762,6 +1830,7 @@ test.describe("the deployed player page", () => {
                 moviebackground: [] } });
         });
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
 
         const key = page.locator("#fanart-key");
         const check = page.locator("#fanart-key-check");
@@ -1794,7 +1863,7 @@ test.describe("the deployed player page", () => {
             /Recheck fanart\.tv personal key; successfully checked on \d{4}-\d{2}-\d{2}/);
         await expect(status).toContainText("Personal key accepted.");
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).fanartKeyVerifiedAt))
             .toBeGreaterThan(0);
 
         const url = new URL(requestUrl);
@@ -1820,6 +1889,7 @@ test.describe("the deployed player page", () => {
             return route.fulfill({ json: { name: "Inception", tmdb_id: "27205" } });
         });
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
 
         const key = page.locator("#fanart-key");
         const check = page.locator("#fanart-key-check");
@@ -1850,7 +1920,7 @@ test.describe("the deployed player page", () => {
     });
     test("restores a checked fanart key without another API request", async ({ page }) => {
         const verifiedAt = Date.UTC(2026, 7, 20, 12, 34, 56);
-        await page.addInitScript((saved) => localStorage.setItem("24sevenfm-covers.player",
+        await page.addInitScript((saved) => localStorage.setItem("24sevenfm-covers.player.v2",
             JSON.stringify(saved)), {
             fanartKey: "persisted-client-key", fanartKeyVerifiedAt: verifiedAt
         });
@@ -1864,6 +1934,7 @@ test.describe("the deployed player page", () => {
             return route.fulfill({ json: { name: "Inception", tmdb_id: "27205" } });
         });
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
 
         const key = page.locator("#fanart-key");
         const check = page.locator("#fanart-key-check");
@@ -1883,19 +1954,19 @@ test.describe("the deployed player page", () => {
         await expect(check).toHaveText("✓");
         await expect(check).toBeEnabled();
         expect(await page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).fanartKeyVerifiedAt))
             .toBe(verifiedAt);
 
         await check.click();
         await expect(check).toHaveText("Check");
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).fanartKeyVerifiedAt))
             .toBe(0);
 
         await check.click();
         await expect(check).toHaveText("✓");
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).fanartKeyVerifiedAt))
             .toBeGreaterThan(verifiedAt);
         expect(fanartRequests).toBe(3);
 
@@ -1905,7 +1976,7 @@ test.describe("the deployed player page", () => {
         await expect(check).toHaveText("Check");
         await expect(check).toBeEnabled();
         await expect.poll(() => page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")).fanartKeyVerifiedAt))
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).fanartKeyVerifiedAt))
             .toBe(0);
         expect(fanartRequests).toBe(3);
     });
@@ -1950,6 +2021,7 @@ test.describe("the deployed player page", () => {
             const transitions = await spectrum.evaluate((canvas) =>
                 getComputedStyle(canvas).transitionProperty.split(", "));
             expect(transitions).toEqual(expect.arrayContaining(["opacity", "width", "height"]));
+            await openSettingsTab(page, "Visualizations");
             await spectrumEnabled.check();
             await page.locator("#stage").hover();
             await page.evaluate(() => {
@@ -2058,7 +2130,8 @@ test.describe("the deployed player page", () => {
             await page.evaluate(() => document.exitFullscreen());
             await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
             await expect(spectrumOptions).toBeHidden();
-            await expect(page.locator(".all-stations-grid > #spectrum-settings")).toHaveCount(1);
+            await expect(page.locator(
+                "#settings-panel-visualizations > #spectrum-settings")).toHaveCount(1);
 
             await expect(spectrum).toHaveCSS("opacity", "0.92");
             const fullFilled = await filledPixels();
@@ -2140,6 +2213,7 @@ test.describe("the deployed player page", () => {
 
             const audio = page.locator("#audio");
             const analyzer = page.locator("#stage-spectrum");
+            await openSettingsTab(page, "Visualizations");
             await page.locator("#spectrum-enabled").check();
             await page.locator("#stage-audio").click();
             await audio.dispatchEvent("playing");
@@ -2260,6 +2334,7 @@ test.describe("the deployed player page", () => {
             await audio.dispatchEvent("playing");
             await expect(lasers).toHaveClass(/active/);
 
+            await openSettingsTab(page, "Visualizations");
             await page.locator("#milkdrop-enabled").check();
             await expect(milkdrop).toHaveClass(/active/);
             await expect(stage).toHaveClass(/milkdrop-scene/);
@@ -2399,6 +2474,7 @@ test.describe("the deployed player page", () => {
             const stationSst = page.locator("label.seg", { hasText: "StreamingSoundtracks" });
             await expect(strobe).not.toBeChecked();
             await station1980s.click();
+            await openSettingsTab(page, "Station");
             await expect(strobe).toBeVisible();
             await strobe.check();
             const smoke = page.locator("#smoke-enabled");
@@ -2415,6 +2491,7 @@ test.describe("the deployed player page", () => {
             await expect(lasers).toHaveClass(/active/);
             await expect(frontLasers).toHaveClass(/active/);
             await expect(bpmDisplay).not.toHaveClass(/active/);
+            await openSettingsTab(page, "Visualizations");
             await bpmEnabled.check();
             await expect(bpmDisplay).toHaveClass(/active/);
             await expect(bpmDisplay).toHaveCSS("opacity", "1");
@@ -2437,6 +2514,7 @@ test.describe("the deployed player page", () => {
             await expect(lasers).toHaveAttribute("data-smoke-pattern",
                 "two-front-particle-emitters");
             await expect(lasers).toHaveAttribute("data-smoke-count", "0");
+            await openSettingsTab(page, "Station");
             await smoke.check();
             await expect.poll(async () => Number(
                 await lasers.getAttribute("data-smoke-count"))).toBeGreaterThan(0);
@@ -2515,6 +2593,7 @@ test.describe("the deployed player page", () => {
                 .getAttribute("data-front-painted-frames")),
             { timeout: 15000 }).toBeGreaterThan(0);
 
+            await openSettingsTab(page, "Visualizations");
             await page.locator("#spectrum-enabled").check();
             await expect(spectrum).toHaveClass(/active/);
             expect(await page.evaluate(() => window.__audioContexts)).toBe(1);
@@ -2587,6 +2666,7 @@ test.describe("the deployed player page", () => {
             const audio = page.locator("#audio");
             const lasers = page.locator("#stage-lasers");
             const bpmDisplay = page.locator("#stage-bpm");
+            await openSettingsTab(page, "Visualizations");
             await page.locator("#bpm-enabled").check();
             await page.locator("#audio-toggle").click();
             await audio.dispatchEvent("playing");
@@ -2950,8 +3030,8 @@ test.describe("the deployed player page", () => {
         const movieBackdrop = "https://image.tmdb.org/t/p/w1280/hidden-sst.jpg";
         let deathImageRoute = null;
 
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"], hideCover: 1 })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "hide" } } })));
         await page.route(/https:\/\/(streamingsoundtracks\.com|death\.fm)\/soap\/FM24sevenJSON\.php\?/, (route) => {
             const url = new URL(route.request().url());
             if (url.searchParams.get("action") === "GetQueue") return route.fulfill({ json: [] });
@@ -3009,8 +3089,8 @@ test.describe("the deployed player page", () => {
             let nextImageRoute = null;
             const resolverAlbums = [];
 
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"], hideCover: 1 })));
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "hide" } } })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
                 if (action === "GetQueue") return route.fulfill({ json: [{
@@ -3067,14 +3147,13 @@ test.describe("the deployed player page", () => {
             await expect(stage).not.toHaveClass(/no-cover/);
         });
 
-    test("ignores a resolver result after movie backdrops are disabled", async ({ page }) => {
+    test("aborts a resolver result when the backdrop master switch is disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/race.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/race.svg";
         let backdropRequested = false;
         await page.addInitScript(() => {
-            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+            localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } },
                 fanartKey: "fanart-race-key",
             }));
             window.__resolverStarted = false;
@@ -3116,14 +3195,87 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => page.evaluate(() => window.__resolverStarted)).toBe(true);
-        await page.locator("#fanart-on").uncheck();
-        await page.locator("#tmdbart-on").uncheck();
-        await page.locator("#steamgriddb-on").uncheck();
+        await openSettingsTab(page, "Station");
+        await page.locator("#backdrops-enabled").uncheck();
         await expect.poll(() => page.evaluate(() => window.__resolverAborted)).toBe(true);
+        await expect(page.locator("#fanart-on")).toBeChecked();
+        await expect(page.locator("#tmdbart-on")).toBeChecked();
+        await expect(page.locator("#steamgriddb-on")).toBeChecked();
+        await expect.poll(() => page.evaluate(() =>
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")).sstBackdrops))
+            .toEqual({ enabled: false, options: {
+                providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } });
         await page.waitForTimeout(100);
         expect(backdropRequested).toBe(false);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
     });
+    test("hides and restores a backdrop without waiting for a ratings-only request",
+        async ({ page }) => {
+            const cover = "https://streamingsoundtracks.com/images/cover/toggle-backdrop.svg";
+            let resolverRequests = 0, releaseRatingsRequest;
+            const ratingsRequestMayFinish = new Promise((resolve) => {
+                releaseRatingsRequest = resolve;
+            });
+            await page.addInitScript(() => localStorage.setItem(
+                "24sevenfm-covers.player.v2", JSON.stringify({
+                    sstBackdrops: { enabled: true,
+                        options: { providers: ["tmdb"], cover: "hide" } },
+                    sstRatings: { enabled: true, options: { countries: ["DE"] } },
+                })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+                (route) => {
+                    const action = new URL(route.request().url()).searchParams.get("action");
+                    if (action === "GetQueue") return route.fulfill({ json: [] });
+                    return route.fulfill({ json: {
+                        Album: "Toggle Backdrop Movie", Track: "Main Cue",
+                        Artist: "Toggle Composer", CoverLink: cover, Length: 0,
+                        PlayStart: "2026-08-25T12:00:00Z",
+                        SystemTime: "2026-08-25T12:00:00Z",
+                    } });
+                });
+            await page.route("https://streamingsoundtracks.com/images/cover/500/toggle-backdrop.svg",
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route(/\/api\/backdrop\?/, async (route) => {
+                resolverRequests++;
+                if (resolverRequests > 1) {
+                    await ratingsRequestMayFinish;
+                    try { return await route.fulfill({ json: { backdrop: null,
+                        certifications: [] } }); } catch (error) { return; }
+                }
+                return route.fulfill({ json: {
+                    backdrop: "https://image.tmdb.org/t/p/w1280/toggle-backdrop.jpg",
+                    source: "tmdb", tint: [70, 80, 90], certifications: [],
+                } });
+            });
+            await page.route("https://image.tmdb.org/t/p/w1280/toggle-backdrop.jpg",
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            const visibleBackdrop = page.locator("#movieA.show, #movieB.show");
+            await expect(visibleBackdrop).toHaveCount(1);
+            await openSettingsTab(page, "Station");
+            const master = page.locator("#backdrops-enabled");
+            expect(await master.evaluate((input) => {
+                input.checked = false;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                return document.querySelectorAll("#movieA.show, #movieB.show").length;
+            })).toBe(0);
+            await expect.poll(() => resolverRequests).toBeGreaterThan(1);
+
+            const showStarted = Date.now();
+            await master.evaluate((input) => {
+                input.checked = true;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+            });
+            await expect(visibleBackdrop).toHaveCount(1, { timeout: 3000 });
+            expect(Date.now() - showStarted).toBeLessThan(3000);
+            releaseRatingsRequest();
+        });
+
     test("uses the server cover tint without enabling movie backdrops", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/cover-tint.jpg";
         const thumbnail = "https://streamingsoundtracks.com/images/cover/040/cover-tint.jpg";
@@ -3206,9 +3358,8 @@ test.describe("the deployed player page", () => {
         let resolverRequests = 0, directProviderRequests = 0;
         let resolvedAlbum = "", resolvedTrack = "", resolvedArtist = "", resolvedProviders = "";
         let resolverVersion = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3263,9 +3414,8 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/hades.svg";
         const backdrop = "https://cdn2.steamgriddb.com/hero/hades.jpg";
         let album = "", track = "", providers = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3304,9 +3454,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/history-title.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/history-title.svg";
         let resolverQuery = "", personalKey = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } },
                 fanartKey: "fanart-history-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -3348,9 +3497,8 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/princess-mononoke.svg";
         const backdrop = "https://image.tmdb.org/t/p/w1280/princess-mononoke.jpg";
         let resolverQuery = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3387,9 +3535,8 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/thomas-crown.svg";
         const backdrop = "https://image.tmdb.org/t/p/w1280/thomas-crown.jpg";
         let resolverQuery = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3428,9 +3575,8 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/inspector-morse.svg";
         const backdrop = "https://image.tmdb.org/t/p/w1280/inspector-morse.jpg";
         let resolverQuery = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3467,9 +3613,8 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/wings-of-a-film.svg";
         const backdrop = "https://image.tmdb.org/t/p/w1280/thin-red-line.jpg";
         let resolverAlbum = "", resolverTrack = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3508,9 +3653,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/constructor.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/constructor.svg";
         let resolverRequests = 0;
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3544,8 +3688,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/no-key.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-key.svg";
         await page.clock.install();
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1 })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3575,9 +3719,10 @@ test.describe("the deployed player page", () => {
             let nowRequests = 0, queueRequests = 0, newResolverRequested = false;
             let releaseNewResolver;
             const newResolverMayFinish = new Promise((resolve) => { releaseNewResolver = resolve; });
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"],
-                    transition: 1, fadeMs: 500 })));
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } },
+                    transition: { enabled: true,
+                        options: { style: 1, durationMs: 500 } } })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
                 if (action === "GetQueue") {
@@ -3668,8 +3813,8 @@ test.describe("the deployed player page", () => {
         let releaseRetry;
         const retryMayFinish = new Promise((resolve) => { releaseRetry = resolve; });
         await page.addInitScript(() => {
-            localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"] }));
+            localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } } }));
             const nativeFetch = window.fetch;
             window.backdropFetchCacheModes = [];
             window.fetch = function (input, init) {
@@ -3707,6 +3852,7 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
         const error = page.locator("#backdrop-error");
         const retry = page.locator("#backdrop-retry");
         await expect(error).toBeVisible();
@@ -3734,8 +3880,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/invalid-key.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/invalid-key.svg";
         let resolverRequests = 0;
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, fanartKey: { key: "bad" } })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } }, fanartKey: { key: "bad" } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3763,8 +3909,8 @@ test.describe("the deployed player page", () => {
     });
     test("preserves audio errors across backdrop option changes", async ({ page }) => {
         await page.addInitScript(() => {
-            localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ tmdbBackdrops: 1 }));
+            localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } } }));
             HTMLMediaElement.prototype.play = function () { return Promise.reject(new Error("denied")); };
             HTMLMediaElement.prototype.pause = function () {};
             HTMLMediaElement.prototype.load = function () {};
@@ -3786,9 +3932,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/movie-failure.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/movie-failure.svg";
         let resolverRequests = 0, failedImages = 0;
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"], hideCover: 1 })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "hide" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3841,8 +3986,8 @@ test.describe("the deployed player page", () => {
             const cover = "https://streamingsoundtracks.com/images/cover/retry.svg";
             const sizedCover = "https://streamingsoundtracks.com/images/cover/500/retry.svg";
             let resolverRequests = 0;
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ sstBackdrops: ["tmdb"] })));
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } } })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
                 const action = new URL(route.request().url()).searchParams.get("action");
                 if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3872,6 +4017,7 @@ test.describe("the deployed player page", () => {
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
             await expect.poll(() => resolverRequests).toBe(1);
             await page.waitForTimeout(100); // let the failed lookup settle without caching
+            await openBackdropSettings(page);
             const toggle = page.locator("label:has(#tmdbart-on)");
             await toggle.click();
             await toggle.click();
@@ -3885,9 +4031,8 @@ test.describe("the deployed player page", () => {
         const nextCover = "https://streamingsoundtracks.com/images/cover/next.svg";
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/next.svg";
         let resolverRequests = 0, resolvedArtist = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } },
                 fanartKey: "bad-fanart-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -3923,8 +4068,8 @@ test.describe("the deployed player page", () => {
             `https://streamingsoundtracks.com/images/cover/queued-${index + 1}.svg`);
         const tintUrls = [], backdropAlbums = [];
         await page.addInitScript(() => {
-            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                tmdbBackdrops: 1, enabledProviders: ["tmdb"],
+            localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } },
             }));
             const nativeSetTimeout = window.setTimeout.bind(window);
             window.__prefetchDelays = [];
@@ -3999,8 +4144,8 @@ test.describe("the deployed player page", () => {
             let queueAlbums = ["Queue A", "Queue B"], queueRequests = 0;
             const backdropAlbums = [];
             await page.addInitScript(() => {
-                localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                    tmdbBackdrops: 1, enabledProviders: ["tmdb"],
+                localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                    sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } },
                 }));
                 const nativeSetTimeout = window.setTimeout.bind(window);
                 window.setTimeout = function (callback, delay) {
@@ -4062,8 +4207,8 @@ test.describe("the deployed player page", () => {
         };
         const artists = [];
         let backdropLoads = 0;
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [{
@@ -4134,9 +4279,13 @@ test.describe("the deployed player page", () => {
             const resolverArtists = [];
             let releaseDefinitive;
             const definitiveMayFinish = new Promise((resolve) => { releaseDefinitive = resolve; });
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-                JSON.stringify({ tmdbBackdrops: 1, ratingsEnabled: 1,
-                    enabledProviders: ["tmdb"] })));
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({
+                    sstBackdrops: { enabled: true,
+                        options: { providers: ["tmdb"], cover: "show" } },
+                    sstRatings: { enabled: true,
+                        options: { countries: ["DE", "US"] } },
+                })));
             await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
                 (route) => {
                     const action = new URL(route.request().url()).searchParams.get("action");
@@ -4225,8 +4374,8 @@ test.describe("the deployed player page", () => {
             SystemTime: "2026-08-21T12:00:00Z",
         };
         const artists = [];
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["tmdb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [{
@@ -4273,9 +4422,8 @@ test.describe("the deployed player page", () => {
     test("does not request TMDB art when that provider is disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/no-fallback.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/no-fallback.svg";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "steamgriddb"], fanartKey: "fanart-key" })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "steamgriddb"], cover: "show" } }, fanartKey: "fanart-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -4308,9 +4456,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/fanart-retry.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/fanart-retry.svg";
         let resolverRequests = 0, lastPersonalKey = "";
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } },
                 fanartKey: "fanart-key" })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
@@ -4359,9 +4506,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/provider-refresh.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/provider-refresh.svg";
         const providerRequests = [];
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -4397,6 +4543,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /fanart-priority-1/);
 
+        await openBackdropSettings(page);
         await page.locator('.provider[data-provider="fanart"] .grip').press("ArrowDown");
         await expect.poll(() => providerRequests).toEqual([
             ["fanart", "tmdb", "steamgriddb"],
@@ -4429,8 +4576,8 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/provider-race.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/provider-race.svg";
         const providerRequests = [];
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, enabledProviders: ["fanart", "tmdb"] })));
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -4463,6 +4610,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /provider-final/);
 
+        await openBackdropSettings(page);
         await page.locator("#fanart-on").uncheck();
         await expect.poll(() => providerRequests).toEqual(["fanart,tmdb", "tmdb"]);
         await page.locator("#fanart-on").check();
@@ -4512,9 +4660,8 @@ test.describe("the deployed player page", () => {
         const nextSized = "https://streamingsoundtracks.com/images/cover/500/art-timeout.svg";
         await page.clock.install();
         await page.addInitScript(() => {
-            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                tmdbBackdrops: 1,
-                enabledProviders: ["fanart", "tmdb", "steamgriddb"],
+            localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } },
                 fanartKey: "fanart-timeout-key",
             }));
             window.__resolverStarted = false;
@@ -4778,10 +4925,7 @@ test.describe("the deployed player page", () => {
                 const cover = document.querySelector("#coverbox");
                 const info = document.querySelector(".info");
                 const countdown = document.querySelector("#countdown");
-                const countdownOn = document.querySelector(
-                    'input[name="remaining"][value="countdown"]');
-                const countdownOff = document.querySelector(
-                    'input[name="remaining"][value=""]');
+                const countdownEnabled = document.querySelector("#remaining-time-enabled");
                 const twoFrames = () => new Promise((resolve) =>
                     requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 const sample = () => {
@@ -4830,8 +4974,8 @@ test.describe("the deployed player page", () => {
                 };
 
                 const collapsed = sample();
-                countdownOn.checked = true;
-                countdownOn.dispatchEvent(new Event("change", { bubbles: true }));
+                countdownEnabled.checked = true;
+                countdownEnabled.dispatchEvent(new Event("change", { bubbles: true }));
                 await twoFrames();
                 const expandingTransitions = transitionNames();
                 pauseCountdownAtHalf();
@@ -4842,8 +4986,8 @@ test.describe("the deployed player page", () => {
                 await twoFrames();
                 const expandedSettled = sample();
 
-                countdownOff.checked = true;
-                countdownOff.dispatchEvent(new Event("change", { bubbles: true }));
+                countdownEnabled.checked = false;
+                countdownEnabled.dispatchEvent(new Event("change", { bubbles: true }));
                 await twoFrames();
                 const collapsingTransitions = transitionNames();
                 pauseCountdownAtHalf();
@@ -4903,8 +5047,7 @@ test.describe("the deployed player page", () => {
         await mockLayoutTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("#info-title")).toContainText("Layout Test");
-        await page.locator(
-            'label.seg:has(input[name="remaining"][value="countdown"])').click();
+        await page.locator("#remaining-time-enabled").check();
 
         const embedded = await expectBalancedPoster(page);
         expect(Math.abs(embedded.coverWidth - embedded.coverHeight)).toBeLessThan(.5);
@@ -4941,25 +5084,22 @@ test.describe("the deployed player page", () => {
                 const cover = document.querySelector("#coverbox");
                 const info = document.querySelector(".info");
                 const countdown = document.querySelector("#countdown");
-                const countdownOn = document.querySelector(
-                    'input[name="remaining"][value="countdown"]');
-                const countdownOff = document.querySelector(
-                    'input[name="remaining"][value=""]');
+                const countdownEnabled = document.querySelector("#remaining-time-enabled");
                 const twoFrames = () => new Promise((resolve) =>
                     requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 const infoHeight = () => info.getBoundingClientRect().height;
 
                 const collapsedHeight = infoHeight();
-                countdownOn.checked = true;
-                countdownOn.dispatchEvent(new Event("change", { bubbles: true }));
+                countdownEnabled.checked = true;
+                countdownEnabled.dispatchEvent(new Event("change", { bubbles: true }));
                 await twoFrames();
                 const expandedHeight = infoHeight();
                 const expandedAnimations = {
                     countdown: countdown.getAnimations().length,
                     cover: cover.getAnimations().length,
                 };
-                countdownOff.checked = true;
-                countdownOff.dispatchEvent(new Event("change", { bubbles: true }));
+                countdownEnabled.checked = false;
+                countdownEnabled.dispatchEvent(new Event("change", { bubbles: true }));
                 await twoFrames();
 
                 return {
@@ -4992,7 +5132,7 @@ test.describe("the deployed player page", () => {
         const errors = [];
         page.on("pageerror", (error) => errors.push(String(error)));
         await page.addInitScript(() => {
-            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({ volume: 2 }));
+            localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({ volume: 2 }));
             HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
             HTMLMediaElement.prototype.pause = function () {};
         });
@@ -5005,21 +5145,22 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#audio-toggle")).toHaveAttribute("aria-pressed", "true");
     });
 
-    test("normalizes persisted scalar options and an invalid provider order", async ({ page }) => {
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
+    test("normalizes persisted scalar options and invalid backdrop options", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
             JSON.stringify({
                 station: "unknown",
                 layout: -7,
-                transition: 99,
-                fadeMs: "not-a-number",
-                remainingSize: 99,
+                transition: { enabled: 1,
+                    options: { style: 99, durationMs: "not-a-number" } },
+                remainingTime: { enabled: 1,
+                    options: { mode: "unknown", size: 99 } },
                 spectrumBars: 999,
                 spectrumMode: "unknown",
                 analyzerType: "unknown",
                 oscilloscopeStyle: "unknown",
                 milkdropPreset: "unknown",
                 fanartKey: 42,
-                providerOrder: ["unknown", "tmdb"],
+                sstBackdrops: { enabled: "1", options: "invalid" },
             })));
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
@@ -5029,7 +5170,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="transition"][value="3"]')).toBeChecked();
         await expect(page.locator("#fade")).toHaveValue("500");
         await expect(page.locator("#fade-val")).toHaveText("0.5 s");
-        await expect(page.locator('input[name="cdsize"][value="large"]')).toBeChecked();
+        await expect(page.locator('input[name="cdsize"][value="small"]')).toBeChecked();
         await expect(page.locator("#spectrum-bars")).toHaveValue("64");
         await expect(page.locator('input[name="spectrum-mode"][value="tinted"]')).toBeChecked();
         await expect(page.locator(
@@ -5039,6 +5180,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator(
             'input[name="milkdrop-preset"][value="auto"]')).toBeChecked();
         await expect(page.locator("#fanart-key")).toHaveValue("");
+        await expect(page.locator("#backdrops-enabled")).toBeChecked();
         expect(await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider)))
             .toEqual(["fanart", "tmdb", "steamgriddb"]);
@@ -5078,13 +5220,13 @@ test.describe("the deployed player page", () => {
         const recipientSettings = {
             station: "death",
             layout: 1,
-            remaining: "rolldown",
-            remainingSize: "medium",
-            sstBackdrops: ["steamgriddb"],
+            remainingTime: { enabled: true,
+                options: { mode: "rolldown", size: "medium" } },
+            sstBackdrops: { enabled: true, options: { providers: ["steamgriddb"], cover: "show" } },
             fanartKey: "recipient-secret",
         };
         await page.addInitScript((settings) => {
-            localStorage.setItem("24sevenfm-covers.player", JSON.stringify(settings));
+            localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify(settings));
             window.__copiedSettingsUrl = "";
             Object.defineProperty(window, "isSecureContext",
                 { configurable: true, value: true });
@@ -5099,7 +5241,8 @@ test.describe("the deployed player page", () => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html?preset=1&station=sst&layout=fill"
             + "&remaining=countdown&remainingSize=large&comingNext=1"
-            + "&sstBackdrops=tmdb,fanart&sstCover=hide&sstRatings=US&bpm=1",
+            + "&sstBackdrops=1&sstBackdropProviders=tmdb,fanart"
+            + "&sstBackdropCover=hide&sstRatings=1&sstRatingCountries=US&bpm=1",
         { waitUntil: "domcontentloaded" });
 
         await expect(page.locator('input[name="station"][value="sst"]')).toBeChecked();
@@ -5109,10 +5252,12 @@ test.describe("the deployed player page", () => {
         await expect(page.locator('input[name="cdsize"][value="large"]')).toBeChecked();
         await expect(page.locator("#show-coming-next")).toBeChecked();
         await expect(page.locator("#bpm-enabled")).toBeChecked();
+        await expect(page.locator("#backdrops-enabled")).toBeChecked();
         await expect(page.locator("#tmdbart-on")).toBeChecked();
         await expect(page.locator("#fanart-on")).toBeChecked();
         await expect(page.locator("#steamgriddb-on")).not.toBeChecked();
         await expect(page.locator("#hide-cover")).toBeChecked();
+        await expect(page.locator("#ratings-enabled")).toBeChecked();
         await expect(page.locator("#rating-de-enabled")).not.toBeChecked();
         await expect(page.locator("#rating-us-enabled")).toBeChecked();
         await expect(page.locator("#fanart-key")).toHaveValue("");
@@ -5120,7 +5265,7 @@ test.describe("the deployed player page", () => {
             rows.map((row) => row.dataset.provider)))
             .toEqual(["tmdb", "fanart", "steamgriddb"]);
         expect(await page.evaluate(() => JSON.parse(
-            localStorage.getItem("24sevenfm-covers.player"))))
+            localStorage.getItem("24sevenfm-covers.player.v2"))))
             .toEqual(recipientSettings);
 
         await page.locator("#share-settings").click();
@@ -5135,36 +5280,42 @@ test.describe("the deployed player page", () => {
             remainingSize: "large",
             comingNext: "1",
             bpm: "1",
-            sstBackdrops: "tmdb,fanart",
-            sstCover: "hide",
-            sstRatings: "US",
+            sstBackdrops: "1",
+            sstBackdropProviders: "tmdb,fanart",
+            sstRatings: "1",
+            sstRatingCountries: "US",
         });
         expect(sharedUrl.searchParams.has("fanartKey")).toBe(false);
         expect(sharedUrl.searchParams.has("remainingDisplay")).toBe(false);
 
+        await openSettingsTab(page, "Visualizations");
         await page.locator("#bpm-enabled").uncheck();
         await expect.poll(() => new URL(page.url()).searchParams.has("bpm"))
             .toBe(false);
-        await page.locator(
-            'label.seg:has(input[name="remaining"][value=""])').click();
+        await openSettingsTab(page, "Common");
+        await page.locator("#remaining-time-enabled").uncheck();
         await expect.poll(() => new URL(page.url()).searchParams.has("remaining"))
             .toBe(false);
         expect(new URL(page.url()).searchParams.get("remainingSize")).toBe("large");
         const savedAfterEdit = await page.evaluate(() => JSON.parse(
-            localStorage.getItem("24sevenfm-covers.player")));
-        expect(savedAfterEdit).not.toHaveProperty("remaining");
-        expect(savedAfterEdit.remainingSize).toBe("large");
+            localStorage.getItem("24sevenfm-covers.player.v2")));
+        expect(savedAfterEdit.remainingTime).toEqual({ enabled: false,
+            options: { mode: "countdown", size: "large" } });
 
         await page.reload({ waitUntil: "domcontentloaded" });
-        await expect(page.locator('input[name="remaining"][value=""]')).toBeChecked();
+        await expect(page.locator("#remaining-time-enabled")).not.toBeChecked();
         await expect(page.locator('input[name="cdsize"][value="large"]')).toBeChecked();
     });
 
-    test("keeps string zero boolean options disabled", async ({ page }) => {
+    test("starts from v2 defaults instead of migrating the old storage key", async ({ page }) => {
         let resolverRequests = 0;
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: "0",
-                showRemaining: "0", showComingNext: "0", roll: "0", hideCover: "0" })));
+        await page.addInitScript(() => {
+            localStorage.removeItem("24sevenfm-covers.player.v2");
+            localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
+                station: "death", layout: 0, tmdbBackdrops: 1,
+                enabledProviders: ["tmdb"], hideCover: 1,
+            }));
+        });
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -5183,12 +5334,17 @@ test.describe("the deployed player page", () => {
         });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect(page.locator("#fanart-on")).not.toBeChecked();
-        await expect(page.locator("#tmdbart-on")).not.toBeChecked();
-        await expect(page.locator("#steamgriddb-on")).not.toBeChecked();
-        await expect(page.locator('input[name="remaining"][value=""]')).toBeChecked();
+        await expect(page.locator('input[name="station"][value="sst"]')).toBeChecked();
+        await expect(page.locator("#stage")).toHaveClass(/layout-poster/);
+        await expect(page.locator("#backdrops-enabled")).not.toBeChecked();
+        await expect(page.locator("#fanart-on")).toBeChecked();
+        await expect(page.locator("#tmdbart-on")).toBeChecked();
+        await expect(page.locator("#steamgriddb-on")).toBeChecked();
+        await expect(page.locator("#remaining-time-enabled")).not.toBeChecked();
         await expect(page.locator("#show-coming-next")).not.toBeChecked();
-        await expect(page.locator("#hide-cover")).not.toBeChecked();
+        await expect(page.locator("#hide-cover")).toBeChecked();
+        expect(await page.evaluate(() => localStorage.getItem(
+            "24sevenfm-covers.player.v2"))).toBeNull();
         await page.waitForTimeout(100);
         expect(resolverRequests).toBe(0);
     });
@@ -5257,6 +5413,9 @@ test.describe("the deployed player page", () => {
     test("keeps artwork-provider controls aligned with their public contract", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect(page.locator("#backdrops-enabled")).not.toBeChecked();
+        await expect(page.locator("#backdrop-options")).toHaveAttribute("aria-hidden", "true");
+        await expect(page.locator("#hide-cover")).toBeChecked();
 
         const providers = await page.locator("#providers > .provider").evaluateAll((rows) =>
             rows.map((row) => {
@@ -5270,20 +5429,21 @@ test.describe("the deployed player page", () => {
                 };
             }));
         expect(providers).toEqual([
-            { id: "fanart", label: "fanart.tv", controlId: "fanart-on", enabled: false,
+            { id: "fanart", label: "fanart.tv", controlId: "fanart-on", enabled: true,
                 reorderLabel: expect.stringMatching(/^Reorder fanart\.tv, position 1 of 3\./) },
-            { id: "tmdb", label: "TMDB backdrops", controlId: "tmdbart-on", enabled: false,
+            { id: "tmdb", label: "TMDB backdrops", controlId: "tmdbart-on", enabled: true,
                 reorderLabel: expect.stringMatching(/^Reorder TMDB backdrops, position 2 of 3\./) },
             { id: "steamgriddb", label: "GameArt by SteamGridDB",
-                controlId: "steamgriddb-on", enabled: false,
+                controlId: "steamgriddb-on", enabled: true,
                 reorderLabel: expect.stringMatching(/^Reorder GameArt by SteamGridDB, position 3 of 3\./) },
         ]);
     });
-    test("persists provider enablement as an ID list", async ({ page }) => {
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ sstBackdrops: ["tmdb"] })));
+    test("persists provider enablement inside backdrop options", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } } })));
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
 
         await expect(page.locator("#fanart-on")).not.toBeChecked();
         await expect(page.locator("#tmdbart-on")).toBeChecked();
@@ -5291,18 +5451,20 @@ test.describe("the deployed player page", () => {
         await page.locator("#fanart-on").check();
 
         const saved = await page.evaluate(() =>
-            JSON.parse(localStorage.getItem("24sevenfm-covers.player")));
-        expect(saved.sstBackdrops).toEqual(["tmdb", "fanart"]);
+            JSON.parse(localStorage.getItem("24sevenfm-covers.player.v2")));
+        expect(saved.sstBackdrops).toEqual({ enabled: true,
+            options: { providers: ["tmdb", "fanart"], cover: "show" } });
     });
     test("reorders and persists backdrop providers with the keyboard", async ({ page }) => {
         await page.addInitScript(() => {
-            if (!localStorage.getItem("24sevenfm-covers.player"))
-                localStorage.setItem("24sevenfm-covers.player", JSON.stringify({
-                    sstBackdrops: ["fanart", "tmdb", "steamgriddb"],
+            if (!localStorage.getItem("24sevenfm-covers.player.v2"))
+                localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                    sstBackdrops: { enabled: true, options: { providers: ["fanart", "tmdb", "steamgriddb"], cover: "show" } },
                 }));
         });
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
         const order = () => page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
         const fanartGrip = page.locator('.provider[data-provider="fanart"] .grip');
@@ -5315,17 +5477,20 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 3.");
 
         await page.reload({ waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
         expect(await order()).toEqual(["tmdb", "fanart", "steamgriddb"]);
         await fanartGrip.focus();
         await fanartGrip.press("ArrowUp");
         expect(await order()).toEqual(["fanart", "tmdb", "steamgriddb"]);
     });
 
-    test("appends SteamGridDB to an older saved two-provider order", async ({ page }) => {
-        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player",
-            JSON.stringify({ tmdbBackdrops: 1, providerOrder: ["tmdb", "fanart"] })));
+    test("filters unknown provider IDs from v2 backdrop options", async ({ page }) => {
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true,
+                options: { providers: ["unknown", "tmdb"], cover: "show" } } })));
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await openBackdropSettings(page);
         const order = await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
         expect(order).toEqual(["tmdb", "fanart", "steamgriddb"]);
@@ -5334,16 +5499,36 @@ test.describe("the deployed player page", () => {
     test("keeps backdrop providers pointer-draggable", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        const grip = page.locator('.provider[data-provider="fanart"] .grip');
+        await openBackdropSettings(page);
+        await expect(page.locator("#providers")).toBeVisible();
+        expect(await page.locator("#providers").evaluate((providers) =>
+            !!(providers.compareDocumentPosition(document.querySelector("#hide-cover"))
+                & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+        const dragged = page.locator('.provider[data-provider="fanart"]');
+        const grip = dragged.locator(".grip");
         const target = page.locator('.provider[data-provider="tmdb"]');
         await grip.scrollIntoViewIfNeeded();
         const from = await grip.boundingBox(), to = await target.boundingBox();
         expect(from).not.toBeNull();
         expect(to).not.toBeNull();
+        const themeBefore = await dragged.evaluate((row) => ({
+            color: getComputedStyle(row).color,
+            accent: getComputedStyle(row.querySelector('input[type="checkbox"]')).accentColor,
+        }));
 
         await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
         await page.mouse.down();
-        await page.mouse.move(to.x + to.width / 2, to.y + to.height * .75, { steps: 5 });
+        const pointer = { x: to.x + to.width / 2, y: to.y + to.height * .75 };
+        await page.mouse.move(pointer.x, pointer.y, { steps: 5 });
+        const floatingGrip = await grip.boundingBox();
+        expect(Math.abs(floatingGrip.x + floatingGrip.width / 2 - pointer.x))
+            .toBeLessThan(15);
+        expect(Math.abs(floatingGrip.y + floatingGrip.height / 2 - pointer.y))
+            .toBeLessThan(15);
+        expect(await dragged.evaluate((row) => ({
+            color: getComputedStyle(row).color,
+            accent: getComputedStyle(row.querySelector('input[type="checkbox"]')).accentColor,
+        }))).toEqual(themeBefore);
         await page.mouse.up();
 
         const order = await page.locator("#providers > .provider")

@@ -1,7 +1,7 @@
 # ADR 0003: Station-contextual settings with stable all-station controls
 
 Date: 2026-08-24
-Status: Accepted
+Status: Superseded by ADR 0005
 
 ## Context
 

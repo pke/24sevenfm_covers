@@ -73,7 +73,7 @@ var STATIONS = [
 // Keys and defaults mirror shared/config.h so the player behaves like the apps.
 // Persisted in localStorage (documented in the privacy policy); posterBlur and
 // borderRadius stay hidden here too - URL parameters instead of UI, like the INI.
-var STORE_KEY = "24sevenfm-covers.player";
+var STORE_KEY = "24sevenfm-covers.player.v2";
 function clampInt(v, lo, hi) {
     v = parseInt(v, 10);
     return isNaN(v) ? lo : Math.min(hi, Math.max(lo, v));
@@ -94,45 +94,38 @@ function boolOption(value) {
 function enumOption(allowed, fallback) {
     return function (value) { return allowed.indexOf(value) >= 0 ? value : fallback; };
 }
-function optionalEnumOption(allowed) {
-    return function (value) { return allowed.indexOf(value) >= 0 ? value : undefined; };
-}
 function optionalTrueOption(value) {
     return boolOption(value) ? true : undefined;
 }
-function orderedIdsOption(known) {
-    return function (value) {
-        var valid = (value instanceof Array) && value.length > 0
-            && value.every(function (id, index, order) {
-                return known.indexOf(id) >= 0 && order.indexOf(id) === index;
-            });
-        var order = (valid ? value : known).slice();
-        known.forEach(function (id) {
-            if (order.indexOf(id) < 0) order.push(id);
+function cloneOptionValue(value) {
+    if (Array.isArray(value)) return value.map(cloneOptionValue);
+    if (value && typeof value === "object") {
+        var copy = {};
+        Object.keys(value).forEach(function (key) {
+            copy[key] = cloneOptionValue(value[key]);
         });
-        return order;
-    };
+        return copy;
+    }
+    return value;
 }
-function enabledIdsOption(known) {
-    return value => {
-        if (!Array.isArray(value)) return known.slice();
-        return known.filter(id => value.indexOf(id) >= 0);
-    };
-}
-function orderedSubsetOption(known) {
+function selectedIdsOption(known, fallback) {
     return function (value) {
-        if (!Array.isArray(value) || !value.length
-                || !value.every(function (id, index, values) {
-                    return known.indexOf(id) >= 0 && values.indexOf(id) === index;
-                })) return undefined;
-        return value.slice();
+        if (!Array.isArray(value)) return fallback.slice();
+        var selected = [];
+        value.forEach(function (id) {
+            if (known.indexOf(id) >= 0 && selected.indexOf(id) < 0) selected.push(id);
+        });
+        return selected;
     };
 }
-function knownIdsOption(known) {
+function featureOption(defaultOptions, coerceOptions) {
     return function (value) {
-        if (!Array.isArray(value)) return undefined;
-        var selected = known.filter(function (id) { return value.indexOf(id) >= 0; });
-        return selected.length ? selected : undefined;
+        var feature = value && typeof value === "object" && !Array.isArray(value)
+            ? value : {};
+        return {
+            enabled: !!boolOption(feature.enabled),
+            options: coerceOptions(feature.options || cloneOptionValue(defaultOptions))
+        };
     };
 }
 
@@ -148,6 +141,41 @@ var ART_PROVIDER_BY_ID = ART_PROVIDER_DEFS.reduce((providers, provider) => {
     providers[provider.id] = provider;
     return providers;
 }, Object.create(null));
+var DEFAULT_BACKDROP_OPTIONS = Object.freeze({
+    providers: Object.freeze(PROVIDER_ORDER.slice()),
+    cover: "hide"
+});
+var DEFAULT_RATING_OPTIONS = Object.freeze({ countries: Object.freeze(["DE", "US"]) });
+var DEFAULT_TRANSITION_OPTIONS = Object.freeze({ style: 1, durationMs: 1000 });
+var DEFAULT_REMAINING_TIME_OPTIONS = Object.freeze({ mode: "countdown", size: "small" });
+function transitionOptions(value) {
+    value = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+        style: intOption(1, 3)(value.style),
+        durationMs: value.durationMs === undefined
+            ? 1000 : intOption(500, 2000)(value.durationMs)
+    };
+}
+function remainingTimeOptions(value) {
+    value = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+        mode: enumOption(["countdown", "rolldown"], "countdown")(value.mode),
+        size: enumOption(["small", "medium", "large"], "small")(value.size)
+    };
+}
+function backdropOptions(value) {
+    value = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+        providers: selectedIdsOption(PROVIDER_ORDER, PROVIDER_ORDER)(value.providers),
+        cover: enumOption(["show", "hide"], "hide")(value.cover)
+    };
+}
+function ratingOptions(value) {
+    value = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+        countries: selectedIdsOption(["DE", "US"], ["DE", "US"])(value.countries)
+    };
+}
 var OPTION_DEFS = {
     // layout intentionally differs from the apps' default (fill): a first-time web
     // visitor gets the poster - the layout that shows title/artist without any host
@@ -156,17 +184,16 @@ var OPTION_DEFS = {
         return stationIndex(value) >= 0 ? value : "sst";
     }, effect: applyStation },
     layout: { default: 1, coerce: intOption(0, 1), effect: applyLayout },
-    transition: { default: 1, coerce: intOption(0, 3) },
-    fadeMs: { default: 1000, coerce: intOption(500, 2000), event: "input",
-        format: function (value) { return (value / 1000).toFixed(1) + " s"; } },
-    // Optional feature keys are absent while disabled. Their dependent presentation
-    // values remain ordinary settings so toggling a feature does not erase them.
-    remaining: { optional: true, coerce: optionalEnumOption(["countdown", "rolldown"]),
-        effect: renderCountdown },
+    transition: {
+        default: { enabled: true, options: DEFAULT_TRANSITION_OPTIONS },
+        coerce: featureOption(DEFAULT_TRANSITION_OPTIONS, transitionOptions)
+    },
+    remainingTime: {
+        default: { enabled: false, options: DEFAULT_REMAINING_TIME_OPTIONS },
+        coerce: featureOption(DEFAULT_REMAINING_TIME_OPTIONS, remainingTimeOptions)
+    },
     comingNext: { optional: true, coerce: optionalTrueOption,
         effect: applyComingNextEnabled },
-    remainingSize: { default: "small",
-        coerce: enumOption(["small", "medium", "large"], "small"), effect: sizeStage },
     posterBlur: { default: 24, coerce: intOption(0, 200) },
     borderRadius: { default: 45, coerce: intOption(0, 500) },
     volume: { default: 0.8, coerce: floatOption(0.8, 0, 1), event: "input",
@@ -189,14 +216,16 @@ var OPTION_DEFS = {
         effect: syncSpectrum },
     oscilloscopeStyle: { default: "line",
         coerce: enumOption(["line", "dots", "filled"], "line"), effect: syncSpectrum },
-    // SST media features encode activation and configuration in one sparse value:
-    // an ordered provider list for backdrops and a country list for ratings.
-    sstBackdrops: { optional: true, coerce: orderedSubsetOption(PROVIDER_ORDER) },
-    sstRatings: { optional: true, coerce: knownIdsOption(["DE", "US"]) },
-    sstCover: { default: "show", coerce: enumOption(["show", "hide"], "show"),
-        fromControl: function (checked) { return checked ? "hide" : "show"; },
-        checked: function (value) { return value === "hide"; },
-        effect: updateCoverVisibility },
+    // Activation is independent from configuration: turning a feature off preserves
+    // provider order, cover behavior and country choices for the next time it is used.
+    sstBackdrops: {
+        default: { enabled: false, options: DEFAULT_BACKDROP_OPTIONS },
+        coerce: featureOption(DEFAULT_BACKDROP_OPTIONS, backdropOptions)
+    },
+    sstRatings: {
+        default: { enabled: false, options: DEFAULT_RATING_OPTIONS },
+        coerce: featureOption(DEFAULT_RATING_OPTIONS, ratingOptions)
+    },
     fanartKey: { default: "", coerce: function (value) {
         return (typeof value === "string") ? value.trim() : "";
     }, effect: updateBackdrop },
@@ -221,46 +250,12 @@ const FANART_KEY_CHECK_URL = "https://webservice.fanart.tv/v3/movies/27205";
 var simulateStationFailure = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
     && new URLSearchParams(location.search).has("simulateStationFailure");
 
-var LEGACY_OPTION_KEYS = [
-    "showRemaining", "roll", "showComingNext", "tmdbBackdrops",
-    "enabledProviders", "providerOrder", "hideCover", "ratingsEnabled",
-    "ratingDE", "ratingUS"
-];
-function migrateStoredOptions(saved) {
-    var owns = function (key) { return Object.prototype.hasOwnProperty.call(saved, key); };
-    var migrated = LEGACY_OPTION_KEYS.some(owns);
-    if (!owns("remaining") && boolOption(saved.showRemaining))
-        saved.remaining = boolOption(saved.roll) ? "rolldown" : "countdown";
-    if (typeof saved.remainingSize === "number" || /^\d+$/.test(saved.remainingSize || "")) {
-        saved.remainingSize = ["small", "medium", "large"][
-            intOption(0, 2)(saved.remainingSize)];
-        migrated = true;
-    }
-    if (!owns("comingNext") && boolOption(saved.showComingNext)) saved.comingNext = true;
-    if (!owns("sstBackdrops") && boolOption(saved.tmdbBackdrops)) {
-        var oldOrder = orderedIdsOption(PROVIDER_ORDER)(saved.providerOrder);
-        var oldEnabled = enabledIdsOption(PROVIDER_ORDER)(saved.enabledProviders);
-        var providers = oldOrder.filter(function (id) { return oldEnabled.indexOf(id) >= 0; });
-        if (providers.length) saved.sstBackdrops = providers;
-    }
-    if (!owns("sstCover") && boolOption(saved.hideCover)) saved.sstCover = "hide";
-    if (!owns("sstRatings") && boolOption(saved.ratingsEnabled)) {
-        var ratings = [];
-        if (!owns("ratingDE") || boolOption(saved.ratingDE)) ratings.push("DE");
-        if (!owns("ratingUS") || boolOption(saved.ratingUS)) ratings.push("US");
-        if (ratings.length) saved.sstRatings = ratings;
-    }
-    LEGACY_OPTION_KEYS.forEach(function (key) { delete saved[key]; });
-    return migrated;
-}
-
 function defaultOptions() {
     var defaults = {};
     for (var key in OPTION_DEFS) {
         if (!Object.prototype.hasOwnProperty.call(OPTION_DEFS[key], "default")) continue;
         var fallback = OPTION_DEFS[key].default;
-        if (fallback !== undefined)
-            defaults[key] = fallback instanceof Array ? fallback.slice() : fallback;
+        if (fallback !== undefined) defaults[key] = cloneOptionValue(fallback);
     }
     return defaults;
 }
@@ -276,14 +271,23 @@ function applyPresetOptions(options, params) {
     if (params.has("station")) set("station", params.get("station"));
     if (params.has("layout"))
         set("layout", params.get("layout") === "fill" ? 0 : 1);
+    var transition = cloneOptionValue(options.transition);
     if (params.has("transition")) {
-        var transitions = { none: 0, crossfade: 1, flipHorizontal: 2, flipVertical: 3 };
+        var transitions = { crossfade: 1, flipHorizontal: 2, flipVertical: 3 };
+        transition.enabled = params.get("transition") !== "none";
         if (Object.prototype.hasOwnProperty.call(transitions, params.get("transition")))
-            set("transition", transitions[params.get("transition")]);
+            transition.options.style = transitions[params.get("transition")];
     }
-    if (params.has("fade")) set("fadeMs", params.get("fade"));
-    if (params.has("remaining")) set("remaining", params.get("remaining"));
-    if (params.has("remainingSize")) set("remainingSize", params.get("remainingSize"));
+    if (params.has("fade")) transition.options.durationMs = params.get("fade");
+    options.transition = OPTION_DEFS.transition.coerce(transition);
+    var remainingTime = cloneOptionValue(options.remainingTime);
+    if (params.has("remaining")) {
+        remainingTime.enabled = true;
+        remainingTime.options.mode = params.get("remaining");
+    }
+    if (params.has("remainingSize"))
+        remainingTime.options.size = params.get("remainingSize");
+    options.remainingTime = OPTION_DEFS.remainingTime.coerce(remainingTime);
     booleanParam("comingNext", "comingNext");
     if (params.has("volume")) set("volume", params.get("volume"));
     if (params.has("milkdrop")) {
@@ -304,11 +308,18 @@ function applyPresetOptions(options, params) {
     if (params.has("bars")) set("spectrumBars", params.get("bars"));
     if (params.has("color")) set("spectrumMode", params.get("color"));
     if (params.has("scope")) set("oscilloscopeStyle", params.get("scope"));
-    if (params.has("sstBackdrops"))
-        set("sstBackdrops", params.get("sstBackdrops").split(",").filter(Boolean));
-    if (params.has("sstCover")) set("sstCover", params.get("sstCover"));
-    if (params.has("sstRatings"))
-        set("sstRatings", params.get("sstRatings").split(",").filter(Boolean));
+    var backdrops = cloneOptionValue(options.sstBackdrops);
+    if (params.has("sstBackdrops")) backdrops.enabled = boolOption(params.get("sstBackdrops"));
+    if (params.has("sstBackdropProviders"))
+        backdrops.options.providers = params.get("sstBackdropProviders").split(",").filter(Boolean);
+    if (params.has("sstBackdropCover"))
+        backdrops.options.cover = params.get("sstBackdropCover");
+    options.sstBackdrops = OPTION_DEFS.sstBackdrops.coerce(backdrops);
+    var ratings = cloneOptionValue(options.sstRatings);
+    if (params.has("sstRatings")) ratings.enabled = boolOption(params.get("sstRatings"));
+    if (params.has("sstRatingCountries"))
+        ratings.options.countries = params.get("sstRatingCountries").split(",").filter(Boolean);
+    options.sstRatings = OPTION_DEFS.sstRatings.coerce(ratings);
     if (params.has("blur")) set("posterBlur", params.get("blur"));
     if (params.has("radius")) set("borderRadius", params.get("radius"));
 }
@@ -317,29 +328,24 @@ function loadOpts() {
     var o = defaultOptions();
     var p = new URLSearchParams(location.search);
     var preset = p.get("preset") === "1";
-    var saved = {}, migrated = false;
+    var saved = {};
     if (!preset) {
         try {
             saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
             if (!saved || typeof saved !== "object" || saved instanceof Array) saved = {};
-            migrated = migrateStoredOptions(saved);
             for (var s in saved) if (s in OPTION_DEFS) o[s] = saved[s];
         } catch (e) { /* corrupt storage -> defaults */ }
     }
-    // Coercion is defined beside each default, so storage migration and first-load
-    // behavior cannot drift into separate lists as settings are added.
+    // Coercion is defined beside each default so corrupt or partial v2 storage falls
+    // back safely without carrying a legacy migration layer in the player.
     for (var key in OPTION_DEFS) {
         var value = OPTION_DEFS[key].coerce(o[key]);
         if (value === undefined && OPTION_DEFS[key].optional) delete o[key];
         else o[key] = value;
     }
-    if (migrated && !preset) {
-        try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); }
-        catch (e) { /* private mode: session-only */ }
-    }
     // A marked share URL is a complete preset: defaults plus its sparse keys, never
-    // the recipient's unrelated local preferences. Ordinary URLs keep the legacy
-    // station and hidden-layout overrides for backwards compatibility.
+    // the recipient's unrelated local preferences. Ordinary URLs keep only the
+    // station and hidden-layout overrides.
     if (preset) applyPresetOptions(o, p);
     else {
         if (p.has("station") && stationIndex(p.get("station")) >= 0) o.station = p.get("station");
@@ -350,6 +356,28 @@ function loadOpts() {
     return o;
 }
 var opts = loadOpts();
+function contentTransitionEffect() {
+    return reducedMotion.matches || !opts.transition.enabled
+        ? 0 : opts.transition.options.style;
+}
+function contentTransitionDuration() {
+    return opts.transition.options.durationMs;
+}
+function remainingTimeMode() {
+    return opts.remainingTime.enabled ? opts.remainingTime.options.mode : "";
+}
+function sstBackdropsEnabled() {
+    return opts.sstBackdrops.enabled && opts.sstBackdrops.options.providers.length > 0;
+}
+function sstRatingsEnabled() {
+    return opts.sstRatings.enabled && opts.sstRatings.options.countries.length > 0;
+}
+function setFeatureOptionsState(element, enabled) {
+    element.classList.toggle("enabled", enabled);
+    element.setAttribute("aria-hidden", enabled ? "false" : "true");
+    if (enabled) element.removeAttribute("inert");
+    else element.setAttribute("inert", "");
+}
 function saveOpts() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(opts)); } catch (e) { /* private mode: session-only */ }
     syncSettingsUrl();
@@ -361,20 +389,26 @@ function stationIndex(id) {
 var SETTINGS_URL_KEYS = [
     "preset", "station", "layout", "transition", "fade", "remaining",
     "remainingSize", "comingNext", "volume", "milkdrop", "laser", "strobe",
-    "smoke", "bpm", "analyzer", "bars", "color", "scope", "sstBackdrops", "sstCover",
-    "sstRatings", "blur", "radius", "posterBlur", "borderRadius"
+    "smoke", "bpm", "analyzer", "bars", "color", "scope", "sstBackdrops",
+    "sstBackdropProviders", "sstBackdropCover", "sstRatings", "sstRatingCountries",
+    "blur", "radius", "posterBlur", "borderRadius"
 ];
 function writeSettingsUrl(url) {
     var params = url.searchParams;
-    var transitions = ["none", "crossfade", "flipHorizontal", "flipVertical"];
+    var transitions = [null, "crossfade", "flipHorizontal", "flipVertical"];
     SETTINGS_URL_KEYS.forEach(function (key) { params.delete(key); });
     params.set("preset", "1");
     params.set("station", opts.station);
     if (opts.layout !== 1) params.set("layout", "fill");
-    if (opts.transition !== 1) params.set("transition", transitions[opts.transition]);
-    if (opts.fadeMs !== 1000) params.set("fade", String(opts.fadeMs));
-    if (opts.remaining) params.set("remaining", opts.remaining);
-    if (opts.remainingSize !== "small") params.set("remainingSize", opts.remainingSize);
+    if (!opts.transition.enabled) params.set("transition", "none");
+    else if (opts.transition.options.style !== 1)
+        params.set("transition", transitions[opts.transition.options.style]);
+    if (opts.transition.options.durationMs !== 1000)
+        params.set("fade", String(opts.transition.options.durationMs));
+    if (opts.remainingTime.enabled)
+        params.set("remaining", opts.remainingTime.options.mode);
+    if (opts.remainingTime.options.size !== "small")
+        params.set("remainingSize", opts.remainingTime.options.size);
     if (opts.comingNext) params.set("comingNext", "1");
     if (opts.volume !== 0.8) params.set("volume", String(opts.volume));
     if (opts.milkdropEnabled) params.set("milkdrop", opts.milkdropPreset);
@@ -386,9 +420,14 @@ function writeSettingsUrl(url) {
     if (opts.spectrumBars !== 24) params.set("bars", String(opts.spectrumBars));
     if (opts.spectrumMode !== "tinted") params.set("color", opts.spectrumMode);
     if (opts.oscilloscopeStyle !== "line") params.set("scope", opts.oscilloscopeStyle);
-    if (opts.sstBackdrops) params.set("sstBackdrops", opts.sstBackdrops.join(","));
-    if (opts.sstCover !== "show") params.set("sstCover", opts.sstCover);
-    if (opts.sstRatings) params.set("sstRatings", opts.sstRatings.join(","));
+    if (opts.sstBackdrops.enabled) params.set("sstBackdrops", "1");
+    if (opts.sstBackdrops.options.providers.join(",") !== PROVIDER_ORDER.join(","))
+        params.set("sstBackdropProviders", opts.sstBackdrops.options.providers.join(","));
+    if (opts.sstBackdrops.options.cover !== "hide")
+        params.set("sstBackdropCover", opts.sstBackdrops.options.cover);
+    if (opts.sstRatings.enabled) params.set("sstRatings", "1");
+    if (opts.sstRatings.options.countries.join(",") !== "DE,US")
+        params.set("sstRatingCountries", opts.sstRatings.options.countries.join(","));
     if (opts.posterBlur !== 24) params.set("blur", String(opts.posterBlur));
     if (opts.borderRadius !== 45) params.set("radius", String(opts.borderRadius));
     return url;
@@ -618,8 +657,8 @@ function makeRatingSlot(slot) {
     }
 
     function effectName() {
-        var effect = reducedMotion.matches ? 0 : opts.transition;
-        stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
+        var effect = contentTransitionEffect();
+        stage.style.setProperty("--fade-ms", contentTransitionDuration() + "ms");
         return ["none", "fade", "fliph", "flipv"][effect];
     }
 
@@ -663,7 +702,7 @@ function makeRatingSlot(slot) {
                 slot.dataset.settled = "";
                 void slot.offsetWidth;
                 delete slot.dataset.warp;
-            }, opts.fadeMs + 50);
+            }, contentTransitionDuration() + 50);
         }
     }
 
@@ -736,11 +775,11 @@ function renderRatingBadges(generation) {
         return ratings;
     }, Object.create(null));
     var available = stationSupports(CAPABILITY_SOUNDTRACK_MEDIA);
-    ratingSlots.DE.show(available && opts.sstRatings
-            && opts.sstRatings.indexOf("DE") >= 0
+    ratingSlots.DE.show(available && sstRatingsEnabled()
+            && opts.sstRatings.options.countries.indexOf("DE") >= 0
         ? byCountry.DE : null, generation);
-    ratingSlots.US.show(available && opts.sstRatings
-            && opts.sstRatings.indexOf("US") >= 0
+    ratingSlots.US.show(available && sstRatingsEnabled()
+            && opts.sstRatings.options.countries.indexOf("US") >= 0
         ? byCountry.US : null, generation);
 }
 
@@ -751,29 +790,38 @@ function setRatings(certifications, generation) {
 }
 
 function syncRatingControls() {
-    $("rating-de-enabled").checked = !!opts.sstRatings
-        && opts.sstRatings.indexOf("DE") >= 0;
-    $("rating-us-enabled").checked = !!opts.sstRatings
-        && opts.sstRatings.indexOf("US") >= 0;
+    var master = $("ratings-enabled");
+    master.checked = opts.sstRatings.enabled;
+    master.setAttribute("aria-expanded", opts.sstRatings.enabled ? "true" : "false");
+    $("rating-de-enabled").checked =
+        opts.sstRatings.options.countries.indexOf("DE") >= 0;
+    $("rating-us-enabled").checked =
+        opts.sstRatings.options.countries.indexOf("US") >= 0;
+    setFeatureOptionsState($("rating-options"), opts.sstRatings.enabled);
 }
 
 function commitRatingCountries() {
-    var wasEnabled = !!opts.sstRatings;
-    var ratings = [
+    opts.sstRatings.options.countries = [
         $("rating-de-enabled").checked ? "DE" : "",
         $("rating-us-enabled").checked ? "US" : ""
     ].filter(Boolean);
-    if (ratings.length) opts.sstRatings = ratings;
-    else delete opts.sstRatings;
     saveOpts();
     syncRatingControls();
-    if (opts.sstRatings && !wasEnabled) prepareRatingTrackVisibility();
-    else if (!opts.sstRatings) cancelRatingTrackVisibility();
     // Hiding is immediate state work (the CSS then performs the exit transition).
     // Do not leave a stale badge up while a replacement resolver request settles.
     renderRatingBadges(renderGenerations.backdrop);
     updateBackdrop();
 }
+function commitRatingsEnabled() {
+    opts.sstRatings.enabled = $("ratings-enabled").checked;
+    saveOpts();
+    syncRatingControls();
+    if (sstRatingsEnabled()) prepareRatingTrackVisibility();
+    else cancelRatingTrackVisibility();
+    renderRatingBadges(renderGenerations.backdrop);
+    updateBackdrop();
+}
+$("ratings-enabled").addEventListener("change", commitRatingsEnabled);
 $("rating-de-enabled").addEventListener("change", commitRatingCountries);
 $("rating-us-enabled").addEventListener("change", commitRatingCountries);
 
@@ -924,7 +972,7 @@ function validArtist(value) {
 function queuedArtistIsNeeded() {
     return !!opts.comingNext
         || (stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
-            && (!!opts.sstBackdrops || !!opts.sstRatings));
+            && (sstBackdropsEnabled() || sstRatingsEnabled()));
 }
 
 function resolveQueuedArtist(tracked) {
@@ -1234,7 +1282,7 @@ function queueBackdropPrefetchKey(entry) {
         includeArt ? providers : ["tmdb"],
         providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
         includeArt,
-        !!opts.sstRatings,
+        sstRatingsEnabled(),
         entry && entry.artist || "",
     ]);
 }
@@ -1261,7 +1309,7 @@ function queuedTrackNeedsPrefetch(entry) {
     if (queuedArtistIsNeeded() && !entry.artist && entry.albumUrl && !entry.creditAttempted)
         return true;
     return stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
-        && (opts.sstBackdrops || opts.sstRatings)
+        && (sstBackdropsEnabled() || sstRatingsEnabled())
         && entry.backdropPrefetchKey !== queueBackdropPrefetchKey(entry);
 }
 
@@ -1292,7 +1340,7 @@ async function prefetchQueuedTrack(entry, signal) {
     await resolveQueuedArtist(entry);
     if (signal.aborted) return;
     if (stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
-            && (opts.sstBackdrops || opts.sstRatings)) {
+            && (sstBackdropsEnabled() || sstRatingsEnabled())) {
         var configKey = queueBackdropPrefetchKey(entry);
         if (entry.backdropPrefetchKey !== configKey) {
             entry.art = await movieArtFor(entry.album, entry.track, entry.artist,
@@ -1422,8 +1470,8 @@ function showCover(url) {
         shownUrl = url;
         back.src = url;
         blurLayer.show(url, generation); // poster backdrop, crossfaded in poster layout
-        var effect = reducedMotion.matches ? 0 : opts.transition;
-        stage.style.setProperty("--fade-ms", opts.fadeMs + "ms");
+        var effect = contentTransitionEffect();
+        stage.style.setProperty("--fade-ms", contentTransitionDuration() + "ms");
         var fx = ["none", "fade", "fliph", "flipv"][effect];
         if (coverBox.dataset.fx !== fx) {
             // A CHANGE of effect must teleport into the new parked poses, never
@@ -1504,7 +1552,8 @@ function cancelBackdropRequest() {
 // hidden, outgoing cover cannot leak through before the destination cover is ready.
 function updateCoverVisibility() {
     stage.classList.toggle("no-cover",
-        !!(coverHiddenUntilCoverReady || (opts.sstCover === "hide" && movieShown)));
+        !!(coverHiddenUntilCoverReady
+            || (opts.sstBackdrops.options.cover === "hide" && movieShown)));
 }
 var currentAlbum = "", currentTrack = "", currentArtist = "", stationIdActive = false;
 
@@ -1526,7 +1575,7 @@ async function fetchResolverJson(url, signal, cacheMode) {
 }
 
 function enabledMovieProviders() {
-    return (opts.sstBackdrops || []).filter(function (id) {
+    return opts.sstBackdrops.options.providers.filter(function (id) {
         return !!ART_PROVIDER_BY_ID[id];
     });
 }
@@ -1763,7 +1812,11 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     const hasPrefetchedResult = arguments.length > 1;
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
-    if (cacheMode === "reload" && opts.sstBackdrops) {
+    // Artwork and ratings share the resolver, but not their visible state. If artwork
+    // is switched off while ratings stay enabled, start the backdrop fade immediately
+    // instead of leaving it visible until that ratings-only request settles.
+    if (!sstBackdropsEnabled()) setMovieBackdrop(null, generation);
+    if (cacheMode === "reload" && sstBackdropsEnabled()) {
         setStatus("Loading backdrop artwork…", "backdrop");
         setBackdropErrorState("retrying");
     } else {
@@ -1772,7 +1825,7 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     }
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
-    if (stationIdActive || (!opts.sstBackdrops && !opts.sstRatings)) {
+    if (stationIdActive || (!sstBackdropsEnabled() && !sstRatingsEnabled())) {
         setMovieBackdrop(null, generation);
         setRatings([], generation);
         return;
@@ -1784,7 +1837,7 @@ function requestBackdrop(cacheMode, prefetchedArt) {
         return;
     } // no media source
     if (hasPrefetchedResult) {
-        setMovieBackdrop(opts.sstBackdrops ? prefetchedArt : null, generation);
+        setMovieBackdrop(sstBackdropsEnabled() ? prefetchedArt : null, generation);
         setRatings(prefetchedArt && prefetchedArt.certifications || [], generation);
     }
     const ctl = new AbortController();
@@ -1812,8 +1865,8 @@ function retryBackdrop() { requestBackdrop("reload"); }
 // endpoint failures stay uncached so a later poll or option change can retry.
 async function movieArtFor(album, track, artist, generation, signal, cacheMode) {
     const providers = enabledMovieProviders();
-    const includeArt = providers.length > 0;
-    const includeRatings = !!opts.sstRatings;
+    const includeArt = sstBackdropsEnabled() && providers.length > 0;
+    const includeRatings = sstRatingsEnabled();
     const requestedProviders = includeArt ? providers : ["tmdb"];
     if ((generation !== null && !renderIsCurrent("backdrop", generation)) || !album
             || (!includeArt && !includeRatings)) return null;
@@ -1842,7 +1895,7 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
         const renderedArt = mergeMovieArt(art, prefetchedArt);
         clearStatus("backdrop");
         setBackdropErrorState("");
-        setMovieBackdrop(opts.sstBackdrops ? renderedArt : null, generation);
+        setMovieBackdrop(sstBackdropsEnabled() ? renderedArt : null, generation);
         setRatings(renderedArt && renderedArt.certifications || [], generation);
     } catch (e) {
         if (!renderIsCurrent("backdrop", generation)) return;
@@ -1851,11 +1904,11 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
             // must never turn that successful state back into the cover or empty badges.
             clearStatus("backdrop");
             setBackdropErrorState("");
-            setMovieBackdrop(opts.sstBackdrops ? prefetchedArt : null, generation);
+            setMovieBackdrop(sstBackdropsEnabled() ? prefetchedArt : null, generation);
             setRatings(prefetchedArt.certifications || [], generation);
             return;
         }
-        if (opts.sstBackdrops
+        if (sstBackdropsEnabled()
                 && (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError"))) {
             setStatus("Backdrop service is currently unavailable.", "backdrop");
             setBackdropErrorState("error");
@@ -1877,7 +1930,8 @@ function currentRemaining() {
 }
 function fmt(s) { return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
 function renderCountdown() {
-    var rem = opts.remaining ? currentRemaining() : -1;
+    var mode = remainingTimeMode();
+    var rem = mode ? currentRemaining() : -1;
     cdEl.classList.toggle("hidden", rem < 0);
     if (rem < 0) { cells = []; cdEl.textContent = ""; return; }
     var text = fmt(rem);
@@ -1900,7 +1954,7 @@ function renderCountdown() {
         var c = cells[k], ch = text[k];
         if (c.ch === ch) continue;
         c.ch = ch;
-        if (opts.remaining !== "rolldown" || reducedMotion.matches || !c.cur.animate) {
+        if (mode !== "rolldown" || reducedMotion.matches || !c.cur.animate) {
             c.cur.textContent = ch;
             continue;
         }
@@ -1967,7 +2021,8 @@ function sizeStage() {
     stage.style.setProperty("--cover-radius", (side * opts.borderRadius / 1000) + "px");
     stage.style.setProperty("--title-size", Math.max(16, side * 0.072) + "px");
     stage.style.setProperty("--artist-size", Math.max(13, side * 0.058) + "px");
-    var cdFrac = { small: 0.048, medium: 0.062, large: 0.08 }[opts.remainingSize];
+    var cdFrac = { small: 0.048, medium: 0.062, large: 0.08 }[
+        opts.remainingTime.options.size];
     stage.style.setProperty("--cd-size", Math.max(12, side * cdFrac) + "px");
     // The grid fixes the info box's center. Re-center the cover in the space above
     // the box's visible top edge; when the box grows, CSS animates this small shift.
@@ -2624,8 +2679,170 @@ fanartKeyCheckElement.addEventListener("click", checkFanartKey);
     });
 })();
 
+var settingsTabList = $("settings-tabs");
+var settingsTabHost = $("settings-tab-host");
+var settingsTabs = Array.prototype.slice.call(
+    settingsTabList.querySelectorAll('[role="tab"]'));
+var settingsTabPanels = Array.prototype.slice.call(
+    settingsTabHost.querySelectorAll('[role="tabpanel"]'));
+var activeSettingsPanel = $("settings-panel-common");
+var settingsTabFrame = null, settingsTabTimer = null, settingsTabGeneration = 0;
+var stationTabTimer = null, stationTabGeneration = 0;
+
+function settingsPanelFor(tab) {
+    return $(tab.getAttribute("aria-controls"));
+}
+function setSettingsPanelSemantics(panel, active) {
+    panel.setAttribute("aria-hidden", active ? "false" : "true");
+    if (active) panel.removeAttribute("inert");
+    else panel.setAttribute("inert", "");
+}
+function syncSettingsTabSemantics(activePanel) {
+    settingsTabs.forEach(function (tab) {
+        var selected = settingsPanelFor(tab) === activePanel;
+        tab.setAttribute("aria-selected", selected ? "true" : "false");
+        tab.tabIndex = selected && !tab.hidden && !tab.disabled ? 0 : -1;
+    });
+}
+function settleSettingsTabs(panel) {
+    cancelAnimationFrame(settingsTabFrame);
+    clearTimeout(settingsTabTimer);
+    settingsTabFrame = settingsTabTimer = null;
+    settingsTabHost.classList.remove("transitioning", "swapping");
+    settingsTabHost.style.height = "";
+    settingsTabPanels.forEach(function (candidate) {
+        candidate.classList.remove("tab-panel-incoming", "tab-panel-outgoing");
+        var selected = candidate === panel;
+        candidate.hidden = !selected;
+        setSettingsPanelSemantics(candidate, selected);
+    });
+    syncSettingsTabSemantics(panel);
+}
+function selectSettingsTab(tab, animate) {
+    if (!tab || tab.hidden || tab.disabled) return;
+    var nextPanel = settingsPanelFor(tab);
+    if (nextPanel === activeSettingsPanel) {
+        syncSettingsTabSemantics(activeSettingsPanel);
+        return;
+    }
+    var interruptedHeight = settingsTabHost.classList.contains("transitioning")
+        ? settingsTabHost.getBoundingClientRect().height : 0;
+    settleSettingsTabs(activeSettingsPanel);
+    var outgoingPanel = activeSettingsPanel;
+    activeSettingsPanel = nextPanel;
+    syncSettingsTabSemantics(nextPanel);
+    if (!outgoingPanel || animate === false || reducedMotion.matches) {
+        settleSettingsTabs(nextPanel);
+        return;
+    }
+
+    var generation = ++settingsTabGeneration;
+    var startHeight = interruptedHeight || outgoingPanel.getBoundingClientRect().height;
+    nextPanel.hidden = false;
+    setSettingsPanelSemantics(outgoingPanel, false);
+    setSettingsPanelSemantics(nextPanel, true);
+    outgoingPanel.classList.add("tab-panel-outgoing");
+    nextPanel.classList.add("tab-panel-incoming");
+    settingsTabHost.style.height = startHeight + "px";
+    settingsTabHost.classList.add("transitioning");
+    var targetHeight = nextPanel.getBoundingClientRect().height;
+    void settingsTabHost.offsetHeight;
+    settingsTabFrame = requestAnimationFrame(function () {
+        settingsTabFrame = null;
+        if (generation !== settingsTabGeneration) return;
+        settingsTabHost.style.height = targetHeight + "px";
+        settingsTabHost.classList.add("swapping");
+        var duration = Math.max(
+            transitionTotalMs(settingsTabHost),
+            transitionTotalMs(outgoingPanel),
+            transitionTotalMs(nextPanel));
+        settingsTabTimer = setTimeout(function () {
+            if (generation !== settingsTabGeneration) return;
+            settleSettingsTabs(nextPanel);
+        }, duration + 50);
+    });
+}
+settingsTabList.addEventListener("click", function (event) {
+    selectSettingsTab(event.target.closest('[role="tab"]'), true);
+});
+settingsTabList.addEventListener("keydown", function (event) {
+    var current = event.target.closest('[role="tab"]');
+    if (!current) return;
+    var available = settingsTabs.filter(function (tab) {
+        return !tab.hidden && !tab.disabled && !tab.classList.contains("tab-exiting");
+    });
+    var index = available.indexOf(current), next = null;
+    if (event.key === "ArrowRight") next = available[(index + 1) % available.length];
+    else if (event.key === "ArrowLeft")
+        next = available[(index - 1 + available.length) % available.length];
+    else if (event.key === "Home") next = available[0];
+    else if (event.key === "End") next = available[available.length - 1];
+    else return;
+    event.preventDefault();
+    next.focus();
+    selectSettingsTab(next, true);
+});
+
+function stationHasSettings(selectedStation) {
+    return stationSupports(CAPABILITY_SOUNDTRACK_MEDIA, selectedStation)
+        || stationSupports(CAPABILITY_LASERS, selectedStation);
+}
+function syncStationSettingsTab(animate) {
+    var tab = $("settings-tab-station");
+    var available = stationHasSettings(station());
+    var wasHidden = tab.hidden;
+    var wasExiting = tab.classList.contains("tab-exiting");
+    var generation = ++stationTabGeneration;
+    clearTimeout(stationTabTimer);
+    stationTabTimer = null;
+    if (available) {
+        tab.hidden = false;
+        tab.disabled = false;
+        tab.setAttribute("aria-hidden", "false");
+        if (!wasHidden && !wasExiting) {
+            syncSettingsTabSemantics(activeSettingsPanel);
+            return;
+        }
+        if (animate === false || reducedMotion.matches) {
+            tab.classList.remove("tab-entering", "tab-exiting");
+            syncSettingsTabSemantics(activeSettingsPanel);
+            return;
+        }
+        tab.classList.remove("tab-exiting");
+        tab.classList.add("tab-entering");
+        void tab.offsetWidth;
+        requestAnimationFrame(function () {
+            if (generation !== stationTabGeneration) return;
+            tab.classList.remove("tab-entering");
+            syncSettingsTabSemantics(activeSettingsPanel);
+        });
+        return;
+    }
+
+    if (activeSettingsPanel === $("settings-panel-station"))
+        selectSettingsTab($("settings-tab-common"), animate);
+    tab.disabled = true;
+    tab.tabIndex = -1;
+    tab.setAttribute("aria-hidden", "true");
+    if (animate === false || reducedMotion.matches) {
+        tab.classList.remove("tab-entering", "tab-exiting");
+        tab.hidden = true;
+        return;
+    }
+    tab.classList.remove("tab-entering");
+    tab.classList.add("tab-exiting");
+    var duration = transitionTotalMs(tab);
+    stationTabTimer = setTimeout(function () {
+        if (generation !== stationTabGeneration) return;
+        tab.hidden = true;
+        tab.classList.remove("tab-exiting");
+    }, duration + 50);
+}
+settleSettingsTabs(activeSettingsPanel);
+syncStationSettingsTab(false);
+
 var stationContextHost = $("station-context-host");
-var stationContextName = $("station-settings-name");
+var stationContextName = $("station-tab-name");
 var stationContextPanels = Array.prototype.slice.call(
     stationContextHost.querySelectorAll(".station-context-panel"));
 var activeStationContextPanel = null;
@@ -2639,7 +2856,7 @@ function contextPanelFor(selectedStation) {
                 && stationSupports(panel.dataset.capability, selectedStation)) return panel;
         if (panel.dataset.station === selectedStation.id) return panel;
     }
-    throw new Error("Missing contextual settings for station: " + selectedStation.id);
+    return null;
 }
 function setContextPanelSemantics(panel, active) {
     panel.setAttribute("aria-hidden", active ? "false" : "true");
@@ -2662,14 +2879,19 @@ function settleStationContext(panel) {
 function syncStationContext(animate) {
     var selectedStation = station();
     var nextPanel = contextPanelFor(selectedStation);
-    stationContextName.textContent = selectedStation.name;
+    stationContextName.textContent = selectedStation.id === "sst"
+        ? "SST" : selectedStation.name;
     stationContextHost.setAttribute("aria-label", "Settings for " + selectedStation.name);
+    // A station without contextual settings has no Station tab. Keep the outgoing
+    // content mounted while the tab panel itself crossfades to Common.
+    if (!nextPanel) return;
 
     var interruptedHeight = stationContextHost.classList.contains("transitioning")
         ? stationContextHost.getBoundingClientRect().height : 0;
     settleStationContext(activeStationContextPanel);
     if (!activeStationContextPanel || activeStationContextPanel === nextPanel
-            || animate === false || reducedMotion.matches) {
+            || animate === false || reducedMotion.matches
+            || !stationContextHost.getClientRects().length) {
         activeStationContextPanel = nextPanel;
         settleStationContext(nextPanel);
         return;
@@ -2710,6 +2932,7 @@ function applyStation() {
     // Most station changes pass through saveOpts(); keep this sync here as well so
     // programmatic station changes cannot leave the address bar stale.
     syncSettingsUrl();
+    syncStationSettingsTab(true);
     syncStationContext(true);
     // Station-specific visualizations consume the same capability model as the
     // contextual UI, so a switch also releases any now-unavailable scene.
@@ -2758,24 +2981,33 @@ function syncSpectrumSettingControls() {
     var spectrum = opts.analyzerType === "spectrum";
     spectrumBarsEl.disabled = !enabled || !spectrum;
     analyzerTypeEls.forEach(function (input) { input.disabled = !enabled; });
-    spectrumModeEls.forEach(function (input) { input.disabled = !enabled; });
+    spectrumModeEls.forEach(function (input) { input.disabled = !enabled || !spectrum; });
     oscilloscopeStyleEls.forEach(function (input) {
         input.disabled = !enabled || spectrum;
     });
     setVisualizationSettingEnabled(analyzerTypeSettingEl, enabled);
     setVisualizationSettingEnabled(spectrumBarsSettingEl, enabled && spectrum);
     setVisualizationSettingEnabled(oscilloscopeStyleSettingEl, enabled && !spectrum);
-    setVisualizationSettingEnabled(analyzerColorSettingEl, enabled);
+    setVisualizationSettingEnabled(analyzerColorSettingEl, enabled && spectrum);
+    $("spectrum-enabled").setAttribute("aria-expanded", enabled ? "true" : "false");
+    setFeatureOptionsState($("analyzer-options"), enabled);
+    setFeatureOptionsState($("spectrum-detail-options"), enabled && spectrum);
+    setFeatureOptionsState($("oscilloscope-detail-options"), enabled && !spectrum);
 }
 function syncLaserSettingControls() {
     var enabled = !!opts.laserEnabled && !opts.milkdropEnabled;
     strobeEnabledEl.disabled = !enabled;
     smokeEnabledEl.disabled = !enabled;
+    $("laser-enabled").setAttribute("aria-expanded",
+        opts.laserEnabled ? "true" : "false");
+    setFeatureOptionsState($("laser-options"), !!opts.laserEnabled);
 }
 function syncMilkdropSettingControls() {
     var enabled = !!opts.milkdropEnabled;
     milkdropPresetEls.forEach(function (input) { input.disabled = !enabled; });
     setVisualizationSettingEnabled(milkdropPresetSettingEl, enabled);
+    $("milkdrop-enabled").setAttribute("aria-expanded", enabled ? "true" : "false");
+    setFeatureOptionsState($("milkdrop-options"), enabled);
 }
 function applySpectrumEnabled() {
     syncSpectrumSettingControls();
@@ -2813,7 +3045,105 @@ function applySmokeEnabled(enabled) {
 function resetSpectrumBars() {
     if (audioSpectrumController) audioSpectrumController.reset("spectrum");
 }
+
+var transitionEnabledEl = $("transitions-enabled");
+var transitionStyleEls = document.querySelectorAll('input[name="transition"]');
+var transitionDurationEl = $("fade");
+var transitionDurationOutputEl = $("fade-val");
+var transitionPreviewTimer = null;
+function syncTransitionControls() {
+    var enabled = opts.transition.enabled;
+    transitionEnabledEl.checked = enabled;
+    transitionEnabledEl.setAttribute("aria-expanded", enabled ? "true" : "false");
+    transitionStyleEls.forEach(function (input) {
+        input.checked = Number(input.value) === opts.transition.options.style;
+    });
+    transitionDurationEl.value = opts.transition.options.durationMs;
+    transitionDurationOutputEl.textContent =
+        (opts.transition.options.durationMs / 1000).toFixed(1) + " s";
+    setFeatureOptionsState($("transition-options"), enabled);
+}
+function previewTransitionChoice(input) {
+    if (reducedMotion.matches) return;
+    var label = input.nextElementSibling;
+    var previewClasses = ["", "preview-crossfade", "preview-flip-horizontal",
+        "preview-flip-vertical"];
+    document.querySelectorAll(".transition-choice span").forEach(function (choice) {
+        previewClasses.slice(1).forEach(function (name) { choice.classList.remove(name); });
+    });
+    void label.offsetWidth;
+    label.classList.add(previewClasses[Number(input.value)]);
+    clearTimeout(transitionPreviewTimer);
+    transitionPreviewTimer = setTimeout(function () {
+        previewClasses.slice(1).forEach(function (name) { label.classList.remove(name); });
+    }, 750);
+}
+transitionEnabledEl.addEventListener("change", function () {
+    opts.transition.enabled = transitionEnabledEl.checked;
+    saveOpts();
+    syncTransitionControls();
+});
+transitionStyleEls.forEach(function (input) {
+    // Label clicks and taps activate the real radio input even when it is already
+    // selected. `click` therefore replays the sample on every activation, whereas
+    // `change` alone would only preview the first selection.
+    input.addEventListener("click", function () { previewTransitionChoice(input); });
+    input.addEventListener("change", function () {
+        if (!input.checked) return;
+        opts.transition.options.style = Number(input.value);
+        saveOpts();
+        syncTransitionControls();
+    });
+});
+transitionDurationEl.addEventListener("input", function () {
+    opts.transition.options.durationMs = intOption(500, 2000)(transitionDurationEl.value);
+    saveOpts();
+    syncTransitionControls();
+});
+
+var remainingTimeEnabledEl = $("remaining-time-enabled");
+var remainingTimeModeEls = document.querySelectorAll('input[name="remaining"]');
+var remainingTimeSizeEls = document.querySelectorAll('input[name="cdsize"]');
+function syncRemainingTimeControls() {
+    var enabled = opts.remainingTime.enabled;
+    remainingTimeEnabledEl.checked = enabled;
+    remainingTimeEnabledEl.setAttribute("aria-expanded", enabled ? "true" : "false");
+    remainingTimeModeEls.forEach(function (input) {
+        input.checked = input.value === opts.remainingTime.options.mode;
+    });
+    remainingTimeSizeEls.forEach(function (input) {
+        input.checked = input.value === opts.remainingTime.options.size;
+    });
+    setFeatureOptionsState($("remaining-time-options"), enabled);
+}
+remainingTimeEnabledEl.addEventListener("change", function () {
+    opts.remainingTime.enabled = remainingTimeEnabledEl.checked;
+    saveOpts();
+    syncRemainingTimeControls();
+    renderCountdown();
+    sizeStage();
+});
+remainingTimeModeEls.forEach(function (input) {
+    input.addEventListener("change", function () {
+        if (!input.checked) return;
+        opts.remainingTime.options.mode = input.value;
+        saveOpts();
+        syncRemainingTimeControls();
+        renderCountdown();
+    });
+});
+remainingTimeSizeEls.forEach(function (input) {
+    input.addEventListener("change", function () {
+        if (!input.checked) return;
+        opts.remainingTime.options.size = input.value;
+        saveOpts();
+        syncRemainingTimeControls();
+        sizeStage();
+    });
+});
 bindOptionControls();
+syncTransitionControls();
+syncRemainingTimeControls();
 restoreFanartKeyCheck();
 syncSpectrumSettingControls();
 syncMilkdropSettingControls();
@@ -2878,8 +3208,8 @@ shareSettingsButton.addEventListener("click", async function () {
 // fight text selection there.
 var providersEl = $("providers");
 backdropRetryEl.addEventListener("click", retryBackdrop);
-var providerDomOrder = (opts.sstBackdrops || []).concat(PROVIDER_ORDER.filter(function (id) {
-    return !opts.sstBackdrops || opts.sstBackdrops.indexOf(id) < 0;
+var providerDomOrder = opts.sstBackdrops.options.providers.concat(PROVIDER_ORDER.filter(function (id) {
+    return opts.sstBackdrops.options.providers.indexOf(id) < 0;
 }));
 providerDomOrder.forEach(function (id) {
     var row = providersEl.querySelector('[data-provider="' + id + '"]');
@@ -2905,22 +3235,51 @@ function commitProviderOrder(moved) {
     var providers = Array.prototype.filter.call(providersEl.children, function (li) {
         return li.querySelector('input[type="checkbox"]').checked;
     }).map(function (li) { return li.dataset.provider; });
-    if (providers.length) opts.sstBackdrops = providers;
-    else delete opts.sstBackdrops;
+    opts.sstBackdrops.options.providers = providers;
     saveOpts();
+    syncBackdropControls();
     updateBackdrop();
     syncProviderHandles(moved);
 }
 syncProviderHandles();
-// The checked rows, in DOM order, are the complete sparse sstBackdrops value.
-// With no checked row the key is absent and resolver work is disabled.
+function syncBackdropControls() {
+    var master = $("backdrops-enabled");
+    master.checked = opts.sstBackdrops.enabled;
+    master.setAttribute("aria-expanded", opts.sstBackdrops.enabled ? "true" : "false");
+    $("hide-cover").checked = opts.sstBackdrops.options.cover === "hide";
+    setFeatureOptionsState($("backdrop-options"), opts.sstBackdrops.enabled);
+    Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function (li) {
+        li.querySelector('input[type="checkbox"]').checked =
+            opts.sstBackdrops.options.providers.indexOf(li.dataset.provider) >= 0;
+    });
+    var fanartSelected = opts.sstBackdrops.options.providers.indexOf("fanart") >= 0;
+    fanartKeySettingElement.classList.toggle("provider-selected", fanartSelected);
+    fanartKeySettingElement.setAttribute("aria-hidden",
+        fanartSelected ? "false" : "true");
+    if (fanartSelected) fanartKeySettingElement.removeAttribute("inert");
+    else fanartKeySettingElement.setAttribute("inert", "");
+}
+function commitBackdropsEnabled() {
+    opts.sstBackdrops.enabled = $("backdrops-enabled").checked;
+    saveOpts();
+    syncBackdropControls();
+    updateBackdrop();
+}
+function commitBackdropCover() {
+    opts.sstBackdrops.options.cover = $("hide-cover").checked ? "hide" : "show";
+    saveOpts();
+    updateCoverVisibility();
+}
+$("backdrops-enabled").addEventListener("change", commitBackdropsEnabled);
+$("hide-cover").addEventListener("change", commitBackdropCover);
+// Provider selection and order are retained while the backdrop master switch is off.
 Array.prototype.forEach.call(providersEl.querySelectorAll(".provider"), function (li) {
     var provider = ART_PROVIDER_BY_ID[li.dataset.provider];
     if (!provider) throw new Error("Unknown artwork provider control: " + li.dataset.provider);
     var box = li.querySelector('input[type="checkbox"]');
-    box.checked = !!opts.sstBackdrops && opts.sstBackdrops.indexOf(provider.id) >= 0;
     box.addEventListener("change", function () { commitProviderOrder(); });
 });
+syncBackdropControls();
 providersEl.addEventListener("keydown", function (e) {
     var grip = e.target.closest(".grip");
     if (!grip) return;
@@ -2986,6 +3345,12 @@ providersEl.addEventListener("keydown", function (e) {
         row.parentNode.insertBefore(placeholder, row);
         row.style.width = r.width + "px"; // fixed positioning loses the list's width
         row.classList.add("dragging");
+        // Settings disclosures animate with transforms. A fixed child of a transformed
+        // ancestor is positioned against that ancestor rather than the viewport, which
+        // offsets it far from the pointer. Portal only the actively dragged row to the
+        // page root: it escapes those transforms while retaining the page's theme tokens.
+        // The placeholder keeps its exact position in the provider list.
+        document.querySelector(".page").appendChild(row);
         document.body.classList.add("row-dragging");
         moveTo(e);
         window.addEventListener("pointermove", onMove);
