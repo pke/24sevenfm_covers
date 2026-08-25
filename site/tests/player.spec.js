@@ -1001,6 +1001,11 @@ test.describe("the deployed player page", () => {
         const firstResolverMayFinish = new Promise((resolve) => {
             releaseFirstResolver = resolve;
         });
+        let secondResolverRequested = false;
+        let releaseSecondResolver;
+        const secondResolverMayFinish = new Promise((resolve) => {
+            releaseSecondResolver = resolve;
+        });
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
             JSON.stringify({ sstRatings: { enabled: true, options: { countries: ["DE"] } },
                 transition: { enabled: true, options: { style: 1, durationMs: 500 } } })));
@@ -1025,6 +1030,9 @@ test.describe("the deployed player page", () => {
             if (!next) {
                 firstResolverRequested = true;
                 await firstResolverMayFinish;
+            } else {
+                secondResolverRequested = true;
+                await secondResolverMayFinish;
             }
             return route.fulfill({ json: {
                 media: { id: next ? 11 : 10,
@@ -1108,15 +1116,37 @@ test.describe("the deployed player page", () => {
         await expect(stage).not.toHaveClass(/idle/);
         await expect(badges).toHaveCSS("opacity", "1");
         await expect(stageAudio).toHaveCSS("opacity", "1");
-        await page.evaluate(() => document.exitFullscreen());
+        await expect(stage).toHaveClass(/idle/);
+        await expect(badges).toHaveCSS("opacity", "0");
 
+        // A track handoff that begins while fullscreen chrome is hidden must keep
+        // the outgoing badge concealed until the destination logo is ready. Even a
+        // pointer wake during that wait may not reveal the stale front/back faces.
         secondTrack = true;
         await expect(page.locator("#info-title"))
             .toContainText("Next Rating Movie - Second Cue", { timeout: 7000 });
+        await expect.poll(() => secondResolverRequested).toBe(true);
+        await expect(badges).toHaveClass(/track-handoff/);
+        await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
+        await page.mouse.move(fullscreenBox.x + fullscreenBox.width / 4,
+            fullscreenBox.y + fullscreenBox.height / 3);
+        await expect(stage).not.toHaveClass(/idle/);
+        await expect(badges).toHaveCSS("opacity", "0");
+        await expect(badges).toBeHidden();
+
+        releaseSecondResolver();
         await expect(page.locator("#rating-de")).toHaveAttribute("aria-label", "Germany: FSK 16");
+        await expect(badges).not.toHaveClass(/track-handoff/);
         await expect(badges).toHaveClass(/track-intro/);
         await expect(badges).toHaveAttribute("aria-hidden", "false");
         await expect(badges).toHaveCSS("opacity", "1");
+        const handoffFaces = await page.locator("#rating-de .rating-face img")
+            .evaluateAll((images) => images.map((image) => image.getAttribute("src")));
+        expect(handoffFaces).toEqual([
+            "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg",
+            "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg",
+        ]);
+        await page.evaluate(() => document.exitFullscreen());
     });
     test("persists scalar controls and reapplies their effects", async ({ page }) => {
         await mockLayoutTestFeed(page);

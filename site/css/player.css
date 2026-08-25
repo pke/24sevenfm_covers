@@ -655,6 +655,14 @@
     opacity: 1;
     visibility: visible;
 }
+/* A track change that begins after the badge chrome has idled out keeps the old
+   faces concealed while the destination logos load. JS releases this only after
+   the retained card has been updated, so pointer movement cannot expose stale art. */
+.stage .rating-badges.track-handoff {
+    opacity: 0;
+    visibility: hidden;
+    transition-delay: 0s, 0s;
+}
 .stage:fullscreen.idle { cursor: none; }
 
 /* The options overlay: hosts the REAL .controls panel while open in fullscreen. */

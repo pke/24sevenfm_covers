@@ -663,7 +663,7 @@ function makeRatingSlot(slot) {
         return ["none", "fade", "fliph", "flipv"][effect];
     }
 
-    function reveal(front, certification) {
+    function reveal(front, certification, replaceWhileHidden) {
         var fx = effectName(), wasHidden = !slot.classList.contains("show");
         clearTimeout(settleTimer);
         delete slot.dataset.settled;
@@ -672,6 +672,25 @@ function makeRatingSlot(slot) {
             slot.dataset.fx = fx;
             void slot.offsetWidth;
             delete slot.dataset.warp;
+        }
+        // If the badges were already hidden when this track handoff began, there is
+        // no outgoing badge to animate for the listener. Replace BOTH retained faces
+        // while the container is still held invisible, then fade/expand the slot with
+        // only the destination badge attached. Otherwise track-intro would expose the
+        // old front face for the first part of a flip (or crossfade).
+        if (replaceWhileHidden) {
+            var incoming = front === "a" ? faces[0] : faces[1];
+            copyFace(incoming, incoming === faces[0] ? faces[1] : faces[0]);
+            slot.dataset.warp = "";
+            slot.dataset.front = "a";
+            slot.dataset.settled = "";
+            slot.classList.add("show");
+            void slot.offsetWidth;
+            delete slot.dataset.warp;
+            slot.setAttribute("aria-hidden", "false");
+            slot.setAttribute("aria-label", certification.accessibleLabel);
+            maybeBeginRatingTrackVisibility();
+            return;
         }
         // A retained badge that is being revealed again still enters through the
         // selected cover effect. Prime the opposite face while the slot is invisible,
@@ -707,12 +726,12 @@ function makeRatingSlot(slot) {
         }
     }
 
-    function show(certification, generation) {
+    function show(certification, generation, replaceWhileHidden) {
         if (!certification) { hide(); return; }
         var nextToken = [certification.rating, certification.label,
             certification.logo || ""].join("\n");
         if (token === nextToken && slot.dataset.front) {
-            reveal(slot.dataset.front, certification);
+            reveal(slot.dataset.front, certification, replaceWhileHidden);
             return;
         }
 
@@ -722,7 +741,7 @@ function makeRatingSlot(slot) {
             if (version !== currentVersion || !renderIsCurrent("backdrop", generation)) return;
             setFace(back, certification, logo);
             token = nextToken;
-            reveal(back === faces[0] ? "a" : "b", certification);
+            reveal(back === faces[0] ? "a" : "b", certification, replaceWhileHidden);
         };
         if (certification.logo) {
             preloadImage(certification.logo,
@@ -744,25 +763,45 @@ var currentCertifications = [];
 var ratingBadgesEl = $("rating-badges");
 var STAGE_IDLE_MS = 2000, RATING_TRACK_VISIBLE_MS = 10000;
 var ratingIntroTimer = null, ratingIntroPending = false;
+var ratingHandoffStartedHidden = false;
+
+function ratingBadgesAreHidden() {
+    var style = getComputedStyle(ratingBadgesEl);
+    return style.visibility === "hidden" || parseFloat(style.opacity) === 0;
+}
 
 // A new track reserves an intro window, but its ten seconds start only when the
 // first selected rating is actually revealed. Resolver and SVG latency therefore
 // cannot consume the entire window before the listener has seen a badge.
-function prepareRatingTrackVisibility() {
+function prepareRatingTrackVisibility(concealHiddenHandoff) {
+    // Snapshot before removing the previous track's intro class. A handoff that
+    // starts genuinely hidden stays hidden even if the pointer moves while the
+    // resolver or logo is loading, matching the cover's hidden-until-ready hold.
+    ratingHandoffStartedHidden = !!concealHiddenHandoff && ratingBadgesAreHidden();
     clearTimeout(ratingIntroTimer);
     ratingIntroPending = true;
     ratingBadgesEl.classList.remove("track-intro");
+    ratingBadgesEl.classList.toggle("track-handoff", ratingHandoffStartedHidden);
+    if (ratingHandoffStartedHidden) {
+        ratingBadgesEl.setAttribute("aria-hidden", "true");
+        ratingSlots.DE.hide();
+        ratingSlots.US.hide();
+    }
 }
 
 function cancelRatingTrackVisibility() {
     clearTimeout(ratingIntroTimer);
     ratingIntroPending = false;
+    ratingHandoffStartedHidden = false;
     ratingBadgesEl.classList.remove("track-intro");
+    ratingBadgesEl.classList.remove("track-handoff");
 }
 
 function maybeBeginRatingTrackVisibility() {
     if (!ratingIntroPending || !ratingBadgesEl.querySelector(".rating-slot.show")) return;
     ratingIntroPending = false;
+    ratingHandoffStartedHidden = false;
+    ratingBadgesEl.classList.remove("track-handoff");
     ratingBadgesEl.classList.add("track-intro");
     ratingBadgesEl.setAttribute("aria-hidden", "false");
     ratingIntroTimer = setTimeout(function () {
@@ -776,12 +815,19 @@ function renderRatingBadges(generation) {
         return ratings;
     }, Object.create(null));
     var available = stationSupports(CAPABILITY_SOUNDTRACK_MEDIA);
-    ratingSlots.DE.show(available && sstRatingsEnabled()
+    var de = available && sstRatingsEnabled()
             && opts.sstRatings.options.countries.indexOf("DE") >= 0
-        ? byCountry.DE : null, generation);
-    ratingSlots.US.show(available && sstRatingsEnabled()
+        ? byCountry.DE : null;
+    var us = available && sstRatingsEnabled()
             && opts.sstRatings.options.countries.indexOf("US") >= 0
-        ? byCountry.US : null, generation);
+        ? byCountry.US : null;
+    var replaceWhileHidden = ratingHandoffStartedHidden;
+    ratingSlots.DE.show(de, generation, replaceWhileHidden);
+    ratingSlots.US.show(us, generation, replaceWhileHidden);
+    // Keep the handoff armed until a face actually commits. A prefetched result can
+    // be superseded while its logo is still loading; clearing here would let that
+    // second render animate from the stale face. Each country captures the mode so
+    // both destination logos still replace their retained faces when loads race.
 }
 
 function setRatings(certifications, generation) {
@@ -1189,7 +1235,7 @@ async function poll() {
             }
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
-            if (metadataChanged) prepareRatingTrackVisibility();
+            if (metadataChanged) prepareRatingTrackVisibility(trackIdentityChanged);
             // Promote the prepared queue result in the same generation that starts
             // current-track revalidation. With no valid result, null clears the old
             // track through the normal fade before the resolver response arrives.
