@@ -2994,6 +2994,56 @@ providersEl.addEventListener("keydown", function (e) {
     });
 })();
 
+// --- easter egg ---------------------------------------------------------------
+// Seven taps on the current cover unlock a self-contained game chunk. Keep the
+// module, its stylesheet and the extra history/queue requests out of the ordinary
+// player path; even import() is deferred until the gesture is complete.
+var memoryGameModule = null, coverTapCount = 0, coverTapResetTimer = null;
+var coverTapStart = null;
+function openMemoryGame() {
+    if (!memoryGameModule) {
+        var moduleUrl = new URL("memory-game.js" + PLAYER_SCRIPT_URL.search, PLAYER_SCRIPT_URL);
+        memoryGameModule = import(moduleUrl.href).catch(function (error) {
+            memoryGameModule = null;
+            throw error;
+        });
+    }
+    memoryGameModule.then(function (game) {
+        var selectedStation = station();
+        game.openMemoryGame({
+            host: selectedStation.host,
+            stationName: selectedStation.name,
+            stationLogo: selectedStation.logo,
+        });
+    }).catch(function () {
+        setStatus("The secret level couldn’t be loaded.", "general");
+    });
+}
+coverBox.addEventListener("pointerdown", function (event) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    coverTapStart = { id: event.pointerId, x: event.clientX, y: event.clientY };
+});
+coverBox.addEventListener("pointerup", function (event) {
+    if (!coverTapStart || event.pointerId !== coverTapStart.id) return;
+    var distance = Math.hypot(event.clientX - coverTapStart.x,
+        event.clientY - coverTapStart.y);
+    coverTapStart = null;
+    if (distance > 12) {
+        coverTapCount = 0;
+        clearTimeout(coverTapResetTimer);
+        return;
+    }
+    coverTapCount++;
+    clearTimeout(coverTapResetTimer);
+    if (coverTapCount < 7) {
+        coverTapResetTimer = setTimeout(function () { coverTapCount = 0; }, 4000);
+        return;
+    }
+    coverTapCount = 0;
+    openMemoryGame();
+});
+coverBox.addEventListener("pointercancel", function () { coverTapStart = null; });
+
 // --- go ----------------------------------------------------------------------
 applyLayout();
 setInfo("Loading…", "");

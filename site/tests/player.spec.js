@@ -4558,6 +4558,128 @@ test.describe("the deployed player page", () => {
         await page.clock.fastForward(20001);
         await expect.poll(() => page.evaluate(() => window.__resolverAborted)).toBe(true);
     });
+    test("lazy-loads the seven-tap cover game, lets the listener size the deck, and tracks downloads", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.setViewportSize({ width: 1280, height: 720 });
+        const memoryAssets = [];
+        let historyRequests = 0;
+        let historyCoverRequests = 0;
+        page.on("request", (request) => {
+            if (/memory-game\.(js|css)/.test(request.url())) memoryAssets.push(request.url());
+        });
+        const queue = Array.from({ length: 6 }, (_, index) => ({
+            Album: `Upcoming ${index + 1}`,
+            Track: `Queue cue ${index + 1}`,
+            CoverLink: `https://streamingsoundtracks.com/images/cover/game-queue-${index + 1}.svg`,
+        }));
+        const history = Array.from({ length: 6 }, (_, index) => ({
+            Album: `History ${index + 1}`,
+            Track: `Played cue ${index + 1}`,
+            CoverLink: `https://streamingsoundtracks.com/images/cover/game-history-${index + 1}.svg`,
+        }));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: queue });
+            if (action === "GetHistory") {
+                historyRequests++;
+                return route.fulfill({ json: history });
+            }
+            return route.fulfill({ json: {
+                Album: "Station ID", Track: "", Artist: "24seven.fm", CoverLink: "", Length: 0,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+            route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#7c5cff"/></svg>' }));
+        await page.route("https://streamingsoundtracks.com/images/cover/500/game-*.svg", async (route) => {
+            if (route.request().url().includes("game-history")) historyCoverRequests++;
+            await new Promise((resolve) => setTimeout(resolve, 450));
+            const hue = Math.abs(route.request().url().split("").reduce(
+                (sum, character) => sum + character.charCodeAt(0), 0)) % 360;
+            return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="hsl(${hue} 70% 45%)"/></svg>` });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        for (let tap = 0; tap < 6; tap++) await page.locator("#coverbox").click();
+        expect(memoryAssets).toEqual([]);
+        expect(historyRequests).toBe(0);
+        await expect(page.locator(".memory-game-overlay")).toHaveCount(0);
+
+        await page.locator("#coverbox").click();
+        const dialog = page.getByRole("dialog", { name: "Cover Memory" });
+        await expect(dialog).toBeVisible();
+        await expect(dialog.getByRole("heading", { name: "How many covers?" })).toBeVisible();
+        expect(memoryAssets.some((url) => url.includes("memory-game.js"))).toBe(true);
+        expect(memoryAssets.some((url) => url.includes("memory-game.css"))).toBe(true);
+        expect(historyRequests).toBe(1);
+        expect(historyCoverRequests).toBe(0);
+        await expect(dialog.locator(".memory-game-size-choice")).toHaveCount(6);
+
+        await dialog.getByRole("button", { name: "10 covers, 20 cards" }).click();
+        await dialog.getByRole("button", { name: "Deal 10 pairs" }).click();
+        const progress = dialog.getByRole("progressbar", { name: "Cover downloads" });
+        await expect(progress).toBeVisible();
+        await expect(progress).toHaveAttribute("aria-valuemax", "10");
+        await expect(dialog.locator(".memory-game-card-stack")).toBeVisible();
+
+        const cards = dialog.locator(".memory-game-card");
+        await expect(cards).toHaveCount(20);
+        await expect(dialog.locator(".memory-game-card-back img")).toHaveCount(20);
+        expect(historyCoverRequests).toBeGreaterThan(0);
+        const gameGeometry = await dialog.evaluate((element) => {
+            const viewport = element.querySelector(".memory-game-viewport");
+            const shell = element.getBoundingClientRect();
+            const header = element.querySelector(".memory-game-header").getBoundingClientRect();
+            const board = element.querySelector(".memory-game-board").getBoundingClientRect();
+            return {
+                overflowY: getComputedStyle(viewport).overflowY,
+                viewportClientHeight: viewport.clientHeight,
+                viewportScrollHeight: viewport.scrollHeight,
+                shellTop: shell.top,
+                shellBottom: shell.bottom,
+                headerTop: header.top,
+                boardBottom: board.bottom,
+                windowHeight: window.innerHeight,
+            };
+        });
+        expect(gameGeometry.overflowY).toBe("hidden");
+        expect(gameGeometry.viewportScrollHeight).toBeLessThanOrEqual(
+            gameGeometry.viewportClientHeight + 1);
+        expect(gameGeometry.shellTop).toBeLessThanOrEqual(20);
+        expect(gameGeometry.headerTop - gameGeometry.shellTop).toBeLessThanOrEqual(2);
+        expect(gameGeometry.shellBottom).toBeLessThanOrEqual(gameGeometry.windowHeight);
+        expect(gameGeometry.boardBottom).toBeLessThanOrEqual(gameGeometry.shellBottom - 6);
+        const pairCounts = await cards.evaluateAll((elements) => elements.reduce((counts, card) => {
+            counts[card.dataset.pair] = (counts[card.dataset.pair] || 0) + 1;
+            return counts;
+        }, {}));
+        expect(Object.values(pairCounts)).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 2, 2]);
+
+        for (const pair of Object.keys(pairCounts)) {
+            const pairCards = dialog.locator(`.memory-game-card[data-pair="${pair}"]`);
+            await pairCards.nth(0).click();
+            await pairCards.nth(1).click();
+            await expect(pairCards.nth(0)).toHaveClass(/is-matched/);
+        }
+        await expect(dialog.getByRole("button", { name: "Play again" })).toBeVisible();
+        await expect(dialog.locator(".memory-game-pairs")).toHaveText("10 / 10");
+
+        await page.keyboard.press("Escape");
+        await expect(page.locator(".memory-game-overlay")).toHaveCount(0);
+
+        // A smaller queue snapshot shortens the picker instead of offering empty decks.
+        queue.length = 4;
+        history.length = 3;
+        await page.reload({ waitUntil: "domcontentloaded" });
+        for (let tap = 0; tap < 7; tap++) await page.locator("#coverbox").click();
+        const cappedDialog = page.getByRole("dialog", { name: "Cover Memory" });
+        await expect(cappedDialog.getByRole("heading", { name: "How many covers?" })).toBeVisible();
+        await expect(cappedDialog).toContainText("Pick 5–7 covers");
+        await expect(cappedDialog.locator(".memory-game-size-choice")).toHaveCount(3);
+    });
+
     async function mockProviderTestFeed(page) {
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
