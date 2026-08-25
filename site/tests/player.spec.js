@@ -3876,6 +3876,47 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#status")).toHaveText("");
         expect(resolverRequests).toBe(2);
     });
+    test("retries a backdrop after a transient image load failure", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/blade-runner-2049.svg";
+        const sizedCover =
+            "https://streamingsoundtracks.com/images/cover/500/blade-runner-2049.svg";
+        const backdrop = "https://fanart.tv/blade-runner-2049.jpg";
+        let resolverRequests = 0, imageRequests = 0;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true, options: {
+                providers: ["fanart", "tmdb"], cover: "show" } } })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Blade Runner 2049", Track: "Main Titles",
+                Artist: "Hans Zimmer, Benjamin Wallfisch", CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-25T12:00:00Z", SystemTime: "2026-08-25T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
+            return route.fulfill({ json: {
+                media: { id: 335984, title: "Blade Runner 2049", type: "movie" },
+                backdrop, source: "fanart", tint: [255, 226, 229],
+            } });
+        });
+        await page.route(backdrop, (route) => {
+            imageRequests++;
+            if (imageRequests === 1) return route.abort();
+            return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => imageRequests, { timeout: 5000 }).toBe(2);
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", backdrop);
+        await expect(page.locator("#backdrop-error")).not.toHaveClass(/show/);
+        expect(resolverRequests).toBe(1);
+    });
     test("rejects a non-string persisted fanart personal key", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/invalid-key.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/invalid-key.svg";
@@ -3973,9 +4014,13 @@ test.describe("the deployed player page", () => {
             input.dispatchEvent(new Event("change", { bubbles: true }));
         });
         await expect.poll(() => resolverRequests).toBe(2);
-        await expect.poll(() => failedImages).toBe(1);
+        await expect.poll(() => failedImages, { timeout: 5000 }).toBe(3);
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
         await expect(page.locator("#stage")).not.toHaveClass(/no-cover/);
+        await openBackdropSettings(page);
+        await expect(page.locator("#backdrop-error")).toBeVisible();
+        await expect(page.locator("#backdrop-error"))
+            .toContainText("Backdrop artwork couldn’t be loaded. Retry");
         await expect.poll(() => page.locator("#stage").evaluate((stage) =>
             getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
             .toBe("rgb(20, 40, 60)");

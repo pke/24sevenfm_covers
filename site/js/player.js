@@ -518,6 +518,7 @@ function nextRenderGeneration(channel) { return ++renderGenerations[channel]; }
 function renderIsCurrent(channel, generation) { return renderGenerations[channel] === generation; }
 var IMAGE_TIMEOUT = 20000, COVER_RETRY_DELAY = 5000, COVER_RETRY_LIMIT = 3;
 var COVER_RETRY_COOLDOWN = 300000;
+var BACKDROP_RETRY_DELAY = 1000, BACKDROP_RETRY_LIMIT = 2;
 
 function preloadImage(url, onLoad, onError) {
     var image = new Image(), settled = false;
@@ -1515,12 +1516,13 @@ function showCover(url) {
 // Poster mode only: the media work's real backdrop, sharp and dimmed, replaces the
 // blurred cover behind the artwork. The normalized soundtrack title usually resembles the movie,
 // TV or game title, so a catalog can match it. A
-// per-title cache (negative results too) keeps it to one request per work, and every
-// failure path falls back silently to the blurred cover - experimental means the
-// player must never be worse off for having it enabled.
+// per-title cache (negative results too) keeps it to one request per work. A failed
+// image gets a short bounded retry burst before the existing manual retry appears;
+// meanwhile the player falls back to the blurred cover.
 var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a screen backdrop is currently visible (drives hide-cover)
 var coverHiddenUntilCoverReady = false;
+var backdropImageRetryTimer = null;
 function newMovieCache() { return Object.create(null); }
 var movieCaches = Object.create(null);
 var backdropRequest = null;
@@ -1771,8 +1773,15 @@ function mergeMovieArt(authoritative, fallback) {
     };
 }
 
-function setMovieBackdrop(art, generation) {
+function cancelBackdropImageRetry() {
+    clearTimeout(backdropImageRetryTimer);
+    backdropImageRetryTimer = null;
+}
+
+function setMovieBackdrop(art, generation, retryFailures) {
     if (!renderIsCurrent("backdrop", generation)) return;
+    const isAutomaticRetry = typeof retryFailures === "number";
+    if (!isAutomaticRetry) cancelBackdropImageRetry();
     if (!art || !art.url) {
         movieLayer.hide();
         movieShown = false;
@@ -1786,13 +1795,27 @@ function setMovieBackdrop(art, generation) {
     currentMovieTint = validTint(art.tint);
     applyPreferredPlayerTint();
     movieLayer.show(art.url, generation,
-        function () { movieShown = true; updateCoverVisibility(); },
+        function () {
+            cancelBackdropImageRetry();
+            setBackdropErrorState("");
+            movieShown = true;
+            updateCoverVisibility();
+        },
         function () {
             movieLayer.hide();
             movieShown = false;
             currentMovieTint = null;
             applyPreferredPlayerTint();
             updateCoverVisibility();
+            const failures = (retryFailures || 0) + 1;
+            if (failures <= BACKDROP_RETRY_LIMIT) {
+                backdropImageRetryTimer = setTimeout(function () {
+                    backdropImageRetryTimer = null;
+                    setMovieBackdrop(art, generation, failures);
+                }, BACKDROP_RETRY_DELAY * Math.pow(2, failures - 1));
+            } else {
+                setBackdropErrorState("error");
+            }
         });
 }
 
@@ -1812,6 +1835,7 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     const hasPrefetchedResult = arguments.length > 1;
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
+    cancelBackdropImageRetry();
     // Artwork and ratings share the resolver, but not their visible state. If artwork
     // is switched off while ratings stay enabled, start the backdrop fade immediately
     // instead of leaving it visible until that ratings-only request settles.
