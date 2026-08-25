@@ -91,23 +91,25 @@ for those paths.
 
 ## Local preview
 
-For the interactive web player, start the static site and the Vercel Functions
+For the interactive web player, start the static site and a persistent local Node API
 together. The site stays on port 8099; the API runs separately on port 3000 and
-allows only that local site origin. The script uses an installed `vercel` CLI or
-falls back to `pnpm dlx`/`npx`, then keeps both servers running until Ctrl+C:
+allows only that local site origin. Production still deploys the same handlers as
+Vercel Functions; the lightweight local adapter avoids rebuilding a Function worker
+for every preview request. The script keeps both servers running until Ctrl+C:
 
 ```powershell
 pwsh -File start_test_server.ps1
 ```
 
-The launcher enables Vercel CLI debug output and structured backdrop-provider timing
-by default. Each run keeps `stdout.log` and `stderr.log` in a new session directory
-below `.vercel/logs/`; the exact path is printed after startup. Pass
-`-NoVercelDebug` to disable both debug streams.
+The launcher enables structured backdrop-provider timing by default. Each run keeps
+`stdout.log` and `stderr.log` in a new session directory below `.vercel/logs/`; the
+exact path is printed after startup. Pass `-NoApiDebug` to disable it (the former
+`-NoVercelDebug` name remains an alias). Local API responses use `Cache-Control:
+no-store`, so a browser cannot retain results across resolver edits.
 
 The local site server watches `site\` recursively. After a short debounce, every
-source edit is rendered into `www\` automatically; reloading port 8099 therefore
-always uses the latest source without restarting either server.
+source edit is rendered into `www\` automatically. The Node API separately watches
+its loaded `api\` modules and restarts itself when resolver code changes.
 
 Only generated `www\player.html` points at the local API. The committed template
 and every deployment continue to use `https://24covers-api.vercel.app`.

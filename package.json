@@ -7,7 +7,7 @@
     "node": "24.x"
   },
   "scripts": {
-    "test:api": "node --test api/*.test.js"
+    "test:api": "node --test api/*.test.js installer/local_api_server.test.js"
   },
   "dependencies": {
     "sharp": "0.35.3"

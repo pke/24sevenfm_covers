@@ -1,4 +1,4 @@
-# Start the rendered website and the Vercel Functions used by it. The two ports are
+# Start the rendered website and its persistent local Node API. The two ports are
 # intentionally explicit: the API process allows the static site's complete origin,
 # while only the generated www\player.html points at the local API.
 [CmdletBinding()]
@@ -8,7 +8,8 @@ param(
     [ValidateRange(1, 65535)]
     [int]$ApiPort = 3000,
     [switch]$NoRender,
-    [switch]$NoVercelDebug
+    [Alias('NoVercelDebug')]
+    [switch]$NoApiDebug
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,67 +19,37 @@ if ($SitePort -eq $ApiPort) { throw 'SitePort and ApiPort must differ.' }
 $root = $PSScriptRoot
 $siteOrigin = "http://localhost:$SitePort"
 $apiOrigin = "http://localhost:$ApiPort"
-$vercelVersion = '59.3.0'
+$node = Get-Command node -ErrorAction SilentlyContinue
+if (-not $node) { throw 'Node.js is required for the local API preview.' }
+$apiExecutable = $node.Source
+$apiServerPath = Join-Path $root 'installer\local_api_server.js'
+$apiArguments = @('--watch-preserve-output',
+    ("--watch-path=" + (Join-Path $root 'api')),
+    ("--watch-path=" + $apiServerPath),
+    $apiServerPath)
 
-$vercel = Get-Command vercel -ErrorAction SilentlyContinue
-$pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
-$npx = Get-Command npx -ErrorAction SilentlyContinue
-if ($vercel) {
-    $apiExecutable = $vercel.Source
-    $apiArguments = @('dev', '--local', '--listen', "$ApiPort", '--yes')
-} elseif ($pnpm) {
-    $apiExecutable = $pnpm.Source
-    $apiArguments = @('dlx', '--allow-build=esbuild', "vercel@$vercelVersion",
-        'dev', '--local', '--listen', "$ApiPort", '--yes')
-} elseif ($npx) {
-    $apiExecutable = $npx.Source
-    $apiArguments = @('--yes', "vercel@$vercelVersion", 'dev', '--local',
-        '--listen', "$ApiPort", '--yes')
-} else {
-    throw 'Vercel CLI unavailable: install vercel, pnpm, or npm/npx first.'
-}
-$apiArguments += '--no-color'
-if (-not $NoVercelDebug) { $apiArguments += '--debug' }
-
-$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$runtimeDirectory = [IO.Path]::GetFullPath((Join-Path $tempRoot ("24covers-vercel-" + [guid]::NewGuid())))
-if (-not $runtimeDirectory.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Could not create a safe temporary runtime directory.'
-}
 $vercelDirectory = [IO.Path]::GetFullPath((Join-Path $root '.vercel'))
 $logRoot = [IO.Path]::GetFullPath((Join-Path $vercelDirectory 'logs'))
 if (-not $logRoot.StartsWith(($vercelDirectory + [IO.Path]::DirectorySeparatorChar),
         [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Could not create a safe Vercel log directory.'
+    throw 'Could not create a safe local API log directory.'
 }
 $logDirectory = Join-Path $logRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + "-$ApiPort-" +
     [guid]::NewGuid().ToString('N').Substring(0, 8))
 $apiProcess = $null
 try {
-    New-Item -ItemType Directory -Path $runtimeDirectory | Out-Null
     New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
     $stdoutLog = Join-Path $logDirectory 'stdout.log'
     $stderrLog = Join-Path $logDirectory 'stderr.log'
-    $apiWorkspace = Join-Path $runtimeDirectory 'project'
-    New-Item -ItemType Directory -Path $apiWorkspace | Out-Null
-    Copy-Item (Join-Path $root 'api') $apiWorkspace -Recurse
-    $publicDirectory = Join-Path $root 'public'
-    if (Test-Path $publicDirectory -PathType Container) {
-        Copy-Item $publicDirectory $apiWorkspace -Recurse
-    }
-    foreach ($file in @('package.json', 'package-lock.json', 'vercel.json')) {
-        Copy-Item (Join-Path $root $file) $apiWorkspace
-    }
     $nodeModules = Join-Path $root 'node_modules'
     if (-not (Test-Path $nodeModules -PathType Container)) {
         throw 'node_modules is missing; run npm install before starting the local API.'
     }
-    Copy-Item $nodeModules $apiWorkspace -Recurse
 
     $apiEnvironmentKeys = @(
         'TMDB_API_KEY', 'TMDB_READ_TOKEN', 'TMDB_API_TOKEN', 'FANART_API_KEY',
         'STEAMGRIDDB_API_KEY', 'BACKDROP_MEDIA_OVERRIDES', 'TINT_ALLOWED_HOSTS',
-        'BACKDROP_ALLOWED_ORIGINS', 'BACKDROP_DEBUG_LOG'
+        'BACKDROP_ALLOWED_ORIGINS', 'BACKDROP_DEBUG_LOG', 'LOCAL_API_PORT'
     )
     $previousEnvironment = @{}
     foreach ($key in $apiEnvironmentKeys) {
@@ -99,10 +70,11 @@ try {
     }
     [Environment]::SetEnvironmentVariable('BACKDROP_ALLOWED_ORIGINS', $siteOrigin, 'Process')
     [Environment]::SetEnvironmentVariable('BACKDROP_DEBUG_LOG',
-        $(if ($NoVercelDebug) { '0' } else { '1' }), 'Process')
+        $(if ($NoApiDebug) { '0' } else { '1' }), 'Process')
+    [Environment]::SetEnvironmentVariable('LOCAL_API_PORT', "$ApiPort", 'Process')
     try {
         $apiProcess = Start-Process -FilePath $apiExecutable -ArgumentList $apiArguments `
-            -WorkingDirectory $apiWorkspace -WindowStyle Hidden -PassThru `
+            -WorkingDirectory $root -WindowStyle Hidden -PassThru `
             -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
     } finally {
         foreach ($key in $apiEnvironmentKeys) {
@@ -111,13 +83,10 @@ try {
     }
 
     $portReady = $false
-    # pnpm/Vercel can take a little over 30 seconds on a cold cache or a network-backed
-    # workspace. Keep the bounded check, but do not abandon a process that is still
-    # starting successfully at the old deadline.
-    for ($attempt = 1; $attempt -le 240; $attempt++) {
+    for ($attempt = 1; $attempt -le 80; $attempt++) {
         if ($apiProcess.HasExited) {
             $details = ((Get-Content $stdoutLog, $stderrLog -ErrorAction SilentlyContinue) -join "`n").Trim()
-            throw "Local Vercel API exited before startup.`n$details"
+            throw "Local Node API exited before startup.`n$details"
         }
         $socket = New-Object Net.Sockets.TcpClient
         try {
@@ -132,25 +101,23 @@ try {
     }
     if (-not $portReady) {
         $details = ((Get-Content $stdoutLog, $stderrLog -ErrorAction SilentlyContinue) -join "`n").Trim()
-        throw "Local Vercel API did not become ready at $apiOrigin.`n$details"
+        throw "Local Node API did not become ready at $apiOrigin.`n$details"
     }
 
     try {
-        # The first request compiles the Function. Let it complete once instead of
-        # repeatedly cancelling a cold build with short health-check timeouts.
         $response = Invoke-WebRequest -UseBasicParsing -Method Options -TimeoutSec 60 `
             -Headers @{ Origin = $siteOrigin } "$apiOrigin/api/backdrop"
     } catch {
         $details = ((Get-Content $stdoutLog, $stderrLog -ErrorAction SilentlyContinue) -join "`n").Trim()
-        throw "Local Vercel API failed its CORS preflight: $($_.Exception.Message)`n$details"
+        throw "Local Node API failed its CORS preflight: $($_.Exception.Message)`n$details"
     }
     if ($response.StatusCode -ne 204 -or
             $response.Headers['Access-Control-Allow-Origin'] -ne $siteOrigin) {
-        throw "Local Vercel API did not allow origin $siteOrigin."
+        throw "Local Node API did not allow origin $siteOrigin."
     }
 
-    Write-Host "Local Vercel API ready at $apiOrigin" -ForegroundColor Cyan
-    Write-Host "Vercel logs: $logDirectory" -ForegroundColor DarkCyan
+    Write-Host "Local Node API ready at $apiOrigin (watching api\)" -ForegroundColor Cyan
+    Write-Host "Local API logs: $logDirectory" -ForegroundColor DarkCyan
     & (Join-Path $root 'installer\serve_site.ps1') -Port $SitePort `
         -NoRender:$NoRender -ApiOrigin $apiOrigin
 } finally {
@@ -158,5 +125,4 @@ try {
         try { $apiProcess.Kill($true) } catch { $apiProcess.Kill() }
         $apiProcess.WaitForExit()
     }
-    Remove-Item -LiteralPath $runtimeDirectory -Recurse -Force -ErrorAction SilentlyContinue
 }

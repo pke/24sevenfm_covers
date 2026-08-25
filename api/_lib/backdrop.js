@@ -103,6 +103,7 @@ class ResolverError extends Error {
 
 function cleanMovieTitle(album) {
     const cleaned = unrotateTitleArticle(String(album || "")
+        .replace(/\(\s*video[\s-]*game\s*\)/gi, " ")
         .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
         .replace(/\b(original motion picture soundtrack|music from the motion picture|original motion picture score|motion picture soundtrack|original soundtracks?|original scores?|the original scores?|soundtrack|ost)\b/gi, " ")
         .replace(/\s*[:\-–]\s*(?:the\s+)?symphonic\s+suite\s*$/i, " ")
@@ -234,6 +235,7 @@ function backdropTitleCandidatesFor(album, track) {
 function mediaHintForAlbum(album) {
     const title = String(album || "");
     const cleanedTitle = cleanMovieTitle(title);
+    if (/\(\s*video[\s-]*game\s*\)/i.test(title)) return "game";
     if (starTrekSeriesAlias(cleanedTitle)) return "tv";
     if (tvSeasonIdentity(cleanedTitle)) return "tv";
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
@@ -389,6 +391,20 @@ function trustedCoverTintUrl(raw, env = process.env) {
 
 function queryValue(value) {
     return Array.isArray(value) ? value[0] : value;
+}
+
+function requestQueryValue(req, name) {
+    const query = req && req.query && typeof req.query === "object" ? req.query : {};
+    const fallback = queryValue(query[name]);
+    // Some server adapters expose form-encoded spaces as plus signs after discarding the raw query.
+    const decodedFallback = typeof fallback === "string" ? fallback.replace(/\+/g, " ") : fallback;
+    if (!req || typeof req.url !== "string" || !req.url.includes("?")) return decodedFallback;
+    try {
+        const params = new URL(req.url, "http://localhost").searchParams;
+        return params.has(name) ? params.get(name) : decodedFallback;
+    } catch (error) {
+        return decodedFallback;
+    }
 }
 
 function requestedProviders(value) {
@@ -1247,11 +1263,11 @@ function createHandler(options = {}) {
         }
 
         try {
-            const albumValue = queryValue(req.query && req.query.album);
-            const trackValue = queryValue(req.query && req.query.track);
-            const artistValue = queryValue(req.query && req.query.artist);
+            const albumValue = requestQueryValue(req, "album");
+            const trackValue = requestQueryValue(req, "track");
+            const artistValue = requestQueryValue(req, "artist");
             const titleValue = typeof albumValue === "string"
-                ? albumValue : queryValue(req.query && req.query.title);
+                ? albumValue : requestQueryValue(req, "title");
             if (typeof titleValue !== "string" || !titleValue.trim() || titleValue.length > 180
                     || /[\u0000-\u001F\u007F]/.test(titleValue)) {
                 throw new ResolverError("invalid_title", 400, "title is required and must be at most 180 characters");
@@ -1270,12 +1286,12 @@ function createHandler(options = {}) {
             if (!title || title.length > 160) {
                 throw new ResolverError("invalid_title", 400, "cleaned title is empty or too long");
             }
-            const providers = requestedProviders(queryValue(req.query && req.query.providers));
-            const ratingCountries = requestedRatings(queryValue(req.query && req.query.ratings));
-            const includeArt = requestedArt(queryValue(req.query && req.query.art));
-            const requestedHint = requestedMediaHint(queryValue(req.query && req.query.media_hint));
+            const providers = requestedProviders(requestQueryValue(req, "providers"));
+            const ratingCountries = requestedRatings(requestQueryValue(req, "ratings"));
+            const includeArt = requestedArt(requestQueryValue(req, "art"));
+            const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const mediaHint = requestedHint === "auto" ? mediaHintForAlbum(titleValue) : requestedHint;
-            const rawClientKey = queryValue(req.query && req.query.client_key);
+            const rawClientKey = requestQueryValue(req, "client_key");
             const clientKey = typeof rawClientKey === "string" ? rawClientKey.trim() : "";
             if (clientKey.length > 128 || /[\u0000-\u001F\u007F]/.test(clientKey)) {
                 throw new ResolverError("invalid_client_key", 400, "client_key is invalid");
@@ -1389,6 +1405,7 @@ module.exports = {
     pickGame,
     pickMedia,
     pickMovie,
+    requestQueryValue,
     requestedProviders,
     requestedRatings,
     requestedMediaHint,

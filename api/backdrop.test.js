@@ -17,6 +17,7 @@ const {
     pickGame,
     pickMedia,
     pickMovie,
+    requestQueryValue,
     requestedRatings,
     tintFromMeans,
     tintPreviewUrl,
@@ -498,6 +499,7 @@ function mockRequest(query = {}, extras = {}) {
     return {
         method: extras.method || "GET",
         headers: extras.headers || {},
+        url: extras.url,
         query,
     };
 }
@@ -520,15 +522,28 @@ test("cleans soundtrack noise and rotated articles", () => {
     assert.equal(cleanMovieTitle("Thomas Crown Affair, The (1968)"),
         "The Thomas Crown Affair (1968)");
     assert.equal(cleanMovieTitle("The Magic Of Inspector Morse"), "Inspector Morse");
+    assert.equal(cleanMovieTitle("Defiance (Video Game)"), "Defiance");
 });
 
 test("infers only explicit game, movie, and TV soundtrack markers", () => {
     assert.equal(mediaHintForAlbum("Hades (Original Video Game Soundtrack)"), "game");
     assert.equal(mediaHintForAlbum("Journey - Music From The Video Game"), "game");
     assert.equal(mediaHintForAlbum("Video Games Live: Level 2"), "game");
+    assert.equal(mediaHintForAlbum("Defiance (Video Game)"), "game");
     assert.equal(mediaHintForAlbum("Arrival (Original Motion Picture Soundtrack)"), "movie");
     assert.equal(mediaHintForAlbum("Doctor Who (Original Television Soundtrack)"), "tv");
     assert.equal(mediaHintForAlbum("Prey"), "auto");
+});
+
+test("decodes local Vercel plus-spaces without losing encoded literal plus signs", () => {
+    assert.equal(requestQueryValue({
+        url: "/api/backdrop",
+        query: { album: "Defiance+(Video+Game)" },
+    }, "album"), "Defiance (Video Game)");
+    assert.equal(requestQueryValue({
+        url: "/api/backdrop?album=C%2B%2B",
+        query: { album: "C++" },
+    }, "album"), "C++");
 });
 
 test("uses the track title for a Video Games Live compilation", () => {
@@ -678,6 +693,59 @@ test("resolves an explicitly marked game through SteamGridDB hero art", async ()
     });
     assert.equal(requests.length, 2);
     assert.equal(tintUrl, "https://cdn2.steamgriddb.com/hero_thumb/hades.jpg");
+});
+
+test("uses a parenthesized video-game marker before provider order and ratings", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("api.themoviedb.org")) {
+                throw new Error("explicit video-game metadata must bypass TMDB");
+            }
+            if (value.includes("/search/autocomplete/Defiance")) return response(200, {
+                success: true,
+                data: [{ id: 2375, name: "Defiance", verified: true }],
+            });
+            if (value.includes("/heroes/game/2375")) return response(200, {
+                success: true,
+                data: [{
+                    score: 8, upvotes: 12,
+                    url: "https://cdn2.steamgriddb.com/hero/defiance.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/defiance.png",
+                }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [197, 226, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        resolver_version: "16bf184a3c50",
+        album: "Defiance+(Video+Game)",
+        track: "Dark+Woods",
+        artist: "Bear+McCreary",
+        providers: "tmdb,steamgriddb,fanart",
+        ratings: "DE,US",
+    }, {
+        // Vercel dev exposes only the pathname here while leaving form-encoded
+        // spaces as plus signs in req.query.
+        url: "/api/backdrop",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 2375, title: "Defiance", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/defiance.png",
+        source: "steamgriddb",
+        tint: [197, 226, 255],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+    assert.match(requests[0], /\/search\/autocomplete\/Defiance$/);
 });
 
 test("uses an exact base-game hero when an exact expansion has no hero", async () => {
