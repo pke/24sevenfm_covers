@@ -522,7 +522,7 @@
 
 /* The queued-track announcement owns the upper-right corner beneath the stage
    buttons. Its intrinsic width grows with its single-line content up to half the
-   viewport, where album and composer ellipsis take over. */
+   player background, where album and composer ellipsis take over. */
 .coming-next {
     position: absolute;
     top: 3.8rem;
@@ -530,7 +530,7 @@
     z-index: 3;
     box-sizing: border-box;
     width: max-content;
-    max-width: min(50vw, calc(100% - 1.4rem));
+    max-width: 50%;
     padding: .65rem .85rem;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, .16);

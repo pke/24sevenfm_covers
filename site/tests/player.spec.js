@@ -1264,6 +1264,7 @@ test.describe("the deployed player page", () => {
                 const lineStyle = getComputedStyle(albumLine);
                 return {
                     width: box.width,
+                    stageWidth: stage.width,
                     rightGap: stage.right - box.right,
                     belowButton: box.top >= button.bottom,
                     albumOverflow: albumLine.scrollWidth > albumLine.clientWidth,
@@ -1271,8 +1272,8 @@ test.describe("the deployed player page", () => {
                     transitionProperties: style.transitionProperty.split(", "),
                 };
             });
-            expect(geometry.width).toBeLessThanOrEqual(501);
-            expect(geometry.width).toBeGreaterThan(300);
+            expect(geometry.width).toBeLessThanOrEqual(geometry.stageWidth / 2 + 1);
+            expect(geometry.width).toBeGreaterThanOrEqual(geometry.stageWidth / 2 - 2);
             expect(geometry.rightGap).toBeGreaterThan(5);
             expect(geometry.rightGap).toBeLessThan(20);
             expect(geometry.belowButton).toBe(true);
@@ -1290,7 +1291,10 @@ test.describe("the deployed player page", () => {
             });
             const fullscreenRightGap = fullscreenRects.stage.right
                 - fullscreenRects.announcement.right;
-            expect(fullscreenRects.announcement.width).toBeLessThanOrEqual(501);
+            expect(fullscreenRects.announcement.width).toBeLessThanOrEqual(
+                fullscreenRects.stage.width / 2 + 1);
+            expect(fullscreenRects.announcement.width).toBeGreaterThanOrEqual(
+                fullscreenRects.stage.width / 2 - 2);
             expect(fullscreenRightGap).toBeGreaterThan(5);
             expect(fullscreenRightGap).toBeLessThan(20);
             await page.evaluate(() => document.exitFullscreen());
