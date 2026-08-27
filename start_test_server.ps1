@@ -90,7 +90,7 @@ try {
         }
         $socket = New-Object Net.Sockets.TcpClient
         try {
-            $connection = $socket.ConnectAsync('localhost', $ApiPort)
+            $connection = $socket.ConnectAsync('127.0.0.1', $ApiPort)
             if ($connection.Wait(250) -and $socket.Connected) {
                 $portReady = $true
                 break

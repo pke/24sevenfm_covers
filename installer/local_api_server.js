@@ -74,7 +74,7 @@ if (require.main === module) {
         throw new Error("LOCAL_API_PORT must be an integer from 1 to 65535");
     }
     const server = createLocalApiServer();
-    server.listen(port, "localhost", () => {
+    server.listen(port, "127.0.0.1", () => {
         console.log(`[local-api] ready at http://localhost:${port}`);
     });
     const shutdown = () => server.close(() => process.exit(0));
