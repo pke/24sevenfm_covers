@@ -160,10 +160,12 @@ function isTrackTitledTvCompilation(title) {
 }
 
 function isTrackTitledScreenCompilation(title) {
-    // Compilation titles commonly advertise "Themes From ...", while each Track
-    // carries "Work - Cue". The prefix still has to be an exact TMDB title, so this
-    // pattern cannot turn an arbitrary cue containing a dash into a fuzzy match.
-    return /\bthemes?\s+from\b/i.test(title);
+    // Compilation titles commonly advertise "Themes From ..." or end in "Music
+    // For Film", while each Track carries "Work - Cue". The prefix still has to
+    // be an exact TMDB title, so these markers cannot turn an arbitrary cue
+    // containing a dash into a fuzzy match.
+    return /\bthemes?\s+from\b/i.test(title)
+        || /\bmusic\s+for\s+films?\s*$/i.test(title);
 }
 
 function usesExactTrackPrefix(title) {
@@ -1088,9 +1090,10 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
         if (category === "screen") {
             // Start the exact person lookup beside the normal title lookup so the
             // conservative fallback does not add another full provider timeout. Its
-            // result is consumed when title search has no exact match, or when
-            // multiple movie/TV works have the same exact title.
-            const personLookup = artist && !requireExactScreenMatch
+            // result is consumed when multiple movie/TV works have the same exact
+            // title. A non-exact credit fallback remains disabled for compilation
+            // prefixes that explicitly require an exact provider title.
+            const personLookup = artist
                 ? searchTmdbPerson(dependencies.fetchImpl, artist,
                 dependencies.env).then((person) => ({ person }), (error) => ({ error })) : null;
             let match = null;
@@ -1140,7 +1143,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     }
                 }
             }
-            if ((!match || !match.exact) && personLookup) {
+            if ((!match || !match.exact) && personLookup && !requireExactScreenMatch) {
                 const personResult = await personLookup;
                 if (personResult.error) {
                     errors.push(personResult.error);

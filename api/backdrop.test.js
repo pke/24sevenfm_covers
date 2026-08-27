@@ -587,6 +587,61 @@ test("recognizes Theme(s) From compilations without an album-name exception", ()
     assert.equal(backdropTitleFor("Arrival", "Remington Steele - Laura's Theme"), "Arrival");
 });
 
+test("recognizes Music For Film compilations through their track prefix", () => {
+    assert.equal(mediaHintForAlbum("Elliot Goldenthal - Music For Film"), "screen");
+    assert.deepEqual(backdropTitleCandidatesFor("Elliot Goldenthal - Music For Film",
+        "Interview With The Vampire - Born To Darkness / Louis' Revenge"),
+    ["Interview With The Vampire"]);
+    assert.equal(backdropTitleFor("Elliot Goldenthal", "Interview With The Vampire - Cue"),
+        "Elliot Goldenthal");
+});
+
+test("uses the composer to disambiguate a Music For Film compilation track", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [
+                { id: 128098, media_type: "tv", name: "Interview with the Vampire",
+                    backdrop_path: "/interview-tv.jpg" },
+                { id: 628, media_type: "movie", title: "Interview with the Vampire",
+                    backdrop_path: "/interview-movie.jpg" },
+            ] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 1441, name: "Elliot Goldenthal", known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/person/1441/combined_credits") {
+                return response(200, { crew: [{
+                    id: 628, media_type: "movie", title: "Interview with the Vampire",
+                    job: "Original Music Composer", backdrop_path: "/interview-movie.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [90, 70, 60],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Elliot Goldenthal - Music For Film",
+        track: "Interview With The Vampire - Born To Darkness / Louis' Revenge",
+        artist: "Elliot Goldenthal",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 628, title: "Interview with the Vampire", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/interview-movie.jpg",
+        source: "tmdb",
+        tint: [90, 70, 60],
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi", "/3/search/person", "/3/person/1441/combined_credits",
+    ]));
+});
+
 test("uses a game's release year to disambiguate exact SteamGridDB names", () => {
     const oldGame = { id: 1, name: "Prey", release_date: 1147392000, verified: true };
     const newGame = { id: 2, name: "Prey", release_date: 1487894400, verified: false };

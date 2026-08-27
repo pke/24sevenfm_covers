@@ -63,10 +63,12 @@ Vol. 1/2`, the resolver uses the movie-name prefix before the first colon in `Tr
 For `Great British TV Themes`, whose station metadata can omit the printed dash
 between programme and cue, it tries progressively shorter track prefixes and accepts
 only an exact TMDB TV-title match. More generally, an album containing `Theme From`
-or `Themes From` is treated as a screen compilation: the resolver uses the work-name
-prefix before the spaced dash in `Track` and accepts only an exact TMDB film/TV-title
-match. Thus `Remington Steele - Laura's Theme` resolves as `Remington Steele` without
-an album-name-specific exception.
+or `Themes From`, or ending in `Music For Film`, is treated as a screen compilation:
+the resolver uses the work-name prefix before the spaced dash in `Track` and accepts
+only an exact TMDB film/TV-title match. Thus `Remington Steele - Laura's Theme`
+resolves as `Remington Steele`, and `Interview With The Vampire - Born To Darkness /
+Louis' Revenge` resolves as `Interview With The Vampire`, without an album-name-
+specific exception.
 
 A trailing `: Series N`, `- Season N`, or `– Staffel N` is parsed as structured TV
 metadata. The suffix is removed for title search and supplies a `tv` hint. When TMDB
