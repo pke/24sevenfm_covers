@@ -156,7 +156,8 @@ function isTrackTitledGameCompilation(title) {
 }
 
 function isTrackTitledTvCompilation(title) {
-    return /^great british tv themes$/i.test(title);
+    return /^great british tv themes$/i.test(title)
+        || /^television['’]s\s+greatest\s+hits\b/i.test(title);
 }
 
 function isTrackTitledScreenCompilation(title) {

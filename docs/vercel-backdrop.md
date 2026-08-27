@@ -62,7 +62,9 @@ compilations such as `The Wings Of A Film` and `Music For A Darkened Theatre,
 Vol. 1/2`, the resolver uses the movie-name prefix before the first colon in `Track`.
 For `Great British TV Themes`, whose station metadata can omit the printed dash
 between programme and cue, it tries progressively shorter track prefixes and accepts
-only an exact TMDB TV-title match. More generally, an album containing `Theme From`
+only an exact TMDB TV-title match. `Television's Greatest Hits` volumes use the same
+exact-TV-title strategy, with the volume and decade wording left as compilation
+metadata. More generally, an album containing `Theme From`
 or `Themes From`, or ending in `Music For Film`, is treated as a screen compilation:
 the resolver uses the work-name prefix before the spaced dash in `Track` and accepts
 only an exact TMDB film/TV-title match. Thus `Remington Steele - Laura's Theme`

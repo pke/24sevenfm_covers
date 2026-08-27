@@ -585,6 +585,14 @@ test("uses exact TV-title prefixes for a Great British TV Themes track", () => {
         "The Protectors - Avenues And Alleyways"), ["The Protectors"]);
 });
 
+test("uses track titles for Television's Greatest Hits volumes", () => {
+    const album = "Television's Greatest Hits 1, From The 50's And 60's";
+    assert.equal(mediaHintForAlbum(album), "tv");
+    assert.equal(backdropTitleFor(album, "Surfside 6"), "Surfside 6");
+    assert.equal(mediaHintForAlbum("Television's Greatest Hits 2, From The 50's And 60's"),
+        "tv");
+});
+
 test("recognizes Theme(s) From compilations without an album-name exception", () => {
     assert.equal(mediaHintForAlbum("Cinema Classics: Themes From The Screen"), "screen");
     assert.deepEqual(backdropTitleCandidatesFor("Cinema Classics: Themes From The Screen",
@@ -1029,6 +1037,36 @@ test("resolves a Great British TV Themes cue through an exact track prefix", asy
         backdrop: "https://image.tmdb.org/t/p/w1280/protectors.jpg",
         source: "tmdb",
         tint: [40, 50, 60],
+    });
+});
+
+test("resolves a Television's Greatest Hits track as TV", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.pathname, "/3/search/multi");
+            assert.equal(parsed.searchParams.get("query"), "Surfside 6");
+            return response(200, { results: [{
+                id: 2627, media_type: "tv", name: "Surfside 6",
+                backdrop_path: "/surfside-6.jpg",
+            }] });
+        },
+        tintForImage: async () => [60, 90, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Television's Greatest Hits 1, From The 50's And 60's",
+        track: "Surfside 6",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 2627, title: "Surfside 6", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/surfside-6.jpg",
+        source: "tmdb",
+        tint: [60, 90, 120],
     });
 });
 
