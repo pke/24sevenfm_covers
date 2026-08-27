@@ -567,6 +567,11 @@ test("uses a conservative SteamGridDB title extension for game compilations", ()
         "Doom", { allowPrefix: true }), null);
 });
 
+test("matches spelled-out And against a provider ampersand", () => {
+    const conker = { id: 5256835, name: "Conker: Live & Reloaded", verified: true };
+    assert.equal(pickGame([conker], "Conker: Live And Reloaded"), conker);
+});
+
 test("uses exact TV-title prefixes for a Great British TV Themes track", () => {
     assert.equal(mediaHintForAlbum("Great British TV Themes"), "tv");
     assert.deepEqual(backdropTitleCandidatesFor("Great British TV Themes",
@@ -952,6 +957,42 @@ test("resolves a shortened Video Games Live game title", async () => {
     });
     assert.equal(requests.length, 2);
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
+test("resolves Conker through its SteamGridDB ampersand spelling", async () => {
+    const handler = createHandler({
+        env: { STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            if (value.includes("/search/autocomplete/Conker%3A%20Live%20And%20Reloaded")) {
+                return response(200, { success: true, data: [{
+                    id: 5256835, name: "Conker: Live & Reloaded", verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/5256835")) return response(200, {
+                success: true,
+                data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/conker.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/conker.jpg" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [45, 55, 65],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Conker: Live And Reloaded",
+        track: "Surf Punks (Original Version)",
+        providers: "steamgriddb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 5256835, title: "Conker: Live & Reloaded", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/conker.jpg",
+        source: "steamgriddb",
+        tint: [45, 55, 65],
+    });
 });
 
 test("resolves a Great British TV Themes cue through an exact track prefix", async () => {

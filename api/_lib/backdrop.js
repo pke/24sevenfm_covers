@@ -262,6 +262,7 @@ function unrotateTitleArticle(title) {
 function normalizedTitle(title) {
     return String(title || "")
         .normalize("NFKD").replace(/\p{M}/gu, "")
+        .replace(/&/g, " and ")
         .toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 
