@@ -601,29 +601,53 @@ function gameReleaseYear(game) {
     return Number.isNaN(date.valueOf()) ? null : date.getUTCFullYear();
 }
 
-function pickGame(results, query) {
+function normalizedTitleWords(title) {
+    return String(title || "")
+        .normalize("NFKD").replace(/\p{M}/gu, "")
+        .toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+function pickGame(results, query, options = {}) {
     const datedTitle = String(query || "").match(/^(.*?)\s*\(((?:18|19|20|21)\d{2})\)\s*$/);
     const searchTitle = datedTitle ? datedTitle[1].trim() : query;
     const wanted = normalizedTitle(searchTitle);
-    const exact = (Array.isArray(results) ? results : []).filter((game) => game
+    const valid = (Array.isArray(results) ? results : []).filter((game) => game
         && Number.isSafeInteger(Number(game.id)) && Number(game.id) > 0
-        && normalizedTitle(game.name) === wanted);
-    if (!exact.length) return null;
+        && normalizedTitle(game.name));
+    const exact = valid.filter((game) => normalizedTitle(game.name) === wanted);
     if (datedTitle) {
         const wantedYear = Number(datedTitle[2]);
         const sameYear = exact.find((game) => gameReleaseYear(game) === wantedYear);
         if (sameYear) return sameYear;
     }
-    return exact.find((game) => game.verified) || exact[0];
+    if (exact.length) return exact.find((game) => game.verified) || exact[0];
+
+    // Compilation track lists sometimes use a franchise shorthand while SGDB
+    // stores the first game under a subtitle (for example "Phoenix Wright" vs.
+    // "Phoenix Wright: Ace Attorney"). Only allow this for an explicitly
+    // track-titled game compilation, require at least two whole leading words,
+    // and choose the shortest verified extension as the representative game.
+    if (!options.allowPrefix) return null;
+    const wantedWords = normalizedTitleWords(searchTitle);
+    if (wantedWords.length < 2) return null;
+    const prefixed = valid.filter((game) => {
+        const words = normalizedTitleWords(game.name);
+        return words.length > wantedWords.length
+            && wantedWords.every((word, index) => words[index] === word);
+    });
+    prefixed.sort((left, right) => Number(!!right.verified) - Number(!!left.verified)
+        || normalizedTitleWords(left.name).length - normalizedTitleWords(right.name).length
+        || normalizedTitle(left.name).length - normalizedTitle(right.name).length);
+    return prefixed[0] || null;
 }
 
-async function searchSteamGridDb(fetchImpl, query, env) {
+async function searchSteamGridDb(fetchImpl, query, env, options = {}) {
     const datedTitle = String(query || "").match(/^(.*?)\s*\(((?:18|19|20|21)\d{2})\)\s*$/);
     const searchTitle = datedTitle ? datedTitle[1].trim() : query;
     const url = new URL("https://www.steamgriddb.com/api/v2/search/autocomplete/"
         + encodeURIComponent(searchTitle));
     const body = await fetchJson(fetchImpl, url, steamGridDbRequest(env), "steamgriddb");
-    const game = pickGame(body && body.data, query);
+    const game = pickGame(body && body.data, query, options);
     return { game, exact: !!game };
 }
 
@@ -1153,7 +1177,9 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
         } else {
             let match;
             try {
-                match = await searchSteamGridDb(dependencies.fetchImpl, query, dependencies.env);
+                match = await searchSteamGridDb(dependencies.fetchImpl, query, dependencies.env, {
+                    allowPrefix: options.allowGameTitleExtension === true,
+                });
             } catch (error) {
                 errors.push(error);
                 continue;
@@ -1304,6 +1330,8 @@ function createHandler(options = {}) {
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
                     || !!starTrekSeriesAlias(titleValue),
+                allowGameTitleExtension:
+                    isTrackTitledGameCompilation(cleanMovieTitle(titleValue)),
             });
             const shortCache = !result.media || (includeArt && !result.backdrop);
             debugLog("info", "request.resolved", {

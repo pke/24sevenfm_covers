@@ -28,6 +28,8 @@ const {
 test("normalizes the live The Wings Of A Film title in the resolver", () => {
     assert.equal(backdropTitleFor("The Wings Of A Film",
         "The Thin Red Line: Journey To The Line"), "The Thin Red Line");
+    assert.equal(backdropTitleFor("The Wings Of A Film",
+        "Rain Man: Main Theme"), "Rain Man");
     assert.equal(mediaHintForAlbum("The Wings Of A Film"), "movie");
     assert.equal(backdropTitleFor("Arrival (Original Motion Picture Soundtrack)",
         "Another Film: A Cue"), "Arrival");
@@ -549,6 +551,20 @@ test("decodes local Vercel plus-spaces without losing encoded literal plus signs
 test("uses the track title for a Video Games Live compilation", () => {
     assert.equal(backdropTitleFor("Video Games Live: Level 2",
         "The Legend Of Zelda Suite"), "The Legend Of Zelda");
+    assert.equal(backdropTitleFor("Video Games Live: Level 5",
+        "Phoenix Wright"), "Phoenix Wright");
+});
+
+test("uses a conservative SteamGridDB title extension for game compilations", () => {
+    const results = [
+        { id: 1, name: "Phoenix Wright: Ace Attorney - Justice For All", verified: true },
+        { id: 2, name: "Phoenix Wright: Ace Attorney", verified: true },
+        { id: 3, name: "Professor Layton vs. Phoenix Wright: Ace Attorney", verified: true },
+    ];
+    assert.equal(pickGame(results, "Phoenix Wright"), null);
+    assert.equal(pickGame(results, "Phoenix Wright", { allowPrefix: true }), results[1]);
+    assert.equal(pickGame([{ id: 4, name: "Doom II", verified: true }],
+        "Doom", { allowPrefix: true }), null);
 });
 
 test("uses exact TV-title prefixes for a Great British TV Themes track", () => {
@@ -834,6 +850,50 @@ test("resolves a Video Games Live suite through its game track", async () => {
         backdrop: "https://cdn2.steamgriddb.com/hero/zelda.jpg",
         source: "steamgriddb",
         tint: [10, 20, 30],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
+test("resolves a shortened Video Games Live game title", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Phoenix%20Wright")) {
+                return response(200, { success: true, data: [{
+                    id: 34587,
+                    name: "Phoenix Wright: Ace Attorney - Justice For All",
+                    verified: true,
+                }, {
+                    id: 38330, name: "Phoenix Wright: Ace Attorney", verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/38330")) return response(200, {
+                success: true,
+                data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/phoenix-wright.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/phoenix-wright.png" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [30, 40, 50],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Video Games Live: Level 5",
+        track: "Phoenix Wright",
+        providers: "tmdb,steamgriddb,fanart",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 38330, title: "Phoenix Wright: Ace Attorney", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/phoenix-wright.png",
+        source: "steamgriddb",
+        tint: [30, 40, 50],
     });
     assert.equal(requests.length, 2);
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
