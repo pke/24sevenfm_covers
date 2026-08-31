@@ -245,9 +245,10 @@ var creditApiMeta = document.querySelector('meta[name="credit-api"]');
 var CREDIT_API_URL = (creditApiMeta && creditApiMeta.getAttribute("content")
     || "/api/credit").trim();
 const FANART_KEY_CHECK_URL = "https://webservice.fanart.tv/v3/movies/27205";
+var isLocalPlayer = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname);
 // Local visual QA can force the retry state even while the real station is healthy.
 // The hostname guard makes the switch inert on every deployed origin.
-var simulateStationFailure = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
+var simulateStationFailure = isLocalPlayer
     && new URLSearchParams(location.search).has("simulateStationFailure");
 
 function defaultOptions() {
@@ -1788,6 +1789,20 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
 
     var body = await fetchResolverJson(url, signal, cacheMode);
+    if (isLocalPlayer && typeof console !== "undefined"
+            && typeof console.info === "function") {
+        console.info("[backdrop resolver]", {
+            request: {
+                album: album,
+                track: track,
+                artist: artist,
+                providers: providers,
+                includeArt: includeArt,
+                includeRatings: includeRatings,
+            },
+            result: body,
+        });
+    }
     if (!body || typeof body !== "object") return null;
     var certifications = trustedCertifications(body.certifications);
     var resolved = body.backdrop ? trustedResolvedBackdrop(body.backdrop, body.source) : "";

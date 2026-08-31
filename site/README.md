@@ -107,6 +107,12 @@ exact path is printed after startup. Pass `-NoApiDebug` to disable it (the forme
 `-NoVercelDebug` name remains an alias). Local API responses use `Cache-Control:
 no-store`, so a browser cannot retain results across resolver edits.
 
+On `localhost`, every completed backdrop request also writes `[backdrop resolver]`
+to the browser console. Expanding the logged object shows the album, track, artist,
+provider configuration and the resolver's raw JSON result, including successful
+misses. Credentials and the request URL are deliberately omitted. Deployed players
+do not emit this diagnostic log.
+
 The local site server watches `site\` recursively. After a short debounce, every
 source edit is rendered into `www\` automatically. The Node API separately watches
 its loaded `api\` modules and restarts itself when resolver code changes.

@@ -3181,6 +3181,66 @@ test.describe("the deployed player page", () => {
             await expect(stage).not.toHaveClass(/no-cover/);
         });
 
+    test("logs the raw backdrop resolver result on localhost", async ({ page }) => {
+        test.skip(!localMode, "localhost-only diagnostics must stay disabled in production");
+        const logs = [];
+        page.on("console", async (message) => {
+            if (message.type() !== "info"
+                    || !message.text().startsWith("[backdrop resolver]")) return;
+            logs.push(await Promise.all(message.args().map((argument) => argument.jsonValue())));
+        });
+        await page.addInitScript(() => localStorage.setItem(
+            "24sevenfm-covers.player.v2", JSON.stringify({
+                sstBackdrops: { enabled: true,
+                    options: { providers: ["tmdb"], cover: "show" } },
+            })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+            (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: "Tvpopmuzik", Track: "Regency Punk", Artist: "Daniel Pemberton",
+                    CoverLink: "https://streamingsoundtracks.com/images/cover/tvpopmuzik.svg",
+                    Length: 180000, PlayStart: "2026-08-27T12:00:00Z",
+                    SystemTime: "2026-08-27T12:00:00Z",
+                } });
+            });
+        await page.route("https://streamingsoundtracks.com/images/cover/500/tvpopmuzik.svg",
+            (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/tint\?/, (route) =>
+            route.fulfill({ json: { tint: [255, 255, 255] } }));
+        let resolverRequests = 0;
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverRequests++;
+            return route.fulfill({ json: {
+            media: null, backdrop: null, source: null, tint: [255, 255, 255],
+            certifications: [],
+            } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => resolverRequests).toBe(1);
+        await expect.poll(() => logs.length).toBe(1);
+        expect(logs[0]).toEqual([
+            "[backdrop resolver]",
+            {
+                request: {
+                    album: "Tvpopmuzik",
+                    track: "Regency Punk",
+                    artist: "Daniel Pemberton",
+                    providers: ["tmdb"],
+                    includeArt: true,
+                    includeRatings: false,
+                },
+                result: {
+                    media: null, backdrop: null, source: null, tint: [255, 255, 255],
+                    certifications: [],
+                },
+            },
+        ]);
+    });
+
     test("aborts a resolver result when the backdrop master switch is disabled", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/race.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/race.svg";
