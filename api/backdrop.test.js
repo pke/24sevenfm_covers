@@ -604,6 +604,38 @@ test("cleans soundtrack noise and rotated articles", () => {
     assert.equal(cleanMovieTitle("Defiance (Video Game)"), "Defiance");
 });
 
+test("removes a bracketed soundtrack edition before resolving the movie", async () => {
+    const album = "Close Encounters Of The Third Kind [Collector's Edition]";
+    const track = "The Visitors/Bye/End Titles: The Special Edition";
+    assert.equal(cleanMovieTitle(album), "Close Encounters Of The Third Kind");
+    assert.equal(backdropTitleFor(album, track), "Close Encounters Of The Third Kind");
+
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.pathname, "/3/search/multi");
+            assert.equal(parsed.searchParams.get("query"),
+                "Close Encounters Of The Third Kind");
+            return response(200, { results: [{
+                id: 840, media_type: "movie", title: "Close Encounters of the Third Kind",
+                release_date: "1977-12-14", backdrop_path: "/close-encounters.jpg",
+            }] });
+        },
+        tintForImage: async () => [212, 206, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({ album, track, providers: "tmdb" }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 840, title: "Close Encounters of the Third Kind", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/close-encounters.jpg",
+        source: "tmdb",
+        tint: [212, 206, 255],
+    });
+});
+
 test("infers only explicit game, movie, and TV soundtrack markers", () => {
     assert.equal(mediaHintForAlbum("Hades (Original Video Game Soundtrack)"), "game");
     assert.equal(mediaHintForAlbum("Journey - Music From The Video Game"), "game");
