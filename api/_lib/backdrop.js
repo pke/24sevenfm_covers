@@ -104,6 +104,7 @@ class ResolverError extends Error {
 function cleanMovieTitle(album) {
     const cleaned = unrotateTitleArticle(String(album || "")
         .replace(/\(\s*video[\s-]*game\s*\)/gi, " ")
+        .replace(/\(\s*vol(?:ume)?\.?\s+(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*\)/gi, " ")
         .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
         .replace(/\b(original motion picture soundtrack|music from the motion picture|original motion picture score|motion picture soundtrack|original soundtracks?|original scores?|the original scores?|soundtrack|ost)\b/gi, " ")
         .replace(/\s*[:\-–]\s*(?:the\s+)?symphonic\s+suite\s*$/i, " ")
@@ -257,6 +258,7 @@ function mediaHintForAlbum(album) {
     if (/\(\s*video[\s-]*game\s*\)/i.test(title)) return "game";
     if (starTrekSeriesAlias(cleanedTitle)) return "tv";
     if (tvSeasonIdentity(cleanedTitle)) return "tv";
+    if (/\banimated\s+(?:television\s+)?series\b/i.test(cleanedTitle)) return "tv";
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
     if (isTrackTitledScreenCompilation(cleanedTitle)) return "screen";
     if (isTrackTitledGameCompilation(cleanedTitle)) return "game";

@@ -138,6 +138,47 @@ test("extracts a trailing TV season marker without a title-specific exception", 
         "Series 7: The Contenders");
 });
 
+test("removes parenthesized soundtrack volumes from animated series titles", () => {
+    assert.equal(cleanMovieTitle("Green Lantern: The Animated Series (Volume Two)"),
+        "Green Lantern: The Animated Series");
+    assert.equal(cleanMovieTitle("Green Lantern: The Animated Series (Vol. 2)"),
+        "Green Lantern: The Animated Series");
+    assert.equal(mediaHintForAlbum("Green Lantern: The Animated Series (Volume Two)"), "tv");
+    assert.equal(backdropTitleFor("Green Lantern: The Animated Series (Volume Two)",
+        "Dawn Of Time"), "Green Lantern: The Animated Series");
+});
+
+test("resolves an animated-series soundtrack volume as TV", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.pathname, "/3/search/multi");
+            assert.equal(parsed.searchParams.get("query"),
+                "Green Lantern: The Animated Series");
+            return response(200, { results: [{
+                id: 40351, media_type: "tv", name: "Green Lantern: The Animated Series",
+                backdrop_path: "/green-lantern.jpg",
+            }] });
+        },
+        tintForImage: async () => [119, 255, 156],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Green Lantern: The Animated Series (Volume Two)",
+        track: "Dawn Of Time",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 40351, title: "Green Lantern: The Animated Series", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/green-lantern.jpg",
+        source: "tmdb",
+        tint: [119, 255, 156],
+    });
+});
+
 test("uses the composer to disambiguate a season-marked TV series", async () => {
     let titleQuery = "";
     const handler = createHandler({
