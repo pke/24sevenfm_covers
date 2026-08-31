@@ -129,6 +129,15 @@ function tvSeasonIdentity(album) {
     return { title, season: Number(match[3]) };
 }
 
+function tvBookSoundtrackIdentity(album) {
+    const match = String(album || "").match(
+        /^(.+?)\s*:\s*original\s+music\s+from\s+book\s+([0-9]{1,2}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*$/i);
+    if (!match) return null;
+    const title = cleanMovieTitle(match[1]);
+    if (!title) return null;
+    return { title, book: match[2] };
+}
+
 function starTrekSeriesAlias(album) {
     const match = cleanMovieTitle(album).match(
         /^star trek\s*[,\-–—:]\s*(tos|tng|ds9|voy|ent|pic|snw|dis|dsc)\b/i);
@@ -216,6 +225,8 @@ function backdropTitleFor(album, track) {
     if (seriesAlias) return seriesAlias;
     const seasonIdentity = tvSeasonIdentity(normalizedAlbum);
     if (seasonIdentity) return seasonIdentity.title;
+    const bookIdentity = tvBookSoundtrackIdentity(album);
+    if (bookIdentity) return bookIdentity.title;
     if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
         const workTitle = cleanMovieTitle(track);
         if (workTitle) return workTitle;
@@ -258,6 +269,7 @@ function mediaHintForAlbum(album) {
     if (/\(\s*video[\s-]*game\s*\)/i.test(title)) return "game";
     if (starTrekSeriesAlias(cleanedTitle)) return "tv";
     if (tvSeasonIdentity(cleanedTitle)) return "tv";
+    if (tvBookSoundtrackIdentity(title)) return "tv";
     if (/\banimated\s+(?:television\s+)?series\b/i.test(cleanedTitle)) return "tv";
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
     if (isTrackTitledScreenCompilation(cleanedTitle)) return "screen";

@@ -138,6 +138,42 @@ test("extracts a trailing TV season marker without a title-specific exception", 
         "Series 7: The Contenders");
 });
 
+test("extracts a TV book soundtrack suffix and rotates its title article", () => {
+    const album = "Legend Of Korra, The: Original Music From Book One";
+    assert.equal(backdropTitleFor(album, "Korra Airbends"), "The Legend Of Korra");
+    assert.equal(mediaHintForAlbum(album), "tv");
+});
+
+test("resolves a TV book soundtrack to its series", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.pathname, "/3/search/multi");
+            assert.equal(parsed.searchParams.get("query"), "The Legend Of Korra");
+            return response(200, { results: [{
+                id: 33880, media_type: "tv", name: "The Legend of Korra",
+                first_air_date: "2012-04-14", backdrop_path: "/korra.jpg",
+            }] });
+        },
+        tintForImage: async () => [91, 111, 131],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Legend Of Korra, The: Original Music From Book One",
+        track: "Korra Airbends",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 33880, title: "The Legend of Korra", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/korra.jpg",
+        source: "tmdb",
+        tint: [91, 111, 131],
+    });
+});
+
 test("removes parenthesized soundtrack volumes from animated series titles", () => {
     assert.equal(cleanMovieTitle("Green Lantern: The Animated Series (Volume Two)"),
         "Green Lantern: The Animated Series");

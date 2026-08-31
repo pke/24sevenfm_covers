@@ -90,6 +90,11 @@ person's `Original Music Composer` credit may select the matching series. For ex
 same-named 1963 series. Artwork remains series-level; the season number is not treated
 as part of the TMDB title.
 
+An `: Original Music From Book N` suffix is likewise treated as structured TV
+metadata and removed before lookup. Article rotation is then applied to the remaining
+title, so `Legend Of Korra, The: Original Music From Book One` resolves as
+`The Legend Of Korra`; the book name does not become part of the TMDB query.
+
 Parenthesized soundtrack-volume markers such as `(Volume Two)`, `(Volume 2)` and
 `(Vol. II)` are removed before lookup. A remaining `Animated Series` title is an
 explicit TV hint, so `Green Lantern: The Animated Series (Volume Two)` resolves to
