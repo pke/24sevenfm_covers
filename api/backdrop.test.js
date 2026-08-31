@@ -615,6 +615,43 @@ test("uses the work title carried by Every Note Paints A Picture tracks", () => 
         ["Wilde"]);
 });
 
+test("uses track titles for Sci-Fi's Greatest Hits volumes", () => {
+    const album = "Sci-Fi's Greatest Hits, Vol. 1 - Final Frontiers";
+    assert.equal(mediaHintForAlbum(album), "screen");
+    assert.deepEqual(backdropTitleCandidatesFor(album, "Blade Runner"),
+        ["Blade Runner"]);
+});
+
+test("resolves a Sci-Fi's Greatest Hits track as screen media", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.pathname, "/3/search/multi");
+            assert.equal(parsed.searchParams.get("query"), "Blade Runner");
+            return response(200, { results: [{
+                id: 78, media_type: "movie", title: "Blade Runner",
+                release_date: "1982-06-25", backdrop_path: "/blade-runner.jpg",
+            }] });
+        },
+        tintForImage: async () => [111, 121, 131],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Sci-Fi's Greatest Hits, Vol. 1 - Final Frontiers",
+        track: "Blade Runner",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 78, title: "Blade Runner", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/blade-runner.jpg",
+        source: "tmdb",
+        tint: [111, 121, 131],
+    });
+});
+
 test("resolves an Every Note Paints A Picture work as screen media", async () => {
     const handler = createHandler({
         env: { TMDB_API_KEY: "key" },

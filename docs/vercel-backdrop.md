@@ -77,6 +77,11 @@ anthology. Its marketing title has no generic compilation marker, so this is an
 explicit album contract: a track such as `Wilde` is searched as the work title and
 must still match a TMDB title exactly.
 
+The same exact-title contract applies to every `Sci-Fi's Greatest Hits` volume,
+including subtitle variants such as `Vol. 1 - Final Frontiers`. For example, its
+track `Blade Runner` is resolved as the film title rather than as a cue belonging to
+the compilation name.
+
 A trailing `: Series N`, `- Season N`, or `– Staffel N` is parsed as structured TV
 metadata. The suffix is removed for title search and supplies a `tv` hint. When TMDB
 returns multiple exact series with the same title, an exact `Artist` person and that

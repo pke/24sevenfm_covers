@@ -160,17 +160,21 @@ function isTrackTitledTvCompilation(title) {
         || /^television['’]s\s+greatest\s+hits\b/i.test(title);
 }
 
+function isExactTrackTitledScreenCompilation(title) {
+    return /^every note paints a picture$/i.test(title)
+        || /^sci[\s-]*fi['’]s\s+greatest\s+hits\b/i.test(title);
+}
+
 function isTrackTitledScreenCompilation(title) {
     // Compilation titles commonly advertise "Themes From ..." or end in "Music
     // For Film", while each Track carries "Work - Cue". The prefix still has to
     // be an exact TMDB title, so these markers cannot turn an arbitrary cue
-    // containing a dash into a fuzzy match. "Every Note Paints A Picture" is a
-    // screen-score anthology whose marketing title has no generic compilation
-    // marker; its tracks likewise carry the work title and use the same strict
-    // provider match.
+    // containing a dash into a fuzzy match. Some named screen-score anthology
+    // series have no generic compilation marker; their tracks likewise carry the
+    // work title and use the same strict provider match.
     return /\bthemes?\s+from\b/i.test(title)
         || /\bmusic\s+for\s+films?\s*$/i.test(title)
-        || /^every note paints a picture$/i.test(title);
+        || isExactTrackTitledScreenCompilation(title);
 }
 
 function usesExactTrackPrefix(title) {
@@ -211,6 +215,10 @@ function backdropTitleFor(album, track) {
     if (seriesAlias) return seriesAlias;
     const seasonIdentity = tvSeasonIdentity(normalizedAlbum);
     if (seasonIdentity) return seasonIdentity.title;
+    if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
+        const workTitle = cleanMovieTitle(track);
+        if (workTitle) return workTitle;
+    }
     if (usesExactTrackPrefix(normalizedAlbum)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates[0];
@@ -232,6 +240,10 @@ function backdropTitleFor(album, track) {
 
 function backdropTitleCandidatesFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
+    if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
+        const workTitle = cleanMovieTitle(track);
+        if (workTitle) return [workTitle];
+    }
     if (usesExactTrackPrefix(normalizedAlbum)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates;
