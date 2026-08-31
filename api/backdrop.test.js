@@ -388,6 +388,7 @@ test("returns Game of Thrones German and US TV ratings", async () => {
         },
         {
             country: "US", system: "TV Parental Guidelines", rating: "TV-MA", label: "TV-MA",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
         },
     ]);
 });
@@ -475,8 +476,8 @@ test("validates the requested rating countries", () => {
     assert.throws(() => requestedRatings("GB"), /ratings must contain DE and\/or US/);
 });
 
-test("maps every supported FSK and MPA movie rating to its Wikimedia SVG", () => {
-    const logos = {
+test("maps every supported FSK, MPA, and US TV rating to its Wikimedia SVG", () => {
+    const movieLogos = {
         "DE|0": "https://upload.wikimedia.org/wikipedia/commons/1/17/FSK_0.svg",
         "DE|6": "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg",
         "DE|12": "https://upload.wikimedia.org/wikipedia/commons/6/6e/FSK_12.svg",
@@ -488,12 +489,24 @@ test("maps every supported FSK and MPA movie rating to its Wikimedia SVG", () =>
         "US|R": "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
         "US|NC-17": "https://upload.wikimedia.org/wikipedia/commons/c/c0/MPA_NC-17_RATING.svg",
     };
-    for (const [key, logo] of Object.entries(logos)) {
+    for (const [key, logo] of Object.entries(movieLogos)) {
         const [country, rating] = key.split("|");
         assert.equal(certificationResponse(country, rating, "movie").logo, logo);
     }
+    const tvLogos = {
+        "TV-Y": "https://upload.wikimedia.org/wikipedia/commons/2/25/TV-Y_icon.svg",
+        "TV-Y7": "https://upload.wikimedia.org/wikipedia/commons/5/5a/TV-Y7_icon.svg",
+        "TV-Y7-FV": "https://upload.wikimedia.org/wikipedia/commons/a/ac/TV-Y7-FV_icon.svg",
+        "TV-G": "https://upload.wikimedia.org/wikipedia/commons/5/5e/TV-G_icon.svg",
+        "TV-PG": "https://upload.wikimedia.org/wikipedia/commons/9/9a/TV-PG_icon.svg",
+        "TV-14": "https://upload.wikimedia.org/wikipedia/commons/c/c3/TV-14_icon.svg",
+        "TV-MA": "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
+    };
+    for (const [rating, logo] of Object.entries(tvLogos)) {
+        assert.equal(certificationResponse("US", rating, "tv").logo, logo);
+    }
     assert.equal(certificationResponse("US", "NR", "movie").logo, null);
-    assert.equal("logo" in certificationResponse("US", "TV-MA", "tv"), false);
+    assert.equal(certificationResponse("US", "TV-NR", "tv").logo, null);
 });
 
 test("resolves The Dune Sketchbook through Hans Zimmer composer credits", async () => {

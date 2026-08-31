@@ -91,6 +91,15 @@ const MPA_LOGOS = Object.freeze({
     "R": "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
     "NC-17": "https://upload.wikimedia.org/wikipedia/commons/c/c0/MPA_NC-17_RATING.svg",
 });
+const TV_PARENTAL_GUIDELINES_LOGOS = Object.freeze({
+    "TV-Y": "https://upload.wikimedia.org/wikipedia/commons/2/25/TV-Y_icon.svg",
+    "TV-Y7": "https://upload.wikimedia.org/wikipedia/commons/5/5a/TV-Y7_icon.svg",
+    "TV-Y7-FV": "https://upload.wikimedia.org/wikipedia/commons/a/ac/TV-Y7-FV_icon.svg",
+    "TV-G": "https://upload.wikimedia.org/wikipedia/commons/5/5e/TV-G_icon.svg",
+    "TV-PG": "https://upload.wikimedia.org/wikipedia/commons/9/9a/TV-PG_icon.svg",
+    "TV-14": "https://upload.wikimedia.org/wikipedia/commons/c/c3/TV-14_icon.svg",
+    "TV-MA": "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
+});
 
 class ResolverError extends Error {
     constructor(code, status, message) {
@@ -1043,7 +1052,9 @@ function certificationResponse(country, rating, type) {
         rating,
         label: rating,
     };
-    if (type !== "tv") response.logo = MPA_LOGOS[rating] || null;
+    response.logo = type === "tv"
+        ? TV_PARENTAL_GUIDELINES_LOGOS[rating] || null
+        : MPA_LOGOS[rating] || null;
     return response;
 }
 

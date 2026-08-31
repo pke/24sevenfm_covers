@@ -81,7 +81,8 @@ release either way.
 
 The movie/TV/game-backdrop, DE/US-rating, cover-tint and album-credit resolvers are served by the
 Vercel project at the repository root. The media features share `api/backdrop.js`; the
-rating resolver returns exact Wikimedia Commons SVG URLs for FSK and MPA movie badges.
+rating resolver returns exact Wikimedia Commons SVG URLs for FSK, MPA movie, and US TV
+Parental Guidelines badges, with the text badge retained as the image-load fallback.
 Cover tint uses `api/tint.js`; missing queued `Artist` values use the allowlisted
 `api/credit.js` album-page fallback. Their deployment, security
 limits and environment variables are documented in `docs/vercel-backdrop.md`.

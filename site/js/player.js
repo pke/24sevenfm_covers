@@ -1655,6 +1655,13 @@ var WIKIMEDIA_RATING_LOGOS = Object.freeze({
     "US|MPA|PG-13": "https://upload.wikimedia.org/wikipedia/commons/9/98/MPA_PG-13_RATING.svg",
     "US|MPA|R": "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
     "US|MPA|NC-17": "https://upload.wikimedia.org/wikipedia/commons/c/c0/MPA_NC-17_RATING.svg",
+    "US|TV Parental Guidelines|TV-Y": "https://upload.wikimedia.org/wikipedia/commons/2/25/TV-Y_icon.svg",
+    "US|TV Parental Guidelines|TV-Y7": "https://upload.wikimedia.org/wikipedia/commons/5/5a/TV-Y7_icon.svg",
+    "US|TV Parental Guidelines|TV-Y7-FV": "https://upload.wikimedia.org/wikipedia/commons/a/ac/TV-Y7-FV_icon.svg",
+    "US|TV Parental Guidelines|TV-G": "https://upload.wikimedia.org/wikipedia/commons/5/5e/TV-G_icon.svg",
+    "US|TV Parental Guidelines|TV-PG": "https://upload.wikimedia.org/wikipedia/commons/9/9a/TV-PG_icon.svg",
+    "US|TV Parental Guidelines|TV-14": "https://upload.wikimedia.org/wikipedia/commons/c/c3/TV-14_icon.svg",
+    "US|TV Parental Guidelines|TV-MA": "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
 });
 
 function trustedRatingLogo(raw, country, system, rating) {

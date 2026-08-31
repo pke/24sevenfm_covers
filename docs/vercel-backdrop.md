@@ -144,9 +144,11 @@ add that origin to the page's `connect-src` CSP. Also keep the public site origi
 in `BACKDROP_ALLOWED_ORIGINS`.
 
 The resolver returns direct Wikimedia Commons original-file URLs for the coloured
-FSK 0/6/12/16/18 and MPA G/PG/PG-13/R/NC-17 SVGs. The browser accepts only those
-ten exact `https://upload.wikimedia.org` URLs, and the player's `img-src` CSP permits
-that host. Unsupported ratings, including US TV ratings, continue to use text badges.
+FSK 0/6/12/16/18, MPA G/PG/PG-13/R/NC-17 and official-style US TV Parental
+Guidelines TV-Y/TV-Y7/TV-Y7-FV/TV-G/TV-PG/TV-14/TV-MA SVGs. The browser accepts
+only those exact `https://upload.wikimedia.org` URLs, and the player's `img-src` CSP
+permits that host. Unsupported ratings and failed logo loads continue to use text
+badges.
 
 ## Abuse protection
 

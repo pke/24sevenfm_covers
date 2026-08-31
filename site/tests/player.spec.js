@@ -831,7 +831,8 @@ test.describe("the deployed player page", () => {
                     { country: "DE", system: "FSK", rating: "16", label: "FSK 16",
                         logo: "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg" },
                     { country: "US", system: "TV Parental Guidelines", rating: "TV-MA",
-                        label: "TV-MA" },
+                        label: "TV-MA",
+                        logo: "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg" },
                 ] : [
                     { country: "DE", system: "FSK", rating: "6", label: "FSK 6",
                         logo: "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg" },
@@ -989,10 +990,60 @@ test.describe("the deployed player page", () => {
         expect(settled.source).toContain("FSK_16.svg");
         const usTvRating = page.locator("#rating-us .rating-face").last();
         await expect(usTvRating).toHaveText("TV-MA");
+        await expect(usTvRating).toHaveClass(/has-logo/);
+        await expect(usTvRating.locator("img")).toHaveAttribute("src",
+            "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg");
         await expect(usTvRating).toHaveCSS("border-top-width", "0px");
         await expect(usTvRating).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
         await expect(usTvRating).toHaveCSS("box-shadow", "none");
     });
+    test("falls back to the existing US TV text badge when its logo cannot load",
+        async ({ page }) => {
+            const logo = "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg";
+            let logoRequested = false;
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({
+                    sstRatings: { enabled: true, options: { countries: ["US"] } },
+                })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+                (route) => {
+                    const action = new URL(route.request().url()).searchParams.get("action");
+                    if (action === "GetQueue") return route.fulfill({ json: [] });
+                    return route.fulfill({ json: {
+                        Album: "Fallback TV", Track: "Main Title", Artist: "Test Composer",
+                        CoverLink: "https://streamingsoundtracks.com/images/cover/fallback-tv.svg",
+                        Length: 0, PlayStart: "2026-08-20T12:00:00Z",
+                        SystemTime: "2026-08-20T12:00:00Z",
+                    } });
+                });
+            await page.route(
+                "https://streamingsoundtracks.com/images/cover/500/fallback-tv.svg",
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route(/\/api\/backdrop\?/, (route) => route.fulfill({ json: {
+                media: { id: 42, title: "Fallback TV", type: "tv" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+                certifications: [{
+                    country: "US", system: "TV Parental Guidelines", rating: "TV-MA",
+                    label: "TV-MA", logo,
+                }],
+            } }));
+            await page.route(logo, (route) => {
+                logoRequested = true;
+                return route.fulfill({ status: 404, contentType: "text/plain", body: "missing" });
+            });
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect.poll(() => logoRequested).toBe(true);
+            const slot = page.locator("#rating-us");
+            await expect(slot).toHaveClass(/show/);
+            await expect(slot).toHaveAttribute("aria-label", "United States: TV-MA");
+            await expect(slot).toContainText("TV-MA");
+            await expect(slot.locator(".rating-face.has-logo")).toHaveCount(0);
+            await expect(slot.locator(".rating-face img[src]")).toHaveCount(0);
+        });
     test("fades ratings after ten idle seconds and wakes them on pointer movement", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/rating-idle.svg";
         let secondTrack = false;
