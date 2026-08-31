@@ -175,6 +175,11 @@ service limit. Custom station album IDs are never sent as fuzzy searches. The
 existing edge cache and queue-prefetch staggering avoid repeated lookups during
 normal operation.
 
+Only the credit function runs in Vercel's Frankfurt region (`fra1`), configured in
+`vercel.json`. The artwork functions keep the project default region. This gives the
+station and MusicBrainz credit lookups a European egress path instead of the default
+Washington (`iad1`) path that both services reject for this workload.
+
 Before enabling Production, add one Vercel Firewall rate-limit rule for paths
 starting with `/api/`. A conservative starting policy for this player is 20
 requests per IP per 10-second fixed window, followed by HTTP 429. Monitor the
