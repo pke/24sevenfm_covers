@@ -164,9 +164,13 @@ function isTrackTitledScreenCompilation(title) {
     // Compilation titles commonly advertise "Themes From ..." or end in "Music
     // For Film", while each Track carries "Work - Cue". The prefix still has to
     // be an exact TMDB title, so these markers cannot turn an arbitrary cue
-    // containing a dash into a fuzzy match.
+    // containing a dash into a fuzzy match. "Every Note Paints A Picture" is a
+    // screen-score anthology whose marketing title has no generic compilation
+    // marker; its tracks likewise carry the work title and use the same strict
+    // provider match.
     return /\bthemes?\s+from\b/i.test(title)
-        || /\bmusic\s+for\s+films?\s*$/i.test(title);
+        || /\bmusic\s+for\s+films?\s*$/i.test(title)
+        || /^every note paints a picture$/i.test(title);
 }
 
 function usesExactTrackPrefix(title) {

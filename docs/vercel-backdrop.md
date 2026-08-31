@@ -72,6 +72,11 @@ resolves as `Remington Steele`, and `Interview With The Vampire - Born To Darkne
 Louis' Revenge` resolves as `Interview With The Vampire`, without an album-name-
 specific exception.
 
+`Every Note Paints A Picture` is also recognized as a track-titled screen-score
+anthology. Its marketing title has no generic compilation marker, so this is an
+explicit album contract: a track such as `Wilde` is searched as the work title and
+must still match a TMDB title exactly.
+
 A trailing `: Series N`, `- Season N`, or `– Staffel N` is parsed as structured TV
 metadata. The suffix is removed for title search and supplies a `tv` hint. When TMDB
 returns multiple exact series with the same title, an exact `Artist` person and that

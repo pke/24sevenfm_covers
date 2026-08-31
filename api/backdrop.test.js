@@ -609,6 +609,43 @@ test("recognizes Music For Film compilations through their track prefix", () => 
         "Elliot Goldenthal");
 });
 
+test("uses the work title carried by Every Note Paints A Picture tracks", () => {
+    assert.equal(mediaHintForAlbum("Every Note Paints A Picture"), "screen");
+    assert.deepEqual(backdropTitleCandidatesFor("Every Note Paints A Picture", "Wilde"),
+        ["Wilde"]);
+});
+
+test("resolves an Every Note Paints A Picture work as screen media", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.pathname, "/3/search/multi");
+            assert.equal(parsed.searchParams.get("query"), "Wilde");
+            return response(200, { results: [{
+                id: 11365, media_type: "movie", title: "Wilde",
+                release_date: "1997-09-01", backdrop_path: "/wilde.jpg",
+            }] });
+        },
+        tintForImage: async () => [141, 151, 161],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Every Note Paints A Picture",
+        track: "Wilde",
+        artist: "Debbie Wiseman",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 11365, title: "Wilde", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/wilde.jpg",
+        source: "tmdb",
+        tint: [141, 151, 161],
+    });
+});
+
 test("uses the composer to disambiguate a Music For Film compilation track", async () => {
     const requests = [];
     const handler = createHandler({
