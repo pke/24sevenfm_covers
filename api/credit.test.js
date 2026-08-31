@@ -114,6 +114,89 @@ test("returns a short-cache miss when the album page has no usable credit", asyn
         + ", s-maxage=" + CREDIT_MISS_CACHE_SECONDS + ", stale-while-revalidate=60");
 });
 
+test("falls back to an exact MusicBrainz ASIN when the station page is blocked", async () => {
+    const requests = [];
+    const handler = createCreditHandler({
+        env: { ALBUM_CREDIT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
+        fetchImpl: async (url, init) => {
+            const parsed = new URL(url);
+            requests.push({ url: parsed, init });
+            if (parsed.hostname === "streamingsoundtracks.com") {
+                return new Response("blocked", { status: 403,
+                    headers: { "content-type": "text/html" } });
+            }
+            assert.equal(parsed.hostname, "musicbrainz.org");
+            assert.equal(parsed.pathname, "/ws/2/release/");
+            assert.equal(parsed.searchParams.get("query"), "asin:B000852GIQ");
+            assert.equal(parsed.searchParams.get("fmt"), "json");
+            assert.match(init.headers["User-Agent"], /24sevenfm-covers/);
+            return Response.json({ releases: [{
+                asin: "B000852GIQ",
+                "artist-credit": [{
+                    name: "Yann Tiersen",
+                    artist: { name: "Yann Tiersen" },
+                }],
+            }] });
+        },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Les Retrouvailles",
+        url: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B000852GIQ",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), { artist: "Yann Tiersen" });
+    assert.equal(requests.length, 2);
+    assert.equal(res.headers.get("cache-control"), "public, max-age=" + CREDIT_CACHE_SECONDS
+        + ", s-maxage=" + CREDIT_CACHE_SECONDS + ", stale-while-revalidate=86400");
+});
+
+test("does not send custom station album ids to MusicBrainz", async () => {
+    let requests = 0;
+    const handler = createCreditHandler({
+        env: { ALBUM_CREDIT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
+        fetchImpl: async () => {
+            requests++;
+            return new Response("blocked", { status: 403,
+                headers: { "content-type": "text/html" } });
+        },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Custom Album",
+        url: "https://streamingsoundtracks.com/modules.php?name=Album&asin=Custom_Id",
+    }), res);
+
+    assert.equal(res.statusCode, 502);
+    assert.deepEqual(JSON.parse(res.body), { error: "album_page_unavailable" });
+    assert.equal(requests, 1);
+});
+
+test("does not guess when exact MusicBrainz releases disagree on their artist", async () => {
+    const handler = createCreditHandler({
+        env: { ALBUM_CREDIT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
+        fetchImpl: async (url) => new URL(url).hostname === "streamingsoundtracks.com"
+            ? new Response("blocked", { status: 403,
+                headers: { "content-type": "text/html" } })
+            : Response.json({ releases: [
+                { asin: "B000852GIQ", "artist-credit": [{ name: "Artist One" }] },
+                { asin: "B000852GIQ", "artist-credit": [{ name: "Artist Two" }] },
+            ] }),
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Les Retrouvailles",
+        url: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B000852GIQ",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), { artist: "" });
+    assert.equal(res.headers.get("cache-control"), "public, max-age="
+        + CREDIT_MISS_CACHE_SECONDS + ", s-maxage=" + CREDIT_MISS_CACHE_SECONDS
+        + ", stale-while-revalidate=60");
+});
+
 test("rejects untrusted album URLs before making a request", async () => {
     let fetched = false;
     const handler = createCreditHandler({

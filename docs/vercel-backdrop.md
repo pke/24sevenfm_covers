@@ -165,6 +165,14 @@ fragments and every redirect, and stops after 3 seconds or 256 KB. A successful
 credit is cached for six months; a page without matching Open Graph metadata is
 cached for 15 minutes.
 
+SST's Cloudflare policy can reject non-browser requests from Vercel's datacenter
+network. When a station album page is unavailable and its trusted URL contains a
+10-character Amazon ASIN, the endpoint performs one bounded MusicBrainz release
+search for that exact ASIN and accepts the artist credit only when all matching
+releases agree. Custom station album IDs are never sent as fuzzy searches. The
+existing edge cache and queue-prefetch staggering keep this fallback well below
+MusicBrainz's one-request-per-second service limit during normal operation.
+
 Before enabling Production, add one Vercel Firewall rate-limit rule for paths
 starting with `/api/`. A conservative starting policy for this player is 20
 requests per IP per 10-second fixed window, followed by HTTP 429. Monitor the
