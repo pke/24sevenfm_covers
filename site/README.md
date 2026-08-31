@@ -83,6 +83,9 @@ The movie/TV/game-backdrop, DE/US-rating, cover-tint and album-credit resolvers 
 Vercel project at the repository root. The media features share `api/backdrop.js`; the
 rating resolver returns exact Wikimedia Commons SVG URLs for FSK, MPA movie, and US TV
 Parental Guidelines badges, with the text badge retained as the image-load fallback.
+Available US TV content descriptors appear with their meanings on hover and keyboard
+focus (`D` dialogue, `L` language, `S` sexual situations, `V` violence, and `FV`
+fantasy violence).
 Cover tint uses `api/tint.js`; missing queued `Artist` values use the allowlisted
 `api/credit.js` album-page fallback. Their deployment, security
 limits and environment variables are documented in `docs/vercel-backdrop.md`.
@@ -113,6 +116,66 @@ to the browser console. Expanding the logged object shows the album, track, arti
 provider configuration and the resolver's raw JSON result, including successful
 misses. Credentials and the request URL are deliberately omitted. Deployed players
 do not emit this diagnostic log.
+
+For deterministic metadata and rating previews, `previewAlbum` replaces the local
+player's now-playing item; `previewTrack` and `previewArtist` are optional. These
+parameters are inert outside `localhost`, `127.0.0.1`, and `::1`. The fixture does
+not poll the station's now-playing or queue endpoints, while audio continues to use
+the selected station's real stream. For example:
+
+```text
+http://localhost:8099/player.html?preset=1&station=sst&sstRatings=1&sstRatingCountries=US&previewAlbum=Family%20Guy&previewTrack=Main%20Title&previewArtist=Walter%20Murphy
+```
+
+### Player query parameters
+
+`preset=1` makes the URL a complete, shareable configuration: the player starts
+from its defaults and applies the other preset parameters instead of loading saved
+browser settings. Without it, only `station`, `posterBlur`, and `borderRadius` are
+read. The player normalizes its address bar to `preset=1` after loading, preserves
+unrecognized parameters such as campaign tags, and never accepts `fanartKey` from
+the URL.
+
+| Parameter | Values | Effect |
+|---|---|---|
+| `preset` | `1` | Treat the URL as a complete settings preset. Required for the preset parameters below. |
+| `station` | `sst`, `1980s`, `adagio`, `death`, `entranced` | Select the station. Also works without `preset=1`. |
+| `layout` | `poster`, `fill` | Select the player layout. |
+| `transition` | `none`, `crossfade`, `flipHorizontal`, `flipVertical` | Select or disable cover/content transitions. |
+| `fade` | `500`–`2000` | Transition duration in milliseconds; out-of-range values are clamped. |
+| `remaining` | `countdown`, `rolldown` | Enable and select the remaining-time display. |
+| `remainingSize` | `small`, `medium`, `large` | Set the remaining-time size. |
+| `comingNext` | `0`, `1` | Disable or enable the upcoming-track display. |
+| `volume` | `0`–`1` | Set audio volume; out-of-range values are clamped. |
+| `milkdrop` | `auto`, `aurora`, `mandala`, `tunnel` | Enable Milkdrop and select its preset. |
+| `laser` | `0`, `1` | Disable or enable the 1980s.FM laser visualization. |
+| `strobe` | `0`, `1` | Disable or enable laser strobe accents. |
+| `smoke` | `0`, `1` | Disable or enable laser smoke. |
+| `bpm` | `0`, `1` | Disable or enable the BPM display. |
+| `analyzer` | `spectrum`, `oscilloscope` | Enable and select the audio analyzer. |
+| `bars` | `8`–`64` | Set the spectrum bar count; out-of-range values are clamped. |
+| `color` | `tinted`, `legacy` | Select the spectrum color mode. |
+| `scope` | `line`, `dots`, `filled` | Select the oscilloscope style. |
+| `sstBackdrops` | `0`, `1` | Disable or enable SST screen artwork. |
+| `sstBackdropProviders` | comma-separated `fanart`, `tmdb`, `steamgriddb` | Select and order artwork providers. |
+| `sstBackdropCover` | `show`, `hide` | Keep or hide the soundtrack cover when screen artwork is visible. |
+| `sstRatings` | `0`, `1` | Disable or enable SST age ratings. |
+| `sstRatingCountries` | comma-separated `DE`, `US` | Select rating countries. |
+| `blur` | `0`–`200` | Set poster-background blur. Preset form of `posterBlur`. |
+| `radius` | `0`–`500` | Set poster corner radius in thousandths of the cover side. Preset form of `borderRadius`. |
+
+The compatibility parameters `posterBlur` (`0`–`200`) and `borderRadius`
+(`0`–`500`) work on an ordinary URL without `preset=1`; URL normalization rewrites
+them to `blur` and `radius`.
+
+These visual-QA parameters work only on `localhost`, `127.0.0.1`, and `::1`:
+
+| Parameter | Values | Effect |
+|---|---|---|
+| `previewAlbum` | text, max. 160 characters | Activate local now-playing preview and set its album or screen title. |
+| `previewTrack` | text, max. 300 characters | Optionally set the preview track title. |
+| `previewArtist` | text, max. 160 characters | Optionally set the preview artist/composer. |
+| `simulateStationFailure` | presence flag | Force the station retry/outage state, regardless of its value. |
 
 The local site server watches `site\` recursively. After a short debounce, every
 source edit is rendered into `www\` automatically. The Node API separately watches

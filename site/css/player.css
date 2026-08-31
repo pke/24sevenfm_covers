@@ -499,6 +499,51 @@
     text-align: center;
 }
 .rating-face.has-logo span { display: none; }
+.rating-descriptors {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + .45rem);
+    z-index: 2;
+    display: grid;
+    gap: .28rem;
+    width: min(14.5rem, calc(100vw - 2 * var(--rating-gap)));
+    padding: .48rem .62rem;
+    border: 1px solid rgba(255, 255, 255, .28);
+    border-radius: .4rem;
+    background: rgba(12, 12, 15, .92);
+    color: #fff;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .45);
+    font-size: clamp(.72rem, 1.8vw, .9rem);
+    line-height: 1.15;
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(.3rem) scale(.96);
+    transform-origin: bottom right;
+    transition: opacity .2s ease, transform .2s ease, visibility 0s linear .2s;
+}
+.rating-descriptor {
+    display: grid;
+    grid-template-columns: 1.8rem 1fr;
+    gap: .4rem;
+    align-items: baseline;
+}
+.rating-descriptor-code {
+    font-weight: 800;
+    letter-spacing: .08em;
+}
+.rating-descriptor-label {
+    color: rgba(255, 255, 255, .88);
+    font-weight: 550;
+    letter-spacing: 0;
+}
+.rating-slot.has-descriptors.show { pointer-events: auto; cursor: help; }
+.rating-slot.has-descriptors:is(:hover, :focus) .rating-descriptors {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+    transition-delay: 0s;
+}
 .rating-slot[data-front="a"] .rating-face:first-child,
 .rating-slot[data-front="b"] .rating-face:last-child { opacity: 1; }
 .rating-slot[data-fx="fade"] .rating-face {
@@ -1187,7 +1232,8 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     .stage-status, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
     .fanart-key-check span, .provider-key-help, .provider-key-status,
-    .rating-badges, .rating-slot, .rating-card, .rating-face, .rating-country-options,
+    .rating-badges, .rating-slot, .rating-card, .rating-face, .rating-descriptors,
+    .rating-country-options,
     .coming-next, .coming-next-artist, .visualization-setting, .seg span,
     .station-context-host, .station-context-panel, .share-status,
     .settings-tab, .settings-tab-host, .settings-tab-panel, .feature-options,

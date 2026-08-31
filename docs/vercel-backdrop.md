@@ -14,6 +14,8 @@ bytes to the browser.
 and tint resolution, allowing the Ratings visualization to use the same media match
 without paying for unused image-provider work. Rating lookup is best-effort: a TMDB
 certification failure returns an empty array and does not fail otherwise valid art.
+For US TV ratings, a sanitized `descriptors` array carries the optional D/L/S/V/FV
+content descriptors supplied by TMDB.
 
 ## Project settings
 

@@ -369,7 +369,8 @@ test("returns Game of Thrones German and US TV ratings", async () => {
             if (parsed.pathname === "/3/tv/1399/content_ratings") return response(200, {
                 results: [
                     { iso_3166_1: "DE", rating: "16" },
-                    { iso_3166_1: "US", rating: "TV-MA" },
+                    { iso_3166_1: "US", rating: "TV-MA",
+                        descriptors: ["V", "S", "L", "D", "V", "unknown"] },
                 ],
             });
             throw new Error("unexpected request " + parsed.href);
@@ -389,6 +390,7 @@ test("returns Game of Thrones German and US TV ratings", async () => {
         {
             country: "US", system: "TV Parental Guidelines", rating: "TV-MA", label: "TV-MA",
             logo: "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
+            descriptors: ["L", "S", "V"],
         },
     ]);
 });
@@ -505,6 +507,9 @@ test("maps every supported FSK, MPA, and US TV rating to its Wikimedia SVG", () 
     for (const [rating, logo] of Object.entries(tvLogos)) {
         assert.equal(certificationResponse("US", rating, "tv").logo, logo);
     }
+    assert.deepEqual(certificationResponse("US", "TV-Y7-FV", "tv").descriptors, ["FV"]);
+    assert.deepEqual(certificationResponse("US", "TV-PG", "tv",
+        ["v", "D", "X", "D"]).descriptors, ["D", "V"]);
     assert.equal(certificationResponse("US", "NR", "movie").logo, null);
     assert.equal(certificationResponse("US", "TV-NR", "tv").logo, null);
 });

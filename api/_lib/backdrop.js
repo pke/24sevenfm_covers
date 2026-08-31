@@ -100,6 +100,13 @@ const TV_PARENTAL_GUIDELINES_LOGOS = Object.freeze({
     "TV-14": "https://upload.wikimedia.org/wikipedia/commons/c/c3/TV-14_icon.svg",
     "TV-MA": "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
 });
+const TV_CONTENT_DESCRIPTORS = Object.freeze({
+    "TV-Y7": Object.freeze(["FV"]),
+    "TV-Y7-FV": Object.freeze(["FV"]),
+    "TV-PG": Object.freeze(["D", "L", "S", "V"]),
+    "TV-14": Object.freeze(["D", "L", "S", "V"]),
+    "TV-MA": Object.freeze(["L", "S", "V"]),
+});
 
 class ResolverError extends Error {
     constructor(code, status, message) {
@@ -1035,7 +1042,19 @@ function movieCertification(countryResult, country) {
         .sort((a, b) => a.rank - b.rank || a.index - b.index)[0]?.rating || "";
 }
 
-function certificationResponse(country, rating, type) {
+function cleanTvContentDescriptors(raw, rating) {
+    const allowed = TV_CONTENT_DESCRIPTORS[rating] || [];
+    if (!allowed.length) return [];
+    const supplied = new Set((Array.isArray(raw) ? raw : [])
+        .filter((value) => typeof value === "string")
+        .map((value) => value.trim().toUpperCase()));
+    // TV-Y7-FV carries FV in the rating itself, even when TMDB's optional
+    // descriptors array is empty.
+    if (rating === "TV-Y7-FV") supplied.add("FV");
+    return allowed.filter((descriptor) => supplied.has(descriptor));
+}
+
+function certificationResponse(country, rating, type, descriptors) {
     if (!rating) return null;
     if (country === "DE") {
         return {
@@ -1055,6 +1074,7 @@ function certificationResponse(country, rating, type) {
     response.logo = type === "tv"
         ? TV_PARENTAL_GUIDELINES_LOGOS[rating] || null
         : MPA_LOGOS[rating] || null;
+    if (type === "tv") response.descriptors = cleanTvContentDescriptors(descriptors, rating);
     return response;
 }
 
@@ -1069,7 +1089,8 @@ async function screenCertifications(fetchImpl, media, countries, env) {
         const countryResult = results.find((entry) => entry && entry.iso_3166_1 === country);
         const raw = type === "tv" ? countryResult && countryResult.rating
             : movieCertification(countryResult, country);
-        return certificationResponse(country, cleanCertification(raw, country), type);
+        return certificationResponse(country, cleanCertification(raw, country), type,
+            type === "tv" && countryResult && countryResult.descriptors);
     }).filter(Boolean);
 }
 

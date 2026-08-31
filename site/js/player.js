@@ -250,6 +250,22 @@ var isLocalPlayer = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostnam
 // The hostname guard makes the switch inert on every deployed origin.
 var simulateStationFailure = isLocalPlayer
     && new URLSearchParams(location.search).has("simulateStationFailure");
+var localPreviewParams = new URLSearchParams(location.search);
+
+function localPreviewText(key, maxLength) {
+    if (!isLocalPlayer || !localPreviewParams.has(key)) return "";
+    var value = localPreviewParams.get(key).trim();
+    return value.length <= maxLength && !/[\u0000-\u001F\u007F]/.test(value) ? value : "";
+}
+
+// A local-only metadata fixture makes visual QA reproducible without touching the
+// station feed. previewAlbum is the opt-in; the other two fields are optional.
+var previewAlbum = localPreviewText("previewAlbum", 160);
+var localNowPlayingPreview = previewAlbum ? Object.freeze({
+    album: previewAlbum,
+    track: localPreviewText("previewTrack", 300),
+    artist: localPreviewText("previewArtist", 160),
+}) : null;
 
 function defaultOptions() {
     var defaults = {};
@@ -632,7 +648,33 @@ var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 // already-attached back face into view.
 function makeRatingSlot(slot) {
     var faces = Array.from(slot.querySelectorAll(".rating-face"));
+    var descriptorBubble = slot.querySelector(".rating-descriptors");
     var token = "", version = 0, settleTimer = null;
+
+    function setDescriptors(certification) {
+        if (!descriptorBubble) return;
+        var descriptors = certification.descriptors || [];
+        var hasDescriptors = descriptors.length > 0;
+        descriptorBubble.replaceChildren();
+        descriptors.forEach(function (descriptor) {
+            var row = document.createElement("span");
+            var code = document.createElement("strong");
+            var label = document.createElement("span");
+            row.className = "rating-descriptor";
+            code.className = "rating-descriptor-code";
+            label.className = "rating-descriptor-label";
+            code.textContent = descriptor;
+            label.textContent = TV_CONTENT_DESCRIPTOR_LABELS[descriptor] || "";
+            row.append(code, label);
+            descriptorBubble.append(row);
+        });
+        slot.classList.toggle("has-descriptors", hasDescriptors);
+        if (hasDescriptors) slot.setAttribute("tabindex", "0");
+        else {
+            slot.removeAttribute("tabindex");
+            if (document.activeElement === slot) slot.blur();
+        }
+    }
 
     function setFace(face, certification, logo) {
         var img = face.querySelector("img"), label = face.querySelector("span");
@@ -656,6 +698,7 @@ function makeRatingSlot(slot) {
         slot.classList.remove("show");
         slot.setAttribute("aria-hidden", "true");
         slot.removeAttribute("aria-label");
+        setDescriptors({ descriptors: [] });
     }
 
     function effectName() {
@@ -690,6 +733,7 @@ function makeRatingSlot(slot) {
             delete slot.dataset.warp;
             slot.setAttribute("aria-hidden", "false");
             slot.setAttribute("aria-label", certification.accessibleLabel);
+            setDescriptors(certification);
             maybeBeginRatingTrackVisibility();
             return;
         }
@@ -707,6 +751,7 @@ function makeRatingSlot(slot) {
         slot.dataset.front = front;
         slot.setAttribute("aria-hidden", "false");
         slot.setAttribute("aria-label", certification.accessibleLabel);
+        setDescriptors(certification);
         maybeBeginRatingTrackVisibility();
         if (fx === "fliph" || fx === "flipv") {
             var settleVersion = version;
@@ -730,7 +775,7 @@ function makeRatingSlot(slot) {
     function show(certification, generation, replaceWhileHidden) {
         if (!certification) { hide(); return; }
         var nextToken = [certification.rating, certification.label,
-            certification.logo || ""].join("\n");
+            certification.logo || "", (certification.descriptors || []).join(",")].join("\n");
         if (token === nextToken && slot.dataset.front) {
             reveal(slot.dataset.front, certification, replaceWhileHidden);
             return;
@@ -1186,11 +1231,26 @@ async function poll() {
     const kill = setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT);
     try {
         if (simulateStationFailure) throw new Error("Simulated station failure");
-        const r = await fetch("https://" + station().host
-            + "/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now(),
-            { signal: ctl.signal });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const j = await r.json();
+        var j;
+        if (localNowPlayingPreview) {
+            var previewTime = new Date().toISOString();
+            j = {
+                Album: localNowPlayingPreview.album,
+                Track: localNowPlayingPreview.track,
+                Artist: localNowPlayingPreview.artist,
+                CoverLink: "",
+                ThumbnailLink: "",
+                Length: 0,
+                PlayStart: previewTime,
+                SystemTime: previewTime,
+            };
+        } else {
+            const r = await fetch("https://" + station().host
+                + "/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now(),
+                { signal: ctl.signal });
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            j = await r.json();
+        }
         if (ctl !== inflight) return; // superseded by a station switch
         if (!validNowPlaying(j)) throw new Error("Invalid now-playing response");
         errBackoff = ERR_RETRY;
@@ -1216,7 +1276,7 @@ async function poll() {
         // logo and the veto can never disagree.
         const tintCover = trustedCoverUrl(j.ThumbnailLink) || trustedCoverUrl(j.CoverLink);
         const displayCover = sizedCoverUrl(j.CoverLink);
-        const isStationId = !displayCover;
+        const isStationId = !displayCover && !localNowPlayingPreview;
         const trackIdentityChanged = album !== currentAlbum || track !== currentTrack
             || isStationId !== stationIdActive;
         const prefetchedArt = trackIdentityChanged && !isStationId
@@ -1250,7 +1310,7 @@ async function poll() {
             title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
         setInfo(title || "—", artist);
 
-        const cover = isStationId ? station().logo : displayCover;
+        const cover = isStationId ? station().logo : displayCover || station().logo;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
         else if (trackIdentityChanged && cover === shownUrl && coverHiddenUntilCoverReady) {
             // The next cue can legitimately reuse an album cover. It is already the
@@ -1261,8 +1321,9 @@ async function poll() {
         clearStatus("station");
         lastSuccessfulPollAt = Date.now();
         const trackToken = [album, track, isStationId ? "station" : displayCover].join("\n");
-        scheduleHealthyPoll(trackToken, lengthSec, remaining, timingIsValid);
-        if (trackIdentityChanged || !queueSnapshotReady)
+        if (localNowPlayingPreview) schedulePoll(MAX_POLL);
+        else scheduleHealthyPoll(trackToken, lengthSec, remaining, timingIsValid);
+        if (!localNowPlayingPreview && (trackIdentityChanged || !queueSnapshotReady))
             refreshQueue(); // fire-and-forget: one snapshot per confirmed track
     } catch (e) {
         if (ctl !== inflight) return;
@@ -1663,6 +1724,20 @@ var WIKIMEDIA_RATING_LOGOS = Object.freeze({
     "US|TV Parental Guidelines|TV-14": "https://upload.wikimedia.org/wikipedia/commons/c/c3/TV-14_icon.svg",
     "US|TV Parental Guidelines|TV-MA": "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
 });
+var TV_CONTENT_DESCRIPTORS = Object.freeze({
+    "TV-Y7": Object.freeze(["FV"]),
+    "TV-Y7-FV": Object.freeze(["FV"]),
+    "TV-PG": Object.freeze(["D", "L", "S", "V"]),
+    "TV-14": Object.freeze(["D", "L", "S", "V"]),
+    "TV-MA": Object.freeze(["L", "S", "V"]),
+});
+var TV_CONTENT_DESCRIPTOR_LABELS = Object.freeze({
+    D: "suggestive dialogue",
+    L: "coarse or crude language",
+    S: "sexual situations",
+    V: "violence",
+    FV: "fantasy violence",
+});
 
 function trustedRatingLogo(raw, country, system, rating) {
     var expected = WIKIMEDIA_RATING_LOGOS[[country, system, rating].join("|")];
@@ -1673,6 +1748,17 @@ function trustedRatingLogo(raw, country, system, rating) {
             && !url.username && !url.password && !url.search && !url.hash
             && url.href === expected ? url.href : "";
     } catch (e) { return ""; }
+}
+
+function trustedTvContentDescriptors(raw, rating) {
+    var allowed = TV_CONTENT_DESCRIPTORS[rating] || [];
+    if (!allowed.length) return [];
+    var supplied = (raw instanceof Array ? raw : []).reduce(function (values, value) {
+        if (typeof value === "string") values[value.trim().toUpperCase()] = true;
+        return values;
+    }, Object.create(null));
+    if (rating === "TV-Y7-FV") supplied.FV = true;
+    return allowed.filter(function (descriptor) { return supplied[descriptor]; });
 }
 
 function trustedCertifications(raw) {
@@ -1691,6 +1777,11 @@ function trustedCertifications(raw) {
                 || ["0", "6", "12", "16", "18"].indexOf(rating) < 0)) return certifications;
         if (entry.country === "US" && system !== "MPA"
                 && system !== "TV Parental Guidelines") return certifications;
+        var descriptors = entry.country === "US" && system === "TV Parental Guidelines"
+            ? trustedTvContentDescriptors(entry.descriptors, rating) : [];
+        var descriptorLabel = descriptors.map(function (descriptor) {
+            return descriptor + ": " + TV_CONTENT_DESCRIPTOR_LABELS[descriptor];
+        }).join("; ");
         seen[entry.country] = true;
         certifications.push({
             country: entry.country,
@@ -1698,7 +1789,9 @@ function trustedCertifications(raw) {
             label: label,
             system: system,
             logo: trustedRatingLogo(entry.logo, entry.country, system, rating),
-            accessibleLabel: (entry.country === "DE" ? "Germany: " : "United States: ") + label,
+            descriptors: descriptors,
+            accessibleLabel: (entry.country === "DE" ? "Germany: " : "United States: ")
+                + label + (descriptorLabel ? "; content descriptors: " + descriptorLabel : ""),
         });
         return certifications;
     }, []);

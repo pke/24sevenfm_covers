@@ -832,7 +832,8 @@ test.describe("the deployed player page", () => {
                         logo: "https://upload.wikimedia.org/wikipedia/commons/3/30/FSK_16.svg" },
                     { country: "US", system: "TV Parental Guidelines", rating: "TV-MA",
                         label: "TV-MA",
-                        logo: "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg" },
+                        logo: "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
+                        descriptors: ["L", "S", "V"] },
                 ] : [
                     { country: "DE", system: "FSK", rating: "6", label: "FSK 6",
                         logo: "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg" },
@@ -996,6 +997,26 @@ test.describe("the deployed player page", () => {
         await expect(usTvRating).toHaveCSS("border-top-width", "0px");
         await expect(usTvRating).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
         await expect(usTvRating).toHaveCSS("box-shadow", "none");
+        const usTvSlot = page.locator("#rating-us");
+        const descriptorBubble = usTvSlot.locator(".rating-descriptors");
+        await expect(usTvSlot).toHaveClass(/has-descriptors/);
+        await expect(usTvSlot).toHaveAttribute("tabindex", "0");
+        await expect(usTvSlot).toHaveAttribute("aria-label",
+            "United States: TV-MA; content descriptors: L: coarse or crude language; "
+                + "S: sexual situations; V: violence");
+        await expect(descriptorBubble.locator(".rating-descriptor")).toHaveText([
+            "Lcoarse or crude language",
+            "Ssexual situations",
+            "Vviolence",
+        ]);
+        await expect(descriptorBubble).toBeHidden();
+        await usTvSlot.hover();
+        await expect(descriptorBubble).toBeVisible();
+        await expect(descriptorBubble).toHaveCSS("opacity", "1");
+        await page.mouse.move(1, 1);
+        await expect(descriptorBubble).toBeHidden();
+        await usTvSlot.focus();
+        await expect(descriptorBubble).toBeVisible();
     });
     test("falls back to the existing US TV text badge when its logo cannot load",
         async ({ page }) => {
@@ -1041,8 +1062,71 @@ test.describe("the deployed player page", () => {
             await expect(slot).toHaveClass(/show/);
             await expect(slot).toHaveAttribute("aria-label", "United States: TV-MA");
             await expect(slot).toContainText("TV-MA");
+            await expect(slot).not.toHaveClass(/has-descriptors/);
+            await expect(slot).not.toHaveAttribute("tabindex", "0");
             await expect(slot.locator(".rating-face.has-logo")).toHaveCount(0);
             await expect(slot.locator(".rating-face img[src]")).toHaveCount(0);
+        });
+    test("previews local now-playing metadata from query parameters without polling the station",
+        async ({ page }) => {
+            const logo = "https://upload.wikimedia.org/wikipedia/commons/c/c3/TV-14_icon.svg";
+            let stationRequests = 0;
+            let resolverQuery = null;
+            page.on("request", (request) => {
+                if (/streamingsoundtracks\.com\/soap\/FM24sevenJSON\.php/.test(request.url()))
+                    stationRequests++;
+            });
+            await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
+            await page.route(/\/api\/backdrop\?/, (route) => {
+                const url = new URL(route.request().url());
+                resolverQuery = {
+                    album: url.searchParams.get("album"),
+                    track: url.searchParams.get("track"),
+                    artist: url.searchParams.get("artist"),
+                    art: url.searchParams.get("art"),
+                    ratings: url.searchParams.get("ratings"),
+                };
+                return route.fulfill({ json: {
+                    media: { id: 1434, title: "Family Guy", type: "tv" },
+                    backdrop: null, source: null, tint: [255, 255, 255],
+                    certifications: [{
+                        country: "US", system: "TV Parental Guidelines", rating: "TV-14",
+                        label: "TV-14", logo, descriptors: ["D", "L", "S", "V"],
+                    }],
+                } });
+            });
+            await page.route(logo, (route) =>
+                route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
+
+            await page.goto("/player.html?preset=1&station=sst&sstRatings=1"
+                + "&sstRatingCountries=US&previewAlbum=Family%20Guy"
+                + "&previewTrack=Main%20Title&previewArtist=Walter%20Murphy",
+            { waitUntil: "domcontentloaded" });
+
+            await expect(page.locator("#info-title")).toHaveText("Family Guy - Main Title");
+            await expect(page.locator("#info-artist")).toHaveText("Walter Murphy");
+            await expect.poll(() => resolverQuery).toEqual({
+                album: "Family Guy", track: "Main Title", artist: "Walter Murphy",
+                art: "0", ratings: "DE,US",
+            });
+            expect(stationRequests).toBe(0);
+            const slot = page.locator("#rating-us");
+            await expect(slot).toHaveClass(/show/);
+            await expect(slot.locator(".rating-descriptor")).toHaveText([
+                "Dsuggestive dialogue",
+                "Lcoarse or crude language",
+                "Ssexual situations",
+                "Vviolence",
+            ]);
+            await slot.hover();
+            await expect(slot.locator(".rating-descriptors")).toBeVisible();
+            const params = new URL(page.url()).searchParams;
+            expect(params.get("previewAlbum")).toBe("Family Guy");
+            expect(params.get("previewTrack")).toBe("Main Title");
+            expect(params.get("previewArtist")).toBe("Walter Murphy");
         });
     test("fades ratings after ten idle seconds and wakes them on pointer movement", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/rating-idle.svg";

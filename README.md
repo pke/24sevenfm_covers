@@ -232,6 +232,8 @@ taste, not everyday options. Edit them in the INI (`[options]` section) while th
 
 The web player honours the same two as URL parameters
 (`player.html?posterBlur=0&borderRadius=500`), hidden from its UI for the same reason.
+The [complete player query-parameter reference](site/README.md#player-query-parameters)
+also documents shareable presets, visualizations, SST artwork/ratings, and local QA fixtures.
 
 The INI lives next to the viewer's `.exe` (or `%APPDATA%\24seven.fm Covers\` when that folder
 isn't writable), and in Winamp's settings folder for the plugin. Neither key applies to the
