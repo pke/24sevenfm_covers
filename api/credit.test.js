@@ -116,8 +116,11 @@ test("returns a short-cache miss when the album page has no usable credit", asyn
 
 test("falls back to an exact MusicBrainz ASIN when the station page is blocked", async () => {
     const requests = [];
+    const waits = [];
+    let musicBrainzAttempts = 0;
     const handler = createCreditHandler({
         env: { ALBUM_CREDIT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
+        waitImpl: async (milliseconds) => { waits.push(milliseconds); },
         fetchImpl: async (url, init) => {
             const parsed = new URL(url);
             requests.push({ url: parsed, init });
@@ -130,6 +133,8 @@ test("falls back to an exact MusicBrainz ASIN when the station page is blocked",
             assert.equal(parsed.searchParams.get("query"), "asin:B000852GIQ");
             assert.equal(parsed.searchParams.get("fmt"), "json");
             assert.match(init.headers["User-Agent"], /24sevenfm-covers/);
+            musicBrainzAttempts++;
+            if (musicBrainzAttempts === 1) return new Response("busy", { status: 503 });
             return Response.json({ releases: [{
                 asin: "B000852GIQ",
                 "artist-credit": [{
@@ -147,7 +152,9 @@ test("falls back to an exact MusicBrainz ASIN when the station page is blocked",
 
     assert.equal(res.statusCode, 200);
     assert.deepEqual(JSON.parse(res.body), { artist: "Yann Tiersen" });
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 3);
+    assert.equal(waits.length, 1);
+    assert.ok(waits[0] >= 1000);
     assert.equal(res.headers.get("cache-control"), "public, max-age=" + CREDIT_CACHE_SECONDS
         + ", s-maxage=" + CREDIT_CACHE_SECONDS + ", stale-while-revalidate=86400");
 });

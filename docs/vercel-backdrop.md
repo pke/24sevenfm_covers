@@ -169,9 +169,11 @@ SST's Cloudflare policy can reject non-browser requests from Vercel's datacenter
 network. When a station album page is unavailable and its trusted URL contains a
 10-character Amazon ASIN, the endpoint performs one bounded MusicBrainz release
 search for that exact ASIN and accepts the artist credit only when all matching
-releases agree. Custom station album IDs are never sent as fuzzy searches. The
-existing edge cache and queue-prefetch staggering keep this fallback well below
-MusicBrainz's one-request-per-second service limit during normal operation.
+releases agree. A transient network error, HTTP 429 or HTTP 5xx receives one retry
+after 1.1 seconds; this delay also respects MusicBrainz's one-request-per-second
+service limit. Custom station album IDs are never sent as fuzzy searches. The
+existing edge cache and queue-prefetch staggering avoid repeated lookups during
+normal operation.
 
 Before enabling Production, add one Vercel Firewall rate-limit rule for paths
 starting with `/api/`. A conservative starting policy for this player is 20

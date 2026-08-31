@@ -5,6 +5,7 @@ const { AsyncLocalStorage } = require("node:async_hooks");
 const CREDIT_CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
 const CREDIT_MISS_CACHE_SECONDS = 15 * 60;
 const CREDIT_TIMEOUT_MS = 3000;
+const MUSICBRAINZ_RETRY_MS = 1100;
 const debugLogContext = new AsyncLocalStorage();
 let debugRequestSequence = 0;
 const MAX_ALBUM_PAGE_BYTES = 256 * 1024;
@@ -235,7 +236,7 @@ async function fetchAlbumArtist(fetchImpl, url, album) {
     return artistFromAlbumHtml(new TextDecoder(encoding).decode(bytes), album);
 }
 
-async function fetchMusicBrainzArtist(fetchImpl, albumUrl) {
+async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
     const asin = new URL(albumUrl).searchParams.get("asin").toUpperCase();
     if (!AMAZON_ASIN.test(asin)) return null;
     const url = new URL("https://musicbrainz.org/ws/2/release/");
@@ -245,30 +246,54 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl) {
     const startedAt = Date.now();
     debugLog("info", "fallback.request", { provider: "musicbrainz", asin });
     let response;
-    try {
-        response = await fetchImpl(url, {
-            redirect: "manual",
-            headers: {
-                "Accept": "application/json",
-                "User-Agent": MUSICBRAINZ_USER_AGENT,
-            },
-            signal: AbortSignal.timeout(CREDIT_TIMEOUT_MS),
-        });
-    } catch (error) {
-        debugLog("warn", "fallback.failure", {
-            provider: "musicbrainz",
-            asin,
-            duration_ms: Date.now() - startedAt,
-            error_name: error && error.name || "Error",
-            error_message: error && error.message || "request failed",
-        });
-        throw error;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            response = await fetchImpl(url, {
+                redirect: "manual",
+                headers: {
+                    "Accept": "application/json",
+                    "User-Agent": MUSICBRAINZ_USER_AGENT,
+                },
+                signal: AbortSignal.timeout(CREDIT_TIMEOUT_MS),
+            });
+        } catch (error) {
+            if (attempt === 0) {
+                debugLog("warn", "fallback.retry", {
+                    provider: "musicbrainz",
+                    asin,
+                    reason: error && error.name || "network_error",
+                    delay_ms: MUSICBRAINZ_RETRY_MS,
+                });
+                await waitImpl(MUSICBRAINZ_RETRY_MS);
+                continue;
+            }
+            debugLog("warn", "fallback.failure", {
+                provider: "musicbrainz",
+                asin,
+                duration_ms: Date.now() - startedAt,
+                error_name: error && error.name || "Error",
+                error_message: error && error.message || "request failed",
+            });
+            throw error;
+        }
+        const retryable = response.status === 429 || response.status >= 500;
+        if (attempt === 0 && retryable) {
+            debugLog("warn", "fallback.retry", {
+                provider: "musicbrainz",
+                asin,
+                reason: "http_" + response.status,
+                delay_ms: MUSICBRAINZ_RETRY_MS,
+            });
+            await waitImpl(MUSICBRAINZ_RETRY_MS);
+            continue;
+        }
+        break;
     }
-    if (!response.ok) {
+    if (!response || !response.ok) {
         debugLog("warn", "fallback.rejected", {
             provider: "musicbrainz",
             asin,
-            status: response.status,
+            status: response && response.status || 0,
             duration_ms: Date.now() - startedAt,
         });
         throw new CreditError("credit_lookup_unavailable", 502);
@@ -290,7 +315,7 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl) {
     return artist;
 }
 
-async function fetchAlbumArtistWithFallback(fetchImpl, url, album) {
+async function fetchAlbumArtistWithFallback(fetchImpl, url, album, waitImpl) {
     try {
         return await fetchAlbumArtist(fetchImpl, url, album);
     } catch (stationError) {
@@ -298,7 +323,7 @@ async function fetchAlbumArtistWithFallback(fetchImpl, url, album) {
             || stationError.code === "album_page_unavailable";
         if (!canFallback) throw stationError;
         try {
-            const artist = await fetchMusicBrainzArtist(fetchImpl, url);
+            const artist = await fetchMusicBrainzArtist(fetchImpl, url, waitImpl);
             if (artist !== null) return artist;
         } catch (fallbackError) {
             debugLog("warn", "fallback.unavailable", {
@@ -321,6 +346,8 @@ function sendJson(res, status, body) {
 function createCreditHandler(options = {}) {
     const env = options.env || process.env;
     const fetchImpl = options.fetchImpl || globalThis.fetch;
+    const waitImpl = options.waitImpl
+        || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
     async function handleCreditRequest(req, res) {
         debugLog("info", "request.start", {
             method: req && req.method,
@@ -354,7 +381,8 @@ function createCreditHandler(options = {}) {
                     || /[\u0000-\u001F\u007F]/.test(album))
                 throw new CreditError("invalid_album", 400);
             if (!url) throw new CreditError("invalid_album_url", 400);
-            const artist = await fetchAlbumArtistWithFallback(fetchImpl, url, album.trim());
+            const artist = await fetchAlbumArtistWithFallback(
+                fetchImpl, url, album.trim(), waitImpl);
             res.setHeader("Cache-Control", artist
                 ? cacheControl(CREDIT_CACHE_SECONDS, 86400)
                 : cacheControl(CREDIT_MISS_CACHE_SECONDS, 60));
