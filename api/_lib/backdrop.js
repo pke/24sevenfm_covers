@@ -16,6 +16,14 @@ const MAX_TINT_URL_LENGTH = 512;
 const MAX_TINT_REDIRECTS = 2;
 const MAX_TRACK_PREFIX_CANDIDATES = 8;
 const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
+// Exact station metadata that resolves an otherwise ambiguous catalog title.
+const TRACK_MEDIA_HINTS = Object.freeze([
+    Object.freeze({
+        album: "Medal Of Honor",
+        track: "Attack On Fort Schmerzen",
+        hint: "game",
+    }),
+]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
     "1980s.fm",
@@ -213,6 +221,15 @@ function quotedFromScreenTitle(track) {
         /\(\s*from\s+(?:"([^"]+)"|“([^”]+)”)\s*\)\s*$/i);
     const title = match && cleanMovieTitle(match[1] || match[2]);
     return title || "";
+}
+
+function mediaHintForTrack(album, track) {
+    const albumKey = normalizedTitle(album);
+    const trackKey = normalizedTitle(track);
+    if (!albumKey || !trackKey) return "";
+    const match = TRACK_MEDIA_HINTS.find((entry) =>
+        normalizedTitle(entry.album) === albumKey && normalizedTitle(entry.track) === trackKey);
+    return match ? match.hint : "";
 }
 
 function trackPrefixCandidates(track) {
@@ -1396,8 +1413,9 @@ function createHandler(options = {}) {
             const includeArt = requestedArt(requestQueryValue(req, "art"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(trackValue);
+            const trackMediaHint = mediaHintForTrack(titleValue, trackValue);
             const mediaHint = requestedHint === "auto"
-                ? quotedFromTitle ? "screen" : mediaHintForAlbum(titleValue)
+                ? quotedFromTitle ? "screen" : trackMediaHint || mediaHintForAlbum(titleValue)
                 : requestedHint;
             const rawClientKey = requestQueryValue(req, "client_key");
             const clientKey = typeof rawClientKey === "string" ? rawClientKey.trim() : "";

@@ -1074,6 +1074,84 @@ test("uses a parenthesized video-game marker before provider order and ratings",
     assert.match(requests[0], /\/search\/autocomplete\/Defiance$/);
 });
 
+test("resolves the ambiguous Medal Of Honor station album as a game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("api.themoviedb.org/3/search/multi")) return response(200, {
+                results: [{ id: 83109, media_type: "tv", name: "Medal of Honor",
+                    backdrop_path: "/medal-of-honor-tv.jpg" }],
+            });
+            if (value.includes("api.themoviedb.org/3/tv/83109/content_ratings")) {
+                return response(200, { results: [{ iso_3166_1: "US", rating: "TV-MA" }] });
+            }
+            if (value.includes("/search/autocomplete/Medal%20Of%20Honor")) {
+                return response(200, { success: true,
+                    data: [{ id: 12091, name: "Medal of Honor", verified: true }] });
+            }
+            if (value.includes("/heroes/game/12091")) return response(200, {
+                success: true, data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/medal-of-honor.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/medal-of-honor.jpg" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [251, 245, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Medal Of Honor",
+        track: "Attack On Fort Schmerzen",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 12091, title: "Medal of Honor", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/medal-of-honor.jpg",
+        source: "steamgriddb",
+        tint: [251, 245, 255],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
+test("does not force different Medal Of Honor track metadata to the game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("api.themoviedb.org/3/search/multi")) return response(200, {
+                results: [{ id: 83109, media_type: "tv", name: "Medal of Honor",
+                    backdrop_path: "/medal-of-honor-tv.jpg" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [220, 230, 240],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Medal Of Honor",
+        track: "A Different Cue",
+        providers: "fanart,tmdb,steamgriddb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 83109, title: "Medal of Honor", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/medal-of-honor-tv.jpg",
+        source: "tmdb",
+        tint: [220, 230, 240],
+    });
+    assert.equal(requests.some((url) => url.includes("steamgriddb.com")), false);
+});
+
 test("uses an exact base-game hero when an exact expansion has no hero", async () => {
     const requests = [];
     const handler = createHandler({
