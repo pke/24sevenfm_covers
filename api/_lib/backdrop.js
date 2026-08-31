@@ -191,6 +191,13 @@ function usesExactTrackPrefix(title) {
     return isTrackTitledTvCompilation(title) || isTrackTitledScreenCompilation(title);
 }
 
+function quotedFromScreenTitle(track) {
+    const match = String(track || "").trim().match(
+        /\(\s*from\s+(?:"([^"]+)"|“([^”]+)”)\s*\)\s*$/i);
+    const title = match && cleanMovieTitle(match[1] || match[2]);
+    return title || "";
+}
+
 function trackPrefixCandidates(track) {
     const title = String(track || "").trim();
     if (!title) return [];
@@ -227,6 +234,8 @@ function backdropTitleFor(album, track) {
     if (seasonIdentity) return seasonIdentity.title;
     const bookIdentity = tvBookSoundtrackIdentity(album);
     if (bookIdentity) return bookIdentity.title;
+    const quotedFromTitle = quotedFromScreenTitle(track);
+    if (quotedFromTitle) return quotedFromTitle;
     if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
         const workTitle = cleanMovieTitle(track);
         if (workTitle) return workTitle;
@@ -252,6 +261,8 @@ function backdropTitleFor(album, track) {
 
 function backdropTitleCandidatesFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
+    const quotedFromTitle = quotedFromScreenTitle(track);
+    if (quotedFromTitle) return [quotedFromTitle];
     if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
         const workTitle = cleanMovieTitle(track);
         if (workTitle) return [workTitle];
@@ -1351,7 +1362,10 @@ function createHandler(options = {}) {
             const ratingCountries = requestedRatings(requestQueryValue(req, "ratings"));
             const includeArt = requestedArt(requestQueryValue(req, "art"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
-            const mediaHint = requestedHint === "auto" ? mediaHintForAlbum(titleValue) : requestedHint;
+            const quotedFromTitle = quotedFromScreenTitle(trackValue);
+            const mediaHint = requestedHint === "auto"
+                ? quotedFromTitle ? "screen" : mediaHintForAlbum(titleValue)
+                : requestedHint;
             const rawClientKey = requestQueryValue(req, "client_key");
             const clientKey = typeof rawClientKey === "string" ? rawClientKey.trim() : "";
             if (clientKey.length > 128 || /[\u0000-\u001F\u007F]/.test(clientKey)) {
@@ -1364,7 +1378,7 @@ function createHandler(options = {}) {
                 includeArt,
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
-                    || !!starTrekSeriesAlias(titleValue),
+                    || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle,
                 allowGameTitleExtension:
                     isTrackTitledGameCompilation(cleanMovieTitle(titleValue)),
             });

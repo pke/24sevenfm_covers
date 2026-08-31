@@ -686,6 +686,47 @@ test("recognizes Music For Film compilations through their track prefix", () => 
         "Elliot Goldenthal");
 });
 
+test("uses a quoted From credit as the track's screen work", () => {
+    const album = "Imitation Games";
+    const track = 'Redeeming Love Theme (From "Redeeming Love")';
+    assert.equal(backdropTitleFor(album, track), "Redeeming Love");
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), ["Redeeming Love"]);
+});
+
+test("resolves a quoted From credit as an exact screen title", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "steam-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.hostname);
+            assert.equal(parsed.hostname, "api.themoviedb.org");
+            assert.equal(parsed.pathname, "/3/search/multi");
+            assert.equal(parsed.searchParams.get("query"), "Redeeming Love");
+            return response(200, { results: [{
+                id: 698508, media_type: "movie", title: "Redeeming Love",
+                release_date: "2022-01-21", backdrop_path: "/redeeming-love.jpg",
+            }] });
+        },
+        tintForImage: async () => [255, 208, 185],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Imitation Games",
+        track: 'Redeeming Love Theme (From "Redeeming Love")',
+        providers: "steamgriddb,tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(requests, ["api.themoviedb.org"]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 698508, title: "Redeeming Love", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/redeeming-love.jpg",
+        source: "tmdb",
+        tint: [255, 208, 185],
+    });
+});
+
 test("uses the work title carried by Every Note Paints A Picture tracks", () => {
     assert.equal(mediaHintForAlbum("Every Note Paints A Picture"), "screen");
     assert.deepEqual(backdropTitleCandidatesFor("Every Note Paints A Picture", "Wilde"),
