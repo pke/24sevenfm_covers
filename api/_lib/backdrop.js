@@ -16,8 +16,9 @@ const MAX_TINT_URL_LENGTH = 512;
 const MAX_TINT_REDIRECTS = 2;
 const MAX_TRACK_PREFIX_CANDIDATES = 8;
 const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
-// Exact station metadata that resolves an otherwise ambiguous catalog title.
-const TRACK_MEDIA_HINTS = Object.freeze([
+// Exact station metadata that resolves an otherwise ambiguous
+// catalog title. Only the fields present on an entry participate in its match.
+const METADATA_MEDIA_HINTS = Object.freeze([
     Object.freeze({
         album: "Medal Of Honor",
         track: "Attack On Fort Schmerzen",
@@ -223,12 +224,11 @@ function quotedFromScreenTitle(track) {
     return title || "";
 }
 
-function mediaHintForTrack(album, track) {
-    const albumKey = normalizedTitle(album);
-    const trackKey = normalizedTitle(track);
-    if (!albumKey || !trackKey) return "";
-    const match = TRACK_MEDIA_HINTS.find((entry) =>
-        normalizedTitle(entry.album) === albumKey && normalizedTitle(entry.track) === trackKey);
+function mediaHintForMetadata(album, track, artist) {
+    const values = { album, track, artist };
+    const match = METADATA_MEDIA_HINTS.find((entry) =>
+        ["album", "track", "artist"].every((field) => !entry[field]
+            || normalizedTitle(entry[field]) === normalizedTitle(values[field])));
     return match ? match.hint : "";
 }
 
@@ -662,6 +662,19 @@ async function composerCreditForAlbum(fetchImpl, person, album, env) {
         + encodeURIComponent(person.id) + "/combined_credits");
     const body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
     return pickComposerCredit(body, album);
+}
+
+async function screenComposerIds(fetchImpl, media, env) {
+    const type = mediaType(media);
+    const url = new URL("https://api.themoviedb.org/3/" + type + "/"
+        + encodeURIComponent(media.id) + (type === "tv" ? "/aggregate_credits" : "/credits"));
+    const body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
+    return new Set((Array.isArray(body && body.crew) ? body.crew : [])
+        .filter((credit) => credit && (credit.job === "Original Music Composer"
+            || (Array.isArray(credit.jobs) && credit.jobs.some((job) =>
+                job && job.job === "Original Music Composer"))))
+        .map((credit) => Number(credit.id))
+        .filter((id) => Number.isSafeInteger(id) && id > 0));
 }
 
 function steamGridDbRequest(env) {
@@ -1193,6 +1206,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             let fallbackMatch = null;
             let matchedQuery = query;
             let successfulTitleLookup = false;
+            let rejectedComposerMismatch = false;
             const titleErrors = [];
             const titleLookups = await Promise.all(screenQueries.map(async (candidate) => {
                 try {
@@ -1236,7 +1250,28 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     }
                 }
             }
-            if ((!match || !match.exact) && personLookup && !requireExactScreenMatch) {
+            if (match && match.exact && personLookup && options.validateExactComposer === true) {
+                const personResult = await personLookup;
+                if (personResult.error) {
+                    errors.push(personResult.error);
+                } else if (personResult.person
+                        && personResult.person.known_for_department === "Sound") {
+                    try {
+                        const composerIds = await screenComposerIds(dependencies.fetchImpl,
+                            match.media, dependencies.env);
+                        if (composerIds.size && !composerIds.has(Number(personResult.person.id))) {
+                            match = null;
+                            rejectedComposerMismatch = true;
+                        }
+                    } catch (error) {
+                        // Missing credits are not negative evidence. Keep the exact
+                        // title match when TMDB cannot complete this refinement.
+                        errors.push(error);
+                    }
+                }
+            }
+            if ((!match || !match.exact) && personLookup && !requireExactScreenMatch
+                    && !rejectedComposerMismatch) {
                 const personResult = await personLookup;
                 if (personResult.error) {
                     errors.push(personResult.error);
@@ -1413,9 +1448,9 @@ function createHandler(options = {}) {
             const includeArt = requestedArt(requestQueryValue(req, "art"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(trackValue);
-            const trackMediaHint = mediaHintForTrack(titleValue, trackValue);
+            const metadataMediaHint = mediaHintForMetadata(titleValue, trackValue, artistValue);
             const mediaHint = requestedHint === "auto"
-                ? quotedFromTitle ? "screen" : trackMediaHint || mediaHintForAlbum(titleValue)
+                ? quotedFromTitle ? "screen" : metadataMediaHint || mediaHintForAlbum(titleValue)
                 : requestedHint;
             const rawClientKey = requestQueryValue(req, "client_key");
             const clientKey = typeof rawClientKey === "string" ? rawClientKey.trim() : "";
@@ -1432,6 +1467,8 @@ function createHandler(options = {}) {
                     || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle,
                 allowGameTitleExtension:
                     isTrackTitledGameCompilation(cleanMovieTitle(titleValue)),
+                validateExactComposer: requestedHint === "auto" && !quotedFromTitle
+                    && !metadataMediaHint && mediaHint === "auto",
             });
             const shortCache = !result.media || (includeArt && !result.backdrop);
             debugLog("info", "request.resolved", {

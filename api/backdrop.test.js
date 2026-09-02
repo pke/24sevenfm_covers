@@ -1152,6 +1152,111 @@ test("does not force different Medal Of Honor track metadata to the game", async
     assert.equal(requests.some((url) => url.includes("steamgriddb.com")), false);
 });
 
+test("does not resolve Thomas Bergersen's standalone Illusions album as a movie", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 161785, media_type: "movie", title: "Illusions",
+                backdrop_path: "/illusions-movie.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/person") {
+                const name = parsed.searchParams.get("query");
+                return response(200, { results: [{
+                    id: name === "Thomas Bergersen" ? 2458162 : 999,
+                    name,
+                    known_for_department: name === "Thomas Bergersen" ? "Sound" : "Acting",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/161785/credits") return response(200, {
+                crew: [{ id: 34734, name: "Robert J. Walsh",
+                    department: "Sound", job: "Original Music Composer" }],
+            });
+            if (parsed.hostname === "www.steamgriddb.com") {
+                return response(200, { success: true, data: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 239, 236],
+    });
+
+    const standaloneRes = mockResponse();
+    await handler(mockRequest({
+        album: "Illusions",
+        track: "Aura",
+        artist: "Thomas Bergersen",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), standaloneRes);
+    assert.equal(standaloneRes.statusCode, 200);
+    assert.deepEqual(JSON.parse(standaloneRes.body), {
+        media: null,
+        backdrop: null,
+        source: null,
+        tint: [255, 255, 255],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("/3/movie/161785/credits")), true);
+
+    const movieRes = mockResponse();
+    await handler(mockRequest({
+        album: "Illusions",
+        track: "Main Title",
+        artist: "A Different Composer",
+        providers: "tmdb",
+    }), movieRes);
+    assert.equal(JSON.parse(movieRes.body).media.type, "movie");
+    assert.equal(requests.some((url) => url.includes("/3/search/multi")), true);
+    assert.equal(requests.filter((url) => url.includes("/3/movie/161785/credits")).length, 1);
+});
+
+test("keeps exact movies when composer validation is positive or inconclusive", async () => {
+    const scenarios = [
+        { name: "matching composer", credits: response(200, { crew: [{
+            id: 19099, job: "Original Music Composer",
+        }] }) },
+        { name: "empty credits", credits: response(200, { crew: [] }) },
+        { name: "unavailable credits", credits: response(503, {}) },
+    ];
+
+    for (const scenario of scenarios) {
+        const handler = createHandler({
+            env: { TMDB_API_KEY: "tmdb-key" },
+            fetchImpl: async (url) => {
+                const parsed = new URL(url);
+                if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                    id: 329865, media_type: "movie", title: "Arrival",
+                    backdrop_path: "/arrival.jpg",
+                }] });
+                if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                    id: 19099, name: "Jóhann Jóhannsson", known_for_department: "Sound",
+                }] });
+                if (parsed.pathname === "/3/movie/329865/credits") return scenario.credits;
+                throw new Error("unexpected request " + parsed.href);
+            },
+            tintForImage: async () => [100, 110, 120],
+        });
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Arrival",
+            track: "Heptapod B",
+            artist: "Jóhann Jóhannsson",
+            providers: "tmdb",
+        }), res);
+
+        assert.equal(res.statusCode, 200, scenario.name);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 329865, title: "Arrival", type: "movie" },
+            backdrop: "https://image.tmdb.org/t/p/w1280/arrival.jpg",
+            source: "tmdb",
+            tint: [100, 110, 120],
+        }, scenario.name);
+    }
+});
+
 test("uses an exact base-game hero when an exact expansion has no hero", async () => {
     const requests = [];
     const handler = createHandler({

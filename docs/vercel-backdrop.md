@@ -119,6 +119,15 @@ its complete title occurs on word boundaries in `Album` and exactly one credit
 matches. Cast credits, other music jobs, partial words, short one-word titles, and
 ambiguous results remain misses.
 
+For an otherwise unmarked album with an exact TMDB title match, an exact `Artist`
+person whose known department is Sound also supplies negative evidence. The resolver
+loads the matched work's credits and rejects it only when TMDB lists at least one
+`Original Music Composer` but not that person. Missing people, empty or unavailable
+credits, performers from other departments, and explicitly classified soundtrack
+metadata leave the title match intact. This prevents a standalone artist album such
+as Thomas Bergersen's `Illusions` from inheriting artwork and ratings from an
+unrelated same-named movie without making every `Artist` value a mandatory composer.
+
 For an unmarked title, the resolver tries the enabled catalog category that appears
 first in the user's provider order. It accepts exact normalized SteamGridDB matches;
 a partial game-search result is never enough. With the default order, an exact TMDB
