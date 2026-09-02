@@ -559,6 +559,7 @@ function preloadImage(url, onLoad, onError) {
 // same crossfade the cover gets.
 function makeLayer(a, b, channel) {
     var front = null, pendingLoad = null;
+    var retirements = new Map();
 
     function loadedElement(url) {
         return [a, b].find(element => element.src === url
@@ -569,22 +570,112 @@ function makeLayer(a, b, channel) {
         if (record.settled) return;
         record.settled = true;
         clearTimeout(record.kill);
-        record.element.onload = record.element.onerror = null;
-        if (removeSource) record.element.removeAttribute("src");
+        if (record.element) {
+            record.element.onload = record.element.onerror = null;
+            if (removeSource && record.loading) record.element.removeAttribute("src");
+        }
         if (pendingLoad === record) pendingLoad = null;
         record.resolve(element);
     }
 
-    function loadIntoBack(url) {
+    function finishRetirement(record) {
+        if (record.settled) return;
+        record.settled = true;
+        clearTimeout(record.kill);
+        record.element.removeEventListener("transitionend", record.onTransitionEnd);
+        if (retirements.get(record.element) === record)
+            retirements.delete(record.element);
+        record.resolve();
+    }
+
+    // Removing .show starts an opacity transition, so that element is still visible
+    // even though it is already the logical back buffer. Do not replace its src until
+    // the exit has finished: a queue prefetch would otherwise paint the next title
+    // into the fading pixels of the outgoing title.
+    function retire(element) {
+        const previous = retirements.get(element);
+        if (previous) finishRetirement(previous);
+        const duration = getComputedStyle(element).display === "none"
+            ? 0 : transitionTotalMs(element);
+        if (!duration) return;
+        const record = {
+            element: element,
+            settled: false,
+            kill: null,
+            onTransitionEnd: null,
+            resolve: null,
+            promise: null
+        };
+        record.promise = new Promise(resolve => { record.resolve = resolve; });
+        record.onTransitionEnd = function (event) {
+            if (event.target === element && event.propertyName === "opacity")
+                finishRetirement(record);
+        };
+        retirements.set(element, record);
+        element.addEventListener("transitionend", record.onTransitionEnd);
+        record.kill = setTimeout(() => finishRetirement(record), duration + 50);
+    }
+
+    function reuse(element) {
+        const retirement = retirements.get(element);
+        if (retirement) finishRetirement(retirement);
+    }
+
+    function backElement() {
+        if (front === a) return b;
+        if (front === b) return a;
+        if (!retirements.has(a)) return a;
+        if (!retirements.has(b)) return b;
+        return a;
+    }
+
+    function startPending(record) {
+        if (record.settled) return;
+        const loaded = loadedElement(record.url);
+        if (loaded) {
+            settlePending(record, loaded, false);
+            return;
+        }
+        const back = backElement();
+        const retirement = retirements.get(back);
+        if (retirement) {
+            if (record.waitingOn !== retirement) {
+                record.waitingOn = retirement;
+                retirement.promise.then(function () { startPending(record); });
+            }
+            return;
+        }
+        record.waitingOn = null;
+        record.element = back;
+        record.loading = true;
+        back.onload = () => settlePending(record, back, false);
+        back.onerror = () => settlePending(record, null, true);
+        back.src = record.url;
+        // A memory-cache hit may complete synchronously without a later load event.
+        if (back.complete && back.naturalWidth > 0)
+            queueMicrotask(() => settlePending(record, back, false));
+    }
+
+    function loadIntoBack(url, purpose) {
         const loaded = loadedElement(url);
         if (loaded) return Promise.resolve(loaded);
-        if (pendingLoad && pendingLoad.url === url) return pendingLoad.promise;
+        if (pendingLoad && pendingLoad.url === url) {
+            if (purpose === "show") pendingLoad.purpose = "show";
+            return pendingLoad.promise;
+        }
+        // Speculative queue work must never cancel the image currently requested for
+        // display. The queue also owns a detached Image preload, so skipping this DOM
+        // preparation still leaves the eventual promotion warm in the browser cache.
+        if (pendingLoad && pendingLoad.purpose === "show" && purpose === "prepare")
+            return Promise.resolve(null);
         if (pendingLoad) settlePending(pendingLoad, null, true);
 
-        const back = front === a ? b : a;
         const record = {
-            element: back,
+            element: null,
             url,
+            purpose,
+            loading: false,
+            waitingOn: null,
             settled: false,
             kill: null,
             resolve: null,
@@ -593,34 +684,36 @@ function makeLayer(a, b, channel) {
         record.promise = new Promise(resolve => { record.resolve = resolve; });
         pendingLoad = record;
         record.kill = setTimeout(() => settlePending(record, null, true), IMAGE_TIMEOUT);
-        back.onload = () => settlePending(record, back, false);
-        back.onerror = () => settlePending(record, null, true);
-        back.src = url;
-        // A memory-cache hit may complete synchronously without a later load event.
-        if (back.complete && back.naturalWidth > 0)
-            queueMicrotask(() => settlePending(record, back, false));
+        startPending(record);
         return record.promise;
     }
 
     return {
-        prepare: function (url) { return loadIntoBack(url); },
+        prepare: function (url) { return loadIntoBack(url, "prepare"); },
         show: function (url, generation, onShown, onError) {
             if (front && front.src === url && front.classList.contains("show")) return;
-            loadIntoBack(url).then(function (back) {
+            loadIntoBack(url, "show").then(function (back) {
                 if (!renderIsCurrent(channel, generation)) return;
                 if (!back) {
                     if (onError) onError();
                     return;
                 }
+                reuse(back);
                 back.classList.add("show");
-                if (front && front !== back) front.classList.remove("show");
+                if (front && front !== back) {
+                    front.classList.remove("show");
+                    retire(front);
+                }
                 front = back;
                 if (onShown) onShown();
             });
         },
         hide: function () {
-            a.classList.remove("show");
-            b.classList.remove("show");
+            [a, b].forEach(function (element) {
+                if (!element.classList.contains("show")) return;
+                element.classList.remove("show");
+                retire(element);
+            });
             front = null;
         }
     };

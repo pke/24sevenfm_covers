@@ -4776,6 +4776,113 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /fanart-retry/);
     });
 
+    test("keeps queued artwork out of a backdrop buffer until its exit finishes",
+        async ({ page }) => {
+            const outgoingCover = "https://streamingsoundtracks.com/images/cover/outgoing-title.svg";
+            const currentCover = "https://streamingsoundtracks.com/images/cover/current-fallback.svg";
+            const queuedCover = "https://streamingsoundtracks.com/images/cover/next-title.svg";
+            const outgoingBackdrop = "https://image.tmdb.org/t/p/w1280/outgoing-title.jpg";
+            const currentBackdrop = "https://image.tmdb.org/t/p/w1280/current-fallback.jpg";
+            const queuedBackdrop = "https://fanart.tv/next-title.jpg";
+            let current = {
+                Album: "Outgoing Movie", Track: "Finale", Artist: "Outgoing Composer",
+                CoverLink: outgoingCover, Length: 180000,
+                PlayStart: "2026-08-21T12:00:00Z",
+                SystemTime: "2026-08-21T12:00:00Z",
+            };
+            let queue = [{
+                Album: "Current Fallback", Track: "Main Theme", Artist: "Current Composer",
+                CoverLink: currentCover,
+            }];
+            let queuedFanartRoute = null;
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({ sstBackdrops: { enabled: true, options: {
+                    providers: ["fanart", "tmdb"], cover: "show" } } })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+                (route) => {
+                    const action = new URL(route.request().url()).searchParams.get("action");
+                    return route.fulfill({ json: action === "GetQueue" ? queue : current });
+                });
+            await page.route("https://streamingsoundtracks.com/images/cover/500/*.svg",
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route(/\/api\/backdrop\?/, (route) => {
+                const url = new URL(route.request().url());
+                const album = url.searchParams.get("album");
+                const providers = url.searchParams.get("providers");
+                if (album === "Next Movie" && providers === "fanart,tmdb") {
+                    queuedFanartRoute = route;
+                    return;
+                }
+                const backdrop = album === "Outgoing Movie"
+                    ? outgoingBackdrop : currentBackdrop;
+                return route.fulfill({ json: {
+                    media: { id: album === "Outgoing Movie" ? 41 : 42,
+                        title: album, type: "movie" },
+                    backdrop, source: "tmdb", tint: [80, 90, 100],
+                } });
+            });
+            for (const image of [outgoingBackdrop, currentBackdrop, queuedBackdrop]) {
+                await page.route(image, (route) => route.fulfill({ status: 200,
+                    contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+            }
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", outgoingBackdrop);
+            await expect(page.locator(
+                `#movieA[src="${currentBackdrop}"], #movieB[src="${currentBackdrop}"]`))
+                .toHaveCount(1);
+            await openBackdropSettings(page);
+            await page.addStyleTag({ content:
+                ".backdrop-movie { transition-duration: 10s !important; }" });
+
+            current = {
+                Album: "Current Fallback", Track: "Main Theme", Artist: "Current Composer",
+                CoverLink: currentCover, Length: 180000,
+                PlayStart: "2026-08-21T12:03:00Z",
+                SystemTime: "2026-08-21T12:03:00Z",
+            };
+            queue = [{
+                Album: "Next Movie", Track: "Opening", Artist: "Next Composer",
+                CoverLink: queuedCover,
+            }];
+            await page.locator('input[name="station"][value="sst"]').evaluate((input) =>
+                input.dispatchEvent(new Event("change", { bubbles: true })));
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", currentBackdrop);
+            await expect.poll(() => !!queuedFanartRoute).toBe(true);
+
+            await page.locator("#fanart-on").uncheck();
+            await queuedFanartRoute.fulfill({ json: {
+                media: { id: 43, title: "Next Movie", type: "movie" },
+                backdrop: queuedBackdrop, source: "fanart", tint: [110, 120, 130],
+            } });
+
+            await page.waitForTimeout(50);
+            await expect(page.locator(
+                `#movieA[src="${outgoingBackdrop}"], #movieB[src="${outgoingBackdrop}"]`))
+                .toHaveCount(1);
+            await expect(page.locator(
+                `#movieA[src="${queuedBackdrop}"], #movieB[src="${queuedBackdrop}"]`))
+                .toHaveCount(0);
+
+            await page.locator(
+                `#movieA[src="${outgoingBackdrop}"], #movieB[src="${outgoingBackdrop}"]`)
+                .evaluate((image) => image.dispatchEvent(new TransitionEvent("transitionend", {
+                    bubbles: true, propertyName: "opacity",
+                })));
+            await expect(page.locator(
+                `#movieA[src="${queuedBackdrop}"], #movieB[src="${queuedBackdrop}"]`))
+                .toHaveCount(1, { timeout: 2000 });
+            await expect(page.locator(
+                `#movieA[src="${queuedBackdrop}"], #movieB[src="${queuedBackdrop}"]`))
+                .not.toHaveClass(/show/);
+        });
+
     test("re-resolves cached art after provider priority or enablement changes", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/provider-refresh.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/provider-refresh.svg";
