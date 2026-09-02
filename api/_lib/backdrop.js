@@ -18,11 +18,17 @@ const MAX_TRACK_PREFIX_CANDIDATES = 8;
 const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
 // Exact station metadata that resolves an otherwise ambiguous
 // catalog title. Only the fields present on an entry participate in its match.
-const METADATA_MEDIA_HINTS = Object.freeze([
+const METADATA_RESOLUTIONS = Object.freeze([
     Object.freeze({
         album: "Medal Of Honor",
         track: "Attack On Fort Schmerzen",
         hint: "game",
+    }),
+    Object.freeze({
+        album: "Romantic Duets From MGM Classics",
+        track: "Be My Love",
+        title: "The Toast of New Orleans (1950)",
+        hint: "movie",
     }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
@@ -224,12 +230,11 @@ function quotedFromScreenTitle(track) {
     return title || "";
 }
 
-function mediaHintForMetadata(album, track, artist) {
+function metadataResolutionFor(album, track, artist) {
     const values = { album, track, artist };
-    const match = METADATA_MEDIA_HINTS.find((entry) =>
+    return METADATA_RESOLUTIONS.find((entry) =>
         ["album", "track", "artist"].every((field) => !entry[field]
-            || normalizedTitle(entry[field]) === normalizedTitle(values[field])));
-    return match ? match.hint : "";
+            || normalizedTitle(entry[field]) === normalizedTitle(values[field]))) || null;
 }
 
 function trackPrefixCandidates(track) {
@@ -1438,7 +1443,10 @@ function createHandler(options = {}) {
                 throw new ResolverError("invalid_artist", 400,
                     "artist must be at most 180 characters");
             }
-            const titleCandidates = backdropTitleCandidatesFor(titleValue, trackValue);
+            const metadataResolution = metadataResolutionFor(titleValue, trackValue, artistValue);
+            const titleCandidates = metadataResolution && metadataResolution.title
+                ? [metadataResolution.title]
+                : backdropTitleCandidatesFor(titleValue, trackValue);
             const title = titleCandidates[0];
             if (!title || title.length > 160) {
                 throw new ResolverError("invalid_title", 400, "cleaned title is empty or too long");
@@ -1448,7 +1456,7 @@ function createHandler(options = {}) {
             const includeArt = requestedArt(requestQueryValue(req, "art"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(trackValue);
-            const metadataMediaHint = mediaHintForMetadata(titleValue, trackValue, artistValue);
+            const metadataMediaHint = metadataResolution && metadataResolution.hint || "";
             const mediaHint = requestedHint === "auto"
                 ? quotedFromTitle ? "screen" : metadataMediaHint || mediaHintForAlbum(titleValue)
                 : requestedHint;
@@ -1459,16 +1467,18 @@ function createHandler(options = {}) {
             }
             const result = await resolveBackdrop(title, providers, clientKey, {
                 env, fetchImpl, tintForImage,
-            }, mediaHint, typeof artistValue === "string" ? artistValue.trim() : "", {
+            }, mediaHint, metadataResolution && metadataResolution.title
+                ? "" : typeof artistValue === "string" ? artistValue.trim() : "", {
                 ratingCountries,
                 includeArt,
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
-                    || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle,
+                    || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle
+                    || !!(metadataResolution && metadataResolution.title),
                 allowGameTitleExtension:
                     isTrackTitledGameCompilation(cleanMovieTitle(titleValue)),
                 validateExactComposer: requestedHint === "auto" && !quotedFromTitle
-                    && !metadataMediaHint && mediaHint === "auto",
+                    && !metadataResolution && mediaHint === "auto",
             });
             const shortCache = !result.media || (includeArt && !result.backdrop);
             debugLog("info", "request.resolved", {

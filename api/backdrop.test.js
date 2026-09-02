@@ -94,6 +94,51 @@ test("resolves the live Music For A Darkened Theatre compilation track", async (
     });
 });
 
+test("resolves Be My Love from Romantic Duets From MGM Classics", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+                year: parsed.searchParams.get("primary_release_year")
+                    || parsed.searchParams.get("first_air_date_year"),
+            });
+            if (parsed.pathname === "/3/search/movie") {
+                return response(200, { results: [{
+                    id: 52847,
+                    title: "The Toast of New Orleans",
+                    release_date: "1950-08-24",
+                    backdrop_path: "/toast-of-new-orleans.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            throw new Error("Unexpected provider URL " + parsed.href);
+        },
+        tintForImage: async () => [120, 100, 80],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Romantic Duets From MGM Classics",
+        track: "Be My Love",
+        artist: "Mario Lanza & Kathryn Grayson",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [
+        { path: "/3/search/movie", query: "The Toast of New Orleans", year: "1950" },
+        { path: "/3/search/tv", query: "The Toast of New Orleans", year: "1950" },
+    ]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 52847, title: "The Toast of New Orleans", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/toast-of-new-orleans.jpg",
+        source: "tmdb",
+        tint: [120, 100, 80],
+    });
+});
+
 test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
     let providerQuery = "";
     const handler = createHandler({

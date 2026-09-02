@@ -109,6 +109,13 @@ and requires an exact TMDB match. Remaining volume, episode and cue text is igno
 an unprefixed abbreviation or a normal title such as `Star Trek: The Motion Picture`
 is not rewritten.
 
+When a known compilation omits the source work from both `Album` and `Track`, an exact
+metadata resolution may supply the missing title and media type. These entries match
+only the configured field combination and require an exact provider result. For
+example, `Romantic Duets From MGM Classics` plus `Be My Love` resolves to
+`The Toast of New Orleans (1950)`; a different track from that compilation is not
+rewritten.
+
 Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
 supplies `game`.
 
