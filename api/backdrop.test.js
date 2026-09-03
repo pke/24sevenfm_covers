@@ -179,6 +179,46 @@ test("resolves the Once More, With Feeling episode album to the Buffy TV series"
     });
 });
 
+test("resolves Songs In The Key Of Springfield to The Simpsons TV series", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+            });
+            assert.equal(parsed.pathname, "/3/search/multi");
+            return response(200, { results: [{
+                id: 456,
+                media_type: "tv",
+                name: "The Simpsons",
+                backdrop_path: "/simpsons.jpg",
+            }] });
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Simpsons, The: Songs In The Key Of Springfield",
+        track: "Happy Birthday, Lisa",
+        artist: "Lisa/Bart/Leon Kompowski (Kipp Lennon)",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [{
+        path: "/3/search/multi",
+        query: "The Simpsons",
+    }]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 456, title: "The Simpsons", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/simpsons.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+    });
+});
+
 test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
     let providerQuery = "";
     const handler = createHandler({

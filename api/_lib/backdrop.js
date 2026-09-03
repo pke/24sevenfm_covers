@@ -35,6 +35,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Buffy the Vampire Slayer",
         hint: "tv",
     }),
+    Object.freeze({
+        album: "Simpsons, The: Songs In The Key Of Springfield",
+        title: "The Simpsons",
+        hint: "tv",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
