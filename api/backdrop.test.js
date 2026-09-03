@@ -915,6 +915,54 @@ test("uses track titles for Sci-Fi's Greatest Hits volumes", () => {
         ["Blade Runner"]);
 });
 
+test("resolves a Film Music (Isham) track as screen media", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [] });
+            }
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+            });
+            assert.equal(parsed.pathname, "/3/search/multi");
+            return response(200, { results: [{
+                id: 31955,
+                media_type: "movie",
+                title: "Mrs. Soffel",
+                backdrop_path: "/mrs-soffel.jpg",
+            }] });
+        },
+        tintForImage: async () => [100, 110, 120],
+    });
+    const res = mockResponse();
+    const album = "Film Music (Isham)";
+    const track = "Mrs. Soffel";
+    assert.equal(mediaHintForAlbum(album), "screen");
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), [track]);
+
+    await handler(mockRequest({
+        album,
+        track,
+        artist: "Mark Isham",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [{
+        path: "/3/search/multi",
+        query: "Mrs. Soffel",
+    }]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 31955, title: "Mrs. Soffel", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/mrs-soffel.jpg",
+        source: "tmdb",
+        tint: [100, 110, 120],
+    });
+});
+
 test("resolves a Sci-Fi's Greatest Hits track as screen media", async () => {
     const handler = createHandler({
         env: { TMDB_API_KEY: "key" },

@@ -214,6 +214,7 @@ function isTrackTitledTvCompilation(title) {
 
 function isExactTrackTitledScreenCompilation(title) {
     return /^every note paints a picture$/i.test(title)
+        || /^film music \(isham\)$/i.test(title)
         || /^sci[\s-]*fi['’]s\s+greatest\s+hits\b/i.test(title);
 }
 
