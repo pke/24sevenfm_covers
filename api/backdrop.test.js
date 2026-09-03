@@ -139,6 +139,46 @@ test("resolves Be My Love from Romantic Duets From MGM Classics", async () => {
     });
 });
 
+test("resolves the Once More, With Feeling episode album to the Buffy TV series", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+            });
+            assert.equal(parsed.pathname, "/3/search/multi");
+            return response(200, { results: [{
+                id: 95,
+                media_type: "tv",
+                name: "Buffy the Vampire Slayer",
+                backdrop_path: "/buffy.jpg",
+            }] });
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Buffy The Vampire Slayer: Once More, With Feeling",
+        track: "The Parking Ticket",
+        artist: "Joss Whedon",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [{
+        path: "/3/search/multi",
+        query: "Buffy the Vampire Slayer",
+    }]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 95, title: "Buffy the Vampire Slayer", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/buffy.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+    });
+});
+
 test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
     let providerQuery = "";
     const handler = createHandler({

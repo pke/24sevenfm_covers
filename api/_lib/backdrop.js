@@ -30,6 +30,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "The Toast of New Orleans (1950)",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Buffy The Vampire Slayer: Once More, With Feeling",
+        title: "Buffy the Vampire Slayer",
+        hint: "tv",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
