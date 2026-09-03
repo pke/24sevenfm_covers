@@ -117,6 +117,21 @@ provider configuration and the resolver's raw JSON result, including successful
 misses. Credentials and the request URL are deliberately omitted. Deployed players
 do not emit this diagnostic log.
 
+When the launcher runs inside a Codex task, it also binds a local title
+backchannel to that task and prints a one-run pairing code. Click the current title
+in the player, enter the code once, and the player queues its current metadata,
+provider order, visible backdrop state and sanitized resolver result into the same
+task. The queued request asks Codex to diagnose the case, add a regression fix when
+one is justified, run the relevant tests, and then commit and push only a tested
+change. A genuine provider miss remains a diagnosis rather than fabricated artwork.
+
+The pairing code lives only in the API process and the browser tab's
+`sessionStorage`; the browser never receives the Codex task ID or login. Both the
+page and API origin must be loopback addresses, and the API continues to listen on
+`127.0.0.1` only. Outside a Codex-launched shell, pass an explicit task UUID with
+`-BackchannelThreadId`; pass `-NoBackchannel` to disable the feature entirely.
+Deployed players never attach the title action and have no backchannel endpoint.
+
 For deterministic metadata and rating previews, `previewAlbum` replaces the local
 player's now-playing item; `previewTrack` and `previewArtist` are optional. These
 parameters are inert outside `localhost`, `127.0.0.1`, and `::1`. The fixture does

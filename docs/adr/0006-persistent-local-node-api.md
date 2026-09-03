@@ -3,6 +3,10 @@
 Date: 2026-08-26
 Status: Accepted
 
+Amended 2026-09-03 by ADR 0007, which adds a separate local-only
+`/api/backchannel` route. References below to the three API routes describe the
+production-parity resolver surface.
+
 ## Context
 
 ADR 0001 chose Vercel Functions for the deployed backdrop, tint and album-credit

@@ -164,8 +164,45 @@
     place-self: center;
 }
 .layout-fill .info { display: none; }
-.info .t { font-weight: 600; font-size: var(--title-size, 1.15rem); line-height: 1.25; }
+.info .t {
+    border-radius: .25rem;
+    font-weight: 600;
+    font-size: var(--title-size, 1.15rem);
+    line-height: 1.25;
+    transition: opacity .2s ease, outline-color .2s ease;
+}
 .info .a { opacity: .8; font-size: var(--artist-size, .95rem); }
+.info .t.local-backchannel { cursor: pointer; }
+.info .t.local-backchannel:hover { opacity: .78; }
+.info .t.local-backchannel:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: .2rem;
+}
+.info .t.local-backchannel[aria-busy="true"] {
+    cursor: wait;
+    opacity: .6;
+    pointer-events: none;
+}
+.backchannel-status {
+    max-height: 0;
+    margin: 0;
+    overflow: hidden;
+    font-size: .76rem;
+    line-height: 1.25;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-.15rem);
+    transition: opacity .2s ease, transform .2s ease, max-height .25s ease,
+                margin-top .25s ease, visibility 0s linear .25s;
+}
+.backchannel-status.show {
+    max-height: 2.5rem;
+    margin-top: .35rem;
+    opacity: .78;
+    visibility: visible;
+    transform: translateY(0);
+    transition-delay: 0s;
+}
 
 /* --- countdown ------------------------------------------------------------------ */
 /* applyLayout() moves the element between its two homes: the info box's last row in
@@ -1227,6 +1264,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 
 @media (prefers-reduced-motion: reduce) {
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
+    .info .t, .backchannel-status,
     .stage-button, .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum,
     .stage-bpm,
     .stage-status, .options-overlay,

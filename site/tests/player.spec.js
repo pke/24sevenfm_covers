@@ -109,6 +109,8 @@ test.describe("the deployed player page", () => {
             "content", "https://24covers-api.vercel.app/api/tint");
         await expect(page.locator('meta[name="credit-api"]')).toHaveAttribute(
             "content", "https://24covers-api.vercel.app/api/credit");
+        await expect(page.locator("#info-title")).not.toHaveAttribute("role", "button");
+        await expect(page.locator("#info-title")).not.toHaveClass(/local-backchannel/);
         expect(policy).toContain("media-src https://streamingsoundtracks.com");
         expect(policy).toContain("object-src 'none'");
 
@@ -1127,6 +1129,116 @@ test.describe("the deployed player page", () => {
             expect(params.get("previewAlbum")).toBe("Family Guy");
             expect(params.get("previewTrack")).toBe("Main Title");
             expect(params.get("previewArtist")).toBe("Walter Murphy");
+        });
+    test("pairs on the first local title click and sends a bounded report to this Codex task",
+        async ({ page }) => {
+            test.skip(!localMode, "the backchannel is intentionally absent from deployments");
+            const localOrigin = new URL(process.env.PLAYER_URL).origin;
+            const pairingCode = "ABCD-EFGH-IJKL";
+            let statusRequests = 0, postRequests = 0, receivedReport = null;
+            let authorization = "";
+
+            await page.route("**/player.html", async (route) => {
+                const response = await route.fetch();
+                const body = (await response.text()).replaceAll(
+                    "https://24covers-api.vercel.app", localOrigin);
+                await route.fulfill({ response, body });
+            });
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({ sstBackdrops: { enabled: true,
+                    options: { providers: ["fanart", "tmdb"], cover: "hide" } } })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+                (route) => {
+                    const action = new URL(route.request().url()).searchParams.get("action");
+                    if (action === "GetQueue") return route.fulfill({ json: [] });
+                    return route.fulfill({ json: {
+                        Album: "La Mula", Track: "El Tocadiscos", Artist: "Oscar Navarro",
+                        CoverLink: "https://streamingsoundtracks.com/images/cover/la-mula.svg",
+                        Length: 123000, PlayStart: "2026-09-03T10:00:00Z",
+                        SystemTime: "2026-09-03T10:00:00Z",
+                    } });
+                });
+            await page.route(
+                "https://streamingsoundtracks.com/images/cover/500/la-mula.svg",
+                (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route("**/api/tint?*", (route) =>
+                route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route("**/api/backdrop?*", (route) => route.fulfill({ json: {
+                media: { id: 172265, title: "La Mula", type: "movie" },
+                backdrop: null, source: null, tint: [255, 255, 255],
+            } }));
+            await page.route("**/api/backchannel", async (route) => {
+                if (route.request().method() === "GET") {
+                    statusRequests++;
+                    return route.fulfill({ json: {
+                        enabled: true, authentication: "pairing_code",
+                    } });
+                }
+                postRequests++;
+                authorization = await route.request().headerValue("authorization") || "";
+                receivedReport = route.request().postDataJSON();
+                return route.fulfill({ status: 202, json: { queued: true } });
+            });
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            const title = page.locator("#info-title");
+            await expect(title).toContainText("La Mula - El Tocadiscos");
+            await expect(title).toHaveAttribute("role", "button");
+            await expect(title).toHaveClass(/local-backchannel/);
+            await expect(title).toHaveAttribute("tabindex", "0");
+            expect(statusRequests).toBe(0);
+
+            page.once("dialog", async (dialog) => {
+                expect(dialog.type()).toBe("prompt");
+                expect(dialog.message()).toContain("pairing code");
+                await dialog.accept(pairingCode);
+            });
+            await title.click();
+            await expect.poll(() => receivedReport).not.toBeNull();
+            await expect(page.locator("#backchannel-status"))
+                .toHaveText("Sent to this Codex task.");
+            expect(statusRequests).toBe(1);
+            expect(postRequests).toBe(1);
+            expect(authorization).toBe(`Bearer ${pairingCode}`);
+            expect(receivedReport).toEqual({
+                station: "sst",
+                album: "La Mula",
+                track: "El Tocadiscos",
+                artist: "Oscar Navarro",
+                displayedTitle: "La Mula - El Tocadiscos (2:03)",
+                settings: {
+                    backdropsEnabled: true,
+                    ratingsEnabled: false,
+                    fanartPersonalKeyConfigured: false,
+                    providers: ["fanart", "tmdb"],
+                    coverPolicy: "hide",
+                },
+                display: {
+                    backdropVisible: false,
+                    backdropError: "",
+                    resolver: {
+                        request: {
+                            album: "La Mula", track: "El Tocadiscos",
+                            artist: "Oscar Navarro", providers: ["fanart", "tmdb"],
+                            includeArt: true, includeRatings: false,
+                        },
+                        result: {
+                            media: { id: 172265, title: "La Mula", type: "movie" },
+                            backdrop: null,
+                            source: null,
+                        },
+                    },
+                },
+            });
+            expect(await page.evaluate(() =>
+                sessionStorage.getItem("24sevenfm-covers.backchannel-token")))
+                .toBe(pairingCode);
+
+            receivedReport = null;
+            await title.press("Enter");
+            await expect.poll(() => postRequests).toBe(2);
+            expect(statusRequests).toBe(2);
         });
     test("fades ratings after ten idle seconds and wakes them on pointer movement", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/rating-idle.svg";

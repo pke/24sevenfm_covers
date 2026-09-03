@@ -246,6 +246,21 @@ var CREDIT_API_URL = (creditApiMeta && creditApiMeta.getAttribute("content")
     || "/api/credit").trim();
 const FANART_KEY_CHECK_URL = "https://webservice.fanart.tv/v3/movies/27205";
 var isLocalPlayer = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname);
+function localBackchannelUrl() {
+    if (!isLocalPlayer || !BACKDROP_API_URL) return "";
+    try {
+        var url = new URL(BACKDROP_API_URL, location.href);
+        if (!/^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(url.hostname)
+                || (url.protocol !== "http:" && url.protocol !== "https:")) return "";
+        url.pathname = "/api/backchannel";
+        url.search = "";
+        url.hash = "";
+        return url.href;
+    } catch (error) {
+        return "";
+    }
+}
+var BACKCHANNEL_API_URL = localBackchannelUrl();
 // Local visual QA can force the retry state even while the real station is healthy.
 // The hostname guard makes the switch inert on every deployed origin.
 var simulateStationFailure = isLocalPlayer
@@ -726,15 +741,180 @@ var comingNextAlbumEl = $("coming-next-album"), comingNextArtistEl = $("coming-n
 var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
 var backdropRetryEl = $("backdrop-retry");
 var audioEl = $("audio");
+var infoTitleEl = $("info-title"), backchannelStatusEl = $("backchannel-status");
 
 // One info box serves both layouts (title, artist, countdown) - overlaid on the
 // stage in fill, sitting below the cover in poster.
 function setInfo(title, artist) {
-    $("info-title").textContent = title;
+    infoTitleEl.textContent = title;
     $("info-artist").textContent = artist;
 }
 
 var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+var BACKCHANNEL_TOKEN_KEY = "24sevenfm-covers.backchannel-token";
+var backchannelStatusGeneration = 0, backchannelStatusTimer = null;
+var backchannelClearTimer = null, backchannelSending = false;
+var backchannelAvailable = false;
+
+function showBackchannelStatus(message, visibleMilliseconds) {
+    var generation = ++backchannelStatusGeneration;
+    clearTimeout(backchannelStatusTimer);
+    clearTimeout(backchannelClearTimer);
+    function reveal() {
+        if (generation !== backchannelStatusGeneration) return;
+        backchannelStatusEl.textContent = message;
+        backchannelStatusEl.setAttribute("aria-hidden", "false");
+        requestAnimationFrame(function () {
+            if (generation === backchannelStatusGeneration)
+                backchannelStatusEl.classList.add("show");
+        });
+        if (!visibleMilliseconds) return;
+        backchannelStatusTimer = setTimeout(function () {
+            if (generation !== backchannelStatusGeneration) return;
+            backchannelStatusEl.classList.remove("show");
+            backchannelStatusEl.setAttribute("aria-hidden", "true");
+            backchannelClearTimer = setTimeout(function () {
+                if (generation === backchannelStatusGeneration)
+                    backchannelStatusEl.textContent = "";
+            }, reducedMotion.matches ? 0 : 260);
+        }, visibleMilliseconds);
+    }
+    if (backchannelStatusEl.textContent && backchannelStatusEl.textContent !== message
+            && !reducedMotion.matches) {
+        backchannelStatusEl.classList.remove("show");
+        backchannelStatusEl.setAttribute("aria-hidden", "true");
+        backchannelClearTimer = setTimeout(reveal, 210);
+    } else reveal();
+}
+
+function backchannelStoredToken() {
+    try { return sessionStorage.getItem(BACKCHANNEL_TOKEN_KEY) || ""; }
+    catch (error) { return ""; }
+}
+
+function storeBackchannelToken(value) {
+    try {
+        if (value) sessionStorage.setItem(BACKCHANNEL_TOKEN_KEY, value);
+        else sessionStorage.removeItem(BACKCHANNEL_TOKEN_KEY);
+    } catch (error) { /* pairing lasts for this click when storage is unavailable */ }
+}
+
+function currentBackdropDiagnostic() {
+    return localBackdropDiagnostics[localBackdropDiagnosticKey(
+        currentAlbum, currentTrack, currentArtist)] || null;
+}
+
+function currentBackchannelReport() {
+    return {
+        station: station().id,
+        album: currentAlbum,
+        track: currentTrack,
+        artist: currentArtist,
+        displayedTitle: infoTitleEl.textContent,
+        settings: {
+            backdropsEnabled: sstBackdropsEnabled(),
+            ratingsEnabled: sstRatingsEnabled(),
+            fanartPersonalKeyConfigured: !!opts.fanartKey,
+            providers: enabledMovieProviders(),
+            coverPolicy: opts.sstBackdrops.options.cover,
+        },
+        display: {
+            backdropVisible: movieShown,
+            backdropError: backdropErrorEl.classList.contains("show")
+                ? backdropErrorTextEl.textContent : "",
+            resolver: currentBackdropDiagnostic(),
+        },
+    };
+}
+
+async function backchannelIsEnabled() {
+    var response = await fetch(BACKCHANNEL_API_URL, { cache: "no-store" });
+    if (!response.ok) return false;
+    var body = await response.json();
+    return !!(body && body.enabled);
+}
+
+async function sendCurrentTitleToCodex() {
+    if (backchannelSending || !BACKCHANNEL_API_URL) return;
+    if (!currentAlbum || stationIdActive) {
+        showBackchannelStatus("No soundtrack title to report.", 3000);
+        return;
+    }
+    backchannelSending = true;
+    infoTitleEl.setAttribute("aria-busy", "true");
+    try {
+        showBackchannelStatus("Checking local Codex backchannel…");
+        backchannelAvailable = await backchannelIsEnabled();
+        if (!backchannelAvailable) {
+            showBackchannelStatus("Local Codex backchannel is not active.", 4000);
+            return;
+        }
+        var token = backchannelStoredToken();
+        if (!token) {
+            token = window.prompt(
+                "Enter the Codex backchannel pairing code shown by start_test_server.ps1:");
+            token = typeof token === "string" ? token.trim().toUpperCase() : "";
+            if (!token) {
+                showBackchannelStatus("Report cancelled.", 2500);
+                return;
+            }
+        }
+        for (var attempt = 0; attempt < 2; attempt++) {
+            showBackchannelStatus("Sending title to Codex…");
+            var response = await fetch(BACKCHANNEL_API_URL, {
+                method: "POST",
+                cache: "no-store",
+                headers: {
+                    "Authorization": "Bearer " + token,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(currentBackchannelReport()),
+            });
+            if (response.status !== 401) {
+                if (!response.ok) {
+                    showBackchannelStatus("Codex could not accept the report.", 4500);
+                    return;
+                }
+                storeBackchannelToken(token);
+                showBackchannelStatus("Sent to this Codex task.", 4000);
+                return;
+            }
+            storeBackchannelToken("");
+            if (attempt) {
+                showBackchannelStatus("Pairing code not accepted.", 4500);
+                return;
+            }
+            token = window.prompt(
+                "The pairing code was not accepted. Enter the current code shown by "
+                + "start_test_server.ps1:");
+            token = typeof token === "string" ? token.trim().toUpperCase() : "";
+            if (!token) {
+                showBackchannelStatus("Report cancelled.", 2500);
+                return;
+            }
+        }
+    } catch (error) {
+        showBackchannelStatus("Local Codex backchannel is unavailable.", 4500);
+    } finally {
+        backchannelSending = false;
+        infoTitleEl.removeAttribute("aria-busy");
+    }
+}
+
+function enableLocalBackchannel() {
+    if (!BACKCHANNEL_API_URL) return;
+    infoTitleEl.classList.add("local-backchannel");
+    infoTitleEl.setAttribute("role", "button");
+    infoTitleEl.setAttribute("tabindex", "0");
+    infoTitleEl.setAttribute("title", "Send this title to the current Codex task");
+    infoTitleEl.addEventListener("click", sendCurrentTitleToCodex);
+    infoTitleEl.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        sendCurrentTitleToCodex();
+    });
+}
 
 // Each country keeps two badge faces on one 3D card. The next rating is loaded into
 // the hidden face first, then the same transition and duration as the cover turn the
@@ -1759,6 +1939,37 @@ function updateCoverVisibility() {
             || (opts.sstBackdrops.options.cover === "hide" && movieShown)));
 }
 var currentAlbum = "", currentTrack = "", currentArtist = "", stationIdActive = false;
+var localBackdropDiagnostics = Object.create(null), localBackdropDiagnosticOrder = [];
+
+function localBackdropDiagnosticKey(album, track, artist) {
+    return [album, track, artist].join("\n");
+}
+
+function rememberLocalBackdropDiagnostic(request, result) {
+    if (!isLocalPlayer || !result || typeof result !== "object") return;
+    var media = result.media && typeof result.media === "object" ? result.media : null;
+    var diagnostic = {
+        request: {
+            album: request.album,
+            track: request.track,
+            artist: request.artist,
+            providers: request.providers.slice(),
+            includeArt: request.includeArt,
+            includeRatings: request.includeRatings,
+        },
+        result: {
+            media: media ? { id: media.id, title: media.title, type: media.type } : null,
+            backdrop: typeof result.backdrop === "string" ? result.backdrop : null,
+            source: typeof result.source === "string" ? result.source : null,
+        },
+    };
+    var key = localBackdropDiagnosticKey(request.album, request.track, request.artist);
+    if (!Object.prototype.hasOwnProperty.call(localBackdropDiagnostics, key))
+        localBackdropDiagnosticOrder.push(key);
+    localBackdropDiagnostics[key] = diagnostic;
+    while (localBackdropDiagnosticOrder.length > 20)
+        delete localBackdropDiagnostics[localBackdropDiagnosticOrder.shift()];
+}
 
 var SERVER_ART_UNAVAILABLE = {};
 
@@ -1982,6 +2193,14 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
 
     var body = await fetchResolverJson(url, signal, cacheMode);
+    rememberLocalBackdropDiagnostic({
+        album: album,
+        track: track,
+        artist: artist,
+        providers: providers,
+        includeArt: includeArt,
+        includeRatings: includeRatings,
+    }, body);
     if (isLocalPlayer && typeof console !== "undefined"
             && typeof console.info === "function") {
         console.info("[backdrop resolver]", {
@@ -3689,6 +3908,7 @@ coverBox.addEventListener("pointercancel", function () { coverTapStart = null; }
 
 // --- go ----------------------------------------------------------------------
 applyLayout();
+enableLocalBackchannel();
 setInfo("Loading…", "");
 document.addEventListener("visibilitychange", function () {
     if (!document.hidden) resynchronizeStationIfStale();
