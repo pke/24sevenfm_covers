@@ -139,6 +139,19 @@
                 <div class="a" id="info-artist"></div>
                 <p class="backchannel-status" id="backchannel-status" role="status"
                    aria-live="polite" aria-hidden="true"></p>
+                <form class="backchannel-pairing" id="backchannel-pairing"
+                      aria-hidden="true" inert>
+                    <label for="backchannel-code" id="backchannel-code-label">
+                        Codex pairing code
+                    </label>
+                    <div class="backchannel-pairing-row">
+                        <input id="backchannel-code" type="text" inputmode="text"
+                               autocomplete="off" autocapitalize="characters" spellcheck="false"
+                               maxlength="14" placeholder="XXXX-XXXX-XXXX">
+                        <button type="submit">Send</button>
+                        <button type="button" id="backchannel-cancel">Cancel</button>
+                    </div>
+                </form>
                 <div class="countdown hidden" id="countdown" aria-hidden="true"></div>
             </div>
             <button class="stage-button stage-audio" id="stage-audio" type="button" title="Play audio"

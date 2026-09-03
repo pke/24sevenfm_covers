@@ -742,6 +742,9 @@ var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-err
 var backdropRetryEl = $("backdrop-retry");
 var audioEl = $("audio");
 var infoTitleEl = $("info-title"), backchannelStatusEl = $("backchannel-status");
+var backchannelPairingEl = $("backchannel-pairing");
+var backchannelCodeEl = $("backchannel-code"), backchannelCodeLabelEl = $("backchannel-code-label");
+var backchannelCancelEl = $("backchannel-cancel");
 
 // One info box serves both layouts (title, artist, countdown) - overlaid on the
 // stage in fill, sitting below the cover in poster.
@@ -756,6 +759,7 @@ var BACKCHANNEL_TOKEN_KEY = "24sevenfm-covers.backchannel-token";
 var backchannelStatusGeneration = 0, backchannelStatusTimer = null;
 var backchannelClearTimer = null, backchannelSending = false;
 var backchannelAvailable = false;
+var backchannelPairingResolver = null, backchannelPairingClearTimer = null;
 
 function showBackchannelStatus(message, visibleMilliseconds) {
     var generation = ++backchannelStatusGeneration;
@@ -799,6 +803,50 @@ function storeBackchannelToken(value) {
         else sessionStorage.removeItem(BACKCHANNEL_TOKEN_KEY);
     } catch (error) { /* pairing lasts for this click when storage is unavailable */ }
 }
+
+function finishBackchannelPairing(value) {
+    if (!backchannelPairingResolver) return;
+    var resolve = backchannelPairingResolver;
+    backchannelPairingResolver = null;
+    backchannelPairingEl.classList.remove("show");
+    backchannelPairingEl.setAttribute("aria-hidden", "true");
+    backchannelPairingEl.setAttribute("inert", "");
+    backchannelPairingClearTimer = setTimeout(function () {
+        backchannelCodeEl.value = "";
+    }, reducedMotion.matches ? 0 : 260);
+    resolve(value);
+}
+
+function requestBackchannelPairing(message) {
+    clearTimeout(backchannelPairingClearTimer);
+    backchannelCodeEl.value = "";
+    backchannelCodeLabelEl.textContent = message;
+    backchannelPairingEl.removeAttribute("inert");
+    backchannelPairingEl.setAttribute("aria-hidden", "false");
+    return new Promise(function (resolve) {
+        backchannelPairingResolver = resolve;
+        requestAnimationFrame(function () {
+            backchannelPairingEl.classList.add("show");
+            backchannelCodeEl.focus();
+        });
+    });
+}
+
+backchannelPairingEl.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var token = backchannelCodeEl.value.trim().toUpperCase();
+    if (!token) {
+        backchannelCodeEl.focus();
+        return;
+    }
+    finishBackchannelPairing(token);
+});
+backchannelCancelEl.addEventListener("click", function () { finishBackchannelPairing(""); });
+backchannelCodeEl.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    finishBackchannelPairing("");
+});
 
 function currentBackdropDiagnostic() {
     return localBackdropDiagnostics[localBackdropDiagnosticKey(
@@ -852,9 +900,8 @@ async function sendCurrentTitleToCodex() {
         }
         var token = backchannelStoredToken();
         if (!token) {
-            token = window.prompt(
-                "Enter the Codex backchannel pairing code shown by start_test_server.ps1:");
-            token = typeof token === "string" ? token.trim().toUpperCase() : "";
+            showBackchannelStatus("Enter the pairing code below.");
+            token = await requestBackchannelPairing("Codex pairing code");
             if (!token) {
                 showBackchannelStatus("Report cancelled.", 2500);
                 return;
@@ -885,10 +932,8 @@ async function sendCurrentTitleToCodex() {
                 showBackchannelStatus("Pairing code not accepted.", 4500);
                 return;
             }
-            token = window.prompt(
-                "The pairing code was not accepted. Enter the current code shown by "
-                + "start_test_server.ps1:");
-            token = typeof token === "string" ? token.trim().toUpperCase() : "";
+            showBackchannelStatus("The code was not accepted. Try the current code.");
+            token = await requestBackchannelPairing("Current Codex pairing code");
             if (!token) {
                 showBackchannelStatus("Report cancelled.", 2500);
                 return;

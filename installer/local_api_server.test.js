@@ -102,6 +102,10 @@ test("advertises the local backchannel and allows only the configured loopback o
             });
             assert.equal(status.status, 200);
             assert.equal(status.headers.get("access-control-allow-origin"), BACKCHANNEL_ORIGIN);
+            assert.equal(status.headers.get("access-control-allow-methods"),
+                "GET, POST, OPTIONS");
+            assert.equal(status.headers.get("access-control-allow-headers"),
+                "Authorization, Content-Type");
             assert.deepEqual(await status.json(), {
                 enabled: true,
                 authentication: "pairing_code",
@@ -109,11 +113,15 @@ test("advertises the local backchannel and allows only the configured loopback o
 
             const preflight = await fetch(origin + "/api/backchannel", {
                 method: "OPTIONS",
-                headers: { Origin: BACKCHANNEL_ORIGIN },
+                headers: {
+                    Origin: BACKCHANNEL_ORIGIN,
+                    "Access-Control-Request-Private-Network": "true",
+                },
             });
             assert.equal(preflight.status, 204);
             assert.equal(preflight.headers.get("access-control-allow-methods"),
                 "GET, POST, OPTIONS");
+            assert.equal(preflight.headers.get("access-control-allow-private-network"), "true");
 
             const denied = await fetch(origin + "/api/backchannel", {
                 headers: { Origin: "https://example.com" },

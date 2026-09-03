@@ -45,6 +45,10 @@ function allowRequestOrigin(req, res, allowedOrigins) {
     if (!origin || !allowedOrigins.includes(origin)) return false;
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    if (req.headers["access-control-request-private-network"] === "true")
+        res.setHeader("Access-Control-Allow-Private-Network", "true");
     return true;
 }
 
@@ -275,8 +279,6 @@ function createBackchannelHandler(options = {}) {
         }
         if (req.method === "OPTIONS") {
             res.statusCode = 204;
-            res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-            res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
             res.setHeader("Access-Control-Max-Age", "600");
             res.end();
             return;

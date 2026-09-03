@@ -1189,12 +1189,13 @@ test.describe("the deployed player page", () => {
             await expect(title).toHaveAttribute("tabindex", "0");
             expect(statusRequests).toBe(0);
 
-            page.once("dialog", async (dialog) => {
-                expect(dialog.type()).toBe("prompt");
-                expect(dialog.message()).toContain("pairing code");
-                await dialog.accept(pairingCode);
-            });
             await title.click();
+            const pairing = page.locator("#backchannel-pairing");
+            await expect(pairing).toHaveClass(/show/);
+            await expect(pairing).toHaveAttribute("aria-hidden", "false");
+            await pairing.locator("#backchannel-code").fill(pairingCode);
+            await pairing.getByRole("button", { name: "Send" }).click();
+            await expect(pairing).not.toHaveClass(/show/);
             await expect.poll(() => receivedReport).not.toBeNull();
             await expect(page.locator("#backchannel-status"))
                 .toHaveText("Sent to this Codex task.");
