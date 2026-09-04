@@ -63,6 +63,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Enola Gay: The Men, the Mission, the Atomic Bomb",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Rambo: First Blood",
+        title: "First Blood",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",

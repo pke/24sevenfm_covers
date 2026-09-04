@@ -1474,6 +1474,56 @@ test("resolves the Enola Gay score to the 1980 television film", async () => {
     assert.equal(requests.length, 2);
 });
 
+test("resolves the Rambo: First Blood album to the first film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "First Blood");
+                return response(200, { results: [{
+                    id: 1368,
+                    media_type: "movie",
+                    title: "First Blood",
+                    backdrop_path: "/first-blood.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/1368/release_dates") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/v3/movies/1368") {
+                return response(200, { moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/first-blood.jpg",
+                    lang: "",
+                    likes: "10",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 222, 220],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Rambo: First Blood",
+        track: "It's A Long Road (Theme From First Blood)",
+        artist: "Dan Hill",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 1368, title: "First Blood", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/first-blood.jpg",
+        source: "fanart",
+        tint: [255, 222, 220],
+        certifications: [],
+    });
+    assert.equal(requests.length, 3);
+});
+
 test("does not force different Medal Of Honor track metadata to the game", async () => {
     const requests = [];
     const handler = createHandler({
