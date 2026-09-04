@@ -172,7 +172,7 @@ class ResolverError extends Error {
 
 function cleanMovieTitle(album) {
     const cleaned = unrotateTitleArticle(String(album || "")
-        .replace(/\(\s*video[\s-]*game\s*\)/gi, " ")
+        .replace(/\(\s*(?:video[\s-]*)?game\s*\)/gi, " ")
         .replace(/\[\s*[^\]\r\n]{0,64}\bedition\s*\]/gi, " ")
         .replace(/\(\s*vol(?:ume)?\.?\s+(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*\)/gi, " ")
         .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
@@ -355,7 +355,7 @@ function backdropTitleCandidatesFor(album, track) {
 function mediaHintForAlbum(album) {
     const title = String(album || "");
     const cleanedTitle = cleanMovieTitle(title);
-    if (/\(\s*video[\s-]*game\s*\)/i.test(title)) return "game";
+    if (/\(\s*(?:video[\s-]*)?game\s*\)/i.test(title)) return "game";
     if (starTrekSeriesAlias(cleanedTitle)) return "tv";
     if (tvSeasonIdentity(cleanedTitle)) return "tv";
     if (tvBookSoundtrackIdentity(title)) return "tv";

@@ -1333,6 +1333,56 @@ test("uses a parenthesized video-game marker before provider order and ratings",
     assert.match(requests[0], /\/search\/autocomplete\/Defiance$/);
 });
 
+test("resolves the abbreviated Superman Returns game marker through SteamGridDB", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("api.themoviedb.org")) {
+                throw new Error("explicit game metadata must bypass TMDB");
+            }
+            if (value.includes("/search/autocomplete/Superman%20Returns")) {
+                return response(200, { success: true, data: [{
+                    id: 38982,
+                    name: "Superman Returns",
+                    verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/38982")) return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/superman-returns.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/superman-returns.png",
+                }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [212, 234, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Superman Returns (Game)",
+        track: "It's A Bird",
+        artist: "Colin O'Malley",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(cleanMovieTitle("Superman Returns (Game)"), "Superman Returns");
+    assert.equal(mediaHintForAlbum("Superman Returns (Game)"), "game");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 38982, title: "Superman Returns", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/superman-returns.png",
+        source: "steamgriddb",
+        tint: [212, 234, 255],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+});
+
 test("resolves the ambiguous Medal Of Honor station album as a game", async () => {
     const requests = [];
     const handler = createHandler({
