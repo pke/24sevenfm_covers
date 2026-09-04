@@ -52,6 +52,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Doctor Who (1963)",
         hint: "tv",
     }),
+    Object.freeze({
+        album: "Enderal",
+        title: "Enderal: Forgotten Stories",
+        hint: "game",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
