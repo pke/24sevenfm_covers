@@ -40,6 +40,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "The Simpsons",
         hint: "tv",
     }),
+    Object.freeze({
+        album: "Jazz Loves Disney 2: A Kind Of Magic",
+        track: "Stay Awake",
+        title: "Mary Poppins",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",

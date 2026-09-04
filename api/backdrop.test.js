@@ -219,6 +219,46 @@ test("resolves Songs In The Key Of Springfield to The Simpsons TV series", async
     });
 });
 
+test("resolves Jazz Loves Disney's Stay Awake to Mary Poppins", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+            });
+            assert.equal(parsed.pathname, "/3/search/multi");
+            return response(200, { results: [{
+                id: 433,
+                media_type: "movie",
+                title: "Mary Poppins",
+                backdrop_path: "/mary-poppins.jpg",
+            }] });
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Jazz Loves Disney 2: A Kind Of Magic",
+        track: "Stay Awake",
+        artist: "Laura Mvula",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [{
+        path: "/3/search/multi",
+        query: "Mary Poppins",
+    }]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 433, title: "Mary Poppins", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/mary-poppins.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+    });
+});
+
 test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
     let providerQuery = "";
     const handler = createHandler({
