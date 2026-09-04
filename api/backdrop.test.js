@@ -1426,6 +1426,54 @@ test("resolves the Enderal soundtrack to Enderal: Forgotten Stories", async () =
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves the Enola Gay score to the 1980 television film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"),
+                    "Enola Gay: The Men, the Mission, the Atomic Bomb");
+                return response(200, { results: [{
+                    id: 170881,
+                    media_type: "movie",
+                    title: "Enola Gay: The Men, the Mission, the Atomic Bomb",
+                    backdrop_path: "/enola-gay.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/170881/release_dates") {
+                return response(200, { results: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 246, 245],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Enola Gay",
+        track: "Glenn Miller Suite (B) Moonlight Serenade",
+        artist: "Maurice Jarre",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: {
+            id: 170881,
+            title: "Enola Gay: The Men, the Mission, the Atomic Bomb",
+            type: "movie",
+        },
+        backdrop: "https://image.tmdb.org/t/p/w1280/enola-gay.jpg",
+        source: "tmdb",
+        tint: [255, 246, 245],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+});
+
 test("does not force different Medal Of Honor track metadata to the game", async () => {
     const requests = [];
     const handler = createHandler({

@@ -57,6 +57,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Enderal: Forgotten Stories",
         hint: "game",
     }),
+    Object.freeze({
+        album: "Enola Gay",
+        artist: "Maurice Jarre",
+        title: "Enola Gay: The Men, the Mission, the Atomic Bomb",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
