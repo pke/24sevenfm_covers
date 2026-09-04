@@ -829,6 +829,10 @@ test("cleans soundtrack noise and rotated articles", () => {
     assert.equal(cleanMovieTitle("Princess Mononoke: Symphonic Suite"), "Princess Mononoke");
     assert.equal(cleanMovieTitle("Thomas Crown Affair, The (1968)"),
         "The Thomas Crown Affair (1968)");
+    assert.equal(cleanMovieTitle("Elder Scrolls V, The: Skyrim"),
+        "The Elder Scrolls V: Skyrim");
+    assert.equal(cleanMovieTitle("Example, A — Subtitle"), "A Example — Subtitle");
+    assert.equal(cleanMovieTitle("Paris, Texas"), "Paris, Texas");
     assert.equal(cleanMovieTitle("The Magic Of Inspector Morse"), "Inspector Morse");
     assert.equal(cleanMovieTitle("Defiance (Video Game)"), "Defiance");
 });
@@ -1381,6 +1385,56 @@ test("resolves the abbreviated Superman Returns game marker through SteamGridDB"
         certifications: [],
     });
     assert.equal(requests.length, 2);
+});
+
+test("rotates the Skyrim article before resolving its subtitle as a game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.hostname === "api.themoviedb.org") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/api/v2/search/autocomplete/The%20Elder%20Scrolls%20V%3A%20Skyrim") {
+                return response(200, { success: true, data: [{
+                    id: 22493,
+                    name: "The Elder Scrolls V: Skyrim",
+                    verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/22493") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/skyrim.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/skyrim.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [234, 249, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Elder Scrolls V, The: Skyrim",
+        track: "Wind Guide You",
+        artist: "Jeremy Soule",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(cleanMovieTitle("Elder Scrolls V, The: Skyrim"),
+        "The Elder Scrolls V: Skyrim");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 22493, title: "The Elder Scrolls V: Skyrim", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/skyrim.png",
+        source: "steamgriddb",
+        tint: [234, 249, 255],
+        certifications: [],
+    });
+    assert.equal(requests.length, 4);
 });
 
 test("resolves the ambiguous Medal Of Honor station album as a game", async () => {
