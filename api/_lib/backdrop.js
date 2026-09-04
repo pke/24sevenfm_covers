@@ -68,6 +68,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "First Blood",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Friday The 13th Part 1",
+        artist: "Harry Manfredini",
+        title: "Friday the 13th (1980)",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
