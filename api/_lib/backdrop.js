@@ -46,6 +46,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Mary Poppins",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Doctor Who: The 50th Anniversary Collection",
+        track: "The Caves Of Androzani (Alternative Suite) [From \"The Caves Of Androzani\"]",
+        title: "Doctor Who (1963)",
+        hint: "tv",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",

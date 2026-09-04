@@ -259,6 +259,52 @@ test("resolves Jazz Loves Disney's Stay Awake to Mary Poppins", async () => {
     });
 });
 
+test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+                year: parsed.searchParams.get("first_air_date_year"),
+            });
+            if (parsed.pathname === "/3/search/movie") {
+                return response(200, { results: [] });
+            }
+            assert.equal(parsed.pathname, "/3/search/tv");
+            return response(200, { results: [{
+                id: 121,
+                name: "Doctor Who",
+                first_air_date: "1963-11-23",
+                backdrop_path: "/doctor-who-classic.jpg",
+            }] });
+        },
+        tintForImage: async () => [80, 100, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Doctor Who: The 50th Anniversary Collection",
+        track: "The Caves Of Androzani (Alternative Suite) "
+            + "[From \"The Caves Of Androzani\"]",
+        artist: "Roger Limb",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [{
+        path: "/3/search/movie", query: "Doctor Who", year: null,
+    }, {
+        path: "/3/search/tv", query: "Doctor Who", year: "1963",
+    }]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 121, title: "Doctor Who", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/doctor-who-classic.jpg",
+        source: "tmdb",
+        tint: [80, 100, 120],
+    });
+});
+
 test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
     let providerQuery = "";
     const handler = createHandler({
