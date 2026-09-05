@@ -9,6 +9,8 @@
    or the whole screen without any per-mode positioning. */
 .stage {
     --player-tint: var(--text-inverse);
+    --backdrop-fade-duration: 1.2s;
+    --backdrop-fade-easing: ease;
     --art-text-shadow: 0 1px 8px rgba(0, 0, 0, .8);
     position: relative;
     display: flex;
@@ -45,7 +47,7 @@
     filter: blur(var(--poster-blur, 96px)) brightness(.55);
     display: none;
     opacity: 0;
-    transition: opacity 1.2s ease;
+    transition: opacity var(--backdrop-fade-duration) var(--backdrop-fade-easing);
 }
 .backdrop.show { opacity: 1; }
 .layout-poster .backdrop { display: block; }
@@ -57,7 +59,8 @@
 .backdrop-movie {
     transform: none;              /* no oversize: its edges are meant to be seen */
     filter: brightness(.45);
-    transition: opacity 1.2s ease, filter 1.2s ease;
+    transition: opacity var(--backdrop-fade-duration) var(--backdrop-fade-easing),
+                filter var(--backdrop-fade-duration) var(--backdrop-fade-easing);
 }
 
 /* Experimental: hide the cover while a movie backdrop is showing - the backdrop
@@ -143,7 +146,7 @@
     backdrop-filter: blur(6px);
     color: var(--player-tint);
     text-align: center;
-    transition: color .35s ease;
+    transition: color var(--backdrop-fade-duration) var(--backdrop-fade-easing);
 }
 .layout-poster .coverbox {
     grid-column: 1;

@@ -706,7 +706,10 @@ function makeLayer(a, b, channel) {
     return {
         prepare: function (url) { return loadIntoBack(url, "prepare"); },
         show: function (url, generation, onShown, onError) {
-            if (front && front.src === url && front.classList.contains("show")) return;
+            if (front && front.src === url && front.classList.contains("show")) {
+                if (onShown) onShown();
+                return;
+            }
             loadIntoBack(url, "show").then(function (back) {
                 if (!renderIsCurrent(channel, generation)) return;
                 if (!back) {
@@ -2368,12 +2371,12 @@ function setMovieBackdrop(art, generation, retryFailures) {
         updateCoverVisibility();
         return;
     }
-    // Tint starts its CSS transition while the image preloads, so it arrives with the
-    // backdrop instead of snapping after the image has already appeared.
-    currentMovieTint = validTint(art.tint);
-    applyPreferredPlayerTint();
     movieLayer.show(art.url, generation,
         function () {
+            // Commit image and tint in the same task. Their CSS transitions share
+            // duration and easing, so cached and network-loaded art crossfade alike.
+            currentMovieTint = validTint(art.tint);
+            applyPreferredPlayerTint();
             cancelBackdropImageRetry();
             setBackdropErrorState("");
             movieShown = true;

@@ -3702,6 +3702,7 @@ test.describe("the deployed player page", () => {
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/arrival.svg";
         const backdrop = "https://image.tmdb.org/t/p/w1280/arrival.jpg";
         let resolverRequests = 0, directProviderRequests = 0;
+        let backdropImageRoute = null;
         let resolvedAlbum = "", resolvedTrack = "", resolvedArtist = "", resolvedProviders = "";
         let resolverVersion = "";
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
@@ -3737,9 +3738,7 @@ test.describe("the deployed player page", () => {
             directProviderRequests++;
             return route.abort();
         });
-        await page.route(backdrop, (route) => route.fulfill({ status: 200,
-            contentType: "image/svg+xml",
-            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(backdrop, (route) => { backdropImageRoute = route; });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => resolverRequests).toBe(1);
@@ -3749,6 +3748,27 @@ test.describe("the deployed player page", () => {
         expect(resolvedProviders).toBe("fanart,tmdb,steamgriddb");
         expect(resolverVersion).toMatch(/^[a-f0-9]{12}$/);
         expect(directProviderRequests).toBe(0);
+        await expect.poll(() => !!backdropImageRoute).toBe(true);
+        await expect.poll(() => page.locator("#stage").evaluate((stage) =>
+            getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
+            .toBe("rgb(20, 40, 60)");
+        expect(await page.evaluate(() => ({
+            backdropDuration: getComputedStyle(document.querySelector(".backdrop-movie"))
+                .transitionDuration.split(",")[0].trim(),
+            backdropEasing: getComputedStyle(document.querySelector(".backdrop-movie"))
+                .transitionTimingFunction.split(",")[0].trim(),
+            titleDuration: getComputedStyle(document.querySelector(".info"))
+                .transitionDuration,
+            titleEasing: getComputedStyle(document.querySelector(".info"))
+                .transitionTimingFunction,
+        }))).toEqual({
+            backdropDuration: "1.2s",
+            backdropEasing: "ease",
+            titleDuration: "1.2s",
+            titleEasing: "ease",
+        });
+        await backdropImageRoute.fulfill({ status: 200, contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /arrival\.jpg/);
         await expect.poll(() => page.locator("#stage").evaluate((stage) =>
