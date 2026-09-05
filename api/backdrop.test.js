@@ -1690,6 +1690,61 @@ test("resolves Friday The 13th Part 1 to the 1980 film", async () => {
     assert.equal(requests.length, 4);
 });
 
+test("resolves M83's Oblivion album to the 2013 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/movie") {
+                assert.equal(parsed.searchParams.get("query"), "Oblivion");
+                assert.equal(parsed.searchParams.get("primary_release_year"), "2013");
+                return response(200, { results: [{
+                    id: 75612,
+                    title: "Oblivion",
+                    backdrop_path: "/oblivion.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                assert.equal(parsed.searchParams.get("query"), "Oblivion");
+                assert.equal(parsed.searchParams.get("first_air_date_year"), "2013");
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/movie/75612/release_dates") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/v3/movies/75612") {
+                return response(200, { moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/oblivion.jpg",
+                    lang: "",
+                    likes: "10",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 248, 235],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Oblivion",
+        track: "Fearful Odds",
+        artist: "m83",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 75612, title: "Oblivion", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/oblivion.jpg",
+        source: "fanart",
+        tint: [255, 248, 235],
+        certifications: [],
+    });
+    assert.equal(requests.length, 4);
+});
+
 test("does not force different Medal Of Honor track metadata to the game", async () => {
     const requests = [];
     const handler = createHandler({

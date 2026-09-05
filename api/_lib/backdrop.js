@@ -74,6 +74,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Friday the 13th (1980)",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Oblivion",
+        artist: "m83",
+        title: "Oblivion (2013)",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
