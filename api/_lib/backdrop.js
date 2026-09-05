@@ -53,6 +53,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "tv",
     }),
     Object.freeze({
+        album: "Doctor Who: The Snowmen / The Doctor, The Widow And The Wardrobe",
+        artist: "Murray Gold",
+        title: "Doctor Who (2005)",
+        hint: "tv",
+    }),
+    Object.freeze({
         album: "Enderal",
         title: "Enderal: Forgotten Stories",
         hint: "game",

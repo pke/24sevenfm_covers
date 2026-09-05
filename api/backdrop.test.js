@@ -306,6 +306,42 @@ test("resolves The Caves Of Androzani to the classic Doctor Who series", async (
     });
 });
 
+test("resolves The Snowmen soundtrack cue to the modern Doctor Who series", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            searches.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [{
+                id: 57243, name: "Doctor Who", first_air_date: "2005-03-26",
+                backdrop_path: "/doctor-who-modern.jpg",
+            }] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [156, 206, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Doctor Who: The Snowmen / The Doctor, The Widow And The Wardrobe",
+        track: "Clara In The Tardis (From \"The Snowmen\")",
+        artist: "Murray Gold",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(searches.length, 2);
+    for (const search of searches) assert.equal(search.searchParams.get("query"), "Doctor Who");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/tv"))
+        .searchParams.get("first_air_date_year"), "2005");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 57243, title: "Doctor Who", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/doctor-who-modern.jpg",
+        source: "tmdb",
+        tint: [156, 206, 255],
+    });
+});
+
 test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
     let providerQuery = "";
     const handler = createHandler({
