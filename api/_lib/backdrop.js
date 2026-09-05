@@ -134,6 +134,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "The Goonies (1985)",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Phenomena",
+        track: "Phenomena",
+        artist: "Goblin",
+        title: "Phenomena (1985)",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",

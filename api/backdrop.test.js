@@ -395,6 +395,60 @@ test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", 
     }
 });
 
+test("resolves Goblin's Phenomena theme to the 1985 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 29161, title: "Phenomena", release_date: "1985-01-31",
+                backdrop_path: "/phenomena.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            if (parsed.pathname === "/3/movie/29161/release_dates") return response(200, {
+                results: [{ iso_3166_1: "US", release_dates: [
+                    { certification: "R", type: 3 },
+                ] }],
+            });
+            if (parsed.pathname === "/v3/movies/29161") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/phenomena.jpg",
+                    lang: "", likes: "10",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [233, 229, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Phenomena",
+        track: "Phenomena",
+        artist: "Goblin",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 29161, title: "Phenomena", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/phenomena.jpg",
+        source: "fanart",
+        tint: [233, 229, 255],
+        certifications: [{
+            country: "US", system: "MPA", rating: "R", label: "R",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
+        }],
+    });
+    assert.deepEqual(requests.sort(), [
+        "/3/movie/29161/release_dates",
+        "/3/search/movie",
+        "/3/search/tv",
+        "/v3/movies/29161",
+    ]);
+});
+
 test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
     const providerQueries = [];
     const handler = createHandler({
