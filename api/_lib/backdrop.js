@@ -80,6 +80,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Oblivion (2013)",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Dolores",
+        artist: "Mark Kilian",
+        title: "Dolores (2017)",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",

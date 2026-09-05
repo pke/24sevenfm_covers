@@ -1751,6 +1751,55 @@ test("resolves M83's Oblivion album to the 2013 film", async () => {
     assert.equal(requests.length, 4);
 });
 
+test("resolves Mark Kilian's Dolores album to the 2017 documentary", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/movie") {
+                assert.equal(parsed.searchParams.get("query"), "Dolores");
+                assert.equal(parsed.searchParams.get("primary_release_year"), "2017");
+                return response(200, { results: [{
+                    id: 432619,
+                    title: "Dolores",
+                    backdrop_path: "/dolores.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                assert.equal(parsed.searchParams.get("query"), "Dolores");
+                assert.equal(parsed.searchParams.get("first_air_date_year"), "2017");
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/movie/432619/release_dates") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/v3/movies/432619") return response(200, {});
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [225, 235, 245],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Dolores",
+        track: "Fred Ross",
+        artist: "Mark Kilian",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 432619, title: "Dolores", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/dolores.jpg",
+        source: "tmdb",
+        tint: [225, 235, 245],
+        certifications: [],
+    });
+    assert.equal(requests.length, 4);
+});
+
 test("does not force different Medal Of Honor track metadata to the game", async () => {
     const requests = [];
     const handler = createHandler({
