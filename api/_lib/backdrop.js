@@ -47,6 +47,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Kansas City",
+        track: "Lullaby Of The Leaves",
+        title: "Kansas City (1996)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Doctor Who: The 50th Anniversary Collection",
         track: "The Caves Of Androzani (Alternative Suite) [From \"The Caves Of Androzani\"]",
         title: "Doctor Who (1963)",
