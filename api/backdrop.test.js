@@ -180,6 +180,46 @@ test("resolves the Once More, With Feeling episode album to the Buffy TV series"
     });
 });
 
+test("resolves the second Stranger Things score album to the TV series", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+            });
+            assert.equal(parsed.pathname, "/3/search/multi");
+            return response(200, { results: [{
+                id: 66732,
+                media_type: "tv",
+                name: "Stranger Things",
+                backdrop_path: "/stranger-things.jpg",
+            }] });
+        },
+        tintForImage: async () => [120, 80, 100],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Stranger Things 2",
+        track: "Looking For A Way Out",
+        artist: "Kyle Dixon & Michael Stein",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [{
+        path: "/3/search/multi",
+        query: "Stranger Things",
+    }]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 66732, title: "Stranger Things", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/stranger-things.jpg",
+        source: "tmdb",
+        tint: [120, 80, 100],
+    });
+});
+
 test("resolves Songs In The Key Of Springfield to The Simpsons TV series", async () => {
     const providerQueries = [];
     const handler = createHandler({
