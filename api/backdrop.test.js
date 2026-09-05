@@ -958,6 +958,13 @@ test("uses a quoted From credit as the track's screen work", () => {
     assert.deepEqual(backdropTitleCandidatesFor(album, track), ["Redeeming Love"]);
 });
 
+test("uses an explicit TV-series theme description as the screen work", () => {
+    const album = "Music Of DC Comics, The: Volume 2";
+    const track = "Wonder Woman Tv Series Season 3 Theme (1978)";
+    assert.equal(backdropTitleFor(album, track), "Wonder Woman");
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), ["Wonder Woman"]);
+});
+
 test("resolves a quoted From credit as an exact screen title", async () => {
     const requests = [];
     const handler = createHandler({
@@ -2026,6 +2033,58 @@ test("resolves a Great British TV Themes cue through an exact track prefix", asy
         source: "tmdb",
         tint: [40, 50, 60],
     });
+});
+
+test("resolves an explicit TV-series theme from a mixed compilation", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "Wonder Woman");
+                return response(200, { results: [
+                    { id: 297762, media_type: "movie", title: "Wonder Woman",
+                        backdrop_path: "/wonder-woman-movie.jpg" },
+                    { id: 4331, media_type: "tv", name: "Wonder Woman",
+                        backdrop_path: "/wonder-woman-tv.jpg" },
+                ] });
+            }
+            if (parsed.pathname === "/3/tv/4331/content_ratings") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/tv/4331/external_ids") {
+                return response(200, { tvdb_id: null });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 153, 147],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Music Of DC Comics, The: Volume 2",
+        track: "Wonder Woman Tv Series Season 3 Theme (1978)",
+        artist: "Charles Fox And Norman Gimble",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 4331, title: "Wonder Woman", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/wonder-woman-tv.jpg",
+        source: "tmdb",
+        tint: [255, 153, 147],
+        certifications: [],
+    });
+    assert.deepEqual(requests.sort(), [
+        "/3/search/multi",
+        "/3/search/person",
+        "/3/tv/4331/content_ratings",
+        "/3/tv/4331/external_ids",
+    ]);
 });
 
 test("resolves a Television's Greatest Hits track as TV", async () => {
