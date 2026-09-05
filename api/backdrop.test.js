@@ -1146,6 +1146,18 @@ test("uses an explicit TV-series theme description as the screen work", () => {
     assert.deepEqual(backdropTitleCandidatesFor(album, track), ["Wonder Woman"]);
 });
 
+test("uses a main-title theme description as the screen work", () => {
+    const album = "X-Files, The Truth And The Light, The";
+    const track = "Materia Primoris: The X-Files Theme (Main Title)";
+    assert.equal(backdropTitleFor(album, track), "The X-Files");
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), [
+        "The X-Files",
+        "Materia Primoris: The X-Files",
+    ]);
+    assert.equal(backdropTitleFor("Star Trek: Deep Space Nine",
+        "Star Trek: Deep Space Nine Theme (Main Title)"), "Star Trek: Deep Space Nine");
+});
+
 test("resolves a quoted From credit as an exact screen title", async () => {
     const requests = [];
     const handler = createHandler({
@@ -2618,6 +2630,41 @@ test("resolves an explicit TV-series theme from a mixed compilation", async () =
         "/3/tv/4331/content_ratings",
         "/3/tv/4331/external_ids",
     ]);
+});
+
+test("resolves a prefixed main-title theme as an exact screen title", async () => {
+    const queries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            assert.equal(parsed.pathname, "/3/search/multi");
+            const query = parsed.searchParams.get("query");
+            queries.push(query);
+            return response(200, { results: query === "The X-Files" ? [{
+                id: 4087, media_type: "tv", name: "The X-Files",
+                backdrop_path: "/the-x-files.jpg",
+            }] : [] });
+        },
+        tintForImage: async () => [215, 241, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "X-Files, The Truth And The Light, The",
+        track: "Materia Primoris: The X-Files Theme (Main Title)",
+        artist: "Mark Snow",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(queries.sort(), ["Materia Primoris: The X-Files", "The X-Files"]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 4087, title: "The X-Files", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/the-x-files.jpg",
+        source: "tmdb",
+        tint: [215, 241, 255],
+    });
 });
 
 test("resolves a Television's Greatest Hits track as TV", async () => {

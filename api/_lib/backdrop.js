@@ -328,6 +328,33 @@ function tvSeriesThemeTitle(track) {
     return title || "";
 }
 
+function mainTitleThemeCandidates(album, track) {
+    const match = String(track || "").trim().match(
+        /^(.+?)\s+themes?\s*\(\s*main\s+title\s*\)\s*$/i);
+    if (!match) return [];
+
+    const fullTitle = cleanMovieTitle(match[1]);
+    if (!fullTitle) return [];
+    const candidates = [fullTitle];
+    const separator = fullTitle.lastIndexOf(":");
+    if (separator > 0) {
+        const suffix = cleanMovieTitle(fullTitle.slice(separator + 1));
+        if (suffix && normalizedTitle(suffix) !== normalizedTitle(fullTitle)) {
+            candidates.push(suffix);
+        }
+    }
+
+    // A cue prefix such as "Materia Primoris:" is not part of the screen work.
+    // Prefer the longest candidate that is actually present in the album title;
+    // this preserves genuine colon titles such as "Star Trek: Deep Space Nine".
+    const albumWords = titleWords(cleanMovieTitle(album));
+    return candidates.sort((left, right) => {
+        const leftInAlbum = containsWordSequence(albumWords, titleWords(left));
+        const rightInAlbum = containsWordSequence(albumWords, titleWords(right));
+        return Number(rightInAlbum) - Number(leftInAlbum);
+    });
+}
+
 function metadataResolutionFor(album, track, artist) {
     const values = { album, track, artist };
     return METADATA_RESOLUTIONS.find((entry) =>
@@ -375,6 +402,8 @@ function backdropTitleFor(album, track) {
     if (bookIdentity) return bookIdentity.title;
     const quotedFromTitle = quotedFromScreenTitle(track);
     if (quotedFromTitle) return quotedFromTitle;
+    const mainTitleThemeTitles = mainTitleThemeCandidates(album, track);
+    if (mainTitleThemeTitles.length) return mainTitleThemeTitles[0];
     const tvThemeTitle = tvSeriesThemeTitle(track);
     if (tvThemeTitle) return tvThemeTitle;
     if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
@@ -406,6 +435,8 @@ function backdropTitleCandidatesFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
     const quotedFromTitle = quotedFromScreenTitle(track);
     if (quotedFromTitle) return [quotedFromTitle];
+    const mainTitleThemeTitles = mainTitleThemeCandidates(album, track);
+    if (mainTitleThemeTitles.length) return mainTitleThemeTitles;
     const tvThemeTitle = tvSeriesThemeTitle(track);
     if (tvThemeTitle) return [tvThemeTitle];
     if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
@@ -1756,10 +1787,12 @@ function createHandler(options = {}) {
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(trackValue);
             const quotedAlbumTitle = quotedOriginalMusicTitle(titleValue);
+            const mainTitleThemeTitles = mainTitleThemeCandidates(titleValue, trackValue);
             const tvThemeTitle = tvSeriesThemeTitle(trackValue);
             const metadataMediaHint = metadataResolution && metadataResolution.hint || "";
             const mediaHint = requestedHint === "auto"
                 ? quotedFromTitle ? "screen" : metadataMediaHint || (tvThemeTitle ? "tv" : "")
+                    || (mainTitleThemeTitles.length ? "screen" : "")
                     || mediaHintForAlbum(titleValue)
                 : requestedHint;
             const rawClientKey = requestQueryValue(req, "client_key");
@@ -1778,6 +1811,7 @@ function createHandler(options = {}) {
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
                     || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle
                     || !!quotedAlbumTitle
+                    || mainTitleThemeTitles.length > 0
                     || !!tvThemeTitle
                     || !!(metadataResolution && metadataResolution.title),
                 allowGameTitleExtension:
