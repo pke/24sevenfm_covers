@@ -983,6 +983,67 @@ test("removes a bracketed soundtrack edition before resolving the movie", async 
     });
 });
 
+test("resolves a quoted Original Music from album title as the exact game", async () => {
+    const album = 'Sugaan Essena (Original Music from "Star Wars Jedi: Fallen Order")';
+    const requests = [];
+    assert.equal(backdropTitleFor(album, "Sugaan Essena"),
+        "Star Wars Jedi: Fallen Order");
+
+    const handler = createHandler({
+        env: {
+            TMDB_API_KEY: "tmdb-key",
+            FANART_API_KEY: "fanart-key",
+            STEAMGRIDDB_API_KEY: "sgdb-key",
+        },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"),
+                    "Star Wars Jedi: Fallen Order");
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname.endsWith(
+                "/search/autocomplete/Star%20Wars%20Jedi%3A%20Fallen%20Order")) {
+                return response(200, { success: true, data: [{
+                    id: 5254,
+                    name: "Star Wars Jedi: Fallen Order",
+                    verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/5254") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/fallen-order.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/fallen-order.jpg",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [210, 222, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album,
+        track: "Sugaan Essena",
+        artist: "HU, The",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 5254, title: "Star Wars Jedi: Fallen Order", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/fallen-order.jpg",
+        source: "steamgriddb",
+        tint: [210, 222, 255],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("/heroes/game/5254")), true);
+});
+
 test("infers only explicit game, movie, and TV soundtrack markers", () => {
     assert.equal(mediaHintForAlbum("Hades (Original Video Game Soundtrack)"), "game");
     assert.equal(mediaHintForAlbum("Journey - Music From The Video Game"), "game");

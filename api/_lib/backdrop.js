@@ -314,6 +314,13 @@ function quotedFromScreenTitle(track) {
     return title || "";
 }
 
+function quotedOriginalMusicTitle(album) {
+    const match = String(album || "").trim().match(
+        /\(\s*original\s+music\s+from\s+(?:"([^"]+)"|“([^”]+)”)\s*\)\s*$/i);
+    const title = match && cleanMovieTitle(match[1] || match[2]);
+    return title || "";
+}
+
 function tvSeriesThemeTitle(track) {
     const match = String(track || "").trim().match(
         /^(.+?)\s+(?:tv|television)\s+series(?:\s+season\s+\d{1,2})?\s+themes?(?:\s*\((?:18|19|20|21)\d{2}\))?\s*$/i);
@@ -357,6 +364,8 @@ function trackPrefixCandidates(track) {
 }
 
 function backdropTitleFor(album, track) {
+    const quotedAlbumTitle = quotedOriginalMusicTitle(album);
+    if (quotedAlbumTitle) return quotedAlbumTitle;
     const normalizedAlbum = cleanMovieTitle(album);
     const seriesAlias = starTrekSeriesAlias(normalizedAlbum);
     if (seriesAlias) return seriesAlias;
@@ -392,6 +401,8 @@ function backdropTitleFor(album, track) {
 }
 
 function backdropTitleCandidatesFor(album, track) {
+    const quotedAlbumTitle = quotedOriginalMusicTitle(album);
+    if (quotedAlbumTitle) return [quotedAlbumTitle];
     const normalizedAlbum = cleanMovieTitle(album);
     const quotedFromTitle = quotedFromScreenTitle(track);
     if (quotedFromTitle) return [quotedFromTitle];
@@ -1726,6 +1737,7 @@ function createHandler(options = {}) {
                 requestQueryValue(req, "orientation"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(trackValue);
+            const quotedAlbumTitle = quotedOriginalMusicTitle(titleValue);
             const tvThemeTitle = tvSeriesThemeTitle(trackValue);
             const metadataMediaHint = metadataResolution && metadataResolution.hint || "";
             const mediaHint = requestedHint === "auto"
@@ -1747,11 +1759,13 @@ function createHandler(options = {}) {
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
                     || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle
+                    || !!quotedAlbumTitle
                     || !!tvThemeTitle
                     || !!(metadataResolution && metadataResolution.title),
                 allowGameTitleExtension:
                     isTrackTitledGameCompilation(cleanMovieTitle(titleValue)),
                 validateExactComposer: requestedHint === "auto" && !quotedFromTitle
+                    && !quotedAlbumTitle
                     && !metadataResolution && mediaHint === "auto",
             });
             const shortCache = !result.media || (includeArt && !result.backdrop);
