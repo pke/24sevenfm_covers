@@ -2146,6 +2146,51 @@ test("resolves a Stellaris species pack through its exact base game", async () =
     assert.equal(requests.length, 4);
 });
 
+test("resolves the Stellaris Utopia soundtrack through its base game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/api/v2/search/autocomplete/Stellaris") {
+                return response(200, { success: true, data: [
+                    { id: 3924, name: "Stellaris", verified: true },
+                    { id: 5353607, name: "Stellaris ST: New Horizons", verified: true },
+                ] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/3924") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/stellaris-utopia.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/stellaris-utopia.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [100, 120, 160],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Stellaris: Utopia",
+        track: "Utopia Main Title",
+        artist: "Andreas Waldetoft",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 3924, title: "Stellaris", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/stellaris-utopia.png",
+        source: "steamgriddb",
+        tint: [100, 120, 160],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+});
+
 test("resolves a Video Games Live suite through its game track", async () => {
     const requests = [];
     const handler = createHandler({
