@@ -127,6 +127,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Tales of Phantasia",
         hint: "game",
     }),
+    Object.freeze({
+        album: "Cinemagic",
+        track: "Fratelli Chase",
+        artist: "Dave Grusin",
+        title: "The Goonies (1985)",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",

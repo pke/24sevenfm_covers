@@ -347,6 +347,54 @@ test("resolves verified soundtrack tracks to the 1996 Kansas City film", async (
     }
 });
 
+test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            searches.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 9340, title: "The Goonies", release_date: "1985-06-07",
+                backdrop_path: "/the-goonies-backdrop.jpg",
+                poster_path: "/the-goonies-poster.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 214, 181],
+    });
+    const artwork = {
+        landscape: "https://image.tmdb.org/t/p/w1280/the-goonies-backdrop.jpg",
+        portrait: "https://image.tmdb.org/t/p/w780/the-goonies-poster.jpg",
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Cinemagic",
+            track: "Fratelli Chase",
+            artist: "Dave Grusin",
+            providers: "tmdb,tvmaze,steamgriddb",
+            orientation,
+        }), res);
+
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 9340, title: "The Goonies", type: "movie" },
+            backdrop: artwork[orientation],
+            source: "tmdb",
+            tint: [255, 214, 181],
+        });
+    }
+
+    assert.equal(searches.length, 4);
+    for (const search of searches) assert.equal(search.searchParams.get("query"), "The Goonies");
+    const movieSearches = searches.filter((search) => search.pathname.endsWith("/movie"));
+    assert.equal(movieSearches.length, 2);
+    for (const search of movieSearches) {
+        assert.equal(search.searchParams.get("primary_release_year"), "1985");
+    }
+});
+
 test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
     const providerQueries = [];
     const handler = createHandler({
