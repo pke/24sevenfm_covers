@@ -782,6 +782,16 @@ function pickGame(results, query, options = {}) {
     }
     if (exact.length) return exact.find((game) => game.verified) || exact[0];
 
+    // Some explicit DLC packs have no separate SGDB entry, but their search result
+    // still contains the exact base game. Only accept that result for a colon-
+    // separated title ending in "Pack"; arbitrary subtitles must remain exact.
+    const packBaseTitle = baseGamePackTitle(searchTitle);
+    if (packBaseTitle) {
+        const baseWanted = normalizedTitle(packBaseTitle);
+        const baseExact = valid.filter((game) => normalizedTitle(game.name) === baseWanted);
+        if (baseExact.length) return baseExact.find((game) => game.verified) || baseExact[0];
+    }
+
     // Compilation track lists sometimes use a franchise shorthand while SGDB
     // stores the first game under a subtitle (for example "Phoenix Wright" vs.
     // "Phoenix Wright: Ace Attorney"). Only allow this for an explicitly
@@ -818,6 +828,12 @@ function baseGameTitle(query) {
     if (separator < 0) return "";
     const base = undated.slice(0, separator).trim();
     return normalizedTitle(base).length >= 4 ? base : "";
+}
+
+function baseGamePackTitle(query) {
+    const undated = String(query || "").replace(
+        /\s*\((?:18|19|20|21)\d{2}\)\s*$/, "").trim();
+    return /:\s*.+\bpack\s*$/i.test(undated) ? baseGameTitle(undated) : "";
 }
 
 function trustedSteamGridDbUrl(raw, kind) {

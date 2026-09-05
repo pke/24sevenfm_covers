@@ -909,6 +909,12 @@ test("uses a conservative SteamGridDB title extension for game compilations", ()
         "Doom", { allowPrefix: true }), null);
 });
 
+test("uses an exact base game only for an explicitly named DLC pack", () => {
+    const stellaris = { id: 3924, name: "Stellaris", verified: true };
+    assert.equal(pickGame([stellaris], "Stellaris: Humanoids Species Pack"), stellaris);
+    assert.equal(pickGame([stellaris], "Stellaris: Galactic Paragons"), null);
+});
+
 test("matches spelled-out And against a provider ampersand", () => {
     const conker = { id: 5256835, name: "Conker: Live & Reloaded", verified: true };
     assert.equal(pickGame([conker], "Conker: Live And Reloaded"), conker);
@@ -1928,6 +1934,53 @@ test("uses an exact base-game hero when an exact expansion has no hero", async (
         backdrop: "https://cdn2.steamgriddb.com/hero/starcraft-ii.jpg",
         source: "steamgriddb",
         tint: [20, 30, 40],
+        certifications: [],
+    });
+    assert.equal(requests.length, 4);
+});
+
+test("resolves a Stellaris species pack through its exact base game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [] });
+            if (parsed.pathname === "/api/v2/search/autocomplete/Stellaris%3A%20Humanoids%20Species%20Pack") {
+                return response(200, { success: true, data: [
+                    { id: 3924, name: "Stellaris", verified: true },
+                    { id: 5353607, name: "Stellaris ST: New Horizons", verified: true },
+                ] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/3924") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/stellaris.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/stellaris.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [190, 224, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Stellaris: Humanoids Species Pack",
+        track: "Towards Utopia Nova Flare",
+        artist: "Meyer",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 3924, title: "Stellaris", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/stellaris.png",
+        source: "steamgriddb",
+        tint: [190, 224, 255],
         certifications: [],
     });
     assert.equal(requests.length, 4);
