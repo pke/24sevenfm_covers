@@ -2423,6 +2423,50 @@ test("resolves the Stellaris Utopia soundtrack through its base game", async () 
     assert.equal(requests.length, 2);
 });
 
+test("resolves a Summoning of Spirits remix to its exact source game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/api/v2/search/autocomplete/Tales%20of%20Phantasia") {
+                return response(200, { success: true, data: [
+                    { id: 37692, name: "Tales of Phantasia", verified: true },
+                ] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/37692") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/tales-of-phantasia.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/tales-of-phantasia.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 217, 174],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Summoning Of Spirits",
+        track: "Crisis Healing Salve (Mint)",
+        artist: "Hemophiliac, Christian Pacaud",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 37692, title: "Tales of Phantasia", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/tales-of-phantasia.png",
+        source: "steamgriddb",
+        tint: [255, 217, 174],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+});
+
 test("resolves a Video Games Live suite through its game track", async () => {
     const requests = [];
     const handler = createHandler({

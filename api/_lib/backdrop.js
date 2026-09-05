@@ -113,6 +113,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Dolores (2017)",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Summoning Of Spirits",
+        track: "Crisis Healing Salve (Mint)",
+        artist: "Hemophiliac, Christian Pacaud",
+        title: "Tales of Phantasia",
+        hint: "game",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
