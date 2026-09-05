@@ -119,6 +119,19 @@ rewritten.
 Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
 supplies `game`.
 
+Artwork requests default to `orientation=landscape`, which preserves the original
+backdrop contract. An explicit `orientation=portrait` selects fanart.tv movie/TV
+posters, TMDB `poster_path`, TVmaze poster images, or a vertical SteamGridDB grid in
+the configured provider order. If every enabled provider lacks portrait art, the
+resolver retains the first valid landscape image as a fallback. The web player sends
+the portrait parameter only while its rendered stage is taller than it is wide. The
+player keeps separate result and queue-prefetch caches for both orientations. On an
+aspect-ratio crossing it immediately reuses valid entries for the same title or exact
+queue identity and fills only missing entries for the newly active orientation. A
+changed queue identity or resolver configuration invalidates that entry, preventing
+stale queue art from drifting onto another track. The inactive format is never
+requested or downloaded speculatively.
+
 When TMDB has no exact title match, the resolver may use `Artist` as a conservative
 composer fallback: it requires one exact TMDB person-name match, then considers only
 that person's `Original Music Composer` crew credits. A work is accepted only when
@@ -220,6 +233,7 @@ After deployment, verify a known soundtrack without printing any configured key:
 
 ```powershell
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Arrival"
+curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Arrival" --data-urlencode "orientation=portrait"
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Hades" --data-urlencode "media_hint=game"
 curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Game Of Thrones" --data-urlencode "providers=tmdb" --data-urlencode "ratings=DE,US" --data-urlencode "art=0"
 curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://streamingsoundtracks.com/images/cover/040/B000FBFTCS.jpg"

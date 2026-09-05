@@ -86,6 +86,12 @@ Parental Guidelines badges, with the text badge retained as the image-load fallb
 Available US TV content descriptors appear with their meanings on hover and keyboard
 focus (`D` dialogue, `L` language, `S` sexual situations, `V` violence, and `FV`
 fantasy violence).
+When the rendered player stage becomes taller than it is wide, backdrop requests
+switch to portrait posters or vertical game grids. Separate orientation caches allow
+a quick switch back to reuse matching title and queue entries. Queue-prefetched art
+is reused only for the same queue identity and resolver configuration; missing entries
+are rebuilt for the active orientation, while the inactive format is never requested
+or downloaded in advance.
 Cover tint uses `api/tint.js`; missing queued `Artist` values use the allowlisted
 `api/credit.js` album-page fallback. Their deployment, security
 limits and environment variables are documented in `docs/vercel-backdrop.md`.

@@ -168,7 +168,7 @@ function debugRequestQuery(req) {
     const query = req && req.query && typeof req.query === "object" ? req.query : {};
     const result = {};
     for (const key of ["resolver_version", "album", "track", "title", "artist", "providers",
-        "ratings", "media_hint", "art"]) {
+        "ratings", "media_hint", "orientation", "art"]) {
         const value = query[key];
         if (typeof value === "string") result[key] = value.slice(0, 300);
         else if (Array.isArray(value)) result[key] = value.map((part) => String(part).slice(0, 300));
@@ -616,6 +616,16 @@ function requestedArt(value) {
     throw new ResolverError("invalid_art", 400, "art must be 0 or 1");
 }
 
+function requestedOrientation(value) {
+    const orientation = typeof value === "string" && value
+        ? value.trim().toLowerCase() : "landscape";
+    if (orientation !== "landscape" && orientation !== "portrait") {
+        throw new ResolverError("invalid_orientation", 400,
+            "orientation must be landscape or portrait");
+    }
+    return orientation;
+}
+
 function requestedMediaHint(value) {
     const hint = typeof value === "string" && value ? value.trim().toLowerCase() : "auto";
     if (!["auto", "screen", "movie", "tv", "game"].includes(hint)) {
@@ -875,7 +885,9 @@ function trustedSteamGridDbUrl(raw, kind) {
         const url = new URL(String(raw || ""));
         const allowedPath = kind === "thumb"
             ? /^\/(?:hero_thumb|thumb|file\/sgdb-cdn\/(?:hero_thumb|thumb))\//
-            : /^\/(?:hero|file\/sgdb-cdn\/hero)\//;
+            : kind === "grid"
+                ? /^\/(?:grid|file\/sgdb-cdn\/grid)\//
+                : /^\/(?:hero|file\/sgdb-cdn\/hero)\//;
         if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "cdn2.steamgriddb.com"
                 || url.username || url.password || url.search || url.hash
                 || !allowedPath.test(url.pathname)
@@ -911,14 +923,49 @@ async function steamGridDbHero(fetchImpl, game, env) {
     return null;
 }
 
-async function steamGridDbBaseGameHero(fetchImpl, query, exactGame, env) {
+async function steamGridDbGrid(fetchImpl, game, env) {
+    if (!game) return null;
+    const url = new URL("https://www.steamgriddb.com/api/v2/grids/game/"
+        + encodeURIComponent(game.id));
+    url.searchParams.set("dimensions", "600x900,342x482,660x930");
+    url.searchParams.set("mimes", "image/jpeg,image/png,image/webp");
+    url.searchParams.set("types", "static");
+    url.searchParams.set("nsfw", "false");
+    url.searchParams.set("humor", "false");
+    url.searchParams.set("epilepsy", "false");
+    const body = await fetchJson(fetchImpl, url, steamGridDbRequest(env), "steamgriddb");
+    const candidates = Array.isArray(body && body.data) ? body.data.slice() : [];
+    candidates.sort((a, b) => (Number(b && b.score) || 0) - (Number(a && a.score) || 0)
+        || (Number(b && b.upvotes) || 0) - (Number(a && a.upvotes) || 0)
+        || (Number(b && b.height) || 0) - (Number(a && a.height) || 0));
+    for (const candidate of candidates) {
+        const width = Number(candidate && candidate.width);
+        const height = Number(candidate && candidate.height);
+        if (width > 0 && height > 0 && height <= width) continue;
+        const grid = trustedSteamGridDbUrl(candidate && candidate.url, "grid");
+        if (!grid) continue;
+        return {
+            url: grid,
+            preview: trustedSteamGridDbUrl(candidate && candidate.thumb, "thumb") || grid,
+        };
+    }
+    return null;
+}
+
+function steamGridDbArtwork(fetchImpl, game, env, orientation) {
+    return orientation === "portrait"
+        ? steamGridDbGrid(fetchImpl, game, env)
+        : steamGridDbHero(fetchImpl, game, env);
+}
+
+async function steamGridDbBaseGameArtwork(fetchImpl, query, exactGame, env, orientation) {
     const baseTitle = baseGameTitle(query);
     if (!baseTitle) return null;
     const baseMatch = await searchSteamGridDb(fetchImpl, baseTitle, env);
     if (!baseMatch.game || Number(baseMatch.game.id) === Number(exactGame && exactGame.id)) {
         return null;
     }
-    return steamGridDbHero(fetchImpl, baseMatch.game, env);
+    return steamGridDbArtwork(fetchImpl, baseMatch.game, env, orientation);
 }
 
 async function tvdbIdForTmdbSeries(fetchImpl, seriesId, env) {
@@ -941,8 +988,8 @@ function trustedFanartUrl(raw) {
     }
 }
 
-async function fanartBackdrop(fetchImpl, media, clientKey, env, knownTvdbId) {
-    if (!env.FANART_API_KEY) return "";
+async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId) {
+    if (!env.FANART_API_KEY) return null;
     const type = mediaType(media);
     let fanartId = String(media && media.id || "");
     if (type === "tv") {
@@ -950,13 +997,13 @@ async function fanartBackdrop(fetchImpl, media, clientKey, env, knownTvdbId) {
             try {
                 fanartId = await tvdbIdForTmdbSeries(fetchImpl, media.id, env);
             } catch (error) {
-                return "";
+                return null;
             }
         } else {
             fanartId = knownTvdbId;
         }
     }
-    if (!fanartId) return "";
+    if (!fanartId) return null;
     const url = new URL("https://webservice.fanart.tv/v3/"
         + (type === "tv" ? "tv/" : "movies/") + encodeURIComponent(fanartId));
     url.searchParams.set("api_key", env.FANART_API_KEY);
@@ -966,19 +1013,23 @@ async function fanartBackdrop(fetchImpl, media, clientKey, env, knownTvdbId) {
         body = await fetchJson(fetchImpl, url, { headers: { "Accept": "application/json" } }, "fanart");
     } catch (error) {
         // fanart.tv is an enhancement. Provider failure must still degrade to TMDB art.
-        return "";
+        return null;
     }
-    const backgroundKey = type === "tv" ? "showbackground" : "moviebackground";
-    const candidates = Array.isArray(body && body[backgroundKey])
-        ? body[backgroundKey].slice() : [];
     const isTextless = (candidate) => candidate && (candidate.lang === "" || candidate.lang === "00");
-    candidates.sort((a, b) => (isTextless(a) ? 0 : 1) - (isTextless(b) ? 0 : 1)
-        || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0));
-    for (const candidate of candidates) {
-        const trusted = trustedFanartUrl(candidate && candidate.url);
-        if (trusted) return trusted;
-    }
-    return "";
+    const best = (key) => {
+        const candidates = Array.isArray(body && body[key]) ? body[key].slice() : [];
+        candidates.sort((a, b) => (isTextless(a) ? 0 : 1) - (isTextless(b) ? 0 : 1)
+            || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0));
+        for (const candidate of candidates) {
+            const trusted = trustedFanartUrl(candidate && candidate.url);
+            if (trusted) return trusted;
+        }
+        return "";
+    };
+    return {
+        landscape: best(type === "tv" ? "showbackground" : "moviebackground"),
+        portrait: best(type === "tv" ? "tvposter" : "movieposter"),
+    };
 }
 
 function trustedTvmazeUrl(raw) {
@@ -992,8 +1043,8 @@ function trustedTvmazeUrl(raw) {
     }
 }
 
-async function tvmazeBackdrop(fetchImpl, media, tvdbId) {
-    if (mediaType(media) !== "tv" || !tvdbId) return "";
+async function tvmazeArtwork(fetchImpl, media, tvdbId) {
+    if (mediaType(media) !== "tv" || !tvdbId) return null;
     const lookupUrl = new URL("https://api.tvmaze.com/lookup/shows");
     lookupUrl.searchParams.set("thetvdb", tvdbId);
     let show;
@@ -1003,10 +1054,10 @@ async function tvmazeBackdrop(fetchImpl, media, tvdbId) {
         }, "tvmaze");
     } catch (error) {
         // TVmaze is an optional art source. A miss or outage must not block later providers.
-        return "";
+        return null;
     }
     const showId = Number(show && show.id);
-    if (!Number.isSafeInteger(showId) || showId <= 0) return "";
+    if (!Number.isSafeInteger(showId) || showId <= 0) return null;
     let images;
     try {
         images = await fetchJson(fetchImpl,
@@ -1014,22 +1065,25 @@ async function tvmazeBackdrop(fetchImpl, media, tvdbId) {
                 headers: { "Accept": "application/json" },
             }, "tvmaze");
     } catch (error) {
-        return "";
+        return null;
     }
-    const candidates = Array.isArray(images) ? images.filter((candidate) =>
-        candidate && candidate.type === "background").slice() : [];
     const area = (candidate) => {
         const original = candidate && candidate.resolutions && candidate.resolutions.original;
         return Math.max(0, Number(original && original.width) || 0)
             * Math.max(0, Number(original && original.height) || 0);
     };
-    candidates.sort((a, b) => Number(!!b.main) - Number(!!a.main) || area(b) - area(a));
-    for (const candidate of candidates) {
-        const original = candidate.resolutions && candidate.resolutions.original;
-        const trusted = trustedTvmazeUrl(original && original.url);
-        if (trusted) return trusted;
-    }
-    return "";
+    const best = (type) => {
+        const candidates = Array.isArray(images) ? images.filter((candidate) =>
+            candidate && candidate.type === type).slice() : [];
+        candidates.sort((a, b) => Number(!!b.main) - Number(!!a.main) || area(b) - area(a));
+        for (const candidate of candidates) {
+            const original = candidate.resolutions && candidate.resolutions.original;
+            const trusted = trustedTvmazeUrl(original && original.url);
+            if (trusted) return trusted;
+        }
+        return "";
+    };
+    return { landscape: best("background"), portrait: best("poster") };
 }
 
 function tmdbImageUrl(path, size) {
@@ -1205,8 +1259,10 @@ function hasSteamGridDbCredential(env) {
     return !!String(env.STEAMGRIDDB_API_KEY || "").trim();
 }
 
-async function screenArt(fetchImpl, media, providers, clientKey, env) {
+async function screenArt(fetchImpl, media, providers, clientKey, env,
+    orientation = "landscape") {
     let tvdbIdPromise = null;
+    let landscapeFallback = null;
     const tvdbId = () => {
         if (!tvdbIdPromise) {
             tvdbIdPromise = tvdbIdForTmdbSeries(fetchImpl, media.id, env)
@@ -1215,24 +1271,40 @@ async function screenArt(fetchImpl, media, providers, clientKey, env) {
         return tvdbIdPromise;
     };
     for (const provider of providers) {
-        let url = "";
+        let artwork = null;
         if (provider === "fanart") {
-            url = await fanartBackdrop(fetchImpl, media, clientKey, env,
+            artwork = await fanartArtwork(fetchImpl, media, clientKey, env,
                 mediaType(media) === "tv" && env.FANART_API_KEY ? await tvdbId() : undefined);
         } else if (provider === "tmdb") {
-            url = tmdbImageUrl(media.backdrop_path, "w1280");
+            artwork = {
+                landscape: tmdbImageUrl(media.backdrop_path, "w1280"),
+                portrait: tmdbImageUrl(media.poster_path, "w780"),
+            };
         } else if (provider === "tvmaze" && mediaType(media) === "tv") {
-            url = await tvmazeBackdrop(fetchImpl, media, await tvdbId());
+            artwork = await tvmazeArtwork(fetchImpl, media, await tvdbId());
         }
+        if (!artwork) continue;
+        const tmdbPath = orientation === "portrait" ? media.poster_path : media.backdrop_path;
+        const url = orientation === "portrait" ? artwork.portrait : artwork.landscape;
         if (url) {
             return {
                 url,
                 source: provider,
-                preview: tintPreviewUrl(provider, url, media.backdrop_path),
+                preview: tintPreviewUrl(provider, url, tmdbPath),
+            };
+        }
+        // Portrait assets are less complete than landscape catalogs. Preserve the
+        // existing backdrop as a last resort, but only after every enabled provider
+        // has had a chance to return a real poster in the configured order.
+        if (orientation === "portrait" && !landscapeFallback && artwork.landscape) {
+            landscapeFallback = {
+                url: artwork.landscape,
+                source: provider,
+                preview: tintPreviewUrl(provider, artwork.landscape, media.backdrop_path),
             };
         }
     }
-    return null;
+    return landscapeFallback;
 }
 
 function cleanCertification(raw, country) {
@@ -1336,6 +1408,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     artist = "", options = {}) {
     const ratingCountries = Array.isArray(options.ratingCountries) ? options.ratingCountries : [];
     const includeArt = options.includeArt !== false;
+    const artOrientation = options.artOrientation === "portrait" ? "portrait" : "landscape";
     const screenQueries = Array.isArray(options.screenQueries) && options.screenQueries.length
         ? options.screenQueries : [query];
     const requireExactScreenMatch = options.requireExactScreenMatch === true;
@@ -1486,7 +1559,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     dependencies.env).catch(() => [])
                 : Promise.resolve([]);
             const art = includeArt ? await screenArt(dependencies.fetchImpl, match.media, providers,
-                clientKey, dependencies.env) : null;
+                clientKey, dependencies.env, artOrientation) : null;
             if (art) return resolvedArtResponse(media, art, dependencies,
                 certifications, ratingCountries);
             matchedWithoutArt = matchedWithoutArt || media;
@@ -1504,22 +1577,35 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             }
             if (!match.game) continue;
             const media = gameMediaResponse(match.game, query);
-            let hero = await steamGridDbHero(dependencies.fetchImpl, match.game, dependencies.env);
-            if (!hero) {
+            let gameArt = await steamGridDbArtwork(dependencies.fetchImpl, match.game,
+                dependencies.env, artOrientation);
+            if (!gameArt) {
                 try {
                     // SteamGridDB sometimes has a verified expansion entry but stores
-                    // its hero art only on the exact base-game entry. Restrict this
+                    // its artwork only on the exact base-game entry. Restrict this
                     // fallback to explicit "Base game: Subtitle" titles and require
                     // another exact provider match before borrowing that artwork.
-                    hero = await steamGridDbBaseGameHero(dependencies.fetchImpl,
-                        query, match.game, dependencies.env);
+                    gameArt = await steamGridDbBaseGameArtwork(dependencies.fetchImpl,
+                        query, match.game, dependencies.env, artOrientation);
                 } catch (error) {
                     errors.push(error);
                 }
             }
-            if (hero) {
+            // A game may have heroes but no vertical grid. Retain the old landscape
+            // result as a portrait-mode fallback only after the grid lookup misses.
+            if (!gameArt && artOrientation === "portrait") {
+                try {
+                    gameArt = await steamGridDbBaseGameArtwork(dependencies.fetchImpl,
+                        query, match.game, dependencies.env, "landscape")
+                        || await steamGridDbHero(dependencies.fetchImpl, match.game,
+                            dependencies.env);
+                } catch (error) {
+                    errors.push(error);
+                }
+            }
+            if (gameArt) {
                 return resolvedArtResponse(media, {
-                    url: hero.url, preview: hero.preview, source: "steamgriddb",
+                    url: gameArt.url, preview: gameArt.preview, source: "steamgriddb",
                 }, dependencies, Promise.resolve([]), ratingCountries);
             }
             matchedWithoutArt = matchedWithoutArt || media;
@@ -1534,7 +1620,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 dependencies.env).catch(() => [])
             : Promise.resolve([]);
         const art = includeArt ? await screenArt(dependencies.fetchImpl, screenFallback, providers,
-            clientKey, dependencies.env) : null;
+            clientKey, dependencies.env, artOrientation) : null;
         if (art) return resolvedArtResponse(media, art, dependencies,
             certifications, ratingCountries);
         matchedWithoutArt = matchedWithoutArt || media;
@@ -1636,6 +1722,8 @@ function createHandler(options = {}) {
             const providers = requestedProviders(requestQueryValue(req, "providers"));
             const ratingCountries = requestedRatings(requestQueryValue(req, "ratings"));
             const includeArt = requestedArt(requestQueryValue(req, "art"));
+            const artOrientation = requestedOrientation(
+                requestQueryValue(req, "orientation"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(trackValue);
             const tvThemeTitle = tvSeriesThemeTitle(trackValue);
@@ -1655,6 +1743,7 @@ function createHandler(options = {}) {
                 ? "" : typeof artistValue === "string" ? artistValue.trim() : "", {
                 ratingCountries,
                 includeArt,
+                artOrientation,
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
                     || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle
@@ -1768,6 +1857,7 @@ module.exports = {
     requestQueryValue,
     requestedProviders,
     requestedRatings,
+    requestedOrientation,
     requestedMediaHint,
     resolveBackdrop,
     tintFromMeans,

@@ -1306,9 +1306,7 @@ function nextTrackFromQueue(value, occurrence) {
         tintAttempted: false,
         creditAttempted: false,
         creditPromise: null,
-        backdropPrefetchKey: "",
-        art: null,
-        backdropImage: null,
+        backdropPrefetches: Object.create(null),
         lastSeen: Date.now(),
     };
 }
@@ -1361,6 +1359,8 @@ function reconcileQueuedTracks(values) {
         } else {
             entry.lastSeen = Date.now();
             entry.lengthSeconds = parsed.lengthSeconds;
+            if (!entry.backdropPrefetches)
+                entry.backdropPrefetches = Object.create(null);
             if (parsed.artist) {
                 entry.artist = parsed.artist;
                 entry.artistSource = "queue";
@@ -1702,16 +1702,26 @@ function setStatus(text, source) {
 }
 function clearStatus(source) { setStatus("", source); }
 
-function queueBackdropPrefetchKey(entry) {
+function queueBackdropPrefetchKey(entry, orientation) {
     var providers = enabledMovieProviders();
-    var includeArt = providers.length > 0;
+    var includeArt = sstBackdropsEnabled() && providers.length > 0;
     return JSON.stringify([
+        entry && entry.queueKey || "",
         includeArt ? providers : ["tmdb"],
-        providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
+        includeArt && providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
         includeArt,
         sstRatingsEnabled(),
+        includeArt ? (orientation || backdropOrientationForStage()) : "landscape",
         entry && entry.artist || "",
     ]);
+}
+
+function queuedBackdropPrefetch(entry, orientation) {
+    if (!entry || !entry.backdropPrefetches) return undefined;
+    var record = entry.backdropPrefetches[orientation];
+    if (!record || record.queueKey !== entry.queueKey
+            || record.key !== queueBackdropPrefetchKey(entry, orientation)) return undefined;
+    return record;
 }
 
 // A queue entry is only safe to promote when it is still the announced next track
@@ -1721,11 +1731,13 @@ function queueBackdropPrefetchKey(entry) {
 // the prepared result immediately, then let the regular resolver revalidate it.
 function prefetchedArtForNowPlaying(album, track, coverUrl) {
     var entry = nextTrack;
+    var orientation = backdropOrientationForStage();
+    var prefetched = queuedBackdropPrefetch(entry, orientation);
     if (!entry || entry.album !== album || entry.track !== track
             || (entry.coverUrl && coverUrl && entry.coverUrl !== coverUrl)
-            || entry.backdropPrefetchKey !== queueBackdropPrefetchKey(entry))
+            || !prefetched)
         return undefined;
-    return entry.art;
+    return prefetched.art;
 }
 
 function queuedTrackNeedsPrefetch(entry) {
@@ -1735,9 +1747,10 @@ function queuedTrackNeedsPrefetch(entry) {
             && !Object.prototype.hasOwnProperty.call(coverTintCache, entry.tintUrl)) return true;
     if (queuedArtistIsNeeded() && !entry.artist && entry.albumUrl && !entry.creditAttempted)
         return true;
+    var orientation = backdropOrientationForStage();
     return stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
         && (sstBackdropsEnabled() || sstRatingsEnabled())
-        && entry.backdropPrefetchKey !== queueBackdropPrefetchKey(entry);
+        && !queuedBackdropPrefetch(entry, orientation);
 }
 
 function nextQueuedPrefetch() {
@@ -1768,18 +1781,28 @@ async function prefetchQueuedTrack(entry, signal) {
     if (signal.aborted) return;
     if (stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
             && (sstBackdropsEnabled() || sstRatingsEnabled())) {
-        var configKey = queueBackdropPrefetchKey(entry);
-        if (entry.backdropPrefetchKey !== configKey) {
-            entry.art = await movieArtFor(entry.album, entry.track, entry.artist,
-                null, signal);
-            if (entry.art && entry.art.url) {
-                entry.backdropImage = new Image();
-                entry.backdropImage.src = entry.art.url;
-                if (entry === nextTrack) movieLayer.prepare(entry.art.url);
+        var orientation = backdropOrientationForStage();
+        var configKey = queueBackdropPrefetchKey(entry, orientation);
+        if (!queuedBackdropPrefetch(entry, orientation)) {
+            var art = await movieArtFor(entry.album, entry.track, entry.artist,
+                null, signal, undefined, orientation);
+            if (signal.aborted || orientation !== backdropOrientationForStage()
+                    || queuedTracks.indexOf(entry) < 0
+                    || configKey !== queueBackdropPrefetchKey(entry, orientation)) return;
+            var image = null;
+            if (art && art.url) {
+                image = new Image();
+                image.src = art.url;
+                if (entry === nextTrack) movieLayer.prepare(art.url);
             }
             // Successful misses are cacheable. Transport/provider failures throw and
             // remain eligible for this minute-spaced worker to retry.
-            entry.backdropPrefetchKey = configKey;
+            entry.backdropPrefetches[orientation] = {
+                queueKey: entry.queueKey,
+                key: configKey,
+                art: art,
+                image: image,
+            };
         }
     }
     await tintPromise;
@@ -1821,14 +1844,16 @@ async function runQueuePrefetch() {
     } catch (error) { /* queue prefetch is best-effort */ }
     finally {
         clearTimeout(request.kill);
-        if (queuePrefetchRequest === request) queuePrefetchRequest = null;
-        if (!queuePrefetchUrgent) {
-            var completedIndex = queuedTracks.indexOf(candidate.entry);
-            queuePrefetchCursor = completedIndex < 0 || !queuedTracks.length
-                ? 0 : (completedIndex + 1) % queuedTracks.length;
+        if (queuePrefetchRequest === request) {
+            queuePrefetchRequest = null;
+            if (!queuePrefetchUrgent) {
+                var completedIndex = queuedTracks.indexOf(candidate.entry);
+                queuePrefetchCursor = completedIndex < 0 || !queuedTracks.length
+                    ? 0 : (completedIndex + 1) % queuedTracks.length;
+            }
+            queuePrefetchNextAt = Date.now() + QUEUE_PREFETCH_STAGGER_MS;
+            scheduleQueuePrefetch(false);
         }
-        queuePrefetchNextAt = Date.now() + QUEUE_PREFETCH_STAGGER_MS;
-        scheduleQueuePrefetch(false);
     }
 }
 
@@ -1845,6 +1870,21 @@ function resetQueuedTracks() {
     queuedTracks = [];
     queueSnapshotReady = false;
     setNextTrack(null);
+}
+
+function restartQueuedBackdropPrefetch() {
+    clearTimeout(queuePrefetchTimer);
+    queuePrefetchTimer = null;
+    if (queuePrefetchRequest) queuePrefetchRequest.ctl.abort();
+    queuePrefetchRequest = null;
+    queuePrefetchNextAt = 0;
+    queuePrefetchCursor = 0;
+    queuePrefetchUrgent = false;
+    queuedTracks.forEach(function (entry) {
+        if (entry.tintUrl
+                && !Object.prototype.hasOwnProperty.call(coverTintCache, entry.tintUrl))
+            entry.tintAttempted = false;
+    });
 }
 
 // Refresh the station queue, then let one self-rescheduling worker warm its
@@ -1947,20 +1987,40 @@ function showCover(url) {
 // meanwhile the player falls back to the blurred cover.
 var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a screen backdrop is currently visible (drives hide-cover)
+var activeBackdropOrientation = "";
 var coverHiddenUntilCoverReady = false;
 var backdropImageRetryTimer = null;
 function newMovieCache() { return Object.create(null); }
 var movieCaches = Object.create(null);
 var backdropRequest = null;
 
-function movieCacheFor(providers, includeArt, includeRatings) {
+function backdropOrientationForStage() {
+    var bounds = stage.getBoundingClientRect();
+    return bounds.height > bounds.width ? "portrait" : "landscape";
+}
+
+function syncBackdropOrientation() {
+    var orientation = backdropOrientationForStage();
+    if (!activeBackdropOrientation) {
+        activeBackdropOrientation = orientation;
+        return;
+    }
+    if (orientation === activeBackdropOrientation) return;
+    activeBackdropOrientation = orientation;
+    restartQueuedBackdropPrefetch();
+    if (currentAlbum && sstBackdropsEnabled() && !stationIdActive) updateBackdrop();
+    else scheduleQueuePrefetch(true);
+}
+
+function movieCacheFor(providers, includeArt, includeRatings, orientation) {
     // Provider configuration is part of the resolver result. Keep its title cache
     // separate so switching back to a configuration can reuse both hits and misses.
     const configKey = JSON.stringify([
         providers,
         providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
         includeArt,
-        includeRatings
+        includeRatings,
+        orientation
     ]);
     if (!Object.prototype.hasOwnProperty.call(movieCaches, configKey))
         movieCaches[configKey] = newMovieCache();
@@ -2008,6 +2068,7 @@ function rememberLocalBackdropDiagnostic(request, result) {
             source: typeof result.source === "string" ? result.source : null,
         },
     };
+    if (request.orientation === "portrait") diagnostic.request.orientation = "portrait";
     var key = localBackdropDiagnosticKey(request.album, request.track, request.artist);
     if (!Object.prototype.hasOwnProperty.call(localBackdropDiagnostics, key))
         localBackdropDiagnosticOrder.push(key);
@@ -2224,7 +2285,7 @@ function updateCoverTint(nextUrl) {
 }
 
 async function serverMovieArt(album, track, artist, providers, includeArt, includeRatings,
-    signal, cacheMode) {
+    orientation, signal, cacheMode) {
     if (!BACKDROP_API_URL) throw SERVER_ART_UNAVAILABLE;
     var url;
     try {
@@ -2233,6 +2294,8 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
         if (track) url.searchParams.set("track", track);
         if (artist) url.searchParams.set("artist", artist);
         url.searchParams.set("providers", providers.join(","));
+        if (includeArt && orientation === "portrait")
+            url.searchParams.set("orientation", "portrait");
         if (!includeArt) url.searchParams.set("art", "0");
         if (includeRatings) url.searchParams.set("ratings", "DE,US");
         if (opts.fanartKey && providers.indexOf("fanart") >= 0)
@@ -2240,25 +2303,20 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
     } catch (e) { throw SERVER_ART_UNAVAILABLE; }
 
     var body = await fetchResolverJson(url, signal, cacheMode);
-    rememberLocalBackdropDiagnostic({
+    var diagnosticRequest = {
         album: album,
         track: track,
         artist: artist,
         providers: providers,
         includeArt: includeArt,
         includeRatings: includeRatings,
-    }, body);
+    };
+    if (includeArt && orientation === "portrait") diagnosticRequest.orientation = "portrait";
+    rememberLocalBackdropDiagnostic(diagnosticRequest, body);
     if (isLocalPlayer && typeof console !== "undefined"
             && typeof console.info === "function") {
         console.info("[backdrop resolver]", {
-            request: {
-                album: album,
-                track: track,
-                artist: artist,
-                providers: providers,
-                includeArt: includeArt,
-                includeRatings: includeRatings,
-            },
+            request: diagnosticRequest,
             result: body,
         });
     }
@@ -2407,14 +2465,17 @@ function retryBackdrop() { requestBackdrop("reload"); }
 
 // Resolve only through the project endpoint. The per-title cache stores misses too;
 // endpoint failures stay uncached so a later poll or option change can retry.
-async function movieArtFor(album, track, artist, generation, signal, cacheMode) {
+async function movieArtFor(album, track, artist, generation, signal, cacheMode,
+        requestedOrientation) {
     const providers = enabledMovieProviders();
     const includeArt = sstBackdropsEnabled() && providers.length > 0;
     const includeRatings = sstRatingsEnabled();
     const requestedProviders = includeArt ? providers : ["tmdb"];
+    const orientation = includeArt
+        ? (requestedOrientation || backdropOrientationForStage()) : "landscape";
     if ((generation !== null && !renderIsCurrent("backdrop", generation)) || !album
             || (!includeArt && !includeRatings)) return null;
-    const cache = movieCacheFor(requestedProviders, includeArt, includeRatings);
+    const cache = movieCacheFor(requestedProviders, includeArt, includeRatings, orientation);
     const titleCacheKey = album + "\n" + track + "\n";
     const cacheKey = titleCacheKey + artist;
     if (cacheMode !== "reload" && Object.prototype.hasOwnProperty.call(cache, cacheKey))
@@ -2424,7 +2485,7 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode) 
     // authoritative current-playing artist always receives its own resolver lookup.
 
     const art = await serverMovieArt(album, track, artist, requestedProviders,
-        includeArt, includeRatings, signal, cacheMode);
+        includeArt, includeRatings, orientation, signal, cacheMode);
     if (generation !== null && !renderIsCurrent("backdrop", generation)) return null;
     cache[cacheKey] = art;
     return art;
@@ -2601,6 +2662,7 @@ function sizeStage() {
     stage.style.setProperty("--poster-blur", (opts.posterBlur * r.width / 240) + "px");
     if (comingNextEl.classList.contains("show") && nextTrack) setComingNextContent();
     positionSpectrumOptions();
+    syncBackdropOrientation();
 }
 if (window.ResizeObserver) {
     var layoutObserver = new ResizeObserver(sizeStage);

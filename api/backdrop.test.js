@@ -18,6 +18,7 @@ const {
     pickMedia,
     pickMovie,
     requestQueryValue,
+    requestedOrientation,
     requestedRatings,
     tintFromMeans,
     tintPreviewUrl,
@@ -1357,15 +1358,30 @@ test("uses tiny provider-specific tint images", () => {
         "https://assets.fanart.tv/preview/movies/1/a.jpg");
 });
 
-test("accepts only static SteamGridDB hero CDN URLs", () => {
+test("accepts only explicit backdrop orientations", () => {
+    assert.equal(requestedOrientation(undefined), "landscape");
+    assert.equal(requestedOrientation("portrait"), "portrait");
+    assert.throws(() => requestedOrientation("square"), (error) =>
+        error && error.code === "invalid_orientation" && error.status === 400);
+});
+
+test("accepts only static SteamGridDB hero and grid CDN URLs", () => {
     assert.equal(trustedSteamGridDbUrl(
         "https://cdn2.steamgriddb.com/hero/abc123.jpg", "hero"),
     "https://cdn2.steamgriddb.com/hero/abc123.jpg");
     assert.equal(trustedSteamGridDbUrl(
         "https://cdn2.steamgriddb.com/hero_thumb/abc123.webp", "thumb"),
     "https://cdn2.steamgriddb.com/hero_thumb/abc123.webp");
+    assert.equal(trustedSteamGridDbUrl(
+        "https://cdn2.steamgriddb.com/grid/abc123.png", "grid"),
+    "https://cdn2.steamgriddb.com/grid/abc123.png");
+    assert.equal(trustedSteamGridDbUrl(
+        "https://cdn2.steamgriddb.com/thumb/abc123.jpg", "thumb"),
+    "https://cdn2.steamgriddb.com/thumb/abc123.jpg");
     assert.equal(trustedSteamGridDbUrl("https://evil.example/hero/abc.jpg", "hero"), "");
     assert.equal(trustedSteamGridDbUrl("https://cdn2.steamgriddb.com/hero/abc.gif", "hero"), "");
+    assert.equal(trustedSteamGridDbUrl(
+        "https://cdn2.steamgriddb.com/hero/abc.jpg", "grid"), "");
 });
 
 test("resolves an explicitly marked game through SteamGridDB hero art", async () => {
@@ -1408,6 +1424,49 @@ test("resolves an explicitly marked game through SteamGridDB hero art", async ()
     });
     assert.equal(requests.length, 2);
     assert.equal(tintUrl, "https://cdn2.steamgriddb.com/hero_thumb/hades.jpg");
+});
+
+test("resolves a portrait game request through a SteamGridDB vertical grid", async () => {
+    const requests = [];
+    let tintUrl = "";
+    const handler = createHandler({
+        env: { STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname.endsWith("/search/autocomplete/Hades")) {
+                return response(200, { success: true,
+                    data: [{ id: 5253, name: "Hades", verified: true }] });
+            }
+            if (parsed.pathname.endsWith("/grids/game/5253")) return response(200, {
+                success: true,
+                data: [{
+                    score: 10, upvotes: 20, width: 600, height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/hades.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/hades.jpg",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async (url) => { tintUrl = url; return [80, 90, 100]; },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        title: "Hades (Original Video Game Soundtrack)",
+        providers: "steamgriddb",
+        orientation: "portrait",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 5253, title: "Hades", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/grid/hades.png",
+        source: "steamgriddb",
+        tint: [80, 90, 100],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].searchParams.get("dimensions"), "600x900,342x482,660x930");
+    assert.equal(tintUrl, "https://cdn2.steamgriddb.com/thumb/hades.jpg");
 });
 
 test("uses a parenthesized video-game marker before provider order and ratings", async () => {
@@ -2608,6 +2667,42 @@ test("resolves fanart first and returns a precomputed tint", async () => {
         + ", s-maxage=" + CACHE_SECONDS + ", stale-while-revalidate=86400");
 });
 
+test("uses a fanart poster only for an explicit portrait request", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            if (value.includes("/search/multi")) return response(200, { results: [{
+                id: 7, media_type: "movie", title: "Arrival",
+                backdrop_path: "/arrival-backdrop.jpg", poster_path: "/arrival-poster.jpg",
+            }] });
+            if (value.includes("/v3/movies/7")) return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/arrival-backdrop.jpg",
+                    lang: "00", likes: "20",
+                }],
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/arrival-poster.jpg",
+                    lang: "en", likes: "12",
+                }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [100, 110, 120],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        title: "Arrival", providers: "fanart,tmdb", orientation: "portrait",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 7, title: "Arrival", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/arrival-poster.jpg",
+        source: "fanart",
+        tint: [100, 110, 120],
+    });
+});
+
 test("falls back to TMDB when fanart is unavailable", async () => {
     const handler = createHandler({
         env: { TMDB_READ_TOKEN: "read-token", FANART_API_KEY: "fanart-key" },
@@ -2630,6 +2725,30 @@ test("falls back to TMDB when fanart is unavailable", async () => {
         source: "tmdb",
         tint: [100, 110, 120],
     });
+});
+
+test("uses TMDB poster_path for an explicit portrait request", async () => {
+    let tintUrl = "";
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async () => response(200, { results: [{
+            id: 7, media_type: "movie", title: "Arrival",
+            backdrop_path: "/arrival-backdrop.jpg", poster_path: "/arrival-poster.jpg",
+        }] }),
+        tintForImage: async (url) => { tintUrl = url; return [100, 110, 120]; },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        title: "Arrival", providers: "tmdb", orientation: "portrait",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 7, title: "Arrival", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w780/arrival-poster.jpg",
+        source: "tmdb",
+        tint: [100, 110, 120],
+    });
+    assert.equal(tintUrl, "https://image.tmdb.org/t/p/w92/arrival-poster.jpg");
 });
 
 test("sends a soundtrack release year as a TMDB filter", async () => {
@@ -2706,7 +2825,7 @@ test("resolves TV fanart through the series TheTVDB id", async () => {
     assert.match(requests[2], /client_key=personal-key/);
 });
 
-test("resolves a TVmaze background through the exact series TheTVDB id", async () => {
+test("resolves TVmaze landscape and portrait art through the exact TheTVDB id", async () => {
     const requests = [];
     let tintUrl = "";
     const handler = createHandler({
@@ -2753,6 +2872,19 @@ test("resolves a TVmaze background through the exact series TheTVDB id", async (
     assert.equal(requests.filter((value) => value.includes("/external_ids")).length, 1);
     assert.equal(trustedTvmazeUrl(backdrop), backdrop);
     assert.equal(trustedTvmazeUrl("https://example.com/background.jpg"), "");
+
+    const portraitRes = mockResponse();
+    await handler(mockRequest({
+        title: "Inspector Morse", providers: "tvmaze,tmdb", orientation: "portrait",
+    }), portraitRes);
+    const poster = "https://static.tvmaze.com/uploads/images/original_untouched/poster.jpg";
+    assert.deepEqual(JSON.parse(portraitRes.body), {
+        media: { id: 3476, title: "Inspector Morse", type: "tv" },
+        backdrop: poster,
+        source: "tvmaze",
+        tint: [91, 101, 111],
+    });
+    assert.equal(tintUrl, poster);
 });
 
 test("falls back to TMDB when TVmaze has no matching show", async () => {

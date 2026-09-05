@@ -3755,6 +3755,114 @@ test.describe("the deployed player page", () => {
             getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
             .toBe("rgb(131, 172, 255)");
     });
+    test("loads and queue-prefetches artwork only for the current stage orientation",
+        async ({ page }) => {
+            const cover = "https://streamingsoundtracks.com/images/cover/orientation.svg";
+            const sizedCover = "https://streamingsoundtracks.com/images/cover/500/orientation.svg";
+            const requests = [];
+            const artworkRequests = [];
+            let queuedAlbum = "Queued Orientation Movie";
+            let currentTrack = "Main Cue";
+            await page.setViewportSize({ width: 1280, height: 800 });
+            await page.addInitScript(() => localStorage.setItem(
+                "24sevenfm-covers.player.v2", JSON.stringify({
+                    sstBackdrops: { enabled: true,
+                        options: { providers: ["tmdb"], cover: "show" } },
+                })));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+                (route) => {
+                    const action = new URL(route.request().url()).searchParams.get("action");
+                    if (action === "GetQueue") return route.fulfill({ json: [{
+                        Album: queuedAlbum, Track: "Next Cue",
+                        Artist: "Queue Composer", CoverLink: "",
+                    }] });
+                    return route.fulfill({ json: {
+                        Album: "Orientation Movie", Track: currentTrack,
+                        Artist: "Current Composer", CoverLink: cover, Length: 180000,
+                        PlayStart: "2026-08-20T12:00:00Z",
+                        SystemTime: "2026-08-20T12:00:00Z",
+                    } });
+                });
+            await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, (route) =>
+                route.fulfill({ json: { tint: [20, 40, 60] } }));
+            await page.route(/\/api\/backdrop\?/, (route) => {
+                const url = new URL(route.request().url());
+                const album = url.searchParams.get("album");
+                const orientation = url.searchParams.get("orientation") || "landscape";
+                requests.push({ album, orientation });
+                const slug = album === "Orientation Movie" ? "current" : "queued";
+                const size = orientation === "portrait" ? "w780" : "w1280";
+                return route.fulfill({ json: {
+                    media: { id: slug === "current" ? 1 : 2, title: album, type: "movie" },
+                    backdrop: "https://image.tmdb.org/t/p/" + size + "/" + slug + "-"
+                        + orientation + ".jpg",
+                    source: "tmdb", tint: [100, 120, 140],
+                } });
+            });
+            await page.route("https://image.tmdb.org/t/p/**", (route) => {
+                artworkRequests.push(route.request().url());
+                return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+            });
+
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", /current-landscape\.jpg/);
+            await expect.poll(() => requests).toContainEqual({
+                album: "Queued Orientation Movie", orientation: "landscape",
+            });
+            await expect.poll(() => artworkRequests.some((url) =>
+                url.endsWith("/queued-landscape.jpg"))).toBe(true);
+            expect(requests.some((request) => request.orientation === "portrait")).toBe(false);
+
+            await page.setViewportSize({ width: 390, height: 844 });
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", /current-portrait\.jpg/);
+            await expect.poll(() => requests).toContainEqual({
+                album: "Queued Orientation Movie", orientation: "portrait",
+            });
+            await expect.poll(() => artworkRequests.some((url) =>
+                url.endsWith("/queued-portrait.jpg"))).toBe(true);
+
+            await page.setViewportSize({ width: 1280, height: 800 });
+            await expect.poll(() => requests.filter((request) =>
+                request.album === "Orientation Movie" && request.orientation === "landscape")
+                .length).toBe(1);
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", /current-landscape\.jpg/);
+            await expect.poll(() => requests.filter((request) =>
+                request.album === "Queued Orientation Movie"
+                    && request.orientation === "landscape").length).toBe(1);
+
+            await page.setViewportSize({ width: 390, height: 844 });
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", /current-portrait\.jpg/);
+            expect(requests.filter((request) =>
+                request.album === "Orientation Movie" && request.orientation === "portrait")
+                .length).toBe(1);
+
+            queuedAlbum = "Replacement Queue Movie";
+            currentTrack = "Main Cue Reloaded";
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+            await expect.poll(() => requests).toContainEqual({
+                album: "Replacement Queue Movie", orientation: "portrait",
+            });
+
+            await page.setViewportSize({ width: 1280, height: 800 });
+            await expect(page.locator("#movieA.show, #movieB.show"))
+                .toHaveAttribute("src", /current-landscape\.jpg/);
+            await expect.poll(() => requests).toContainEqual({
+                album: "Replacement Queue Movie", orientation: "landscape",
+            });
+            expect(requests.filter((request) =>
+                request.album === "Queued Orientation Movie"
+                    && request.orientation === "landscape").length).toBe(1);
+        });
+
     test("sends raw game soundtrack metadata and accepts a SteamGridDB hero", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/hades.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/hades.svg";
@@ -4893,7 +5001,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", /fanart-retry/);
     });
 
-    test("keeps queued artwork out of a backdrop buffer until its exit finishes",
+    test("keeps superseded queued artwork out of a backdrop buffer",
         async ({ page }) => {
             const outgoingCover = "https://streamingsoundtracks.com/images/cover/outgoing-title.svg";
             const currentCover = "https://streamingsoundtracks.com/images/cover/current-fallback.svg";
@@ -4912,6 +5020,7 @@ test.describe("the deployed player page", () => {
                 CoverLink: currentCover,
             }];
             let queuedFanartRoute = null;
+            const queuedProviderRequests = [];
             await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
                 JSON.stringify({ sstBackdrops: { enabled: true, options: {
                     providers: ["fanart", "tmdb"], cover: "show" } } })));
@@ -4929,9 +5038,12 @@ test.describe("the deployed player page", () => {
                 const url = new URL(route.request().url());
                 const album = url.searchParams.get("album");
                 const providers = url.searchParams.get("providers");
-                if (album === "Next Movie" && providers === "fanart,tmdb") {
-                    queuedFanartRoute = route;
-                    return;
+                if (album === "Next Movie") {
+                    queuedProviderRequests.push(providers);
+                    if (providers === "fanart,tmdb") {
+                        queuedFanartRoute = route;
+                        return;
+                    }
                 }
                 const backdrop = album === "Outgoing Movie"
                     ? outgoingBackdrop : currentBackdrop;
@@ -4987,6 +5099,8 @@ test.describe("the deployed player page", () => {
                 `#movieA[src="${queuedBackdrop}"], #movieB[src="${queuedBackdrop}"]`))
                 .toHaveCount(0);
 
+            await expect.poll(() => queuedProviderRequests).toContain("tmdb");
+
             await page.locator(
                 `#movieA[src="${outgoingBackdrop}"], #movieB[src="${outgoingBackdrop}"]`)
                 .evaluate((image) => image.dispatchEvent(new TransitionEvent("transitionend", {
@@ -4994,10 +5108,7 @@ test.describe("the deployed player page", () => {
                 })));
             await expect(page.locator(
                 `#movieA[src="${queuedBackdrop}"], #movieB[src="${queuedBackdrop}"]`))
-                .toHaveCount(1, { timeout: 2000 });
-            await expect(page.locator(
-                `#movieA[src="${queuedBackdrop}"], #movieB[src="${queuedBackdrop}"]`))
-                .not.toHaveClass(/show/);
+                .toHaveCount(0);
         });
 
     test("re-resolves cached art after provider priority or enablement changes", async ({ page }) => {
