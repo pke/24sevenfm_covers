@@ -869,10 +869,28 @@ function pickGame(results, query, options = {}) {
 async function searchSteamGridDb(fetchImpl, query, env, options = {}) {
     const datedTitle = String(query || "").match(/^(.*?)\s*\(((?:18|19|20|21)\d{2})\)\s*$/);
     const searchTitle = datedTitle ? datedTitle[1].trim() : query;
-    const url = new URL("https://www.steamgriddb.com/api/v2/search/autocomplete/"
-        + encodeURIComponent(searchTitle));
-    const body = await fetchJson(fetchImpl, url, steamGridDbRequest(env), "steamgriddb");
-    const game = pickGame(body && body.data, query, options);
+    const search = async (title) => {
+        const url = new URL("https://www.steamgriddb.com/api/v2/search/autocomplete/"
+            + encodeURIComponent(title));
+        return fetchJson(fetchImpl, url, steamGridDbRequest(env), "steamgriddb");
+    };
+    const body = await search(searchTitle);
+    let game = pickGame(body && body.data, query, options);
+    // cleanMovieTitle normalizes ampersands to "and" so TMDB and provider-title
+    // comparisons agree. SteamGridDB autocomplete is spelling-sensitive, however:
+    // some exact entries appear only when the symbolic form is queried. Retry only
+    // after a successful exact miss; pickGame still requires the same normalized
+    // title, so a looser autocomplete result can never become a fuzzy match.
+    const ampersandTitle = String(searchTitle).replace(/\band\b/gi, "&");
+    if (!game && ampersandTitle !== searchTitle) {
+        try {
+            const ampersandBody = await search(ampersandTitle);
+            game = pickGame(ampersandBody && ampersandBody.data, query, options);
+        } catch (error) {
+            // The primary lookup completed successfully; an optional spelling retry
+            // must not turn its cacheable miss into a provider outage.
+        }
+    }
     return { game, exact: !!game };
 }
 

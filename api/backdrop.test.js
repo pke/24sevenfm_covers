@@ -1487,6 +1487,66 @@ test("resolves an explicitly marked game through SteamGridDB hero art", async ()
     assert.equal(tintUrl, "https://cdn2.steamgriddb.com/hero_thumb/hades.jpg");
 });
 
+test("retries SteamGridDB ampersand spelling after an exact game-title miss", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: {
+            TMDB_API_KEY: "tmdb-key",
+            FANART_API_KEY: "fanart-key",
+            STEAMGRIDDB_API_KEY: "sgdb-key",
+        },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname.endsWith(
+                "/search/autocomplete/Command%20and%20Conquer%3A%20Red%20Alert")) {
+                return response(200, { success: true, data: [{
+                    id: 1560, name: "Command & Conquer: Red Alert 3", verified: true,
+                }] });
+            }
+            if (parsed.pathname.endsWith(
+                "/search/autocomplete/Command%20%26%20Conquer%3A%20Red%20Alert")) {
+                return response(200, { success: true, data: [{
+                    id: 36154, name: "Command & Conquer: Red Alert", verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/36154") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/red-alert.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/red-alert.jpg",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [237, 224, 219],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Command & Conquer: Red Alert",
+        track: "Hell March",
+        artist: "Frank Klepacki",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 36154, title: "Command & Conquer: Red Alert", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/red-alert.png",
+        source: "steamgriddb",
+        tint: [237, 224, 219],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) =>
+        url.includes("Command%20and%20Conquer%3A%20Red%20Alert")), true);
+    assert.equal(requests.some((url) =>
+        url.includes("Command%20%26%20Conquer%3A%20Red%20Alert")), true);
+});
+
 test("resolves a portrait game request through a SteamGridDB vertical grid", async () => {
     const requests = [];
     let tintUrl = "";
