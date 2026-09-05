@@ -58,6 +58,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Crysis",
+        artist: "Inon Zur",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Enola Gay",
         artist: "Maurice Jarre",
         title: "Enola Gay: The Men, the Mission, the Atomic Bomb",

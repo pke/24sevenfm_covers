@@ -1497,6 +1497,44 @@ test("resolves the ambiguous Medal Of Honor station album as a game", async () =
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves Inon Zur's Crysis soundtrack as the game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Crysis")) return response(200, {
+                success: true, data: [{ id: 1548, name: "Crysis", verified: true }],
+            });
+            if (value.includes("/heroes/game/1548")) return response(200, {
+                success: true, data: [{ score: 9,
+                    url: "https://cdn2.steamgriddb.com/hero/crysis.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/crysis.png" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [244, 255, 240],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Crysis",
+        track: "Guardians",
+        artist: "Inon Zur",
+        providers: "fanart,tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 1548, title: "Crysis", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/crysis.png",
+        source: "steamgriddb",
+        tint: [244, 255, 240],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
 test("resolves the Enderal soundtrack to Enderal: Forgotten Stories", async () => {
     const requests = [];
     const handler = createHandler({
