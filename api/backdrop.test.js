@@ -301,7 +301,7 @@ test("resolves Jazz Loves Disney's Stay Awake to Mary Poppins", async () => {
     });
 });
 
-test("resolves Lullaby Of The Leaves to the 1996 Kansas City film", async () => {
+test("resolves verified soundtrack tracks to the 1996 Kansas City film", async () => {
     const searches = [];
     const handler = createHandler({
         env: { TMDB_API_KEY: "key" },
@@ -317,24 +317,34 @@ test("resolves Lullaby Of The Leaves to the 1996 Kansas City film", async () => 
         },
         tintForImage: async () => [255, 234, 218],
     });
-    const res = mockResponse();
-    await handler(mockRequest({
-        album: "Kansas City",
-        track: "Lullaby Of The Leaves",
-        artist: "Jesse Davis, Clark Gayton, Geri Allen",
-        providers: "tmdb",
-    }), res);
+    const tracks = [
+        { track: "Lullaby Of The Leaves", artist: "Jesse Davis, Clark Gayton, Geri Allen" },
+        { track: "Lafayette", artist: "Nicholas Payton, James Zollar, Olu Dara" },
+    ];
+    for (const metadata of tracks) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Kansas City",
+            track: metadata.track,
+            artist: metadata.artist,
+            providers: "tmdb",
+        }), res);
 
-    assert.equal(searches.length, 2);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 22479, title: "Kansas City", type: "movie" },
+            backdrop: "https://image.tmdb.org/t/p/w1280/kansas-city.jpg",
+            source: "tmdb",
+            tint: [255, 234, 218],
+        });
+    }
+
+    assert.equal(searches.length, 4);
     for (const search of searches) assert.equal(search.searchParams.get("query"), "Kansas City");
-    assert.equal(searches.find((search) => search.pathname.endsWith("/movie"))
-        .searchParams.get("primary_release_year"), "1996");
-    assert.deepEqual(JSON.parse(res.body), {
-        media: { id: 22479, title: "Kansas City", type: "movie" },
-        backdrop: "https://image.tmdb.org/t/p/w1280/kansas-city.jpg",
-        source: "tmdb",
-        tint: [255, 234, 218],
-    });
+    const movieSearches = searches.filter((search) => search.pathname.endsWith("/movie"));
+    assert.equal(movieSearches.length, 2);
+    for (const search of movieSearches) {
+        assert.equal(search.searchParams.get("primary_release_year"), "1996");
+    }
 });
 
 test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
