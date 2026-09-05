@@ -23,6 +23,7 @@ const {
     tintPreviewUrl,
     trustedCoverTintUrl,
     trustedSteamGridDbUrl,
+    trustedTvmazeUrl,
 } = require("./_lib/backdrop");
 
 test("normalizes the live The Wings Of A Film title in the resolver", () => {
@@ -2508,6 +2509,80 @@ test("resolves TV fanart through the series TheTVDB id", async () => {
         tint: [90, 100, 110],
     });
     assert.match(requests[2], /client_key=personal-key/);
+});
+
+test("resolves a TVmaze background through the exact series TheTVDB id", async () => {
+    const requests = [];
+    let tintUrl = "";
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-project-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/multi")) return response(200, { results: [{
+                id: 3476, media_type: "tv", name: "Inspector Morse", backdrop_path: "/tmdb.jpg",
+            }] });
+            if (value.includes("/tv/3476/external_ids")) return response(200, { tvdb_id: 76582 });
+            if (value.startsWith("https://api.tvmaze.com/lookup/shows")) {
+                assert.equal(new URL(value).searchParams.get("thetvdb"), "76582");
+                return response(200, { id: 3276, name: "Inspector Morse" });
+            }
+            if (value === "https://api.tvmaze.com/shows/3276/images") return response(200, [
+                { type: "poster", main: true, resolutions: { original: {
+                    url: "https://static.tvmaze.com/uploads/images/original_untouched/poster.jpg",
+                    width: 680, height: 1000,
+                } } },
+                { type: "background", main: true, resolutions: { original: {
+                    url: "https://example.com/untrusted.jpg", width: 3840, height: 2160,
+                } } },
+                { type: "background", main: false, resolutions: { original: {
+                    url: "https://static.tvmaze.com/uploads/images/original_untouched/223/558821.jpg",
+                    width: 1920, height: 1080,
+                } } },
+            ]);
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async (url) => { tintUrl = url; return [91, 101, 111]; },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({ title: "Inspector Morse", providers: "tvmaze,tmdb" }), res);
+
+    const backdrop = "https://static.tvmaze.com/uploads/images/original_untouched/223/558821.jpg";
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 3476, title: "Inspector Morse", type: "tv" },
+        backdrop,
+        source: "tvmaze",
+        tint: [91, 101, 111],
+    });
+    assert.equal(tintUrl, backdrop);
+    assert.equal(requests.filter((value) => value.includes("/external_ids")).length, 1);
+    assert.equal(trustedTvmazeUrl(backdrop), backdrop);
+    assert.equal(trustedTvmazeUrl("https://example.com/background.jpg"), "");
+});
+
+test("falls back to TMDB when TVmaze has no matching show", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            if (value.includes("/search/multi")) return response(200, { results: [{
+                id: 3476, media_type: "tv", name: "Inspector Morse", backdrop_path: "/morse.jpg",
+            }] });
+            if (value.includes("/tv/3476/external_ids")) return response(200, { tvdb_id: 76582 });
+            if (value.startsWith("https://api.tvmaze.com/lookup/shows")) return response(404, {});
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [120, 130, 140],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({ title: "Inspector Morse", providers: "tvmaze,tmdb" }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 3476, title: "Inspector Morse", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/morse.jpg",
+        source: "tmdb",
+        tint: [120, 130, 140],
+    });
 });
 
 test("falls back to the TMDB series backdrop when TV fanart is unavailable", async () => {

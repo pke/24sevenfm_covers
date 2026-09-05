@@ -172,7 +172,7 @@ the URL.
 | `color` | `tinted`, `legacy` | Select the spectrum color mode. |
 | `scope` | `line`, `dots`, `filled` | Select the oscilloscope style. |
 | `sstBackdrops` | `0`, `1` | Disable or enable SST screen artwork. |
-| `sstBackdropProviders` | comma-separated `fanart`, `tmdb`, `steamgriddb` | Select and order artwork providers. |
+| `sstBackdropProviders` | comma-separated `fanart`, `tmdb`, `tvmaze`, `steamgriddb` | Select and order artwork providers. |
 | `sstBackdropCover` | `show`, `hide` | Keep or hide the soundtrack cover when screen artwork is visible. |
 | `sstRatings` | `0`, `1` | Disable or enable SST age ratings. |
 | `sstRatingCountries` | comma-separated `DE`, `US` | Select rating countries. |

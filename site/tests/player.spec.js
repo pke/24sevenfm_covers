@@ -103,6 +103,7 @@ test.describe("the deployed player page", () => {
         expect(policy).toContain("connect-src 'self'");
         expect(policy).toContain("https://24covers-api.vercel.app");
         expect(policy).toContain("https://webservice.fanart.tv");
+        expect(policy).toContain("https://static.tvmaze.com");
         await expect(page.locator('meta[name="backdrop-api"]')).toHaveAttribute(
             "content", /^https:\/\/24covers-api\.vercel\.app\/api\/backdrop\?resolver_version=[a-f0-9]{12}$/);
         await expect(page.locator('meta[name="tint-api"]')).toHaveAttribute(
@@ -130,11 +131,13 @@ test.describe("the deployed player page", () => {
         const credits = page.locator("footer .art-credits");
         await expect(credits).toContainText(
             "This product uses the TMDB API but is not endorsed or certified by TMDB.");
-        await expect(credits.locator("a")).toHaveCount(3);
+        await expect(credits.locator("a")).toHaveCount(4);
         await expect(credits.locator("a").nth(0)).toHaveAttribute(
             "href", "https://www.themoviedb.org/");
         await expect(credits.locator("a").nth(1)).toHaveAttribute("href", "https://fanart.tv/");
         await expect(credits.locator("a").nth(2)).toHaveAttribute(
+            "href", "https://www.tvmaze.com/");
+        await expect(credits.locator("a").nth(3)).toHaveAttribute(
             "href", "https://www.steamgriddb.com/");
         await expect(credits.locator("img")).toHaveAttribute("src", "img/tmdb.svg");
         await expect.poll(() => credits.locator("img").evaluate((image) => image.naturalWidth))
@@ -1416,6 +1419,7 @@ test.describe("the deployed player page", () => {
         });
         await openBackdropSettings(page);
         await page.locator("#fanart-on").uncheck();
+        await page.locator("#tvmaze-on").uncheck();
         await page.locator("#steamgriddb-on").uncheck();
         await page.locator("#hide-cover").check();
 
@@ -5677,7 +5681,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#backdrops-enabled")).toBeChecked();
         expect(await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider)))
-            .toEqual(["fanart", "tmdb", "steamgriddb"]);
+            .toEqual(["fanart", "tmdb", "tvmaze", "steamgriddb"]);
     });
 
     test("keeps the selected station in the URL across a reload", async ({ page }) => {
@@ -5749,6 +5753,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#backdrops-enabled")).toBeChecked();
         await expect(page.locator("#tmdbart-on")).toBeChecked();
         await expect(page.locator("#fanart-on")).toBeChecked();
+        await expect(page.locator("#tvmaze-on")).not.toBeChecked();
         await expect(page.locator("#steamgriddb-on")).not.toBeChecked();
         await expect(page.locator("#hide-cover")).toBeChecked();
         await expect(page.locator("#ratings-enabled")).toBeChecked();
@@ -5757,7 +5762,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#fanart-key")).toHaveValue("");
         expect(await page.locator("#providers > .provider").evaluateAll((rows) =>
             rows.map((row) => row.dataset.provider)))
-            .toEqual(["tmdb", "fanart", "steamgriddb"]);
+            .toEqual(["tmdb", "fanart", "tvmaze", "steamgriddb"]);
         expect(await page.evaluate(() => JSON.parse(
             localStorage.getItem("24sevenfm-covers.player.v2"))))
             .toEqual(recipientSettings);
@@ -5833,6 +5838,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#backdrops-enabled")).not.toBeChecked();
         await expect(page.locator("#fanart-on")).toBeChecked();
         await expect(page.locator("#tmdbart-on")).toBeChecked();
+        await expect(page.locator("#tvmaze-on")).toBeChecked();
         await expect(page.locator("#steamgriddb-on")).toBeChecked();
         await expect(page.locator("#remaining-time-enabled")).not.toBeChecked();
         await expect(page.locator("#show-coming-next")).not.toBeChecked();
@@ -5924,12 +5930,14 @@ test.describe("the deployed player page", () => {
             }));
         expect(providers).toEqual([
             { id: "fanart", label: "fanart.tv", controlId: "fanart-on", enabled: true,
-                reorderLabel: expect.stringMatching(/^Reorder fanart\.tv, position 1 of 3\./) },
+                reorderLabel: expect.stringMatching(/^Reorder fanart\.tv, position 1 of 4\./) },
             { id: "tmdb", label: "TMDB backdrops", controlId: "tmdbart-on", enabled: true,
-                reorderLabel: expect.stringMatching(/^Reorder TMDB backdrops, position 2 of 3\./) },
+                reorderLabel: expect.stringMatching(/^Reorder TMDB backdrops, position 2 of 4\./) },
+            { id: "tvmaze", label: "TV backdrops by TVmaze", controlId: "tvmaze-on", enabled: true,
+                reorderLabel: expect.stringMatching(/^Reorder TV backdrops by TVmaze, position 3 of 4\./) },
             { id: "steamgriddb", label: "GameArt by SteamGridDB",
                 controlId: "steamgriddb-on", enabled: true,
-                reorderLabel: expect.stringMatching(/^Reorder GameArt by SteamGridDB, position 3 of 3\./) },
+                reorderLabel: expect.stringMatching(/^Reorder GameArt by SteamGridDB, position 4 of 4\./) },
         ]);
     });
     test("persists provider enablement inside backdrop options", async ({ page }) => {
@@ -5941,6 +5949,7 @@ test.describe("the deployed player page", () => {
 
         await expect(page.locator("#fanart-on")).not.toBeChecked();
         await expect(page.locator("#tmdbart-on")).toBeChecked();
+        await expect(page.locator("#tvmaze-on")).not.toBeChecked();
         await expect(page.locator("#steamgriddb-on")).not.toBeChecked();
         await page.locator("#fanart-on").check();
 
@@ -5965,17 +5974,17 @@ test.describe("the deployed player page", () => {
 
         await fanartGrip.focus();
         await fanartGrip.press("ArrowDown");
-        expect(await order()).toEqual(["tmdb", "fanart", "steamgriddb"]);
+        expect(await order()).toEqual(["tmdb", "fanart", "steamgriddb", "tvmaze"]);
         await expect(fanartGrip).toBeFocused();
-        await expect(fanartGrip).toHaveAttribute("aria-label", /position 2 of 3/);
-        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 3.");
+        await expect(fanartGrip).toHaveAttribute("aria-label", /position 2 of 4/);
+        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 4.");
 
         await page.reload({ waitUntil: "domcontentloaded" });
         await openBackdropSettings(page);
-        expect(await order()).toEqual(["tmdb", "fanart", "steamgriddb"]);
+        expect(await order()).toEqual(["tmdb", "fanart", "steamgriddb", "tvmaze"]);
         await fanartGrip.focus();
         await fanartGrip.press("ArrowUp");
-        expect(await order()).toEqual(["fanart", "tmdb", "steamgriddb"]);
+        expect(await order()).toEqual(["fanart", "tmdb", "steamgriddb", "tvmaze"]);
     });
 
     test("filters unknown provider IDs from v2 backdrop options", async ({ page }) => {
@@ -5987,7 +5996,7 @@ test.describe("the deployed player page", () => {
         await openBackdropSettings(page);
         const order = await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
-        expect(order).toEqual(["tmdb", "fanart", "steamgriddb"]);
+        expect(order).toEqual(["tmdb", "fanart", "tvmaze", "steamgriddb"]);
     });
 
     test("keeps backdrop providers pointer-draggable", async ({ page }) => {
@@ -6027,8 +6036,8 @@ test.describe("the deployed player page", () => {
 
         const order = await page.locator("#providers > .provider")
             .evaluateAll((rows) => rows.map((row) => row.dataset.provider));
-        expect(order).toEqual(["tmdb", "fanart", "steamgriddb"]);
-        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 3.");
+        expect(order).toEqual(["tmdb", "fanart", "tvmaze", "steamgriddb"]);
+        await expect(page.locator("#provider-status")).toHaveText("fanart.tv moved to position 2 of 4.");
     });
 
     test("loads, polls the station, and renders a real cover", async ({ page }) => {

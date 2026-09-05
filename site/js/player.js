@@ -2048,7 +2048,9 @@ function trustedResolvedBackdrop(raw, source) {
             ? host === "image.tmdb.org"
             : source === "fanart"
                 ? (host === "fanart.tv" || host.endsWith(".fanart.tv"))
-                : source === "steamgriddb" && host === "cdn2.steamgriddb.com";
+                : source === "tvmaze"
+                    ? host === "static.tvmaze.com"
+                    : source === "steamgriddb" && host === "cdn2.steamgriddb.com";
         return trusted && url.protocol === "https:" && !url.username && !url.password
             ? url.href : "";
     } catch (e) { return ""; }

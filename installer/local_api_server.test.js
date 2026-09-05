@@ -21,7 +21,7 @@ function backchannelReport() {
             backdropsEnabled: true,
             ratingsEnabled: false,
             fanartPersonalKeyConfigured: false,
-            providers: ["fanart", "tmdb"],
+            providers: ["fanart", "tmdb", "tvmaze"],
             coverPolicy: "hide",
         },
         display: {
@@ -30,7 +30,7 @@ function backchannelReport() {
             resolver: {
                 request: {
                     album: "La Mula", track: "El Tocadiscos", artist: "Oscar Navarro",
-                    providers: ["fanart", "tmdb"], includeArt: true, includeRatings: false,
+                    providers: ["fanart", "tmdb", "tvmaze"], includeArt: true, includeRatings: false,
                 },
                 result: {
                     media: { id: 172265, title: "La Mula", type: "movie" },

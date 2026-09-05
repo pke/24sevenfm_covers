@@ -561,11 +561,12 @@ function requestQueryValue(req, name) {
 }
 
 function requestedProviders(value) {
-    const raw = typeof value === "string" && value ? value : "fanart,tmdb,steamgriddb";
+    const raw = typeof value === "string" && value ? value : "fanart,tmdb,tvmaze,steamgriddb";
     const providers = raw.split(",").map((entry) => entry.trim().toLowerCase());
-    if (!providers.length || providers.some((entry) => !["fanart", "tmdb", "steamgriddb"].includes(entry))) {
+    if (!providers.length || providers.some((entry) =>
+        !["fanart", "tmdb", "tvmaze", "steamgriddb"].includes(entry))) {
         throw new ResolverError("invalid_providers", 400,
-            "providers must contain fanart, tmdb, and/or steamgriddb");
+            "providers must contain fanart, tmdb, tvmaze, and/or steamgriddb");
     }
     return [...new Set(providers)];
 }
@@ -913,15 +914,19 @@ function trustedFanartUrl(raw) {
     }
 }
 
-async function fanartBackdrop(fetchImpl, media, clientKey, env) {
+async function fanartBackdrop(fetchImpl, media, clientKey, env, knownTvdbId) {
     if (!env.FANART_API_KEY) return "";
     const type = mediaType(media);
     let fanartId = String(media && media.id || "");
     if (type === "tv") {
-        try {
-            fanartId = await tvdbIdForTmdbSeries(fetchImpl, media.id, env);
-        } catch (error) {
-            return "";
+        if (knownTvdbId === undefined) {
+            try {
+                fanartId = await tvdbIdForTmdbSeries(fetchImpl, media.id, env);
+            } catch (error) {
+                return "";
+            }
+        } else {
+            fanartId = knownTvdbId;
         }
     }
     if (!fanartId) return "";
@@ -949,6 +954,57 @@ async function fanartBackdrop(fetchImpl, media, clientKey, env) {
     return "";
 }
 
+function trustedTvmazeUrl(raw) {
+    try {
+        const url = new URL(String(raw || ""));
+        if (url.protocol !== "https:" || url.username || url.password
+                || url.hostname.toLowerCase() !== "static.tvmaze.com") return "";
+        return url.href;
+    } catch (error) {
+        return "";
+    }
+}
+
+async function tvmazeBackdrop(fetchImpl, media, tvdbId) {
+    if (mediaType(media) !== "tv" || !tvdbId) return "";
+    const lookupUrl = new URL("https://api.tvmaze.com/lookup/shows");
+    lookupUrl.searchParams.set("thetvdb", tvdbId);
+    let show;
+    try {
+        show = await fetchJson(fetchImpl, lookupUrl, {
+            headers: { "Accept": "application/json" },
+        }, "tvmaze");
+    } catch (error) {
+        // TVmaze is an optional art source. A miss or outage must not block later providers.
+        return "";
+    }
+    const showId = Number(show && show.id);
+    if (!Number.isSafeInteger(showId) || showId <= 0) return "";
+    let images;
+    try {
+        images = await fetchJson(fetchImpl,
+            new URL("https://api.tvmaze.com/shows/" + encodeURIComponent(showId) + "/images"), {
+                headers: { "Accept": "application/json" },
+            }, "tvmaze");
+    } catch (error) {
+        return "";
+    }
+    const candidates = Array.isArray(images) ? images.filter((candidate) =>
+        candidate && candidate.type === "background").slice() : [];
+    const area = (candidate) => {
+        const original = candidate && candidate.resolutions && candidate.resolutions.original;
+        return Math.max(0, Number(original && original.width) || 0)
+            * Math.max(0, Number(original && original.height) || 0);
+    };
+    candidates.sort((a, b) => Number(!!b.main) - Number(!!a.main) || area(b) - area(a));
+    for (const candidate of candidates) {
+        const original = candidate.resolutions && candidate.resolutions.original;
+        const trusted = trustedTvmazeUrl(original && original.url);
+        if (trusted) return trusted;
+    }
+    return "";
+}
+
 function tmdbImageUrl(path, size) {
     if (typeof path !== "string" || !/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(path)) return "";
     return "https://image.tmdb.org/t/p/" + size + path;
@@ -956,6 +1012,7 @@ function tmdbImageUrl(path, size) {
 
 function tintPreviewUrl(source, backdrop, tmdbPath) {
     if (source === "tmdb") return tmdbImageUrl(tmdbPath, "w92");
+    if (source === "tvmaze") return trustedTvmazeUrl(backdrop);
     if (source !== "fanart") return "";
     try {
         const url = new URL(backdrop);
@@ -1122,12 +1179,23 @@ function hasSteamGridDbCredential(env) {
 }
 
 async function screenArt(fetchImpl, media, providers, clientKey, env) {
+    let tvdbIdPromise = null;
+    const tvdbId = () => {
+        if (!tvdbIdPromise) {
+            tvdbIdPromise = tvdbIdForTmdbSeries(fetchImpl, media.id, env)
+                .catch(() => "");
+        }
+        return tvdbIdPromise;
+    };
     for (const provider of providers) {
         let url = "";
         if (provider === "fanart") {
-            url = await fanartBackdrop(fetchImpl, media, clientKey, env);
+            url = await fanartBackdrop(fetchImpl, media, clientKey, env,
+                mediaType(media) === "tv" && env.FANART_API_KEY ? await tvdbId() : undefined);
         } else if (provider === "tmdb") {
             url = tmdbImageUrl(media.backdrop_path, "w1280");
+        } else if (provider === "tvmaze" && mediaType(media) === "tv") {
+            url = await tvmazeBackdrop(fetchImpl, media, await tvdbId());
         }
         if (url) {
             return {
@@ -1246,7 +1314,8 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     const requireExactScreenMatch = options.requireExactScreenMatch === true;
     const hint = configuredMediaHint(query, requestHint, dependencies.env);
     const wantsScreen = ratingCountries.length > 0 || (includeArt
-        && providers.some((provider) => provider === "fanart" || provider === "tmdb"));
+        && providers.some((provider) =>
+            provider === "fanart" || provider === "tmdb" || provider === "tvmaze"));
     const wantsGame = includeArt && providers.includes("steamgriddb");
     const screenAvailable = wantsScreen && hasTmdbCredential(dependencies.env);
     const gameAvailable = wantsGame && hasSteamGridDbCredential(dependencies.env);
@@ -1268,7 +1337,8 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             const rank = (category) => category === "game"
                 ? providers.indexOf("steamgriddb")
                 : Math.min(...providers.map((provider, index) =>
-                    provider === "fanart" || provider === "tmdb" ? index : Infinity));
+                    provider === "fanart" || provider === "tmdb" || provider === "tvmaze"
+                        ? index : Infinity));
             return rank(a) - rank(b);
         });
     }
@@ -1678,4 +1748,5 @@ module.exports = {
     tintHandler,
     trustedCoverTintUrl,
     trustedSteamGridDbUrl,
+    trustedTvmazeUrl,
 };

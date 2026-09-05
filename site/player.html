@@ -10,7 +10,7 @@
         https://streamingsoundtracks.com https://*.streamingsoundtracks.com
         https://1980s.fm https://*.1980s.fm https://adagio.fm https://*.adagio.fm
         https://death.fm https://*.death.fm https://entranced.fm https://*.entranced.fm
-        https://image.tmdb.org https://fanart.tv https://*.fanart.tv
+        https://image.tmdb.org https://fanart.tv https://*.fanart.tv https://static.tvmaze.com
         https://cdn2.steamgriddb.com https://upload.wikimedia.org
         https://24covers-api.vercel.app;
       connect-src 'self'
@@ -222,7 +222,7 @@
                 <!-- Art providers by priority: drag ⠿ or focus it and use arrow keys;
                      player.js sorts these to the saved order. The topmost ENABLED provider that has
                      art for the matched work wins; the others are fallback. TMDB searches movie/TV
-                     titles, SteamGridDB searches games, and fanart.tv uses the TMDB match. -->
+                     titles, SteamGridDB searches games, and fanart.tv and TVmaze use the TMDB match. -->
                 <ul class="providers" id="providers" aria-label="Backdrop providers, in priority order">
                     <li class="provider" data-provider="fanart">
                         <button type="button" class="grip" title="Drag or use arrow keys to change priority"
@@ -253,6 +253,11 @@
                         <button type="button" class="grip" title="Drag or use arrow keys to change priority"
                                 aria-label="Reorder TMDB provider">⠿</button>
                         <label><input type="checkbox" id="tmdbart-on"> TMDB backdrops</label>
+                    </li>
+                    <li class="provider" data-provider="tvmaze">
+                        <button type="button" class="grip" title="Drag or use arrow keys to change priority"
+                                aria-label="Reorder TVmaze provider">⠿</button>
+                        <label><input type="checkbox" id="tvmaze-on"> TV backdrops by TVmaze</label>
                     </li>
                     <li class="provider" data-provider="steamgriddb">
                         <button type="button" class="grip" title="Drag or use arrow keys to change priority"
@@ -520,6 +525,7 @@
                 <img src="img/tmdb.svg" alt="TMDB" width="100" height="13">
             </a>
             <a href="https://fanart.tv/">Artwork by fanart.tv</a>
+            <a href="https://www.tvmaze.com/">TV data &amp; artwork by TVmaze</a>
             <a href="https://www.steamgriddb.com/">GameArt by SteamGridDB</a>
         </p>
         <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>

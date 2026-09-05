@@ -8,8 +8,8 @@ const { execFile } = require("node:child_process");
 const MAX_BODY_BYTES = 12 * 1024;
 const QUEUE_TIMEOUT_MS = 30 * 1000;
 const QUEUE_COOLDOWN_MS = 2000;
-const PROVIDERS = new Set(["fanart", "tmdb", "steamgriddb"]);
-const SOURCES = new Set(["fanart", "tmdb", "steamgriddb"]);
+const PROVIDERS = new Set(["fanart", "tmdb", "tvmaze", "steamgriddb"]);
+const SOURCES = new Set(["fanart", "tmdb", "tvmaze", "steamgriddb"]);
 
 function sendJson(res, status, body) {
     if (res.writableEnded) return;
@@ -127,7 +127,9 @@ function trustedBackdrop(value, source) {
             ? host === "image.tmdb.org"
             : source === "fanart"
                 ? host === "fanart.tv" || host.endsWith(".fanart.tv")
-                : source === "steamgriddb" && host === "cdn2.steamgriddb.com";
+                : source === "tvmaze"
+                    ? host === "static.tvmaze.com"
+                    : source === "steamgriddb" && host === "cdn2.steamgriddb.com";
         if (!trusted || url.protocol !== "https:" || url.username || url.password)
             throw new Error("untrusted backdrop");
         return url.href;
@@ -158,7 +160,7 @@ function normalizedResolver(value) {
             track: text(request.track, 300),
             artist: text(request.artist, 180),
             providers: Array.isArray(request.providers)
-                ? request.providers.filter((provider) => PROVIDERS.has(provider)).slice(0, 3) : [],
+                ? request.providers.filter((provider) => PROVIDERS.has(provider)).slice(0, 4) : [],
             includeArt: boolean(request.includeArt),
             includeRatings: boolean(request.includeRatings),
         },
@@ -184,7 +186,7 @@ function normalizeReport(value) {
     if (!settings || !display)
         throw Object.assign(new Error("invalid_report"), { code: "invalid_report" });
     const providers = Array.isArray(settings.providers) ? settings.providers : null;
-    if (!providers || providers.length > 3 || providers.some((provider) => !PROVIDERS.has(provider)))
+    if (!providers || providers.length > 4 || providers.some((provider) => !PROVIDERS.has(provider)))
         throw Object.assign(new Error("invalid_report"), { code: "invalid_report" });
     const coverPolicy = text(settings.coverPolicy, 8, true);
     if (coverPolicy !== "show" && coverPolicy !== "hide")

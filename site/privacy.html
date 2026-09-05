@@ -94,8 +94,9 @@
                 address and request metadata; the resolver then queries
                 <a href="https://www.themoviedb.org/">The Movie Database</a> for movie/TV matching,
                 <a href="https://www.steamgriddb.com/">SteamGridDB</a> for game matching, and a matched
-                movie or TV-series identifier to <a href="https://fanart.tv/">fanart.tv</a> when that
-                provider is enabled. Those providers see the resolver's metadata request rather than
+                movie or TV-series identifier to <a href="https://fanart.tv/">fanart.tv</a>, or a
+                matched TV-series identifier to <a href="https://www.tvmaze.com/">TVmaze</a>, when the
+                respective provider is enabled. Those providers see the resolver's metadata request rather than
                 your browser's IP. During artwork matching, the browser does not call their metadata
                 APIs directly; only the explicit fanart.tv key check does so. The browser does load
                 the selected image from the provider's CDN, which necessarily receives your IP address
@@ -105,6 +106,7 @@
                 (<a href="https://vercel.com/legal/privacy-policy">Vercel</a>,
                 <a href="https://www.themoviedb.org/privacy-policy">TMDB</a>,
                 <a href="https://fanart.tv/privacy-policy/">fanart.tv</a>,
+                <a href="https://www.tvmaze.com/site/privacy">TVmaze</a>,
                 <a href="https://www.steamgriddb.com/privacy">SteamGridDB</a>). Leave both media options
                 off and no soundtrack title or backdrop-provider request is made; cover-tint requests
                 still occur.</p>
