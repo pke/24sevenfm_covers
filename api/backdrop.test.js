@@ -455,6 +455,58 @@ test("resolves Goblin's Phenomena soundtrack tracks to the 1985 film", async () 
     ]);
 });
 
+test("resolves the DC compilation Flying Sequence to Superman (1978)", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/movie") {
+                searches.push(parsed);
+                return response(200, { results: [{
+                    id: 1924, title: "Superman", release_date: "1978-12-14",
+                    backdrop_path: "/superman.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/1924/release_dates") return response(200, {
+                results: [{ iso_3166_1: "US", release_dates: [
+                    { certification: "PG", type: 3 },
+                ] }],
+            });
+            if (parsed.pathname === "/v3/movies/1924") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/superman.jpg",
+                    lang: "", likes: "10",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [203, 237, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Music Of DC Comics, The: Volume 2",
+        track: "The Flying Sequence / Can You Read My Mind? (Feat Margot Kidder) (1978)",
+        artist: "John Williams",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 1924, title: "Superman", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/superman.jpg",
+        source: "fanart",
+        tint: [203, 237, 255],
+        certifications: [{
+            country: "US", system: "MPA", rating: "PG", label: "PG",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/9/9a/MPA_PG_RATING.svg",
+        }],
+    });
+    assert.equal(searches.length, 1);
+    assert.equal(searches[0].searchParams.get("query"), "Superman");
+    assert.equal(searches[0].searchParams.get("primary_release_year"), "1978");
+});
+
 test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
     const providerQueries = [];
     const handler = createHandler({

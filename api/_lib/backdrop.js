@@ -52,6 +52,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Music Of DC Comics, The: Volume 2",
+        track: "The Flying Sequence / Can You Read My Mind? (Feat Margot Kidder) (1978)",
+        artist: "John Williams",
+        title: "Superman (1978)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Kansas City",
         track: "Lullaby Of The Leaves",
         title: "Kansas City (1996)",
