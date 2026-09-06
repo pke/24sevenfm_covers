@@ -317,7 +317,7 @@ function isTrackPrefixedMovieCompilation(title) {
 }
 
 function isTrackTitledGameCompilation(title) {
-    return /^video games live(?:\s*:\s*level\s*\d+)?$/i.test(title);
+    return /^video games live(?:\s*(?::\s*level|,\s*vol(?:ume)?\.?)\s*\d+)?$/i.test(title);
 }
 
 function isTrackTitledTvCompilation(title) {
@@ -456,7 +456,7 @@ function backdropTitleFor(album, track) {
     }
     if (isTrackTitledGameCompilation(normalizedAlbum)) {
         const workTitle = cleanMovieTitle(track)
-            .replace(/\s+(?:symphonic\s+)?suite\s*$/i, "").trim();
+            .replace(/\s+(?:symphonic\s+)?(?:suite|medley)\s*$/i, "").trim();
         if (workTitle) return workTitle;
     }
     if (isTrackPrefixedMovieCompilation(normalizedAlbum)) {
@@ -893,14 +893,25 @@ function normalizedTitleWords(title) {
         .toLowerCase().match(/[a-z0-9]+/g) || [];
 }
 
+function normalizedGameCatalogTitle(title) {
+    // SteamGridDB retains the publisher's branding in titles such as
+    // "Sid Meier's Civilization IV", while soundtrack track lists commonly omit it.
+    // Ignore only that complete leading brand and keep the remainder exact.
+    const words = normalizedTitleWords(title);
+    if (words[0] === "sid" && words[1] === "meier" && words[2] === "s") {
+        return normalizedTitle(words.slice(3).join(" "));
+    }
+    return normalizedTitle(title);
+}
+
 function pickGame(results, query, options = {}) {
     const datedTitle = String(query || "").match(/^(.*?)\s*\(((?:18|19|20|21)\d{2})\)\s*$/);
     const searchTitle = datedTitle ? datedTitle[1].trim() : query;
-    const wanted = normalizedTitle(searchTitle);
+    const wanted = normalizedGameCatalogTitle(searchTitle);
     const valid = (Array.isArray(results) ? results : []).filter((game) => game
         && Number.isSafeInteger(Number(game.id)) && Number(game.id) > 0
         && normalizedTitle(game.name));
-    const exact = valid.filter((game) => normalizedTitle(game.name) === wanted);
+    const exact = valid.filter((game) => normalizedGameCatalogTitle(game.name) === wanted);
     if (datedTitle) {
         const wantedYear = Number(datedTitle[2]);
         const sameYear = exact.find((game) => gameReleaseYear(game) === wantedYear);
@@ -913,8 +924,9 @@ function pickGame(results, query, options = {}) {
     // separated title ending in "Pack"; arbitrary subtitles must remain exact.
     const packBaseTitle = baseGamePackTitle(searchTitle);
     if (packBaseTitle) {
-        const baseWanted = normalizedTitle(packBaseTitle);
-        const baseExact = valid.filter((game) => normalizedTitle(game.name) === baseWanted);
+        const baseWanted = normalizedGameCatalogTitle(packBaseTitle);
+        const baseExact = valid.filter((game) =>
+            normalizedGameCatalogTitle(game.name) === baseWanted);
         if (baseExact.length) return baseExact.find((game) => game.verified) || baseExact[0];
     }
 

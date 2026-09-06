@@ -1218,6 +1218,7 @@ test("infers only explicit game, movie, and TV soundtrack markers", () => {
     assert.equal(mediaHintForAlbum("Hades (Original Video Game Soundtrack)"), "game");
     assert.equal(mediaHintForAlbum("Journey - Music From The Video Game"), "game");
     assert.equal(mediaHintForAlbum("Video Games Live: Level 2"), "game");
+    assert.equal(mediaHintForAlbum("Video Games Live, Vol. 1"), "game");
     assert.equal(mediaHintForAlbum("Defiance (Video Game)"), "game");
     assert.equal(mediaHintForAlbum("Arrival (Original Motion Picture Soundtrack)"), "movie");
     assert.equal(mediaHintForAlbum("Doctor Who (Original Television Soundtrack)"), "tv");
@@ -1240,6 +1241,8 @@ test("uses the track title for a Video Games Live compilation", () => {
         "The Legend Of Zelda Suite"), "The Legend Of Zelda");
     assert.equal(backdropTitleFor("Video Games Live: Level 5",
         "Phoenix Wright"), "Phoenix Wright");
+    assert.equal(backdropTitleFor("Video Games Live, Vol. 1",
+        "Civilization IV Medley"), "Civilization IV");
 });
 
 test("uses a conservative SteamGridDB title extension for game compilations", () => {
@@ -2716,6 +2719,54 @@ test("resolves a Video Games Live suite through its game track", async () => {
         backdrop: "https://cdn2.steamgriddb.com/hero/zelda.jpg",
         source: "steamgriddb",
         tint: [10, 20, 30],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
+test("resolves a numbered Video Games Live volume and medley to its exact branded game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Civilization%20IV")) {
+                return response(200, { success: true, data: [{
+                    id: 1533, name: "Sid Meier's Civilization IV: Colonization", verified: true,
+                }, {
+                    id: 6433, name: "Sid Meier's Civilization IV", verified: true,
+                }, {
+                    id: 6439, name: "Sid Meier's Civilization IV: Beyond the Sword",
+                    verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/6433")) return response(200, {
+                success: true,
+                data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/civilization-iv.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/civilization-iv.jpg" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [178, 226, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Video Games Live, Vol. 1",
+        track: "Civilization IV Medley",
+        artist: "Christopher Tin",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 6433, title: "Sid Meier's Civilization IV", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/civilization-iv.jpg",
+        source: "steamgriddb",
+        tint: [178, 226, 255],
+        certifications: [],
     });
     assert.equal(requests.length, 2);
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
