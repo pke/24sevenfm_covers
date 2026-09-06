@@ -2579,6 +2579,50 @@ test("resolves a Summoning of Spirits remix to its exact source game", async () 
     assert.equal(requests.length, 2);
 });
 
+test("resolves the Summoning of Spirits Final Destination remix to Tales of Symphonia", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/api/v2/search/autocomplete/Tales%20of%20Symphonia") {
+                return response(200, { success: true, data: [
+                    { id: 7777, name: "Tales of Symphonia", verified: true },
+                ] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/7777") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/tales-of-symphonia.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/tales-of-symphonia.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [216, 220, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Summoning Of Spirits",
+        track: "Holy Judgement (Final Destination)",
+        artist: "PriZm, Christian Pacaud",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 7777, title: "Tales of Symphonia", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/tales-of-symphonia.png",
+        source: "steamgriddb",
+        tint: [216, 220, 255],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+});
+
 test("resolves a Video Games Live suite through its game track", async () => {
     const requests = [];
     const handler = createHandler({

@@ -128,6 +128,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Summoning Of Spirits",
+        track: "Holy Judgement (Final Destination)",
+        title: "Tales of Symphonia",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Cinemagic",
         track: "Fratelli Chase",
         artist: "Dave Grusin",
