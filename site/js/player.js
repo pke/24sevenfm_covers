@@ -1608,7 +1608,7 @@ async function poll() {
         if (album !== currentAlbum || track !== currentTrack || artist !== currentArtist
                 || isStationId !== stationIdActive) {
             const metadataChanged = trackIdentityChanged || artist !== currentArtist;
-            if (trackIdentityChanged) {
+            if (trackIdentityChanged && !isStationId) {
                 setNextTrack(null);
                 // If the outgoing movie backdrop hid its cover, keep that cover
                 // suppressed while a backdrop miss fades away. showCover() releases
@@ -1644,7 +1644,11 @@ async function poll() {
         const trackToken = [album, track, isStationId ? "station" : displayCover].join("\n");
         if (localNowPlayingPreview) schedulePoll(MAX_POLL);
         else scheduleHealthyPoll(trackToken, lengthSec, remaining, timingIsValid);
-        if (!localNowPlayingPreview && (trackIdentityChanged || !queueSnapshotReady))
+        // An inserted station ident can play after the scheduler has already removed
+        // the following music track from GetQueue. Preserve the existing snapshot
+        // across that ident or Coming next would skip to the track after it.
+        if (!localNowPlayingPreview && (!queueSnapshotReady
+                || (trackIdentityChanged && !isStationId)))
             refreshQueue(); // fire-and-forget: one snapshot per confirmed track
     } catch (e) {
         if (ctl !== inflight) return;
