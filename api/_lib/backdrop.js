@@ -41,6 +41,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "tv",
     }),
     Object.freeze({
+        album: "Crash: Original Score From The Series, Vol. 1",
+        artist: "Mark Isham & Cindy O'Connor",
+        title: "Crash (2008)",
+        hint: "tv",
+    }),
+    Object.freeze({
         album: "Simpsons, The: Songs In The Key Of Springfield",
         title: "The Simpsons",
         hint: "tv",

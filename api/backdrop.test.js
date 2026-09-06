@@ -589,6 +589,62 @@ test("resolves The Snowmen soundtrack cue to the modern Doctor Who series", asyn
     });
 });
 
+test("resolves the Crash series score to the 2008 TV series", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/movie") {
+                searches.push(parsed);
+                return response(200, { results: [{
+                    id: 1640, title: "Crash", release_date: "2004-09-10",
+                    backdrop_path: "/crash-movie.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                searches.push(parsed);
+                return response(200, { results: [{
+                    id: 8016, name: "Crash", first_air_date: "2008-10-17",
+                    backdrop_path: "/crash-series.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/tv/8016/content_ratings") return response(200, {
+                results: [{ iso_3166_1: "US", rating: "TV-MA" }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [154, 188, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Crash: Original Score From The Series, Vol. 1",
+        track: "Spray Paint",
+        artist: "Mark Isham & Cindy O'Connor",
+        providers: "tmdb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(searches.length, 2);
+    for (const search of searches) assert.equal(search.searchParams.get("query"), "Crash");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/movie"))
+        .searchParams.get("primary_release_year"), "2008");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/tv"))
+        .searchParams.get("first_air_date_year"), "2008");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 8016, title: "Crash", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/crash-series.jpg",
+        source: "tmdb",
+        tint: [154, 188, 255],
+        certifications: [{
+            country: "US", system: "TV Parental Guidelines", rating: "TV-MA",
+            label: "TV-MA",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg",
+            descriptors: [],
+        }],
+    });
+});
+
 test("resolves the live Film Noir's Finest TV cue through its track prefix", async () => {
     let providerQuery = "";
     const handler = createHandler({
