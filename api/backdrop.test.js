@@ -2068,6 +2068,48 @@ test("resolves Inon Zur's Crysis soundtrack as the game", async () => {
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves Jack Wall's Myst 3 album to Myst III: Exile", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Myst%20III%3A%20Exile")) {
+                return response(200, { success: true, data: [{
+                    id: 30851, name: "Myst III: Exile", verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/30851")) return response(200, {
+                success: true, data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/myst-iii-exile.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/myst-iii-exile.png",
+                }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [234, 243, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Myst 3, Exile",
+        track: "Opening Titles",
+        artist: "Jack Wall",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 30851, title: "Myst III: Exile", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/myst-iii-exile.png",
+        source: "steamgriddb",
+        tint: [234, 243, 255],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+});
+
 test("resolves the Enderal soundtrack to Enderal: Forgotten Stories", async () => {
     const requests = [];
     const handler = createHandler({

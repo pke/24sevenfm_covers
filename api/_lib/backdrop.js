@@ -100,6 +100,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Myst 3, Exile",
+        artist: "Jack Wall",
+        title: "Myst III: Exile",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Stellaris: Utopia",
         title: "Stellaris",
         hint: "game",
