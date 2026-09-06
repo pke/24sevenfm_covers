@@ -395,7 +395,7 @@ test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", 
     }
 });
 
-test("resolves Goblin's Phenomena theme to the 1985 film", async () => {
+test("resolves Goblin's Phenomena soundtrack tracks to the 1985 film", async () => {
     const requests = [];
     const handler = createHandler({
         env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
@@ -422,16 +422,7 @@ test("resolves Goblin's Phenomena theme to the 1985 film", async () => {
         },
         tintForImage: async () => [233, 229, 255],
     });
-    const res = mockResponse();
-    await handler(mockRequest({
-        album: "Phenomena",
-        track: "Phenomena",
-        artist: "Goblin",
-        providers: "fanart,tmdb,tvmaze,steamgriddb",
-        ratings: "US",
-    }), res);
-
-    assert.deepEqual(JSON.parse(res.body), {
+    const expected = {
         media: { id: 29161, title: "Phenomena", type: "movie" },
         backdrop: "https://assets.fanart.tv/fanart/phenomena.jpg",
         source: "fanart",
@@ -440,11 +431,26 @@ test("resolves Goblin's Phenomena theme to the 1985 film", async () => {
             country: "US", system: "MPA", rating: "R", label: "R",
             logo: "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
         }],
-    });
+    };
+    for (const track of ["Phenomena", "Jennifer's Friends"]) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Phenomena",
+            track,
+            artist: "Goblin",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ratings: "US",
+        }), res);
+        assert.deepEqual(JSON.parse(res.body), expected);
+    }
     assert.deepEqual(requests.sort(), [
         "/3/movie/29161/release_dates",
+        "/3/movie/29161/release_dates",
+        "/3/search/movie",
         "/3/search/movie",
         "/3/search/tv",
+        "/3/search/tv",
+        "/v3/movies/29161",
         "/v3/movies/29161",
     ]);
 });

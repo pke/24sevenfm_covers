@@ -142,7 +142,6 @@ const METADATA_RESOLUTIONS = Object.freeze([
     }),
     Object.freeze({
         album: "Phenomena",
-        track: "Phenomena",
         artist: "Goblin",
         title: "Phenomena (1985)",
         hint: "movie",
