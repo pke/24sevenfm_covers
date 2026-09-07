@@ -789,6 +789,69 @@ test("resolves a TV book soundtrack to its series", async () => {
     });
 });
 
+test("removes a TV volume and chapter range before rotating its title article", async () => {
+    const album = "Book Of Boba Fett, The: Vol. 1 (Chapters 1-4)";
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "The Book Of Boba Fett");
+                return response(200, { results: [{
+                    id: 115036,
+                    media_type: "tv",
+                    name: "The Book of Boba Fett",
+                    backdrop_path: "/book-of-boba-fett.jpg",
+                    poster_path: "/book-of-boba-fett-poster.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/tv/115036/content_ratings") {
+                return response(200, {
+                    results: [{ iso_3166_1: "US", rating: "TV-14" }],
+                });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 220, 149],
+    });
+    const res = mockResponse();
+
+    assert.equal(cleanMovieTitle(album), "The Book Of Boba Fett");
+    assert.equal(backdropTitleFor(album, "Road Rage"), "The Book Of Boba Fett");
+    await handler(mockRequest({
+        album,
+        track: "Road Rage",
+        artist: "Joseph Shirley & Ludwig Goransson",
+        providers: "tmdb",
+        ratings: "US",
+        orientation: "portrait",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/person", "/3/search/multi", "/3/tv/115036/content_ratings",
+    ]));
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 115036, title: "The Book of Boba Fett", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w780/book-of-boba-fett-poster.jpg",
+        source: "tmdb",
+        tint: [255, 220, 149],
+        certifications: [{
+            country: "US",
+            system: "TV Parental Guidelines",
+            rating: "TV-14",
+            label: "TV-14",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/c/c3/TV-14_icon.svg",
+            descriptors: [],
+        }],
+    });
+});
+
 test("removes parenthesized soundtrack volumes from animated series titles", () => {
     assert.equal(cleanMovieTitle("Green Lantern: The Animated Series (Volume Two)"),
         "Green Lantern: The Animated Series");
