@@ -2174,6 +2174,37 @@ test("resolves Jack Wall's Myst 3 album to Myst III: Exile", async () => {
     assert.equal(requests.length, 2);
 });
 
+test("does not resolve George Christopoulos' Alpha Centauri album as screen media or a game",
+    async () => {
+        let requests = 0;
+        const handler = createHandler({
+            env: {},
+            fetchImpl: async () => {
+                requests++;
+                throw new Error("must not query a media provider");
+            },
+            tintForImage: async () => { throw new Error("must not resolve tint"); },
+        });
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Alpha Centauri",
+            track: "Alpha Centauri",
+            artist: "George Christopoulos",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ratings: "US",
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: null,
+            backdrop: null,
+            source: null,
+            tint: [255, 255, 255],
+            certifications: [],
+        });
+        assert.equal(requests, 0);
+    });
+
 test("resolves the Enderal soundtrack to Enderal: Forgotten Stories", async () => {
     const requests = [];
     const handler = createHandler({

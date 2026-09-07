@@ -113,6 +113,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Alpha Centauri",
+        artist: "George Christopoulos",
+        suppress: true,
+    }),
+    Object.freeze({
         album: "Stellaris: Utopia",
         title: "Stellaris",
         hint: "game",
@@ -1543,6 +1548,11 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     const screenQueries = Array.isArray(options.screenQueries) && options.screenQueries.length
         ? options.screenQueries : [query];
     const requireExactScreenMatch = options.requireExactScreenMatch === true;
+    if (options.suppress === true) {
+        return withCertifications(
+            { media: null, backdrop: null, source: null, tint: [...WHITE_TINT] },
+            [], ratingCountries);
+    }
     const hint = configuredMediaHint(query, requestHint, dependencies.env);
     const wantsScreen = ratingCountries.length > 0 || (includeArt
         && providers.some((provider) =>
@@ -1878,6 +1888,7 @@ function createHandler(options = {}) {
                 ratingCountries,
                 includeArt,
                 artOrientation,
+                suppress: !!(metadataResolution && metadataResolution.suppress),
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
                     || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle
