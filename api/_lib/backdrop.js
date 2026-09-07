@@ -58,6 +58,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Indiana Jones: The Soundtracks Collection",
+        track: "Indy's Very First Adventure",
+        artist: "John Williams",
+        title: "Indiana Jones and the Last Crusade (1989)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Music Of DC Comics, The: Volume 2",
         track: "The Flying Sequence / Can You Read My Mind? (Feat Margot Kidder) (1978)",
         artist: "John Williams",

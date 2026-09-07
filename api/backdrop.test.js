@@ -301,6 +301,70 @@ test("resolves Jazz Loves Disney's Stay Awake to Mary Poppins", async () => {
     });
 });
 
+test("resolves Indy's Very First Adventure to The Last Crusade", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/movie") {
+                searches.push(parsed);
+                return response(200, { results: [{
+                    id: 89,
+                    title: "Indiana Jones and the Last Crusade",
+                    release_date: "1989-05-24",
+                    backdrop_path: "/last-crusade.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                searches.push(parsed);
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/movie/89/release_dates") return response(200, {
+                results: [{ iso_3166_1: "US", release_dates: [
+                    { certification: "PG-13", type: 3 },
+                ] }],
+            });
+            if (parsed.pathname === "/v3/movies/89") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/last-crusade.jpg",
+                    lang: "", likes: "10",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 221, 170],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Indiana Jones: The Soundtracks Collection",
+        track: "Indy's Very First Adventure",
+        artist: "John Williams",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(searches.length, 2);
+    for (const search of searches) {
+        assert.equal(search.searchParams.get("query"),
+            "Indiana Jones and the Last Crusade");
+    }
+    assert.equal(searches.find((search) => search.pathname.endsWith("/movie"))
+        .searchParams.get("primary_release_year"), "1989");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/tv"))
+        .searchParams.get("first_air_date_year"), "1989");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 89, title: "Indiana Jones and the Last Crusade", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/last-crusade.jpg",
+        source: "fanart",
+        tint: [255, 221, 170],
+        certifications: [{
+            country: "US", system: "MPA", rating: "PG-13", label: "PG-13",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/9/98/MPA_PG-13_RATING.svg",
+        }],
+    });
+});
+
 test("resolves verified soundtrack tracks to the 1996 Kansas City film", async () => {
     const searches = [];
     const handler = createHandler({
