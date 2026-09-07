@@ -2651,6 +2651,7 @@ function sizeStage() {
     // before. Portrait is a column flex layout: auto margins center the cover in the
     // space left above the bottom-anchored info box, so it needs no translated offset.
     var infoRect = infoEl.getBoundingClientRect();
+    stage.style.setProperty("--info-width", infoRect.width + "px");
     var infoHeight = infoRect.height;
     var infoTop = infoRect.top - r.top;
     var coverShift = opts.layout === 1

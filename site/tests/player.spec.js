@@ -5680,6 +5680,43 @@ test.describe("the deployed player page", () => {
             }
         });
 
+    test("matches the analyzer to the info box only while the cover is hidden",
+        async ({ page }) => {
+            await page.emulateMedia({ reducedMotion: "no-preference" });
+            await mockLayoutTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator("#info-title")).toContainText("Layout Test");
+
+            const selectors = {
+                stage: "#stage", cover: "#coverbox", info: ".info",
+                analyzer: "#stage-spectrum",
+            };
+            const withCover = await stableElementRects(page, selectors);
+            expect(withCover.info.width).toBeLessThan(withCover.cover.width - 1);
+            expect(Math.abs(withCover.analyzer.width - withCover.cover.width))
+                .toBeLessThanOrEqual(1);
+
+            await page.locator("#stage").evaluate((stage) => stage.classList.add("no-cover"));
+            const withoutCover = await stableElementRects(page, selectors);
+            expect(Math.abs(withoutCover.analyzer.width - withoutCover.info.width))
+                .toBeLessThanOrEqual(1);
+
+            await page.locator("#info-title").evaluate((title) => {
+                title.textContent = "A longer title widens the information box";
+            });
+            const afterTitleChange = await stableElementRects(page, selectors);
+            expect(afterTitleChange.info.width).toBeGreaterThan(withoutCover.info.width + 1);
+            const expectedAnalyzerWidth = Math.min(
+                afterTitleChange.info.width, afterTitleChange.cover.width);
+            expect(Math.abs(afterTitleChange.analyzer.width - expectedAnalyzerWidth))
+                .toBeLessThanOrEqual(1);
+
+            await page.locator("#stage").evaluate((stage) => stage.classList.remove("no-cover"));
+            const restored = await stableElementRects(page, selectors);
+            expect(Math.abs(restored.analyzer.width - restored.cover.width))
+                .toBeLessThanOrEqual(1);
+        });
+
     test("animates poster info height around a fixed center and keeps the cover balanced",
         async ({ page }) => {
             await page.emulateMedia({ reducedMotion: "no-preference" });

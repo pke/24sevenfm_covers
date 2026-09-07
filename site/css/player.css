@@ -457,6 +457,9 @@
     top: var(--spectrum-top, 72%);
     transform: translate(-50%, -50%);
 }
+.layout-poster.no-cover .stage-spectrum {
+    width: min(var(--cover-side, 12rem), var(--info-width, var(--cover-side, 12rem)));
+}
 
 /* The optional tempo readout occupies the otherwise-clear upper-left corner. Keep
    a steady three-character value column so a changing estimate never
