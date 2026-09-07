@@ -30,6 +30,12 @@
     grid-template-columns: 100%;
     grid-template-rows: 72% 28%;
 }
+.stage.layout-poster.stage-portrait {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+}
 .stage:fullscreen { border-radius: 0; border: 0; height: 100%; }
 
 /* Blurred backdrop - poster layout only. The blur radius is set by JS relative to the
@@ -131,10 +137,10 @@
 }
 
 /* --- info box (poster only) ------------------------------------------------------ */
-/* The lower grid row holds title, artist and countdown. Its center never moves, so the
-   box grows equally upward and downward when the countdown appears while the cover's
-   row stays unchanged. Fill mode shows no info at all; the hairline border keeps the
-   box readable on dark artwork. */
+/* The lower grid row holds title, artist and countdown. Landscape keeps its center
+   fixed; a portrait stage fixes its bottom edge instead, so wrapped titles and extra
+   rows can only grow upward and never leave the screen. Fill mode shows no info at
+   all; the hairline border keeps the box readable on dark artwork. */
 .info {
     position: relative;
     z-index: 2;
@@ -146,7 +152,8 @@
     backdrop-filter: blur(6px);
     color: var(--player-tint);
     text-align: center;
-    transition: color var(--backdrop-fade-duration) var(--backdrop-fade-easing);
+    transition: color var(--backdrop-fade-duration) var(--backdrop-fade-easing),
+                margin-bottom .4s ease;
 }
 .layout-poster .coverbox {
     grid-column: 1;
@@ -154,6 +161,10 @@
     place-self: center;
     transform: translateY(var(--cover-shift, 0px));
     transition: opacity .8s ease, transform .45s ease, width .4s ease, height .4s ease;
+}
+.layout-poster.stage-portrait .coverbox {
+    flex: 0 0 auto;
+    margin-block: auto;
 }
 .stage.laser-scene .coverbox {
     transform: scale(.8);
@@ -165,6 +176,10 @@
     grid-column: 1;
     grid-row: 2;
     place-self: center;
+}
+.layout-poster.stage-portrait .info {
+    flex: 0 0 auto;
+    margin-bottom: max(.75rem, env(safe-area-inset-bottom));
 }
 .layout-fill .info { display: none; }
 .info .t {

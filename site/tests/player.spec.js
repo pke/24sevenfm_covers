@@ -5611,6 +5611,41 @@ test.describe("the deployed player page", () => {
         return metrics;
     }
 
+    test("anchors a tall portrait info box above the bottom edge and grows it upward",
+        async ({ page }) => {
+            await page.emulateMedia({ reducedMotion: "no-preference" });
+            await page.setViewportSize({ width: 390, height: 844 });
+            await mockLayoutTestFeed(page);
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator("#info-title")).toContainText("Layout Test");
+            await expect(page.locator("#stage")).toHaveClass(/stage-portrait/);
+
+            const selectors = { stage: "#stage", cover: "#coverbox", info: ".info" };
+            const compact = await stableElementRects(page, selectors);
+            await page.locator("#info-title").evaluate((title) => {
+                title.textContent = "A deliberately long portrait title with enough words "
+                    + "to wrap across many lines while artist, status, and countdown rows "
+                    + "make the information panel substantially taller than its grid row";
+            });
+            const tall = await stableElementRects(page, selectors);
+            const marginBottom = await page.locator(".info").evaluate((info) =>
+                parseFloat(getComputedStyle(info).marginBottom));
+
+            const compactGap = compact.stage.bottom - compact.info.bottom;
+            const tallGap = tall.stage.bottom - tall.info.bottom;
+            expect(marginBottom).toBeGreaterThanOrEqual(12);
+            expect(compactGap).toBeGreaterThanOrEqual(marginBottom);
+            expect(tallGap).toBeGreaterThanOrEqual(marginBottom);
+            expect(Math.abs(tall.info.bottom - compact.info.bottom)).toBeLessThan(1);
+            expect(tall.info.height).toBeGreaterThan(compact.info.height + 60);
+            expect(tall.info.top).toBeLessThan(compact.info.top - 60);
+            for (const boxes of [compact, tall]) {
+                const aboveCover = boxes.cover.top - boxes.stage.top;
+                const belowCover = boxes.info.top - boxes.cover.bottom;
+                expect(Math.abs(aboveCover - belowCover)).toBeLessThan(2.5);
+            }
+        });
+
     test("animates poster info height around a fixed center and keeps the cover balanced",
         async ({ page }) => {
             await page.emulateMedia({ reducedMotion: "no-preference" });

@@ -2606,6 +2606,8 @@ function applyLayout() {
 function sizeStage() {
     var r = stage.getBoundingClientRect();
     if (!r.width || !r.height) return;
+    var portraitStage = r.height > r.width;
+    stage.classList.toggle("stage-portrait", portraitStage);
     // The cover box is the largest SQUARE that fits the stage (CSS alone can't cap a
     // square by both dimensions without breaking the aspect ratio on portrait
     // screens), leaving room below for the info box in poster layout. Because it is
@@ -2616,9 +2618,25 @@ function sizeStage() {
     var expandedOscilloscope = opts.spectrumEnabled
         && opts.analyzerType === "oscilloscope";
     var posterCoverFraction = expandedOscilloscope ? 0.555 : 0.58;
-    var side = opts.layout === 1
+    var baseSide = opts.layout === 1
         ? Math.min(r.height * posterCoverFraction, r.width * 0.86)
         : Math.min(r.height * 0.96, r.width * 0.96);
+    var infoEl = document.querySelector(".info");
+    // Typography follows the normal cover scale, independent of a temporary vertical
+    // squeeze. That keeps the flex layout stable instead of creating a feedback loop
+    // where a smaller cover shrinks the info and then makes the cover larger again.
+    stage.style.setProperty("--title-size", Math.max(16, baseSide * 0.072) + "px");
+    stage.style.setProperty("--artist-size", Math.max(13, baseSide * 0.058) + "px");
+    var cdFrac = { small: 0.048, medium: 0.062, large: 0.08 }[
+        opts.remainingTime.options.size];
+    stage.style.setProperty("--cd-size", Math.max(12, baseSide * cdFrac) + "px");
+    var side = baseSide;
+    if (opts.layout === 1 && portraitStage) {
+        var infoHeightForFit = infoEl.getBoundingClientRect().height;
+        var infoBottomGap = parseFloat(getComputedStyle(infoEl).marginBottom) || 0;
+        side = Math.min(side, Math.max(0,
+            stage.clientHeight - infoHeightForFit - infoBottomGap));
+    }
     coverBox.style.width = side + "px";
     coverBox.style.height = side + "px";
     // The compact analyser shares the cover's width in every stage size. The 80s
@@ -2626,31 +2644,28 @@ function sizeStage() {
     // width too; CSS animates between both values with the analyser's width transition.
     stage.style.setProperty("--cover-side", side + "px");
     stage.style.setProperty("--cover-depth-side", (side * 0.8) + "px");
-    // The C++ renderer sizes everything off the cover's side; do the same, with the
-    // poster's actual fractions: title 7.2%, artist 5.8% of the cover side. The
-    // countdown sits BELOW the title in the hierarchy - it's a status row, not the
-    // headline - so its steps start under the artist size and top out at the title's.
+    // Rounded corners and visualizer geometry follow the cover's actual fitted size.
     stage.style.setProperty("--cover-radius", (side * opts.borderRadius / 1000) + "px");
-    stage.style.setProperty("--title-size", Math.max(16, side * 0.072) + "px");
-    stage.style.setProperty("--artist-size", Math.max(13, side * 0.058) + "px");
-    var cdFrac = { small: 0.048, medium: 0.062, large: 0.08 }[
-        opts.remainingTime.options.size];
-    stage.style.setProperty("--cd-size", Math.max(12, side * cdFrac) + "px");
-    // The grid fixes the info box's center. Re-center the cover in the space above
-    // the box's visible top edge; when the box grows, CSS animates this small shift.
-    // With 72/28 rows the simplified offset is 7% of stage height - 25% of box height.
-    var infoRect = document.querySelector(".info").getBoundingClientRect();
+    // Landscape fixes the info box's center and uses the same balancing equation as
+    // before. Portrait is a column flex layout: auto margins center the cover in the
+    // space left above the bottom-anchored info box, so it needs no translated offset.
+    var infoRect = infoEl.getBoundingClientRect();
     var infoHeight = infoRect.height;
-    var coverShift = opts.layout === 1 ? r.height * 0.07 - infoHeight * 0.25 : 0;
+    var infoTop = infoRect.top - r.top;
+    var coverShift = opts.layout === 1
+        ? portraitStage ? 0
+            : r.height * 0.07 - infoHeight * 0.25
+        : 0;
     // Lift the slightly smaller cover as the scope expands. Its top has ample room in
     // the 72% artwork row; spending that room here creates a true 60px waveform lane
     // instead of squeezing the requested height back down to the old 48px strip.
-    if (opts.layout === 1 && expandedOscilloscope)
+    if (opts.layout === 1 && expandedOscilloscope && !portraitStage)
         coverShift -= Math.min(16, r.height * 0.03);
     stage.style.setProperty("--cover-shift", coverShift + "px");
     if (opts.layout === 1) {
-        var coverBottom = r.height * 0.36 + coverShift + side * 0.5;
-        var infoTop = infoRect.top - r.top;
+        var coverBottom = portraitStage
+            ? coverBox.offsetTop + coverBox.offsetHeight
+            : r.height * 0.36 + coverShift + side * 0.5;
         var availableAnalyzerHeight = Math.max(32, infoTop - coverBottom - 4);
         var desiredAnalyzerHeight = opts.analyzerType === "oscilloscope"
             ? Math.min(72, Math.max(56, side * 0.22))
