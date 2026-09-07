@@ -1554,6 +1554,70 @@ test("resolves a Film Music (Isham) track as screen media", async () => {
     });
 });
 
+test("resolves a dated Film Music anthology track with an alternate title", async () => {
+    const album = "Ennio Morricone: Film Music 1966 - 1987";
+    const track = "The Good, The Bad, And The Ugly (Il Buono, Il Brutto, Il Cattivo)";
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/multi") {
+                providerQueries.push(parsed.searchParams.get("query"));
+                return response(200, { results: [{
+                    id: 429,
+                    media_type: "movie",
+                    title: "The Good, the Bad and the Ugly",
+                    backdrop_path: "/good-bad-ugly.jpg",
+                    poster_path: "/good-bad-ugly-poster.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/429/release_dates") {
+                return response(200, { results: [{
+                    iso_3166_1: "US",
+                    release_dates: [{ certification: "R", type: 3 }],
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 234, 154],
+    });
+    const res = mockResponse();
+
+    assert.equal(mediaHintForAlbum(album), "screen");
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), [
+        track,
+        "The Good, The Bad, And The Ugly",
+    ]);
+    await handler(mockRequest({
+        album,
+        track,
+        artist: "Ennio Morricone",
+        providers: "tmdb",
+        ratings: "US",
+        orientation: "portrait",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(providerQueries, [track, "The Good, The Bad, And The Ugly"]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 429, title: "The Good, the Bad and the Ugly", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w780/good-bad-ugly-poster.jpg",
+        source: "tmdb",
+        tint: [255, 234, 154],
+        certifications: [{
+            country: "US",
+            system: "MPA",
+            rating: "R",
+            label: "R",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
+        }],
+    });
+});
+
 test("resolves a Sci-Fi's Greatest Hits track as screen media", async () => {
     const handler = createHandler({
         env: { TMDB_API_KEY: "key" },

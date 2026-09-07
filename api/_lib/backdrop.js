@@ -353,6 +353,7 @@ function isTrackTitledTvCompilation(title) {
 function isExactTrackTitledScreenCompilation(title) {
     return /^every note paints a picture$/i.test(title)
         || /^film music \(isham\)$/i.test(title)
+        || /(?:^|:\s*)film music\s+(?:18|19|20|21)\d{2}\s*[-–—]\s*(?:18|19|20|21)\d{2}$/i.test(title)
         || /^sci[\s-]*fi['’]s\s+greatest\s+hits\b/i.test(title);
 }
 
@@ -508,7 +509,17 @@ function backdropTitleCandidatesFor(album, track) {
     if (tvThemeTitle) return [tvThemeTitle];
     if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
         const workTitle = cleanMovieTitle(track);
-        if (workTitle) return [workTitle];
+        if (workTitle) {
+            const candidates = [workTitle];
+            const alternateTitle = workTitle.match(/^(.+?)\s+\([^()]{4,}\)$/);
+            if (alternateTitle) {
+                const primaryTitle = cleanMovieTitle(alternateTitle[1]);
+                if (primaryTitle && normalizedTitle(primaryTitle) !== normalizedTitle(workTitle)) {
+                    candidates.push(primaryTitle);
+                }
+            }
+            return candidates;
+        }
     }
     if (usesExactTrackPrefix(normalizedAlbum)) {
         const candidates = trackPrefixCandidates(track);
