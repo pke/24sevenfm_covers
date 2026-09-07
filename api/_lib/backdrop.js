@@ -341,7 +341,8 @@ function isTrackPrefixedMovieCompilation(title) {
 }
 
 function isTrackTitledGameCompilation(title) {
-    return /^video games live(?:\s*(?::\s*level|,\s*vol(?:ume)?\.?)\s*\d+)?$/i.test(title);
+    return /^video games live(?:\s*(?::\s*level|,\s*vol(?:ume)?\.?)\s*\d+)?$/i.test(title)
+        || /^essential games music collection(?:,\s*vol(?:ume)?\.?\s*\d+)?$/i.test(title);
 }
 
 function isTrackTitledTvCompilation(title) {
@@ -479,8 +480,10 @@ function backdropTitleFor(album, track) {
         if (candidates.length) return candidates[0];
     }
     if (isTrackTitledGameCompilation(normalizedAlbum)) {
-        const workTitle = cleanMovieTitle(track)
+        let workTitle = cleanMovieTitle(track)
             .replace(/\s+(?:symphonic\s+)?(?:suite|medley)\s*$/i, "").trim();
+        const fromTitle = workTitle.match(/^.+?\s+from\s+(.+)$/i);
+        if (fromTitle) workTitle = cleanMovieTitle(fromTitle[1]);
         if (workTitle) return workTitle;
     }
     if (isTrackPrefixedMovieCompilation(normalizedAlbum)) {

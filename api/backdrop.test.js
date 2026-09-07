@@ -1365,6 +1365,14 @@ test("uses the track title for a Video Games Live compilation", () => {
         "Civilization IV Medley"), "Civilization IV");
 });
 
+test("uses the credited game from an Essential Games Music Collection track", () => {
+    const album = "Essential Games Music Collection, Vol. 2";
+    const track = "Gerudo Valley From The Legend Of Zelda Ocarina Of Time";
+    assert.equal(mediaHintForAlbum(album), "game");
+    assert.equal(backdropTitleFor(album, track),
+        "The Legend Of Zelda Ocarina Of Time");
+});
+
 test("uses a conservative SteamGridDB title extension for game compilations", () => {
     const results = [
         { id: 1, name: "Phoenix Wright: Ace Attorney - Justice For All", verified: true },
@@ -2912,6 +2920,52 @@ test("resolves a Video Games Live suite through its game track", async () => {
         backdrop: "https://cdn2.steamgriddb.com/hero/zelda.jpg",
         source: "steamgriddb",
         tint: [10, 20, 30],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
+test("resolves an Essential Games Music Collection credit through its game track", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/"
+                    + "The%20Legend%20Of%20Zelda%20Ocarina%20Of%20Time")) {
+                return response(200, { success: true, data: [{
+                    id: 21202,
+                    name: "The Legend of Zelda: Ocarina of Time",
+                    verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/21202")) return response(200, {
+                success: true,
+                data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/ocarina-of-time.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/ocarina-of-time.png" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [252, 255, 206],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Essential Games Music Collection, Vol. 2",
+        track: "Gerudo Valley From The Legend Of Zelda Ocarina Of Time",
+        artist: "London Music Works",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 21202, title: "The Legend of Zelda: Ocarina of Time", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/ocarina-of-time.png",
+        source: "steamgriddb",
+        tint: [252, 255, 206],
+        certifications: [],
     });
     assert.equal(requests.length, 2);
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
