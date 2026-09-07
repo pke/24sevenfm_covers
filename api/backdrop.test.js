@@ -1433,6 +1433,14 @@ test("recognizes Music For Film compilations through their track prefix", () => 
         "Elliot Goldenthal");
 });
 
+test("uses exact track titles for Film Music anthology suffixes", () => {
+    const album = "Essential Elmer Bernstein Film Music";
+    const track = "The Great Escape";
+    assert.equal(mediaHintForAlbum(album), "screen");
+    assert.equal(backdropTitleFor(album, track), track);
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), [track]);
+});
+
 test("uses a quoted From credit as the track's screen work", () => {
     const album = "Imitation Games";
     const track = 'Redeeming Love Theme (From "Redeeming Love")';

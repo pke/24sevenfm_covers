@@ -353,6 +353,7 @@ function isTrackTitledTvCompilation(title) {
 function isExactTrackTitledScreenCompilation(title) {
     return /^every note paints a picture$/i.test(title)
         || /^film music \(isham\)$/i.test(title)
+        || /\bfilm music$/i.test(title)
         || /(?:^|:\s*)film music\s+(?:18|19|20|21)\d{2}\s*[-–—]\s*(?:18|19|20|21)\d{2}$/i.test(title)
         || /^sci[\s-]*fi['’]s\s+greatest\s+hits\b/i.test(title);
 }
