@@ -102,6 +102,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Journey, The: Hunter Returns",
+        artist: "Junkie XL",
+        title: "FIFA 18",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Crysis",
         artist: "Inon Zur",
         hint: "game",

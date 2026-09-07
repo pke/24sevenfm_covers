@@ -2395,6 +2395,55 @@ test("resolves the Enderal soundtrack to Enderal: Forgotten Stories", async () =
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves The Journey Hunter Returns soundtrack to FIFA 18", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/api/v2/search/autocomplete/FIFA%2018") {
+                return response(200, { success: true, data: [{
+                    id: 33780,
+                    name: "FIFA 18",
+                    verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/grids/game/33780") {
+                return response(200, { success: true, data: [{
+                    score: 10,
+                    width: 600,
+                    height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/fifa-18.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/fifa-18.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 185, 195],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Journey, The: Hunter Returns",
+        track: "Make It Count",
+        artist: "Junkie XL",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+        orientation: "portrait",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 33780, title: "FIFA 18", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/grid/fifa-18.png",
+        source: "steamgriddb",
+        tint: [255, 185, 195],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
 test("resolves the Enola Gay score to the 1980 television film", async () => {
     const requests = [];
     const handler = createHandler({
