@@ -96,6 +96,56 @@ test("resolves the live Music For A Darkened Theatre compilation track", async (
     });
 });
 
+test("resolves a dated Best Of movie compilation through its track prefix", async () => {
+    const album = "Best Of Godzilla 1984-1995, The";
+    const track = "The Return Of Godzilla: Take Shelter5/Godzilla Vs. Super X";
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "The Return Of Godzilla");
+                return response(200, { results: [{
+                    id: 421467,
+                    title: "The Return of Godzilla",
+                    media_type: "movie",
+                    backdrop_path: "/return-of-godzilla.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/421467/release_dates") {
+                return response(200, { results: [] });
+            }
+            throw new Error("Unexpected provider URL " + parsed.href);
+        },
+        tintForImage: async () => [227, 242, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album,
+        track,
+        artist: "Reijiroh Koroku",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(cleanMovieTitle(album), "The Best Of Godzilla 1984-1995");
+    assert.equal(backdropTitleFor(album, track), "The Return Of Godzilla");
+    assert.equal(mediaHintForAlbum(album), "movie");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 421467, title: "The Return of Godzilla", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/return-of-godzilla.jpg",
+        source: "tmdb",
+        tint: [227, 242, 255],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("steamgriddb.com")), false);
+});
+
 test("resolves Be My Love from Romantic Duets From MGM Classics", async () => {
     const providerQueries = [];
     const handler = createHandler({

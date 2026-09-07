@@ -344,7 +344,8 @@ function starTrekSeriesAlias(album) {
 
 function isTrackPrefixedMovieCompilation(title) {
     return /^the wings of a film$/i.test(title)
-        || /^music for a darkened theatre,\s*vol\.\s*[12]$/i.test(title);
+        || /^music for a darkened theatre,\s*vol\.\s*[12]$/i.test(title)
+        || /^the best of .+\s+(?:18|19|20|21)\d{2}\s*[-–—]\s*(?:18|19|20|21)\d{2}$/i.test(title);
 }
 
 function isTrackTitledGameCompilation(title) {
