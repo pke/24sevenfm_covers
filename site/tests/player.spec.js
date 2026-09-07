@@ -4113,6 +4113,40 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /thomas-crown\.jpg/);
     });
+    test("unrotates an article before an album subtitle in the info box", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/crown-season-2.svg";
+        const sizedCover =
+            "https://streamingsoundtracks.com/images/cover/500/crown-season-2.svg";
+        let resolverAlbum = "";
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({ sstBackdrops: { enabled: true,
+                options: { providers: ["tmdb"], cover: "show" } } })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Crown, The: Season 2", Track: "Your Majesty",
+                Artist: "Rupert Gregson-Williams & Lorne Balfe",
+                CoverLink: cover, Length: 254000,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/backdrop\?/, (route) => {
+            resolverAlbum = new URL(route.request().url()).searchParams.get("album");
+            return route.fulfill({ json: {
+                media: null, backdrop: null, source: null, tint: [255, 255, 255],
+            } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#info-title"))
+            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await expect.poll(() => resolverAlbum).toBe("Crown, The: Season 2");
+    });
     test("maps a compilation album to its canonical TV series title", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/inspector-morse.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/inspector-morse.svg";

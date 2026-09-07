@@ -495,7 +495,8 @@ function htmlDecode(value) {
 }
 function unrotateTitleArticle(title) {
     return (title || "").replace(
-        /^(.+),\s*(The|A|An)(\s+\((?:18|19|20|21)\d{2}\))?$/i, "$2 $1$3");
+        /^(.+),\s*(The|A|An)(\s+\((?:18|19|20|21)\d{2}\))?(\s*[:\-–—]\s*.+)?$/i,
+        "$2 $1$3$4");
 }
 
 function station() { return STATIONS[stationIndex(opts.station)]; }
