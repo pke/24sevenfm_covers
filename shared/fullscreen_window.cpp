@@ -136,6 +136,7 @@ LRESULT CALLBACK FullscreenWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
                 SetCursor(self->cursorHidden_ ? nullptr : LoadCursor(nullptr, IDC_ARROW));
                 return TRUE;
             }
+            break; // let DefWindowProc handle menu/non-client cursors; never fall into WM_CLOSE
         case WM_CLOSE:
             if (self) self->exit();
             return 0;
