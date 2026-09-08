@@ -69,4 +69,19 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     target_include_directories(rating_assets_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
     doctest_discover_tests(rating_assets_tests)
+
+    if(WIN32)
+        add_executable(native_engine_tests tests/test_native_engine.cpp
+            ../shared/d2d_renderer.cpp ../shared/d2d_transitions.cpp
+            ../shared/d2d_rolldigits.cpp ../shared/rating_assets.cpp ../shared/demo.cpp)
+        target_include_directories(native_engine_tests PRIVATE . ../shared)
+        target_link_libraries(native_engine_tests PRIVATE coverfetch d2d1 dwrite)
+        doctest_discover_tests(native_engine_tests)
+
+        enable_language(RC)
+        add_executable(native_options_tests tests/test_native_options.cpp tests/native_options.rc)
+        target_include_directories(native_options_tests PRIVATE . ../shared ../foobar2000/wtl)
+        target_link_libraries(native_options_tests PRIVATE coverfetch comctl32 msimg32)
+        doctest_discover_tests(native_options_tests)
+    endif()
 endif()

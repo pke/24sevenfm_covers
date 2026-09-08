@@ -86,6 +86,21 @@ token. Late work may not install pixels or badges for an older epoch. Backdrop s
 is independent of square-cover state, so `CoverEngine::currentCover()` continues to
 return the station cover for foobar2000 album-art fallback.
 
+The public settings object belongs exclusively to the host UI thread. Startup,
+`repaint()` and manual retry copy it into the worker's mutex-protected snapshot;
+monitor callbacks never read mutable UI strings. Updating configuration, selecting
+the current/queued tracks and scheduling replacement work are one transaction under
+the worker mutex. A station switch first joins the old monitor, then installs the
+new snapshot and generation before starting its replacement.
+
+Generation advancement, result validation and publication use the same publication
+mutex. The UI validates the pending generation again and retains that mutex through
+the renderer's byte/ratings commit. Pending results from earlier generations are
+discarded; already displayed content remains available for its outgoing transition.
+Generations also advance at shutdown and are never reset when a worker restarts.
+The only nested lock order is worker state followed by publication; publishers and
+the renderer never acquire the worker mutex while holding the publication lock.
+
 `GetQueue` exposes full TrackInfo records. The first queued item is eligible
 immediately; further items are admitted one per minute. The cross-snapshot cache is
 bounded to 64 configuration-aware entries. Sixty-four is a memory bound, not 64
@@ -140,6 +155,17 @@ Winamp registers a scroll host for its shorter Preferences pane, so the complete
 shared options page and provider details stay reachable. Configure and the fullscreen
 context menu open Winamp's own Options/About dialog; a fullscreen-owned dialog joins
 the topmost band and does not close the presentation or redirect into host settings.
+
+Provider details and Winamp Options/About are child windows. They use the shared
+`child_fade` snapshot surface rather than `AnimateWindow(AW_BLEND)`, which supports
+only top-level windows. The old and new rendered pixels crossfade for 150 ms in an
+ordinary child overlay, with sibling clipping on the real pages as well. Rapid
+selections reuse the current blended pixels; no deferred callback can outlive the
+dialog. Bitmap/DC/timer resources follow the overlay's window lifetime. Reduced
+motion bypasses the fade, and allocation/painting/timer failure still reveals the
+requested page. No layered-child support or manifest changes in the plugin host
+are required. The foobar click map forwards WTL's second argument (control ID), not
+its first (notification code), into the same shared options behavior.
 
 The native renderer follows the web player's visible media contract as well:
 
@@ -208,3 +234,12 @@ cadence, queue staggering and every bundled rating PNG. The existing API tests r
 authoritative for provider fallback/matching/certifications, while Playwright remains
 authoritative for the web rendering behavior from which these native contracts are
 derived. Release builds compile the same shared implementation into all three hosts.
+
+Windows CTest additionally runs the production engine scheduler/publication path
+against concurrent settings edits, blocked stale publishers, pending UI results,
+worker restarts and retry/queue preservation without networking. Native off-screen
+dialog tests exercise actual WTL button routing, provider ordering, the mandatory
+rating-country selection, details/key persistence, opacity interpolation, rapid
+page changes, timer and parent-destruction cleanup, repaint clipping and no-animation
+fallbacks. These UI tests use the bundled WTL headers and Visual Studio ATL; they
+do not drive or restart a user's installed player.
