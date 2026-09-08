@@ -162,6 +162,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Legend Of Zelda, The (Ocarina Of Time: Hyrule Symphony)",
+        title: "The Legend of Zelda: Ocarina of Time",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Alpha Centauri",
         artist: "George Christopoulos",
         suppress: true,

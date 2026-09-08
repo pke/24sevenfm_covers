@@ -2705,6 +2705,55 @@ test("resolves Jack Wall's Myst 3 album to Myst III: Exile", async () => {
     assert.equal(requests.length, 2);
 });
 
+test("resolves the Hyrule Symphony album to Ocarina of Time portrait art", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname
+                    === "/api/v2/search/autocomplete/The%20Legend%20of%20Zelda%3A%20Ocarina%20of%20Time") {
+                return response(200, { success: true, data: [{
+                    id: 21202,
+                    name: "The Legend of Zelda: Ocarina of Time",
+                    verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/grids/game/21202") return response(200, {
+                success: true,
+                data: [{
+                    score: 10, width: 600, height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/ocarina-of-time.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/ocarina-of-time.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 247, 209],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Legend Of Zelda, The (Ocarina Of Time: Hyrule Symphony)",
+        track: "Hyrule Field",
+        artist: "Koji Kondo",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+        orientation: "portrait",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 21202, title: "The Legend of Zelda: Ocarina of Time", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/grid/ocarina-of-time.png",
+        source: "steamgriddb",
+        tint: [255, 247, 209],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
 test("does not resolve George Christopoulos' Alpha Centauri album as screen media or a game",
     async () => {
         let requests = 0;
