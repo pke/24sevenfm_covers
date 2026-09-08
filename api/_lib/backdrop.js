@@ -43,6 +43,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "tv",
     }),
     Object.freeze({
+        album: "Ale Filmy!",
+        track: "Rosemary's Baby: Sleep Safe And Warm",
+        artist: "Krzysztof Komeda, Leszek Mozdzer",
+        title: "Rosemary's Baby (1968)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Stranger Things 2",
         title: "Stranger Things",
         hint: "tv",

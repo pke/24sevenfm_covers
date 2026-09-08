@@ -271,6 +271,46 @@ test("resolves Bruce Broughton's J*A*G cue from the Double Feature album", async
     });
 });
 
+test("resolves Rosemary's Baby from the Ale Filmy compilation cue", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            searches.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 805,
+                title: "Rosemary's Baby",
+                release_date: "1968-06-12",
+                backdrop_path: "/rosemarys-baby.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [178, 255, 159],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Ale Filmy!",
+        track: "Rosemary's Baby: Sleep Safe And Warm",
+        artist: "Krzysztof Komeda, Leszek Mozdzer",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(searches.length, 2);
+    for (const search of searches) assert.equal(search.searchParams.get("query"), "Rosemary's Baby");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/movie"))
+        .searchParams.get("primary_release_year"), "1968");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/tv"))
+        .searchParams.get("first_air_date_year"), "1968");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 805, title: "Rosemary's Baby", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/rosemarys-baby.jpg",
+        source: "tmdb",
+        tint: [178, 255, 159],
+    });
+});
+
 test("resolves the second Stranger Things score album to the TV series", async () => {
     const providerQueries = [];
     const handler = createHandler({
