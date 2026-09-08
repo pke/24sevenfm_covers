@@ -1544,7 +1544,7 @@ test("validates the requested rating countries", () => {
     assert.throws(() => requestedRatings("GB"), /ratings must contain DE and\/or US/);
 });
 
-test("maps every supported FSK, MPA, and US TV rating to its Wikimedia SVG", () => {
+test("maps supported age ratings to SVGs and omits US not-rated values", () => {
     const movieLogos = {
         "DE|0": "https://upload.wikimedia.org/wikipedia/commons/1/17/FSK_0.svg",
         "DE|6": "https://upload.wikimedia.org/wikipedia/commons/b/b0/FSK_ab_6_logo.svg",
@@ -1576,8 +1576,8 @@ test("maps every supported FSK, MPA, and US TV rating to its Wikimedia SVG", () 
     assert.deepEqual(certificationResponse("US", "TV-Y7-FV", "tv").descriptors, ["FV"]);
     assert.deepEqual(certificationResponse("US", "TV-PG", "tv",
         ["v", "D", "X", "D"]).descriptors, ["D", "V"]);
-    assert.equal(certificationResponse("US", "NR", "movie").logo, null);
-    assert.equal(certificationResponse("US", "TV-NR", "tv").logo, null);
+    assert.equal(certificationResponse("US", "NR", "movie"), null);
+    assert.equal(certificationResponse("US", "TV-NR", "tv"), null);
 });
 
 test("resolves The Dune Sketchbook through Hans Zimmer composer credits", async () => {

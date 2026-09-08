@@ -1577,6 +1577,7 @@ function cleanTvContentDescriptors(raw, rating) {
 
 function certificationResponse(country, rating, type, descriptors) {
     if (!rating) return null;
+    if (country === "US" && /^(?:TV-)?NR$/i.test(rating)) return null;
     if (country === "DE") {
         return {
             country,
