@@ -12,6 +12,24 @@ float ratingLogoHeight(float stageHeight, float dpiScale) {
     return fontSize * 2.35f;
 }
 
+RatingLogoSize containRatingLogo(float pixelWidth, float pixelHeight, float slotSize) {
+    if (pixelWidth <= 0.0f || pixelHeight <= 0.0f || slotSize <= 0.0f)
+        return {0.0f, 0.0f};
+    const float scale = slotSize / (pixelWidth > pixelHeight ? pixelWidth : pixelHeight);
+    return {pixelWidth * scale, pixelHeight * scale};
+}
+
+float clampPosterInfoTop(float proposedTop, float infoHeight,
+                         float stageHeight, float minimumBottomGap) {
+    if (proposedTop < 0.0f) proposedTop = 0.0f;
+    if (infoHeight < 0.0f) infoHeight = 0.0f;
+    if (stageHeight < 0.0f) stageHeight = 0.0f;
+    if (minimumBottomGap < 0.0f) minimumBottomGap = 0.0f;
+    float maximumTop = stageHeight - minimumBottomGap - infoHeight;
+    if (maximumTop < 0.0f) maximumTop = 0.0f;
+    return proposedTop < maximumTop ? proposedTop : maximumTop;
+}
+
 namespace {
 bool hasProvider(const std::string& csv, const char* wanted) {
     size_t begin = 0;

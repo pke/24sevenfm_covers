@@ -78,3 +78,29 @@ TEST_CASE("rating badge size follows target DPI on fullscreen stages") {
     CHECK(ssc::ratingLogoHeight(2160.0f, 1.0f) == doctest::Approx(70.5f));
     CHECK(ssc::ratingLogoHeight(200.0f, 1.5f) == doctest::Approx(42.3f));
 }
+
+TEST_CASE("rating logos aspect-fit inside the same square slot as the web player") {
+    const ssc::RatingLogoSize fsk = ssc::containRatingLogo(256.0f, 256.0f, 70.5f);
+    CHECK(fsk.width == doctest::Approx(70.5f));
+    CHECK(fsk.height == doctest::Approx(70.5f));
+
+    const ssc::RatingLogoSize pg13 = ssc::containRatingLogo(504.0f, 256.0f, 70.5f);
+    CHECK(pg13.width == doctest::Approx(70.5f));
+    CHECK(pg13.height == doctest::Approx(35.8095f));
+    CHECK(pg13.width / pg13.height == doctest::Approx(504.0f / 256.0f));
+
+    const ssc::RatingLogoSize invalid = ssc::containRatingLogo(0.0f, 256.0f, 70.5f);
+    CHECK(invalid.width == 0.0f);
+    CHECK(invalid.height == 0.0f);
+}
+
+TEST_CASE("poster info box retains a bottom margin after wrapped titles grow") {
+    CHECK(ssc::clampPosterInfoTop(480.0f, 200.0f, 680.0f, 12.0f)
+          == doctest::Approx(468.0f));
+    CHECK(ssc::clampPosterInfoTop(300.0f, 200.0f, 680.0f, 12.0f)
+          == doctest::Approx(300.0f));
+    CHECK(ssc::clampPosterInfoTop(-20.0f, 100.0f, 680.0f, 12.0f)
+          == doctest::Approx(0.0f));
+    CHECK(ssc::clampPosterInfoTop(100.0f, 700.0f, 680.0f, 12.0f)
+          == doctest::Approx(0.0f));
+}

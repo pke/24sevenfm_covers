@@ -387,24 +387,30 @@ void drawRatingSet(const std::vector<RatingBadge>& ratings, float cw, float ch,
                 text.c_str(), (UINT32)text.size(), fmt, cw, ch, &layout)))
             layout->GetMetrics(&metrics);
 
-        float logoW = 0.0f, logoH = 0.0f;
+        float logoW = 0.0f, logoH = 0.0f, logoSlot = 0.0f;
         if (logo) {
-            const D2D1_SIZE_F native = logo->GetSize();
-            logoH = logoHeight;
-            logoW = native.height > 0 ? logoH * native.width / native.height : logoH;
+            const D2D1_SIZE_U pixels = logo->GetPixelSize();
+            const ssc::RatingLogoSize contained = ssc::containRatingLogo(
+                static_cast<float>(pixels.width), static_cast<float>(pixels.height), logoHeight);
+            logoW = contained.width;
+            logoH = contained.height;
+            logoSlot = logoHeight;
         }
         const float textW = layout ? metrics.width + padX * 2.0f : 0.0f;
         const float textH = layout ? metrics.height + padY * 2.0f : 0.0f;
         const float innerGap = logo && layout ? margin * 0.7f : 0.0f;
-        const float groupW = logoW + innerGap + textW;
+        const float groupW = logoSlot + innerGap + textW;
         const float x = cursor - groupW;
         if (logo) {
-            const float y = ch - logoH - margin;
-            g_rt->DrawBitmap(logo, D2D1::RectF(x, y, x + logoW, y + logoH), opacity,
+            const float slotY = ch - logoSlot - margin;
+            const float logoX = x + (logoSlot - logoW) * 0.5f;
+            const float logoY = slotY + (logoSlot - logoH) * 0.5f;
+            g_rt->DrawBitmap(logo,
+                             D2D1::RectF(logoX, logoY, logoX + logoW, logoY + logoH), opacity,
                              D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         }
         if (layout) {
-            const float textX = x + logoW + innerGap;
+            const float textX = x + logoSlot + innerGap;
             const float y = ch - textH - margin;
             g_rt->FillRoundedRectangle(D2D1::RoundedRect(
                 D2D1::RectF(textX, y, textX + textW, y + textH),
@@ -536,6 +542,22 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
         coverY = ch * 0.36f + coverShift - coverS * 0.5f;
         if (coverY + coverS + gap > boxY) coverY = boxY - gap - coverS;
         if (coverY < 0.0f) coverY = 0.0f;
+
+        // A wrapped landscape title can make the 86%-centred box reach or cross
+        // the client edge. Move the complete cover/info stack upward far enough
+        // to retain a visible bottom margin. If that would cross the top edge,
+        // shorten only the cover while preserving its bottom and the inter-row gap.
+        const float minimumBottomGap = scaledGap > 12.0f ? scaledGap : 12.0f;
+        const float boundedBoxY = ssc::clampPosterInfoTop(
+            boxY, boxH, ch, minimumBottomGap);
+        const float upwardShift = boxY - boundedBoxY;
+        boxY = boundedBoxY;
+        coverY -= upwardShift;
+        if (coverY < 0.0f) {
+            coverS += coverY;
+            coverY = 0.0f;
+            if (coverS < 1.0f) coverS = 1.0f;
+        }
     }
     if (showInfo && infoOpacity < 1.0f) {
         const float hiddenY = (ch - baseSide) * 0.5f;
