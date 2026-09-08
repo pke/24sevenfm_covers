@@ -20,6 +20,27 @@ const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
 // catalog title. Only the fields present on an entry participate in its match.
 const METADATA_RESOLUTIONS = Object.freeze([
     Object.freeze({
+        album: "Escape From Television",
+        track: "Tubbs And Valerie",
+        artist: "Jan Hammer",
+        title: "Miami Vice (1984)",
+        hint: "tv",
+    }),
+    Object.freeze({
+        album: "Ad Astra",
+        track: "Says",
+        artist: "Nils Frahm",
+        title: "Ad Astra (2019)",
+        hint: "movie",
+    }),
+    Object.freeze({
+        album: "London",
+        track: "I Luv U",
+        artist: "Crystal Method, The",
+        title: "London (2005)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Medal Of Honor",
         track: "Attack On Fort Schmerzen",
         hint: "game",
