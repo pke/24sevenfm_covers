@@ -10,6 +10,7 @@
 #include "options_panel.h" // shared page IDs + control logic
 #include "cover_engine.h"
 #include "foobar_settings.h"
+#include "preferences_click_map.h"
 
 // External linkage (declared in foobar_settings.h) so the UI element's context menu
 // can open Preferences straight to this page via ui_control::show_preferences().
@@ -20,7 +21,12 @@ namespace {
 
 class CSscPrefs : public CDialogImpl<CSscPrefs>, public preferences_page_instance {
 public:
-    CSscPrefs(preferences_page_callback::ptr callback) : m_callback(callback) {}
+    CSscPrefs(preferences_page_callback::ptr callback)
+        : m_callback(callback), m_clicks([this](int id) {
+            optpanel::onCommand(*this, id);
+            optpanel::updateEnabled(*this);
+            onChanged();
+        }) {}
 
     enum { IDD = IDD_OPTIONS_PAGE }; // the shared dialog resource
 
@@ -43,7 +49,7 @@ public:
     BEGIN_MSG_MAP_EX(CSscPrefs)
         MSG_WM_INITDIALOG(OnInitDialog)
         MSG_WM_HSCROLL(OnHScroll)
-        COMMAND_CODE_HANDLER_EX(BN_CLICKED, OnControlClick) // all checkboxes + radio groups
+        CHAIN_MSG_MAP_MEMBER(m_clicks) // all checkboxes + radio groups
         COMMAND_HANDLER_EX(IDC_OPT_FANART_KEY, EN_CHANGE, OnTextChange)
         NOTIFY_HANDLER_EX(IDC_OPT_PROVIDERS, LVN_ITEMCHANGED, OnProviderChanged)
     END_MSG_MAP()
@@ -55,10 +61,6 @@ private:
         return FALSE;
     }
     void OnHScroll(UINT, UINT, CScrollBar) { optpanel::onHScroll(*this); onChanged(); }
-    void OnControlClick(UINT id, int, CWindow) {
-        optpanel::onCommand(*this, (int)id);
-        optpanel::updateEnabled(*this); onChanged();
-    }
     void OnTextChange(UINT, int, CWindow) { onChanged(); }
     LRESULT OnProviderChanged(LPNMHDR header) {
         if (optpanel::onNotify(*this, header)) onChanged();
@@ -81,6 +83,7 @@ private:
     void onChanged() { m_callback->on_state_changed(); }
 
     const preferences_page_callback::ptr m_callback;
+    SscPreferencesClickMap m_clicks;
     fb2k::CDarkModeHooks m_dark;
 };
 

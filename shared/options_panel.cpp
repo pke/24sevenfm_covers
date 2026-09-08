@@ -4,6 +4,7 @@
 #include "options_panel.h"
 
 #include "config.h"
+#include "child_fade.h"
 #include "media_resolver.h"
 
 #include <commctrl.h>
@@ -85,11 +86,6 @@ HWND detailControl(PanelState* state, int id) {
     return state && state->details ? GetDlgItem(state->details, id) : nullptr;
 }
 
-bool clientAnimationEnabled() {
-    BOOL enabled = TRUE;
-    return !SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) || enabled;
-}
-
 std::string editKey(PanelState* state) {
     char value[129] = {0};
     if (state && state->details)
@@ -121,30 +117,25 @@ void setProviderDetail(HWND dlg, int provider, bool animate) {
     if (!state || !state->details || provider < 0 || provider >= 4) return;
     if (state->provider == provider && IsWindowVisible(state->details)) return;
 
-    const bool fade = animate && clientAnimationEnabled() && IsWindowVisible(state->details);
-    if (fade) AnimateWindow(state->details, 100, AW_HIDE | AW_BLEND);
-    else ShowWindow(state->details, SW_HIDE);
+    childfade::replace(state->details, state->details, animate, [state, provider] {
+        state->provider = provider;
+        SetDlgItemTextA(state->details, IDC_OPT_PROVIDER_LINK, kProviderLinks[provider]);
+        SetDlgItemTextA(state->details, IDC_OPT_PROVIDER_ATTRIBUTION,
+            provider == 1
+                ? "This product uses the TMDB API but is not endorsed or certified by TMDB."
+            : provider == 2 ? "TV data & artwork by TVmaze."
+            : provider == 3 ? "GameArt by SteamGridDB."
+            : "");
 
-    state->provider = provider;
-    SetDlgItemTextA(state->details, IDC_OPT_PROVIDER_LINK, kProviderLinks[provider]);
-    SetDlgItemTextA(state->details, IDC_OPT_PROVIDER_ATTRIBUTION,
-        provider == 1
-            ? "This product uses the TMDB API but is not endorsed or certified by TMDB."
-        : provider == 2 ? "TV data & artwork by TVmaze."
-        : provider == 3 ? "GameArt by SteamGridDB."
-        : "");
-
-    const int fanartControls[] = { IDC_OPT_FANART_KEY_LABEL, IDC_OPT_FANART_KEY,
-        IDC_OPT_FANART_KEY_CHECK, IDC_OPT_FANART_KEY_STATUS,
-        IDC_OPT_FANART_KEY_WHY, IDC_OPT_FANART_KEY_GET };
-    for (int id : fanartControls)
-        ShowWindow(detailControl(state, id), provider == 0 ? SW_SHOW : SW_HIDE);
-    ShowWindow(detailControl(state, IDC_OPT_PROVIDER_ATTRIBUTION),
-        provider == 0 ? SW_HIDE : SW_SHOW);
-    refreshKeyButton(state);
-
-    if (animate && clientAnimationEnabled()) AnimateWindow(state->details, 100, AW_BLEND);
-    else ShowWindow(state->details, SW_SHOW);
+        const int fanartControls[] = { IDC_OPT_FANART_KEY_LABEL, IDC_OPT_FANART_KEY,
+            IDC_OPT_FANART_KEY_CHECK, IDC_OPT_FANART_KEY_STATUS,
+            IDC_OPT_FANART_KEY_WHY, IDC_OPT_FANART_KEY_GET };
+        for (int id : fanartControls)
+            ShowWindow(detailControl(state, id), provider == 0 ? SW_SHOW : SW_HIDE);
+        ShowWindow(detailControl(state, IDC_OPT_PROVIDER_ATTRIBUTION),
+            provider == 0 ? SW_HIDE : SW_SHOW);
+        refreshKeyButton(state);
+    });
 }
 
 int selectedProvider(HWND dlg) {

@@ -35,6 +35,7 @@
 #include "cover_menu.h"        // shared right-click context menu (Poster / Options)
 #include "fullscreen_window.h" // shared dedicated per-monitor fullscreen window
 #include "options_panel.h"  // shared options page (dialog + control logic)
+#include "child_fade.h"
 #include "stations.h"       // 24seven.fm station table + stream-URL detection
 #include "config.h"         // shared option schema + INI adapter
 #include "window_rect.h"    // save/restore the frame's position (Winamp won't do it)
@@ -414,11 +415,6 @@ static int init() {
 // The latter must not switch to Winamp's host preferences or tear fullscreen down.
 static HFONT g_linkFont = nullptr;
 
-static bool clientAnimationEnabled() {
-    BOOL enabled = TRUE;
-    return !SystemParametersInfoA(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) || enabled;
-}
-
 // Positions a tab page child dialog inside the tab control's display area.
 static void placePage(HWND dlg, HWND tab, HWND page) {
     RECT rc; GetWindowRect(tab, &rc);
@@ -480,16 +476,8 @@ static void selectConfigPage(ConfigDialogState* state, int selected) {
     if (!state || selected < 0 || selected > 1 || selected == state->selected) return;
     HWND outgoing = state->selected == 0 ? state->options : state->about;
     HWND incoming = selected == 0 ? state->options : state->about;
-    const bool animate = clientAnimationEnabled();
-    if (outgoing) {
-        if (animate) AnimateWindow(outgoing, 100, AW_HIDE | AW_BLEND);
-        else ShowWindow(outgoing, SW_HIDE);
-    }
     state->selected = selected;
-    if (incoming) {
-        if (animate) AnimateWindow(incoming, 100, AW_BLEND);
-        else ShowWindow(incoming, SW_SHOWNA);
-    }
+    childfade::replace(outgoing, incoming);
 }
 
 static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {

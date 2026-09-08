@@ -41,6 +41,7 @@ add_library(gen_24sevenfm_covers SHARED
     "${SHAREDDIR}/cover_menu.cpp"
     "${SHAREDDIR}/fullscreen_window.cpp"
     "${SHAREDDIR}/options_panel.cpp"
+    "${SHAREDDIR}/child_fade.cpp"
     "${SHAREDDIR}/rating_assets.cpp"
     "${LIBDIR}/coverfetch.cpp"
     "${LIBDIR}/http_client.cpp"
