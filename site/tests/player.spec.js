@@ -3827,9 +3827,9 @@ test.describe("the deployed player page", () => {
             backdropEasing: getComputedStyle(document.querySelector(".backdrop-movie"))
                 .transitionTimingFunction.split(",")[0].trim(),
             titleDuration: getComputedStyle(document.querySelector(".info"))
-                .transitionDuration,
+                .transitionDuration.split(",")[0].trim(),
             titleEasing: getComputedStyle(document.querySelector(".info"))
-                .transitionTimingFunction,
+                .transitionTimingFunction.split(",")[0].trim(),
         }))).toEqual({
             backdropDuration: "1.2s",
             backdropEasing: "ease",
