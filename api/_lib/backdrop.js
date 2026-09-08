@@ -1138,6 +1138,9 @@ async function steamGridDbHero(fetchImpl, game, env) {
         + encodeURIComponent(game.id));
     url.searchParams.set("mimes", "image/jpeg,image/png,image/webp");
     url.searchParams.set("types", "static");
+    // Material heroes can be mostly empty branding templates rather than usable
+    // scene art. Backdrops need SteamGridDB's regular full-art treatment.
+    url.searchParams.set("styles", "alternate");
     url.searchParams.set("nsfw", "false");
     url.searchParams.set("humor", "false");
     url.searchParams.set("epilepsy", "false");
@@ -1147,6 +1150,9 @@ async function steamGridDbHero(fetchImpl, game, env) {
         || (Number(b && b.upvotes) || 0) - (Number(a && a.upvotes) || 0)
         || (Number(b && b.width) || 0) - (Number(a && a.width) || 0));
     for (const candidate of candidates) {
+        // Keep compatibility with old API payloads that omitted style, while still
+        // defending against a provider response that ignores the requested filter.
+        if (candidate && candidate.style && candidate.style !== "alternate") continue;
         const hero = trustedSteamGridDbUrl(candidate && candidate.url, "hero");
         if (!hero) continue;
         return {

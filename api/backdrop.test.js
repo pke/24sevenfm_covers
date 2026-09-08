@@ -2323,6 +2323,57 @@ test("resolves an explicitly marked game through SteamGridDB hero art", async ()
     assert.equal(tintUrl, "https://cdn2.steamgriddb.com/hero_thumb/hades.jpg");
 });
 
+test("uses regular Dragon Age Veilguard art instead of its material hero", async () => {
+    let tintUrl = "";
+    const handler = createHandler({
+        env: { STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname.includes(
+                "/search/autocomplete/Dragon%20Age%3A%20The%20Veilguard")) {
+                return response(200, {
+                success: true,
+                data: [{ id: 5438165, name: "Dragon Age: The Veilguard", verified: true }],
+            });
+            }
+            if (parsed.pathname.includes("/heroes/game/5438165")) {
+                assert.equal(parsed.searchParams.get("styles"), "alternate");
+                return response(200, {
+                    success: true,
+                    // Keep the material response in the fixture so the client-side
+                    // safeguard is covered even if the upstream filter is ignored.
+                    data: [{
+                        score: 20, width: 3840, style: "material",
+                        url: "https://cdn2.steamgriddb.com/hero/3ff92975ec58fc21611d0480f4205633.jpg",
+                        thumb: "https://cdn2.steamgriddb.com/hero_thumb/3ff92975ec58fc21611d0480f4205633.jpg",
+                    }, {
+                        score: 10, width: 1920, style: "alternate",
+                        url: "https://cdn2.steamgriddb.com/hero/08f6d3f1c7b5b5ecedb19cb55f38d490.jpg",
+                        thumb: "https://cdn2.steamgriddb.com/hero_thumb/08f6d3f1c7b5b5ecedb19cb55f38d490.jpg",
+                    }],
+                });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async (url) => { tintUrl = url; return [70, 80, 90]; },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        title: "Dragon Age: The Veilguard (Original Video Game Soundtrack)",
+        providers: "steamgriddb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 5438165, title: "Dragon Age: The Veilguard", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/08f6d3f1c7b5b5ecedb19cb55f38d490.jpg",
+        source: "steamgriddb",
+        tint: [70, 80, 90],
+    });
+    assert.equal(tintUrl,
+        "https://cdn2.steamgriddb.com/hero_thumb/08f6d3f1c7b5b5ecedb19cb55f38d490.jpg");
+});
+
 test("retries SteamGridDB ampersand spelling after an exact game-title miss", async () => {
     const requests = [];
     const handler = createHandler({
