@@ -52,6 +52,10 @@ fallback — on a system without Direct2D the window stays blank (the log notes
   *Crossfade* (GPU alpha-blend), *Flip horizontal*, or *Flip vertical* (a card flip
   where the new cover is the "backside" of the old one).
 - **Duration** — transition length, 500 ms–2 s in 100 ms steps (ignored for *None*).
+- **StreamingSoundtracks media** — optional backdrops and DE/US ratings. The checked
+  native provider list controls fallback priority; selecting a row shows its site and
+  attribution. fanart.tv also offers a masked optional personal client key and a
+  direct Check action.
 
 Settings persist to `24seven.fm-covers.ini` in Winamp's settings directory.
 

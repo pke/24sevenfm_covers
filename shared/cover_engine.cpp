@@ -659,8 +659,9 @@ void CoverEngine::startMonitor() {
         // overlay counts down locally. A title-change swap sets an instant estimate (the
         // preloaded next length) which this poll then confirms/corrects.
         setRemaining(info.remainingSeconds);
-        // Keep the outgoing text until /api/media returns canonical Album/Track/Artist.
-        // This avoids ever painting raw station HTML entities for the incoming track.
+        // Keep the outgoing text until /api/media has completed. Its result then
+        // supplies canonical metadata or the validated stream fallback; on startup
+        // the empty info state therefore remains hidden for the whole request.
         if (info.stationIdent) {
             std::lock_guard<std::mutex> lock(mutex_);
             infoTitle_ = toWide(info.album);

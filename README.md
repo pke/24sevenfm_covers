@@ -20,9 +20,19 @@ the viewer's feature set to the browser, with optional audio streamed straight f
 | **Core library** | `lib/` | `coverfetch` static lib (cross-platform) | CMake |
 
 All three front-ends share the same **Direct2D renderer** (`shared/d2d_*.cpp`), the **cover
-engine** (`shared/cover_engine.*` — cover preload, crossfade/flip transitions, remaining-time
+engine** (`shared/cover_engine.*` — cover/media prefetch, crossfade/flip transitions, remaining-time
 countdown), the **options page** (`shared/options_*`), and the **networking/parse library**
 (`lib/`). The library alone (`lib/`) is portable C++11 and already cross-compiles for Android/iOS.
+
+For StreamingSoundtracks, the native clients can optionally show the same movie/TV/game
+backdrops and DE/US age ratings as the web player. Both switches are off by default. The
+project resolver owns matching and provider credentials; the shared native engine owns
+validation, bounded caching, queue prefetch, cancellation and retry behavior. Selecting
+a provider in Options shows its site and attribution; fanart.tv also accepts and checks
+an optional personal client key stored only in that client's local settings. Ratings
+follow the web visibility policy: a ten-second track intro, then pointer-hover visibility
+(two-second idle timeout in fullscreen). See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for provider and logo attribution.
 
 ## Repository layout
 

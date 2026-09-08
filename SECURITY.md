@@ -3,7 +3,7 @@
 This project fetches data from a third-party radio station and renders remote
 images, so the trust boundary is simple: **everything that comes back from the
 network is untrusted** — the "now playing" JSON, the `CoverLink` URL inside it,
-and the cover image bytes. The two threats worth defending against are a
+the optional media-resolver JSON, and the cover/backdrop image bytes. The two threats worth defending against are a
 **compromised/hostile station** and a **man-in-the-middle (MITM)** on the wire.
 
 ## Mitigated
@@ -12,6 +12,9 @@ and the cover image bytes. The two threats worth defending against are a
 |------|-----------|-------|
 | Cleartext MITM (Windows) | All requests go over **HTTPS:443 via WinHTTP**, with TLS certificate validation from the OS store | [`lib/http_client.cpp`](lib/http_client.cpp) |
 | SSRF via `CoverLink` (e.g. `169.254.169.254`, LAN hosts) | `CoverLink` host is pinned to the configured station (exact host or a subdomain); everything else is rejected before any fetch | `isTrustedCoverUrl` in [`lib/coverfetch.cpp`](lib/coverfetch.cpp) |
+| SSRF via resolver artwork | Backdrops require HTTPS and an exact source-to-CDN-host mapping for TMDB, fanart.tv, TVmaze or SteamGridDB; the mapping is rechecked before the image request | [`lib/media_resolver.cpp`](lib/media_resolver.cpp) |
+| Stale asynchronous result | Station/track/config/orientation epochs cancel old work and suppress late renderer commits | [`shared/cover_engine.cpp`](shared/cover_engine.cpp) |
+| Remote SVG parser/network dependency | Native age-rating logos are validated against a finite vocabulary and rendered from compiled PNG bytes | [`shared/rating_assets.cpp`](shared/rating_assets.cpp) |
 | SSRF via **redirect** (a 3xx from the pinned host escaping the pin) | Redirects are **not followed** (`WINHTTP_OPTION_REDIRECT_POLICY_NEVER`); a 3xx is handed back as a failed fetch. The station's endpoints don't legitimately redirect | [`lib/http_client.cpp`](lib/http_client.cpp) |
 | HTTP request injection via `CoverLink` (CRLF, control bytes) | Any control byte (`< 0x20` or `0x7F`) in the URL rejects it | `isTrustedCoverUrl` |
 | Image decompression bomb (a valid image declaring e.g. `65500×65500` → multi-gigapixel decode on the UI thread) | The frame's header-reported size is checked **before** decode and anything over `4096`/axis is refused | `coverDimsOk` in [`shared/image_limits.h`](shared/image_limits.h), gated in [`shared/d2d_renderer.cpp`](shared/d2d_renderer.cpp) |

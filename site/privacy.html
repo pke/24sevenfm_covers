@@ -22,7 +22,7 @@
 
     <section style="border-top: 0;">
         <h2>Privacy Policy</h2>
-        <p class="effective">Effective 21 August 2026</p>
+        <p class="effective">Effective 8 September 2026</p>
         <p class="lead">24seven.fm Covers is a free, open-source fan project. This policy covers
         this website and all three downloads: the Winamp plugin, the foobar2000 component and the
         standalone desktop player.</p>
@@ -33,11 +33,12 @@
             use no accounts, sign-ups, analytics, tracking scripts, advertising, cookies or
             telemetry. Station data, covers and audio flow directly from the station. To color the
             web player, station-hosted cover image URLs are also sent to this project's Vercel tint
-            resolver. If “Coming next” needs an artist omitted by the queue, the album name and its
-            station page URL are sent to this project's credit resolver. Only if you enable movie,
-            TV and game backdrops or the Ratings visualization is information about the current and
-            upcoming queued titles sent through the media resolver, as detailed below. Both media
-            features are off by default.</p>
+            resolver. Album, track and artist strings are sent to this project's media resolver so
+            every player receives consistently decoded display text. If “Coming next” needs an artist
+            omitted by the queue, the album name and its station page URL are sent to this project's
+            credit resolver. Only if you enable movie, TV and game backdrops or the Ratings
+            visualization does the media resolver query artwork or catalog providers. Both visual
+            media features are off by default.</p>
         </div>
     </section>
 
@@ -81,11 +82,15 @@
                 Vercel credit resolver. It reads only that public page's title metadata. A found artist
                 may be cached for six months; an ordinary “not found” result for 15 minutes; request
                 failures are not cached.</p>
+                <p>The player sends separate Album, Track and Artist strings for the current and
+                upcoming queued titles to this project's Vercel media resolver. It decodes HTML
+                character references, normalizes the displayed album article, returns the three fields
+                separately, and keeps no listening profile or request database. Upcoming requests are
+                spread over time rather than sent as one burst. With both visual media options off, the
+                resolver returns before contacting an artwork or catalog provider.</p>
                 <p>The <strong>off-by-default</strong> “Movie, TV &amp; game backdrops” and “Ratings” options add
-                more requests. If you enable either one, the player sends information about the
-                <em>current and upcoming queued titles</em> to this project's Vercel resolver. Upcoming
-                requests are spread over time rather than sent as one burst. The resolver uses that
-                information to match the movie or series. Backdrops request artwork from the configured
+                provider work. If you enable either one, the resolver uses the title information to
+                match the movie or series. Backdrops request artwork from the configured
                 providers; Ratings requests German FSK and US certifications from TMDB, while the
                 country controls choose which badges are displayed. Official FSK
                 badge images are served by this project's
@@ -108,8 +113,8 @@
                 <a href="https://fanart.tv/privacy-policy/">fanart.tv</a>,
                 <a href="https://www.tvmaze.com/site/privacy">TVmaze</a>,
                 <a href="https://www.steamgriddb.com/privacy">SteamGridDB</a>). Leave both media options
-                off and no soundtrack title or backdrop-provider request is made; cover-tint requests
-                still occur.</p>
+                off and no backdrop-provider request is made; metadata normalization and cover-tint
+                requests still occur.</p>
             </div>
             <div class="card">
                 <h3>Hosting</h3>
@@ -136,12 +141,10 @@
 
         <div class="stack">
             <div class="card">
-                <h3>They collect no data. None.</h3>
+                <h3>No tracking or listening profiles</h3>
                 <p>No accounts, no sign-up, no analytics, no advertising, no tracking SDKs, no crash
-                reporting, no update pings and no unique identifiers. They send data nowhere but the
-                station itself, and <strong>no server belonging to this project is ever
-                involved</strong> — none exists that could receive it. No personal data is
-                collected, stored, sold or shared, because none is ever held in the first place.</p>
+                reporting, no update pings and no unique identifiers. The project keeps no request
+                database and builds no listener profile. It does not sell or share listening data.</p>
             </div>
 
             <div class="card">
@@ -149,7 +152,14 @@
                 <p>To show a cover, they connect <em>directly</em> to the 24seven.fm station you’re
                 tuned to and request its “now playing” information and the cover image. Those
                 servers can see your device’s IP address — exactly as they do when you listen to the
-                stream or visit the station’s website. Nothing is routed through this project.</p>
+                stream or visit the station’s website.</p>
+                <p>The clients also send the current and staggered queued Album, Track and Artist
+                strings to this project's Vercel media resolver. Vercel necessarily processes the
+                device IP and ordinary request metadata. The endpoint returns consistently decoded
+                display fields and, with visual media options disabled, contacts no artwork/catalog
+                provider. On StreamingSoundtracks, enabling backdrops or ratings additionally permits
+                the provider calls described in the web-player section above. Provider images still
+                load directly from their CDN.</p>
             </div>
 
             <div class="card">
@@ -161,9 +171,11 @@
 
             <div class="card">
                 <h3>Settings stay on your device</h3>
-                <p>Your choices — station, layout, transition, countdown — are written only to your
-                own machine, never transmitted, and removed by deleting the file below (or by
-                uninstalling). Exactly where each one keeps them:</p>
+                <p>Your choices — station, layout, transition, countdown, ratings and provider order —
+                are written to your own machine and removed by deleting the file below (or by
+                uninstalling). The optional fanart.tv personal key is stored there too; it is sent to
+                this project's resolver only while fanart artwork is enabled, or directly to fanart.tv
+                when you press Check. Exactly where each client keeps its settings:</p>
                 <ul class="paths">
                     <li><strong>Winamp plugin</strong>
                         <code>24seven.fm-covers.ini</code>, in the settings folder Winamp itself

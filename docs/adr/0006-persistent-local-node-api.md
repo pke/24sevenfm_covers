@@ -11,7 +11,7 @@ production-parity resolver surface.
 
 ADR 0001 chose Vercel Functions for the deployed backdrop, tint and album-credit
 APIs. The local full-stack preview originally ran those Functions through
-`vercel dev` so the browser could use the same `/api/backdrop`, `/api/tint` and
+`vercel dev` so the browser could use the same `/api/media`, `/api/tint` and
 `/api/credit` paths as production.
 
 That platform emulation was a poor fit for the interactive development loop:
@@ -42,7 +42,7 @@ Use a small persistent Node HTTP adapter for local development instead of
 
 `installer/local_api_server.js`:
 
-- maps `/api/backdrop`, `/api/tint` and `/api/credit` directly to the same exported
+- maps `/api/media`, `/api/tint` and `/api/credit` directly to the same exported
   handler functions used by the Vercel entrypoints;
 - constructs `req.query` with the standard `URL` and `URLSearchParams` APIs, so
   form-encoded `+` spaces and percent-encoded literal plus signs have their normal

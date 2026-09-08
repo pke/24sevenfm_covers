@@ -30,6 +30,11 @@ MANUAL INSTALL (this zip)
 CONFIGURE
 ---------
 Preferences > Display > 24seven.fm Covers
-(remaining-time overlay + size, transition + duration, rolling digits).
+(remaining-time overlay + size, transition + duration, rolling digits, and
+optional SST backdrops/FSK+US ratings/provider order; media is off by default).
+
+When media features are enabled, station Album/Track/Artist metadata is sent to
+the project resolver and selected art is fetched from a validated provider CDN.
+The component uses foobar's dynamic/ICY title only as a playback-boundary signal.
 
 Requires foobar2000 v2 (64-bit).

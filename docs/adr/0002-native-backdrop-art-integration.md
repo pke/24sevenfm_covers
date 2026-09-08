@@ -1,172 +1,210 @@
-# ADR 0002: Shared native integration for movie, TV and game backdrop art
+# ADR 0002: Shared native integration for backdrop art and age ratings
 
-Date: 2026-08-20
-Status: Proposed
+Date: 2026-09-08
+Status: Accepted and implemented
 
 ## Context
 
-ADR 0001 introduced the server-side backdrop resolver used by the web player:
+ADR 0001 introduced the project-owned resolver used by the web player:
 
+```text
+GET /api/media?album=<raw album>&track=<raw track>&artist=<raw artist>
+    &providers=<ordered providers>&ratings=DE,US&orientation=<landscape|portrait>
 ```
-GET /api/backdrop?album=<raw album>&track=<raw track>
-```
 
-The resolver owns soundtrack-title cleanup, compilation exceptions, movie/TV/game
-classification and provider selection. Clients should not reproduce that logic.
+It owns soundtrack-title cleanup, compilation exceptions, movie/TV/game
+classification, provider matching and credentials. Backdrops and certifications now
+also need to work in the Winamp plugin, foobar2000 component and standalone Windows
+viewer without three implementations or a second set of title rules.
 
-The same feature may later be added to the Winamp plugin, foobar2000 component and
-standalone Windows viewer. Before doing so, we need to establish which metadata the
-native clients actually receive and choose an integration boundary that avoids three
-host-specific implementations.
+## Native metadata contract
 
-## Existing native metadata paths
+All native clients compile the same `CoverMonitor`, `CoverEngine`, HTTP client and
+Direct2D renderer. The station JSON is authoritative in every client.
 
-All three native clients compile and use the same `CoverMonitor`, `CoverEngine`, HTTP
-client and Direct2D renderer. The station's now-playing JSON is the authoritative
-source of album and track metadata in every client.
-
-| Client | Host/ICY metadata use | Authoritative album and track source |
+| Client | Host/ICY use | Authoritative media metadata |
 | --- | --- | --- |
-| Winamp | Polls `IPC_GETPLAYLISTTITLE`, an ICY-derived playlist title, to detect a real track change. The playlist URL identifies the tuned station. | `FM24sevenJSON.php?action=GetCurrentlyPlaying` through `CoverMonitor`. |
-| foobar2000 | Handles `on_playback_dynamic_info_track`, reads only the dynamic `TITLE` value and uses it as a track-change signal. The stream URL identifies the station. | The same `GetCurrentlyPlaying` JSON through `CoverMonitor`; foobar's `ALBUM` metadata is not used. |
-| Desktop viewer | Has no host player and receives no ICY metadata. It runs the monitor with `autoAdvance=true` and follows the station's server clock. | The same `GetCurrentlyPlaying` JSON through `CoverMonitor`. |
+| Winamp | Playlist/ICY title detects a real playback boundary; stream URL detects station. | `GetCurrentlyPlaying` and `GetQueue` JSON. |
+| foobar2000 | Dynamic `TITLE` detects a playback boundary; stream URL detects station. | The same station JSON; foobar `ALBUM` is not used. |
+| Desktop viewer | No host/ICY input; follows the station clock. | The same station JSON. |
 
-`CoverMonitor::pollOnce` parses and HTML-decodes `Album`, `Track` and `Artist` into
-`TrackInfo`. `CoverEngine` currently combines those fields only for display as
-`Album - Track (M:SS)`. That formatted display string is not an appropriate resolver
-input because its separators and appended duration are presentation details.
+`TrackInfo` therefore carries the station's raw `Album`, `Track`, `Artist`, trusted
+cover and thumbnail URLs, album page URL, duration and station-ident state. ICY
+remains a timing signal only. The resolver receives those separate raw UTF-8 fields,
+never the ICY string or the presentation string `Album - Track (M:SS)`.
 
-For the plugins, an ICY title change causes `CoverEngine::onTitleChanged` to swap the
-preloaded cover and request a JSON refresh. ICY therefore controls playback timing,
-but does not supply the album/track pair used for cover metadata or future backdrop
-resolution. The viewer obtains both metadata and timing entirely from JSON.
+`/api/media` returns the canonical fields independently as
+`metadata: { album, track, artist }`. The server decodes the full HTML5 named and
+numeric character-reference vocabulary exactly once for all three fields and moves a
+trailing album article (`The`, `A`, `An`) to the front. Clients do neither transform;
+they format only the returned values and duration. This keeps composer names correct
+as well as titles and makes future normalization fixes available without a client
+release.
 
 ## Decision
 
-When native backdrop art is implemented, implement it once in the shared native
-layer rather than in the Winamp, foobar2000 and desktop host adapters.
+Implement resolver access, ratings, cache/queue policy and visual state once in the
+shared native code.
 
-### Resolver input
+### Trust and transport boundary
 
-- Pass `TrackInfo.album` and `TrackInfo.track` to `/api/backdrop` as the `album` and
-  `track` query parameters.
-- Pass the HTML-decoded UTF-8 strings without local title cleanup, splitting,
-  rotation, soundtrack-suffix removal or media classification.
-- Do not send Winamp's playlist title, foobar's dynamic `TITLE`, or the formatted
-  `Album - Track (M:SS)` display string.
-- A native wrapper may call its second argument `title` internally, but it must map
-  it to the API's `track` parameter. The API's legacy `title` parameter means a
-  directly supplied work title and must not be confused with an ICY track title.
+The shared resolver:
 
-This keeps every title exception, including multi-film compilation handling, in the
-server resolver and makes future corrections immediately available to all clients.
+1. Percent-encodes raw Album/Track/Artist and calls the HTTPS project endpoint with
+   a 20-second request timeout.
+2. Strictly parses `metadata`, `media`, `backdrop`, `source`, `tint` and `certifications` and
+   accepts only the known FSK, MPA and TV Parental Guidelines vocabulary.
+3. Accepts direct HTTPS images only from the web player's provider mapping:
+   `image.tmdb.org`, fanart.tv artwork hosts, `static.tvmaze.com` and
+   `cdn2.steamgriddb.com`.
+4. Keeps the project TMDB, fanart.tv and SteamGridDB application credentials
+   server-side. A listener may optionally persist a fanart.tv personal `client_key`
+   locally. It is sent to the project resolver only when fanart.tv artwork is enabled;
+   the explicit Check action sends it once directly to fanart.tv's stable movie probe,
+   matching the web player. Keys are trimmed, limited to 128 control-free bytes and
+   never included in diagnostics or share state. A native request sends no browser
+   `Origin`, so browser CORS policy is not used as native auth.
+5. Revalidates the provider URL before the CDN request and retains the existing WIC
+   dimension/response limits before rendering.
 
-### Shared ownership
+Artwork and rating provider resolution is limited to StreamingSoundtracks and is off
+by default. Every station uses a metadata-only request so its display strings follow
+the same server contract. `art=0` with no rating countries returns before any
+third-party provider call.
 
-A shared native resolver component should:
+### Cache, cancellation and queue behavior
 
-1. Percent-encode the UTF-8 `album` and `track` values and call the project HTTPS
-   endpoint using the existing WinHTTP-based transport.
-2. Parse the returned `backdrop`, `source`, `media` and optional `tint` fields.
-3. Accept only HTTPS image URLs on the provider hosts approved by the web client:
-   TMDB's image host, fanart.tv artwork hosts and SteamGridDB's static hero CDN.
-4. Download and decode the selected image under the existing response-size and
-   image-dimension limits.
-5. Cache successful results and misses, while leaving endpoint failures retryable.
-6. Use cancellation plus a per-track or per-station generation token so a late
-   response can never install artwork for an old track or station.
+Cache identity contains raw album, track and artist plus ordered provider list,
+enabled artwork/ratings features, rating countries and landscape/portrait
+orientation. While fanart.tv artwork is enabled it also contains the personal client
+key, so changing that key cannot reuse results resolved with the previous identity.
+Hits and authoritative misses are cached. Endpoint, transport, image
+and decode failures are not.
 
-Native requests do not send a browser `Origin` header, so the resolver's browser CORS
-allowlist does not block them. No provider credential belongs in a native executable;
-TMDB, fanart.tv and SteamGridDB keys remain server-side.
+Every station/track/configuration/orientation snapshot gets an epoch and cancellation
+token. Late work may not install pixels or badges for an older epoch. Backdrop state
+is independent of square-cover state, so `CoverEngine::currentCover()` continues to
+return the station cover for foobar2000 album-art fallback.
 
-All three current native targets are Windows builds and can use the existing WinHTTP
-TLS path. A future non-Windows consumer of `lib/` would first need a platform HTTPS
-transport because the current non-Windows fallback is plain HTTP only.
+`GetQueue` exposes full TrackInfo records. The first queued item is eligible
+immediately; further items are admitted one per minute. The cross-snapshot cache is
+bounded to 64 configuration-aware entries. Sixty-four is a memory bound, not 64
+immediate requests or an assumed station queue length: queues are normally much
+shorter, while repeated snapshots can temporarily contain distinct tracks.
 
-### Engine and rendering state
+If a queue row has no Artist, `/api/credit` can enrich it only through the selected
+station's validated album URL. A prefetched result is provisional: native clients
+show it immediately on the matching boundary and revalidate with authoritative
+current-playing Artist. A failed or empty refinement never erases valid prefetched
+art or ratings.
 
-Backdrop bytes and renderer state must remain separate from the normal station cover.
-In particular, `CoverEngine::currentCover()` feeds foobar2000's native album-art
-system and must continue to return the square station cover, not a landscape hero.
+### Web robustness parity
 
-The backdrop request should run independently of the normal cover download and queue
-preload. Adding a provider lookup synchronously to the existing cover callback would
-delay following-cover prefetch and could make `stop()` or a station switch wait on an
-unrelated provider request.
+- Current-cover failures retry after 5, 10 and 20 seconds, then every five minutes.
+- Backdrop image failures retry after 1 and 2 seconds. After that the normal cover
+  remains visible and the shared context menu offers an explicit retry.
+- Station-feed and current resolver failures use 8, 16, 32 and 60-second delays,
+  then restart at 8 seconds like the web player.
+- Queue provider failures remain uncached and eligible on the minute-spaced worker.
+- Current work has priority over queue work in the single bounded network lane.
+- A cacheable miss is distinct from an endpoint failure.
+- Empty or rejected current CoverLinks fall back to the selected station's trusted
+  logo, and corrupt/oversized cover or backdrop payloads enter the normal retry path.
+- Backdrop replacement and removal keep the outgoing content rendered through an
+  opacity fade. Cover geometry scales with the window, and Windows' client-animation
+  preference disables cover, media and rolling-digit motion together.
 
-Visible backdrop replacement must use the existing double-buffered transition model:
-keep outgoing art rendered until its exit fade completes, animate geometry changes,
-and respect the Windows reduced-motion/animation preference. A miss or failure should
-fade back to the existing cover-derived poster background without disrupting the
-cover itself.
+### Rating images
 
-### Queue prefetch
+Windows Imaging Component has no sufficiently reliable, uniform SVG path for these
+three native hosts. The finite accepted logo vocabulary is bundled as high-resolution
+palette PNG instead. FSK/MPA SVG sources are rasterised locally with `sharp`; TV marks
+also have a deterministic local SVG fallback so source throttling cannot make a build
+incomplete. The generated PNGs and compiled byte bundle are reproducible and are not
+uploaded to TinyPNG/TinyJPG or another optimizer. Text is retained as a decode-safe
+fallback. Source and provider notices live in `THIRD_PARTY_NOTICES.md`.
 
-The current native `nextCoverUrl` path reads only the next `CoverLink` and `Length`
-from `GetQueue`. It does not expose the queued `Album` or `Track`. That is sufficient
-for instant square-cover swaps but insufficient for pre-resolving the next backdrop.
+### Settings and UI
 
-Extend the shared queue result to carry the next track's album, track, artist, cover
-and duration as one structure. The plugins can then associate the preloaded backdrop
-with the same queued item whose cover they swap on the ICY title boundary; the viewer
-can use the same data at the server-clock boundary. This extension belongs in
-`CoverMonitor`, not in either plugin.
+The shared options page owns backdrop, age-rating country, hide-cover and ordered
+provider controls. Selecting a provider fades a detail surface in below the native
+checkbox list view with its clickable site link and applicable attribution. fanart.tv's
+detail additionally owns the masked personal-key field, documentation/key links,
+asynchronous direct check and persisted verification date. Winamp and the viewer
+persist the shared schema in INI; foobar2000 maps it to GUID-backed
+`cfg_int`/`cfg_string` values. Provider enablement uses the checked state of a Win32
+common-control list view; its row order is the resolver fallback order, so the three
+native hosts share both the control implementation and the persisted value.
 
-An initial implementation may resolve only the current JSON item and accept a later
-backdrop arrival, but queue metadata is required for parity with the web player's
-prefetch behavior and for seamless native transitions.
+Winamp registers a scroll host for its shorter Preferences pane, so the complete
+shared options page and provider details stay reachable. Configure and the fullscreen
+context menu open Winamp's own Options/About dialog; a fullscreen-owned dialog joins
+the topmost band and does not close the presentation or redirect into host settings.
 
-### Scope, settings and attribution
+The native renderer follows the web player's visible media contract as well:
 
-- Keep native backdrops experimental and off by default.
-- Initially enable resolution only for the StreamingSoundtracks station, matching the
-  web player. Other family stations are not soundtrack catalogs and should not send
-  their titles to artwork providers.
-- Put the option in `CoverEngine::Settings` and the shared options page. Winamp and the
-  viewer will inherit INI persistence through the shared config schema; foobar2000
-  requires one new GUID-backed `cfg_int` mapping.
-- Add the same privacy disclosure used by the web player: when enabled, current and
-  queued Album/Track values go to the project's resolver, while provider CDNs receive
-  direct image requests from the client.
-- Surface TMDB's required notice and provider links in an accessible native About or
-  shared Options/Credits surface. Do not rely on documentation that is absent from the
-  installed application.
+- Rating marks are retained at the lower-right in DE-then-US order and crossfade on
+  track/configuration changes.
+- Badge height follows both stage-relative web sizing and the fullscreen window's
+  effective DPI, with DPI-scaled lower and upper bounds so high-density monitors do
+  not shrink the native PNG marks visually.
+- A rating becomes visible for ten seconds once the current track's first badge is
+  ready. Afterwards a normal window follows pointer hover; fullscreen fades the
+  badges 350 ms after two seconds without pointer movement. Moving the pointer reveals
+  them again, and the Windows client-animation preference disables those fades.
+- Fullscreen uses that same two-second web-player idle boundary for the system cursor:
+  it is visible on entry and immediately after movement, hidden while parked over the
+  fullscreen canvas, restored on exit, and kept visible while its menu or options UI
+  is open.
+- The dedicated fullscreen HWND is activated, kept topmost and registered with
+  Explorer through `ITaskbarList2::MarkFullscreenWindow`; this covers the primary
+  taskbar as reliably as secondary-monitor taskbars.
+- Poster mode keeps the cover in the upper artwork row and the information panel
+  below it for landscape and portrait windows; it no longer switches to the former
+  native side-by-side layout on wide windows.
+- The cover basis is `min(stage height * 0.58, stage width * 0.86)`. Title, artist
+  and countdown sizes use the web factors `0.072`, `0.058`, and
+  `0.048`/`0.062`/`0.080`, including the 16/13/12-pixel minimums and medium-weight,
+  centred countdown.
+- Resolver `tint` colours title, artist and countdown. The renderer falls back to
+  the cover-derived tint when no authoritative backdrop tint exists and interpolates
+  old and new tint during the same media fade, so the information panel does not
+  snap to its next colour.
+- The information-panel background matches the web `rgba(10, 12, 18, .55)` surface;
+  the tint applies to its text, not to that translucent surface.
 
 ## Consequences
 
-- Winamp, foobar2000 and the viewer need no host-specific title parsing or media-type
-  logic. Their existing host metadata remains a timing and station-detection concern.
-- Fixes to soundtrack normalization remain centralized in the server and benefit all
-  released clients without rebuilding them.
-- Most implementation work is shared: API transport/parsing, cancellation, caching,
-  queue metadata, backdrop renderer state and transitions.
-- Per-host work is limited primarily to build-file inclusion, settings persistence
-  where required, and an appropriate attribution surface.
-- The safe initial cache key is the raw album/track pair. This preserves compilation
-  correctness but can duplicate lookups for different cues from the same ordinary
-  soundtrack. If that becomes material, the API can later return an explicit stable
-  cache key or album-versus-track scope; clients must not infer that scope by copying
-  the resolver's title rules.
-- The feature continues to degrade cleanly: unavailable API, provider miss, rejected
-  URL, failed image download or decode all leave the normal cover presentation intact.
+- Server matching corrections benefit web and every native release without copying
+  JavaScript normalization into C++.
+- Host glue remains limited to playback timing, station detection, persistence,
+  message forwarding and build inclusion.
+- A configuration-aware key can duplicate results across cues, but prevents provider,
+  artist or orientation bleed and avoids guessing the resolver's title scope.
+- Resolver outage, miss, rejected URL, image failure or decode failure degrades to the
+  normal cover-derived presentation and never replaces exported square album art.
+- A future non-Windows consumer must add a real HTTPS transport before enabling this
+  feature; the current non-Windows socket fallback is plain HTTP.
 
 ## Alternatives considered
 
-- **Use ICY metadata as resolver input.** Rejected. Winamp and foobar expose it in
-  different host-specific forms, the viewer has no ICY source, and it may contain a
-  composite display title rather than separate album and track values.
-- **Send the formatted poster title.** Rejected. `Album - Track (M:SS)` is lossy and
-  ambiguous to parse, and duration formatting is unrelated to media matching.
-- **Implement one resolver client per host.** Rejected. All hosts already converge in
-  `CoverEngine` with the same `TrackInfo`; separate implementations would duplicate
-  networking, validation, caching and race handling.
-- **Copy web normalization into C++.** Rejected. Rules would drift between JavaScript
-  and native releases, and every correction would require rebuilding all clients.
-- **Replace foobar's exported album art with the backdrop.** Rejected. A landscape
-  movie/TV/game hero is a visual background, not the track's album cover.
+- **Use ICY metadata as resolver input.** Rejected: host-specific and absent in the
+  viewer; it is a timing string rather than structured media metadata.
+- **Send the formatted poster title.** Rejected: duration/separators are lossy
+  presentation details.
+- **Implement one client per host.** Rejected: it duplicates validation, caching,
+  cancellation, retry and rendering races.
+- **Copy web normalization into C++.** Rejected: rules would drift between releases.
+- **Use remote SVG rating logos.** Rejected: adds network failure and inconsistent
+  native SVG support for a small, fixed vocabulary.
+- **Replace foobar's exported album art with a hero.** Rejected: a landscape/portrait
+  backdrop is not the track's square album cover.
 
-## Implementation status
+## Verification
 
-Assessment only. No native backdrop transport, settings, queue changes or renderer
-changes have been implemented as part of this ADR.
+Deterministic native tests cover raw feed preservation and full queue metadata, resolver
+trust/sanitization, hit-versus-miss-versus-failure state, cache identity, exact retry
+cadence, queue staggering and every bundled rating PNG. The existing API tests remain
+authoritative for provider fallback/matching/certifications, while Playwright remains
+authoritative for the web rendering behavior from which these native contracts are
+derived. Release builds compile the same shared implementation into all three hosts.

@@ -19,7 +19,12 @@ MANUAL INSTALL
 CONFIGURE
 ---------
 Ctrl+P > General Preferences > "24seven.fm Covers"
-(remaining-time overlay + size, transition + duration, rolling digits).
+(remaining-time overlay + size, transition + duration, rolling digits, and
+optional SST backdrops/FSK+US ratings/provider order; media is off by default).
+
+When media features are enabled, station Album/Track/Artist metadata is sent to
+the project resolver and selected art is fetched from a validated provider CDN.
+The plugin never uses Winamp's ICY title as resolver metadata.
 
 UNINSTALL
 ---------

@@ -79,8 +79,9 @@ Two workflows, both ending in a GitHub Pages deploy:
 Both use the same renderer, so they cannot drift. The site tracks the newest
 release either way.
 
-The movie/TV/game-backdrop, DE/US-rating, cover-tint and album-credit resolvers are served by the
-Vercel project at the repository root. The media features share `api/backdrop.js`; the
+The movie/TV/game-backdrop, DE/US-rating, normalized track-metadata, cover-tint and album-credit
+resolvers are served by the Vercel project at the repository root. The media features use
+`api/media.js`; the
 rating resolver returns exact Wikimedia Commons SVG URLs for FSK, MPA movie, and US TV
 Parental Guidelines badges, with the text badge retained as the image-load fallback.
 Available US TV content descriptors appear with their meanings on hover and keyboard
@@ -95,7 +96,7 @@ or downloaded in advance.
 Cover tint uses `api/tint.js`; missing queued `Artist` values use the allowlisted
 `api/credit.js` album-page fallback. Their deployment, security
 limits and environment variables are documented in `docs/vercel-backdrop.md`.
-`player.html` uses `/api/backdrop`, `/api/tint`, and `/api/credit`, so a GitHub Pages deployment
+`player.html` uses `/api/media`, `/api/tint`, and `/api/credit`, so a GitHub Pages deployment
 needs absolute Vercel Function URLs in all three API meta tags or a same-domain proxy
 for those paths.
 

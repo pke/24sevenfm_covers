@@ -17,7 +17,13 @@ Right-click the window (or its system menu / Alt+Space) > Options...
   - Station : which 24seven.fm station to display
   - Overlay : remaining-time countdown + size
   - Transition + duration, rolling digits
+  - StreamingSoundtracks only: optional movie/TV/game backdrops, FSK/US age
+    ratings, cover visibility and ordered artwork providers (off by default)
 Double-click the window (or Esc) toggles fullscreen.
+
+When media features are enabled, Album/Track/Artist metadata is sent to the
+project resolver. Selected artwork is then loaded directly from the validated
+TMDB, fanart.tv, TVmaze or SteamGridDB CDN. Rating logos are bundled PNGs.
 
 UNINSTALL
 ---------

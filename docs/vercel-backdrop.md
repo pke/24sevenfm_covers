@@ -1,10 +1,11 @@
 # Vercel artwork resolvers
 
-ADR 0001 is implemented by `api/backdrop.js` and `api/tint.js`; the web player's
+ADR 0001 is implemented by `api/media.js` and `api/tint.js`; the web player's
 queued-credit fallback is `api/credit.js`. Vercel discovers all three as Node.js
-Functions and installs the root `package.json`. The backdrop API
-returns a selected CDN URL and RGB tint and can optionally return DE/US media
-certifications; the tint API downloads a bounded station
+Functions and installs the root `package.json`. The media API always returns
+separate canonical Album, Track and Artist strings (HTML5 entities decoded exactly
+once and the Album article rotated), plus an optional selected CDN URL, RGB tint and
+DE/US media certifications; the tint API downloads a bounded station
 cover on cache miss and returns only its RGB tint. The credit API reads the public
 Open Graph title of an allowlisted station album page only when `GetQueue` omits
 `Artist`. None of the endpoints proxies image
@@ -16,6 +17,9 @@ without paying for unused image-provider work. Rating lookup is best-effort: a T
 certification failure returns an empty array and does not fail otherwise valid art.
 For US TV ratings, a sanitized `descriptors` array carries the optional D/L/S/V/FV
 content descriptors supplied by TMDB.
+
+With `art=0` and no `ratings`, `/api/media` performs metadata normalization only and
+returns before any artwork or catalog provider call.
 
 ## Project settings
 
@@ -166,7 +170,7 @@ station feed itself cannot prove their type.
 
 ## Site/API routing
 
-`site/player.html` points at `/api/backdrop`, `/api/tint`, and `/api/credit`. The browser has no
+`site/player.html` points at `/api/media`, `/api/tint`, and `/api/credit`. The browser has no
 direct metadata-provider or pixel-reading fallback, so all three routes must be
 reachable. The relative URLs are correct when Vercel serves
 the rendered website and function on the same domain. If the static site remains
@@ -232,10 +236,10 @@ node --test api/*.test.js
 After deployment, verify a known soundtrack without printing any configured key:
 
 ```powershell
-curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Arrival"
-curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Arrival" --data-urlencode "orientation=portrait"
-curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Hades" --data-urlencode "media_hint=game"
-curl.exe --get "https://YOUR-DOMAIN/api/backdrop" --data-urlencode "title=Game Of Thrones" --data-urlencode "providers=tmdb" --data-urlencode "ratings=DE,US" --data-urlencode "art=0"
+curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Arrival"
+curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Arrival" --data-urlencode "orientation=portrait"
+curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Hades" --data-urlencode "media_hint=game"
+curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Game Of Thrones" --data-urlencode "providers=tmdb" --data-urlencode "ratings=DE,US" --data-urlencode "art=0"
 curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://streamingsoundtracks.com/images/cover/040/B000FBFTCS.jpg"
 curl.exe --get "https://YOUR-DOMAIN/api/credit" --data-urlencode "album=JFK (2013)" --data-urlencode "url=https://streamingsoundtracks.com/modules.php?name=Album&asin=B00GHJ08XC"
 ```

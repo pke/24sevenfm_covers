@@ -50,16 +50,21 @@ Build two small serverless endpoints (Vercel functions). The first resolves a
 normalized soundtrack title to backdrop art and a UI tint, using project-owned keys server-side:
 
 ```
-GET /api/backdrop?album=<raw album>&track=<raw track>[&client_key=<fanart personal key>]
+GET /api/media?album=<raw album>&track=<raw track>[&client_key=<fanart personal key>]
 -> { media: { id, title, type: "movie" | "tv" | "game" }, backdrop: "https://...",
      source: "fanart" | "tmdb" | "steamgriddb",
-     tint: [r, g, b] }
+     tint: [r, g, b], metadata: { album, track, artist } }
    Cache-Control: s-maxage=15552000        (artwork hit)
    Cache-Control: s-maxage=900             (no-backdrop result)
 ```
 
 The legacy `title` and optional `media_hint` parameters remain accepted for direct
 callers; the player uses `album` and `track` so normalization stays server-side.
+`metadata` is returned independently of a media match. It HTML5-decodes Album, Track
+and Artist exactly once and applies the trailing `, The/A/An` display transformation
+to Album. An `art=0` request without rating countries exits before provider matching,
+which lets every client obtain canonical display fields without contacting TMDB,
+fanart.tv, TVmaze or SteamGridDB.
 
 The second computes the same tint from a canonical station cover, so the normal
 player can remain cover-colored even when screen backdrops are disabled:
@@ -120,8 +125,9 @@ Key points:
 
 - The web player's user IP and each new cover-thumbnail URL flow through Vercel
   for tint resolution. Album titles additionally flow through the resolver only
-  when the off-by-default movie/TV/game-backdrop option is enabled. The privacy policy
-  discloses both paths.
+  for every track so the resolver can return canonical display metadata. Artwork and
+  rating provider calls remain conditional on the off-by-default options. The privacy
+  policy discloses both paths.
 - fanart.tv works either way: their CORS bug (since fixed upstream) never matters
   to a server, and the fix does not change this design - the endpoint's value is
   the shared keys, the one-lookup-per-movie caching, and the precomputed tint.
@@ -143,12 +149,14 @@ Key points:
 
 Implemented on 2026-08-20:
 
-- `api/backdrop.js` and `api/tint.js` expose the Vercel Functions; provider
+- `api/media.js` and `api/tint.js` expose the Vercel Functions; provider
   resolution, strict URL validation, bounded image decoding, caching and tint
   calculation live in `api/_lib/backdrop.js`.
 - The web player calls only this resolver for provider metadata. It validates the
   returned CDN URL and tint before displaying them and degrades to the normal
   blurred cover if the endpoint is unavailable.
+- The web and native players render the resolver's separate normalized Album, Track
+  and Artist values. Title article rotation is not duplicated in client code.
 - Project credentials come from Vercel environment variables; only an optional
   fanart.tv personal key can originate in the browser.
 - The normal cover tint is the player's base color. A loaded media backdrop's
