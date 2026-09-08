@@ -27,11 +27,12 @@ $assets = @(
     @{ name = 'viewer_24sevenfm_covers-1.2.3-20260821.exe'; size = 1024 }
     @{ name = 'viewer_24sevenfm_covers-1.2.3-20260821.zip'; size = 1024 }
 )
+$commitSha = '0123456789abcdef0123456789abcdef01234567'
 
 try {
     & (Join-Path $PSScriptRoot 'render_site.ps1') `
         -Assets ($assets | ConvertTo-Json -Compress) -OutputDirectory $testOutput `
-        -ApiOrigin 'http://localhost:3000'
+        -ApiOrigin 'http://localhost:3000' -CommitSha $commitSha
     Assert-Test (Test-Path -LiteralPath (Join-Path $testOutput 'player.html') -PathType Leaf) `
         'the isolated output should contain player.html'
     $renderedPlayer = [IO.File]::ReadAllText((Join-Path $testOutput 'player.html'))
@@ -55,6 +56,16 @@ try {
         'the rendered player should not retain a manually maintained resolver version'
     Assert-Test (-not $renderedPlayer.Contains('https://24covers-api.vercel.app')) `
         'the local render should not expose an intermediate production API origin'
+    Assert-Test ($renderedPlayer.Contains("<meta name=`"build-revision`" content=`"$commitSha`">")) `
+        'the renderer should expose the deployed commit in player metadata'
+    foreach ($pageName in @('index.html', 'player.html', 'privacy.html')) {
+        $renderedPage = [IO.File]::ReadAllText((Join-Path $testOutput $pageName))
+        Assert-Test ($renderedPage.Contains('<a href="humans.txt">Humans</a>')) `
+            "$pageName should visibly link its humans.txt metadata"
+    }
+    $renderedHumans = [IO.File]::ReadAllText((Join-Path $testOutput 'humans.txt'))
+    Assert-Test ($renderedHumans.Contains("Revision: $commitSha")) `
+        'humans.txt should identify the same deployed commit as the player'
 
     Assert-Test ((Test-Path -LiteralPath $publishedPlayer -PathType Leaf) -eq $publishedPlayerExisted) `
         'an isolated render should not create or remove www\player.html'

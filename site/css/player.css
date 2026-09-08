@@ -363,6 +363,49 @@
     transition: opacity .35s ease;
 }
 .stage-audio { left: .7rem; bottom: .7rem; }
+.stage-update {
+    position: absolute;
+    z-index: 7;
+    top: .7rem;
+    left: 50%;
+    width: max-content;
+    max-width: min(24rem, calc(100% - 8rem));
+    margin: 0;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate(-50%, -.25rem);
+    transition: opacity .2s ease, transform .2s ease,
+                visibility 0s linear .2s;
+}
+.stage-update.show {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translate(-50%, 0);
+    transition-delay: 0s;
+}
+.stage-update button {
+    appearance: none;
+    max-width: 100%;
+    padding: .4rem .75rem;
+    border: 1px solid rgba(255, 255, 255, .2);
+    border-radius: 999px;
+    background: rgba(0, 0, 0, .62);
+    color: var(--text-inverse);
+    box-shadow: 0 .25rem 1rem rgba(0, 0, 0, .3);
+    backdrop-filter: blur(8px);
+    font: inherit;
+    font-size: .82rem;
+    font-weight: 600;
+    line-height: 1.25;
+    cursor: pointer;
+}
+.stage-update button:hover { background: rgba(20, 20, 20, .78); }
+.stage-update button:focus-visible {
+    outline: 2px solid var(--text-inverse);
+    outline-offset: 2px;
+}
 .stage-milkdrop,
 .stage-lasers,
 .stage-lasers-front {
@@ -810,6 +853,12 @@
    out (these rules out-specify the :hover ones) and the cursor goes with it - a cursor
    parked on the artwork is the same clutter. Any movement lifts .idle again. */
 .stage:fullscreen.idle .stage-button { opacity: 0; }
+.stage:fullscreen.idle .stage-update {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition-delay: 0s;
+}
 .stage:fullscreen.idle .rating-badges { opacity: 0; visibility: hidden; }
 .stage:fullscreen.idle .rating-badges.track-intro {
     opacity: 1;
@@ -1343,7 +1392,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 @media (prefers-reduced-motion: reduce) {
     .coverbox img, .coverbox .card, .coverbox, .countdown, .info,
     .info .t, .backchannel-status, .backchannel-pairing,
-    .stage-button, .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum,
+    .stage-button, .stage-update, .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum,
     .stage-bpm,
     .stage-status, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,

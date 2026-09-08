@@ -26,7 +26,8 @@ param(
     [string]$SiteUrl    = '',   # absolute site base URL (og:image); empty for local preview
     [string]$Repo       = 'pke/24sevenfm_covers',
     [string]$OutputDirectory = '', # empty = the publishable www\ tree
-    [string]$ApiOrigin = '' # local preview only; empty keeps the production API origin
+    [string]$ApiOrigin = '', # local preview only; empty keeps the production API origin
+    [string]$CommitSha = '' # empty = GITHUB_SHA, then the current Git checkout
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,6 +82,26 @@ if ($ReleaseTag -and -not $SiteUrl) {
 # turn release metadata into markup when {{RELEASE_TAG}} is written into each page footer.
 if ($ReleaseTag -and $ReleaseTag -notmatch '^v\d{4}\.\d{2}\.\d{2}-\d+$') {
     throw "render_site: invalid -ReleaseTag '$ReleaseTag'; expected vYYYY.MM.DD-<run>."
+}
+
+$revision = if ($CommitSha) {
+    $CommitSha.Trim()
+} elseif ($env:GITHUB_SHA) {
+    $env:GITHUB_SHA.Trim()
+} else { '' }
+if (-not $revision) {
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if ($git) {
+        $gitRevision = & $git.Source -C $root rev-parse HEAD 2>$null
+        if ($LASTEXITCODE -eq 0) { $revision = ([string]$gitRevision).Trim() }
+    }
+}
+if (-not $revision) {
+    $revision = 'local-preview'
+} elseif ($revision -notmatch '^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$') {
+    throw "render_site: invalid -CommitSha '$revision'; expected a 40- or 64-character Git object id."
+} else {
+    $revision = $revision.ToLowerInvariant()
 }
 
 $normalizedApiOrigin = ''
@@ -140,6 +161,7 @@ $tokens = @{
     '{{RELEASE_TAG}}'           = $(if ($ReleaseTag) {
         [System.Net.WebUtility]::HtmlEncode($ReleaseTag)
     } else { 'local preview' })
+    '{{COMMIT_SHA}}'            = $revision
     # Cache-buster for css/js links (?v=...). GitHub Pages serves everything with a fixed
     # max-age=600 and no way to set headers, so unversioned asset URLs can pair a fresh
     # HTML with a stale script (or vice versa) for up to 10 minutes after a deploy - a JS

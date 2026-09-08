@@ -4091,12 +4091,126 @@ coverBox.addEventListener("pointerup", function (event) {
 });
 coverBox.addEventListener("pointercancel", function () { coverTapStart = null; });
 
+// --- deployed-version check --------------------------------------------------
+// GitHub Pages exposes an ETag for player.html. A HEAD request is enough to compare
+// that validator without downloading the document or involving the GitHub API. The
+// first response establishes this tab's baseline; a later validator means a newly
+// rendered page is available. Reload remains an explicit user action so listening is
+// never interrupted in the background.
+var UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+var FULLSCREEN_RESTORE_KEY = "24sevenfm-covers.restore-fullscreen";
+var updateNoticeEl = $("update-notice");
+var updateRefreshEl = $("update-refresh");
+var updateEtag = "";
+var updateCheckTimer = null;
+var updateCheckInFlight = false;
+var updateNoticeMode = "";
+var updateNoticeDismissTimer = null;
+
+function showUpdateNotice(mode) {
+    updateNoticeMode = mode;
+    clearTimeout(updateNoticeDismissTimer);
+    clearTimeout(updateCheckTimer);
+    updateCheckTimer = null;
+    updateRefreshEl.textContent = mode === "restore"
+        ? "Restore fullscreen" : "New version available · Refresh";
+    updateRefreshEl.disabled = false;
+    updateNoticeEl.setAttribute("aria-hidden", "false");
+    updateNoticeEl.removeAttribute("inert");
+    requestAnimationFrame(function () {
+        updateNoticeEl.classList.add("show");
+        if (document.fullscreenElement === stage) chromeWake();
+    });
+}
+
+function dismissUpdateNotice() {
+    var dismissedMode = updateNoticeMode;
+    updateNoticeEl.classList.remove("show");
+    updateNoticeEl.setAttribute("aria-hidden", "true");
+    updateNoticeEl.setAttribute("inert", "");
+    clearTimeout(updateNoticeDismissTimer);
+    var duration = reducedMotion.matches ? 0 : transitionTotalMs(updateNoticeEl);
+    updateNoticeDismissTimer = setTimeout(function () {
+        updateNoticeMode = "";
+        updateRefreshEl.disabled = false;
+        if (dismissedMode === "restore") checkForPlayerUpdate();
+        else scheduleUpdateCheck();
+    }, duration + 50);
+}
+
+function rememberFullscreenForReload() {
+    try {
+        if (document.fullscreenElement === stage)
+            sessionStorage.setItem(FULLSCREEN_RESTORE_KEY, "1");
+        else sessionStorage.removeItem(FULLSCREEN_RESTORE_KEY);
+    } catch (error) { /* storage unavailable: reload still works */ }
+}
+
+function consumeFullscreenRestoreRequest() {
+    try {
+        var requested = sessionStorage.getItem(FULLSCREEN_RESTORE_KEY) === "1";
+        sessionStorage.removeItem(FULLSCREEN_RESTORE_KEY);
+        return requested;
+    } catch (error) { return false; }
+}
+
+function scheduleUpdateCheck() {
+    clearTimeout(updateCheckTimer);
+    if (!updateNoticeMode) {
+        updateCheckTimer = setTimeout(checkForPlayerUpdate, UPDATE_CHECK_INTERVAL_MS);
+    }
+}
+
+async function checkForPlayerUpdate() {
+    if (updateCheckInFlight || document.hidden || updateNoticeMode) return;
+    updateCheckInFlight = true;
+    clearTimeout(updateCheckTimer);
+    updateCheckTimer = null;
+    try {
+        var url = new URL(location.href);
+        url.hash = "";
+        var response = await fetch(url.href, { method: "HEAD", cache: "no-store" });
+        if (!response.ok) return;
+        var nextEtag = (response.headers.get("etag") || "").trim();
+        if (!nextEtag) return;
+        if (!updateEtag) updateEtag = nextEtag;
+        else if (nextEtag !== updateEtag) showUpdateNotice("update");
+    } catch (error) {
+        // An update check is opportunistic; playback and metadata polling continue.
+    } finally {
+        updateCheckInFlight = false;
+        scheduleUpdateCheck();
+    }
+}
+
+updateRefreshEl.addEventListener("click", function () {
+    if (updateNoticeMode === "restore") {
+        if (!stage.requestFullscreen) return;
+        updateRefreshEl.disabled = true;
+        try {
+            Promise.resolve(stage.requestFullscreen()).then(dismissUpdateNotice, function () {
+                updateRefreshEl.disabled = false;
+            });
+        } catch (error) {
+            updateRefreshEl.disabled = false;
+        }
+        return;
+    }
+    if (updateNoticeMode === "update") {
+        rememberFullscreenForReload();
+        location.reload();
+    }
+});
+
 // --- go ----------------------------------------------------------------------
 applyLayout();
 enableLocalBackchannel();
 setInfo("Loading…", "");
 document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) resynchronizeStationIfStale();
+    if (!document.hidden) {
+        resynchronizeStationIfStale();
+        checkForPlayerUpdate();
+    }
 });
 window.addEventListener("focus", resynchronizeStationIfStale);
 window.addEventListener("pageshow", resynchronizeStationIfStale);
@@ -4107,5 +4221,7 @@ tickTimer = setInterval(function () {
     renderRetryStatus();
 }, 1000);
 poll();
+if (consumeFullscreenRestoreRequest()) showUpdateNotice("restore");
+else checkForPlayerUpdate();
 
 })();

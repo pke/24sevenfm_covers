@@ -15,6 +15,7 @@
 
 /* SITE */
     Last update: {{UPDATED}}
+    Revision: {{COMMIT_SHA}}
     Language: English
     Doctype: HTML5
     Components: none - no frameworks, no trackers, no cookies

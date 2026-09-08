@@ -120,6 +120,8 @@ test.describe("the deployed player page", () => {
             "content", "https://24covers-api.vercel.app/api/tint");
         await expect(page.locator('meta[name="credit-api"]')).toHaveAttribute(
             "content", "https://24covers-api.vercel.app/api/credit");
+        await expect(page.locator('meta[name="build-revision"]')).toHaveAttribute(
+            "content", /^(?:[a-f0-9]{40}|[a-f0-9]{64}|local-preview)$/);
         await expect(page.locator("#info-title")).not.toHaveAttribute("role", "button");
         await expect(page.locator("#info-title")).not.toHaveClass(/local-backchannel/);
         expect(policy).toContain("media-src https://streamingsoundtracks.com");
@@ -152,6 +154,63 @@ test.describe("the deployed player page", () => {
         await expect(credits.locator("img")).toHaveAttribute("src", "img/tmdb.svg");
         await expect.poll(() => credits.locator("img").evaluate((image) => image.naturalWidth))
             .toBeGreaterThan(0);
+        await expect(page.locator('footer a[href="humans.txt"]')).toHaveText("Humans");
+    });
+    test("announces a changed player ETag on the stage and restores fullscreen after reload",
+        async ({ page }) => {
+        await mockProviderTestFeed(page);
+        let etag = '"player-a"';
+        let headRequests = 0;
+        await page.route(/\/player\.html(?:\?.*)?$/, (route) => {
+            if (route.request().method() !== "HEAD") return route.continue();
+            headRequests++;
+            return route.fulfill({ status: 200, headers: { ETag: etag } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => headRequests).toBe(1);
+        const notice = page.locator("#update-notice");
+        await expect(notice.locator("xpath=..")).toHaveAttribute("id", "stage");
+        await expect(notice).toHaveAttribute("aria-hidden", "true");
+        await expect(notice).toHaveAttribute("inert", "");
+        await expect(notice).toHaveCSS("opacity", "0");
+
+        etag = '"player-b"';
+        await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+        await expect.poll(() => headRequests).toBe(2);
+        await expect(notice).toHaveClass(/show/);
+        await expect(notice).toHaveAttribute("aria-hidden", "false");
+        await expect(notice).not.toHaveAttribute("inert", "");
+        await expect(notice).toHaveCSS("opacity", "1");
+        await expect(notice).toContainText("New version available");
+        expect(await notice.evaluate((element) => getComputedStyle(element).transitionProperty))
+            .toContain("opacity");
+        expect(headRequests).toBe(2);
+
+        await page.locator("#stage").evaluate((element) => element.requestFullscreen());
+        await expect.poll(() => page.evaluate(() =>
+            document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+        const fullscreenBox = await page.locator("#stage").boundingBox();
+        await page.mouse.move(fullscreenBox.width / 3, fullscreenBox.height / 3);
+        await expect(page.locator("#stage")).not.toHaveClass(/idle/);
+        await expect(notice).toBeVisible();
+        const reload = page.waitForNavigation({ waitUntil: "domcontentloaded" });
+        await page.locator("#update-refresh").click({ timeout: 10000 });
+        await reload;
+        expect(await page.evaluate(() => performance.getEntriesByType("navigation")[0].type))
+            .toBe("reload");
+        await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBe(null);
+        await expect(notice).toHaveClass(/show/);
+        await expect(page.locator("#update-refresh")).toHaveText("Restore fullscreen");
+        expect(headRequests).toBe(2);
+
+        await page.locator("#update-refresh").click();
+        await expect.poll(() => page.evaluate(() =>
+            document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
+        await expect(notice).toHaveAttribute("aria-hidden", "true");
+        await expect(notice).toHaveCSS("opacity", "0");
+        await expect.poll(() => headRequests).toBe(3);
+        await page.evaluate(() => document.exitFullscreen());
     });
     test("discloses canonical metadata requests separately from visual providers", async ({ page }) => {
         await mockProviderTestFeed(page);
