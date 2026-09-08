@@ -96,6 +96,50 @@ test("resolves the live Music For A Darkened Theatre compilation track", async (
     });
 });
 
+test("resolves a Wielcy Kompozytorzy Filmowi track through its movie prefix", async () => {
+    const album = "Wielcy Kompozytorzy Filmowi: Michal Lorenc";
+    const track = "300 Mil Do Nieba: Droga";
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "300 Mil Do Nieba");
+                return response(200, { results: [{
+                    id: 155325,
+                    media_type: "movie",
+                    title: "300 Miles to Heaven",
+                    original_title: "300 mil do nieba",
+                    backdrop_path: "/300-miles-to-heaven.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 241, 219],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album,
+        track,
+        artist: "Michal Lorenc",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(backdropTitleFor(album, track), "300 Mil Do Nieba");
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), ["300 Mil Do Nieba"]);
+    assert.equal(mediaHintForAlbum(album), "movie");
+    assert.deepEqual(requests.sort(), ["/3/search/multi", "/3/search/person"]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 155325, title: "300 Miles to Heaven", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/300-miles-to-heaven.jpg",
+        source: "tmdb",
+        tint: [255, 241, 219],
+    });
+});
+
 test("resolves a dated Best Of movie compilation through its track prefix", async () => {
     const album = "Best Of Godzilla 1984-1995, The";
     const track = "The Return Of Godzilla: Take Shelter5/Godzilla Vs. Super X";
