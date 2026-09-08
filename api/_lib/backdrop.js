@@ -309,6 +309,8 @@ class ResolverError extends Error {
 function cleanMovieTitle(album) {
     const cleaned = unrotateTitleArticle(String(album || "")
         .replace(/\(\s*(?:video[\s-]*)?game\s*\)/gi, " ")
+        .replace(/\(\s*((?:18|19|20|21)\d{2})\s+animated\s+(?:television\s+)?series\s*\)/gi,
+            " ($1)")
         .replace(/\[\s*[^\]\r\n]{0,64}\bedition\s*\]/gi, " ")
         .replace(/\s*:\s*vol(?:ume)?\.?\s+(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*\(\s*chapters?\s+\d{1,3}(?:\s*[-–—]\s*\d{1,3})?\s*\)\s*$/gi, " ")
         .replace(/\(\s*vol(?:ume)?\.?\s+(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*\)/gi, " ")
@@ -566,7 +568,7 @@ function mediaHintForAlbum(album) {
     if (starTrekSeriesAlias(cleanedTitle)) return "tv";
     if (tvSeasonIdentity(cleanedTitle)) return "tv";
     if (tvBookSoundtrackIdentity(title)) return "tv";
-    if (/\banimated\s+(?:television\s+)?series\b/i.test(cleanedTitle)) return "tv";
+    if (/\banimated\s+(?:television\s+)?series\b/i.test(title)) return "tv";
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
     if (isTrackTitledScreenCompilation(cleanedTitle)) return "screen";
     if (isTrackTitledGameCompilation(cleanedTitle)) return "game";

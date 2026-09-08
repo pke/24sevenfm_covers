@@ -1107,6 +1107,63 @@ test("resolves an animated-series soundtrack volume as TV", async () => {
     });
 });
 
+test("resolves a dated parenthesized animated-series marker as TV", async () => {
+    const album = "Superman (1988 Animated Series)";
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/movie") {
+                searches.push(parsed);
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                searches.push(parsed);
+                return response(200, { results: [{
+                    id: 10223,
+                    name: "Superman",
+                    first_air_date: "1988-09-17",
+                    backdrop_path: "/superman-1988.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/tv/10223/content_ratings") {
+                return response(200, { results: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [170, 164, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album,
+        track: "(Destroy The Defendroids) Saved From Lava-Plans",
+        artist: "Ron Jones",
+        providers: "tmdb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(cleanMovieTitle(album), "Superman (1988)");
+    assert.equal(backdropTitleFor(album, "Saved From Lava-Plans"), "Superman (1988)");
+    assert.equal(mediaHintForAlbum(album), "tv");
+    assert.equal(searches.length, 2);
+    for (const search of searches) assert.equal(search.searchParams.get("query"), "Superman");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/movie"))
+        .searchParams.get("primary_release_year"), "1988");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/tv"))
+        .searchParams.get("first_air_date_year"), "1988");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 10223, title: "Superman", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/superman-1988.jpg",
+        source: "tmdb",
+        tint: [170, 164, 255],
+        certifications: [],
+    });
+});
+
 test("uses the composer to disambiguate a season-marked TV series", async () => {
     let titleQuery = "";
     const handler = createHandler({
