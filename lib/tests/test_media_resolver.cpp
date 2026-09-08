@@ -192,6 +192,38 @@ TEST_CASE("cacheable resolver miss is distinct from retryable endpoint failure")
     CHECK(failure.error.find("503") != std::string::npos);
 }
 
+TEST_CASE("validated stream metadata survives missing normalized metadata and endpoint failure") {
+    int calls = 0;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string&, unsigned short, const std::string&,
+                        const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r;
+        if (++calls == 1) {
+            r.status = 200;
+            r.body = R"JSON({"media":null,"backdrop":null,"source":null,"certifications":[]})JSON";
+        } else {
+            r.status = 404;
+        }
+        return r;
+    };
+    MediaRequest request;
+    request.album = "Abyss, The";
+    request.track = "Finale";
+    request.artist = "Alan Silvestri";
+
+    const MediaResult oldDeployment = MediaResolver(cfg).resolve(request);
+    CHECK(oldDeployment.status == MediaResult::Miss);
+    CHECK(oldDeployment.album == request.album);
+    CHECK(oldDeployment.track == request.track);
+    CHECK(oldDeployment.artist == request.artist);
+
+    const MediaResult unavailable = MediaResolver(cfg).resolve(request);
+    CHECK(unavailable.status == MediaResult::Failure);
+    CHECK(unavailable.album == request.album);
+    CHECK(unavailable.track == request.track);
+    CHECK(unavailable.artist == request.artist);
+}
+
 TEST_CASE("untrusted resolver artwork fails closed") {
     MediaResolverConfig cfg;
     cfg.transport = [](const std::string&, unsigned short, const std::string&,

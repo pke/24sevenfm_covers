@@ -285,6 +285,12 @@ MediaResult MediaResolver::resolve(const MediaRequest& request,
         result.error = "invalid native media request";
         return result;
     }
+    // The stream metadata is already useful display data. Keep it as a safe
+    // fallback when the endpoint is unavailable or an older deployment omits
+    // the normalized metadata object; a valid object below replaces it.
+    result.album = request.album;
+    result.track = request.track;
+    result.artist = request.artist;
     std::string path = "/api/media?resolver_version=" + urlEncode(config_.resolverVersion)
         + "&album=" + urlEncode(request.album);
     if (!request.track.empty()) path += "&track=" + urlEncode(request.track);

@@ -338,6 +338,10 @@ void CoverEngine::startMediaWorker() {
                     // A current-track refinement must not erase an already prepared
                     // queue hit. Failures remain uncached and retry on the feed cadence.
                     if (item.current) {
+                        // The resolver retains the validated stream metadata when
+                        // /api/media cannot provide its normalized form. Show that
+                        // fallback instead of leaving native clients without a title.
+                        publishMetadata(item.epoch, resolved, item.track.lengthSeconds);
                         MediaWorkerState::CacheEntry fallback;
                         bool haveFallback = false;
                         {
