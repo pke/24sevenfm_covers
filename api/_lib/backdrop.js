@@ -50,6 +50,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "X TV OST, Vol. 1",
+        track: "Destiny (Piano Version)",
+        artist: "Naoki Sato",
+        title: "X (2001)",
+        hint: "tv",
+    }),
+    Object.freeze({
         album: "Stranger Things 2",
         title: "Stranger Things",
         hint: "tv",

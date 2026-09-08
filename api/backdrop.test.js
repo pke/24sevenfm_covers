@@ -311,6 +311,46 @@ test("resolves Rosemary's Baby from the Ale Filmy compilation cue", async () => 
     });
 });
 
+test("resolves Naoki Sato's X TV OST to the 2001 series", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            searches.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [{
+                id: 3251,
+                name: "X",
+                first_air_date: "2001-10-03",
+                backdrop_path: "/x-2001.jpg",
+            }] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [254, 255, 250],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "X TV OST, Vol. 1",
+        track: "Destiny (Piano Version)",
+        artist: "Naoki Sato",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(searches.length, 2);
+    for (const search of searches) assert.equal(search.searchParams.get("query"), "X");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/movie"))
+        .searchParams.get("primary_release_year"), "2001");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/tv"))
+        .searchParams.get("first_air_date_year"), "2001");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 3251, title: "X", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/x-2001.jpg",
+        source: "tmdb",
+        tint: [254, 255, 250],
+    });
+});
+
 test("resolves the second Stranger Things score album to the TV series", async () => {
     const providerQueries = [];
     const handler = createHandler({
