@@ -187,6 +187,7 @@ private:
     bool  haveCover_ = false;
     DWORD fadeStart_ = 0;
     bool  mediaFading_ = false;
+    std::atomic<DWORD> infoRevealAt_{0};
     bool  ratingFading_ = false;
     bool  haveBackdrop_ = false;
     DWORD mediaFadeStart_ = 0;

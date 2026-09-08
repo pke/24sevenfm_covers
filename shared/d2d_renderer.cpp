@@ -469,7 +469,7 @@ void drawCover(const D2D1_RECT_F& dest, Transition transition, float progress, f
 bool renderPoster(float cw, float ch, Transition transition, float progress,
                   int remainingSeconds, float overlayFontFrac, bool rollDigits,
                   const wchar_t* title, const wchar_t* artist, const wchar_t* status,
-                  float mediaProgress, bool hideCoverWithBackdrop) {
+                  float mediaProgress, bool hideCoverWithBackdrop, float infoOpacity) {
     drawBlurredBackground(cw, ch); // stable fallback remains underneath the fade
     const bool mediaVisible = g_backdropCurBmp || g_backdropPrevBmp;
     if (mediaVisible) {
@@ -487,6 +487,9 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     float coverS = baseSide;
     const float boxW = baseSide;
     const float boxX = (cw - boxW) * 0.5f;
+    const bool showInfo = title && *title;
+    if (infoOpacity < 0.0f) infoOpacity = 0.0f;
+    if (infoOpacity > 1.0f) infoOpacity = 1.0f;
 
     // Measure the info text to size the box.
     float padX = baseSide * 0.052f, padY = baseSide * 0.035f;
@@ -500,32 +503,32 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     IDWriteTextFormat* af = g_dwrite ? makeFormat(artistSize, DWRITE_FONT_WEIGHT_NORMAL, true) : nullptr;
     IDWriteTextLayout* tl = nullptr; float titleH = 0;
     IDWriteTextLayout* al = nullptr; float artistH = 0;
-    if (tf && title && *title &&
+    if (showInfo && tf &&
         SUCCEEDED(g_dwrite->CreateTextLayout(title, (UINT32)lstrlenW(title), tf, textW, 10000, &tl))) {
         DWRITE_TEXT_METRICS mt = {}; tl->GetMetrics(&mt); titleH = mt.height;
     }
-    if (af && artist && *artist &&
+    if (showInfo && af && artist && *artist &&
         SUCCEEDED(g_dwrite->CreateTextLayout(artist, (UINT32)lstrlenW(artist), af, textW, 10000, &al))) {
         DWRITE_TEXT_METRICS ma = {}; al->GetMetrics(&ma); artistH = ma.height;
     }
     const float lineGap = artistSize * 0.35f;
     float cdFont = baseSide * overlayFontFrac;
     if (cdFont < 12.0f) cdFont = 12.0f;
-    const float statusH = remainingSeconds >= 0 ? cdFont * 1.2f + 6.4f : 0.0f;
-    const float boxH = padY + titleH + (artistH > 0 ? lineGap + artistH : 0)
-                     + (statusH > 0 ? 6.4f + statusH : 0) + padY;
+    const float statusH = showInfo && remainingSeconds >= 0 ? cdFont * 1.2f + 6.4f : 0.0f;
+    const float boxH = showInfo ? padY + titleH + (artistH > 0 ? lineGap + artistH : 0)
+                     + (statusH > 0 ? 6.4f + statusH : 0) + padY : 0.0f;
 
     const float bottomGap = m > 12.0f ? m : 12.0f;
     const float scaledGap = minSide * 0.016f;
     const float gap = scaledGap > 4.0f ? scaledGap : 4.0f;
-    float boxY, coverY;
-    if (portrait) {
+    float boxY = ch - bottomGap, coverY = (ch - coverS) * 0.5f;
+    if (showInfo && portrait) {
         boxY = ch - bottomGap - boxH;
         const float available = boxY - gap;
         if (coverS > available) coverS = available > 1.0f ? available : 1.0f;
         coverY = (available - coverS) * 0.5f;
         if (coverY < 0.0f) coverY = 0.0f;
-    } else {
+    } else if (showInfo) {
         // CSS grid row centres are 36% and 86%; the small cover shift is the
         // same balancing term used by sizeStage().
         boxY = ch * 0.86f - boxH * 0.5f;
@@ -533,6 +536,11 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
         coverY = ch * 0.36f + coverShift - coverS * 0.5f;
         if (coverY + coverS + gap > boxY) coverY = boxY - gap - coverS;
         if (coverY < 0.0f) coverY = 0.0f;
+    }
+    if (showInfo && infoOpacity < 1.0f) {
+        const float hiddenY = (ch - baseSide) * 0.5f;
+        coverY = hiddenY + (coverY - hiddenY) * infoOpacity;
+        coverS = baseSide + (coverS - baseSide) * infoOpacity;
     }
     if (boxY < 0.0f) boxY = 0.0f;
     const float coverX = (cw - coverS) * 0.5f;
@@ -544,21 +552,29 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
                   transition, progress, coverS * (g_coverRadius / 1000.0f));
 
     // Info box - same radius as the cover and always in the retained lower row.
-    if (g_boxBrush) {
+    if (showInfo && infoOpacity > 0.0f && g_boxBrush) {
         const float br = coverS * (g_coverRadius / 1000.0f);
+        g_boxBrush->SetOpacity(infoOpacity);
         g_rt->FillRoundedRectangle(
             D2D1::RoundedRect(D2D1::RectF(boxX, boxY, boxX + boxW, boxY + boxH), br, br), g_boxBrush);
+        g_boxBrush->SetOpacity(1.0f);
     }
     const D2D1_COLOR_F tint = playerTint(mediaProgress);
-    if (g_fgBrush) g_fgBrush->SetColor(tint); // backdrop tint, falling back to cover tint
+    if (g_fgBrush) {
+        g_fgBrush->SetColor(tint); // backdrop tint, falling back to cover tint
+        g_fgBrush->SetOpacity(infoOpacity);
+    }
     float ty = boxY + padY;
     if (tl) { g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, ty), tl, g_fgBrush); ty += titleH + (artistH > 0 ? lineGap : 0); }
     if (al) {
-        if (g_fgBrush) g_fgBrush->SetOpacity(0.8f);
+        if (g_fgBrush) g_fgBrush->SetOpacity(0.8f * infoOpacity);
         g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, ty), al, g_fgBrush);
         if (g_fgBrush) g_fgBrush->SetOpacity(1.0f);
     }
-    if (g_fgBrush) g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+    if (g_fgBrush) {
+        g_fgBrush->SetOpacity(1.0f);
+        g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+    }
     SafeRelease(tl); SafeRelease(al); SafeRelease(tf); SafeRelease(af);
 
     // Bottom row of the box: "Loading..." while fetching, else the live countdown -
@@ -567,14 +583,16 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     bool overlayAnimating = false;
     if (status && *status) {
         drawStatus(status, cw, ch); // window bottom-right, only while loading
-    } else if (remainingSeconds >= 0 && g_dwrite && g_bgBrush && g_fgBrush) {
+    } else if (showInfo && remainingSeconds >= 0 && g_dwrite && g_bgBrush && g_fgBrush) {
         // Same rolling widget as fill mode, centred like the web player's status row.
         g_fgBrush->SetColor(tint);
-        g_fgBrush->SetOpacity(0.85f);
+        g_fgBrush->SetOpacity(0.85f * infoOpacity);
+        g_bgBrush->SetOpacity(infoOpacity);
         g_rt->SetTransform(D2D1::Matrix3x2F::Translation(boxX, boxY));
         overlayAnimating = drawRollingTime(g_rt, g_dwrite, g_bgBrush, g_fgBrush, remainingSeconds,
                                            boxW, boxH, cdFont, rollDigits, true, false, true);
         g_rt->SetTransform(D2D1::Matrix3x2F::Identity());
+        g_bgBrush->SetOpacity(1.0f);
         g_fgBrush->SetOpacity(1.0f);
         g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
     } else {
@@ -750,7 +768,7 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
             int layout, const wchar_t* title, const wchar_t* artist,
             float mediaProgress, bool hideCoverWithBackdrop, float ratingProgress,
-            float ratingOpacity) {
+            float ratingOpacity, float infoOpacity) {
     if (!g_factory)
         return false;
 
@@ -795,7 +813,7 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     if (layout == 1) {
         overlayAnimating = renderPoster((float)cw, (float)ch, transition, progress,
                                         remainingSeconds, overlayFontFrac, rollDigits, title, artist,
-                                        statusText, mediaProgress, hideCoverWithBackdrop);
+                                        statusText, mediaProgress, hideCoverWithBackdrop, infoOpacity);
     } else {
         overlayAnimating = renderCover((float)cw, (float)ch, transition, progress,
                                        remainingSeconds, overlayFontFrac, rollDigits, statusText,

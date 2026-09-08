@@ -613,8 +613,10 @@ void CoverEngine::publishMetadata(unsigned long long epoch, const ssc::MediaResu
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        const bool reveal = infoTitle_.empty() && !title.empty();
         infoTitle_ = toWide(title);
         infoArtist_ = toWide(result.artist);
+        if (reveal) infoRevealAt_.store(GetTickCount());
     }
     invalidate();
 }
@@ -1111,6 +1113,16 @@ void CoverEngine::onPaint(HWND h) {
             ratingAlpha = (float)el / settings.fadeMs;
         }
     }
+    float infoAlpha = 1.0f;
+    const DWORD infoRevealAt = infoRevealAt_.load();
+    if (infoRevealAt) {
+        const DWORD el = GetTickCount() - infoRevealAt;
+        if (!clientAnimationsEnabled() || settings.fadeMs <= 0 || el >= (DWORD)settings.fadeMs) {
+            infoRevealAt_.store(0);
+        } else {
+            infoAlpha = (float)el / settings.fadeMs;
+        }
+    }
     const DWORD now = GetTickCount();
     updateRatingVisibility(now);
     const float ratingOpacity = ratingVisibilityAlpha(now);
@@ -1127,7 +1139,7 @@ void CoverEngine::onPaint(HWND h) {
     d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(),
                 settings.rollDigits && clientAnimationsEnabled(), status,
                 settings.layout, title.c_str(), artist.c_str(), mediaAlpha,
-                settings.hideCoverWithBackdrop, ratingAlpha, ratingOpacity);
+                settings.hideCoverWithBackdrop, ratingAlpha, ratingOpacity, infoAlpha);
 }
 
 // The engine's repaint heartbeat: redraw only while something is actually changing -
@@ -1150,7 +1162,8 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
         const int portrait = (rc.bottom - rc.top) > (rc.right - rc.left) ? 1 : 0;
         if (portrait != mediaPortrait_.load()) repaint();
     }
-    if (fading_ || mediaFading_ || ratingFading_ || ratingVisibilityAnimating_ || loading_.load()
+    if (fading_ || mediaFading_ || infoRevealAt_.load() || ratingFading_
+            || ratingVisibilityAnimating_ || loading_.load()
             || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);
 }

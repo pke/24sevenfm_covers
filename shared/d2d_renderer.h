@@ -85,7 +85,8 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
             int layout, const wchar_t* title, const wchar_t* artist,
             float mediaProgress = 1.0f, bool hideCoverWithBackdrop = true,
-            float ratingProgress = 1.0f, float ratingOpacity = 1.0f);
+            float ratingProgress = 1.0f, float ratingOpacity = 1.0f,
+            float infoOpacity = 1.0f);
 
 } // namespace d2d
 
