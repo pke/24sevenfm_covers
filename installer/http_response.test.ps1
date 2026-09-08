@@ -20,6 +20,10 @@ class TestResponseStream {
         if ($this.Failure -eq 'programming') {
             throw [System.InvalidOperationException]::new('Unexpected response failure.')
         }
+        if ($this.Failure -eq 'framing') {
+            throw [System.Net.ProtocolViolationException]::new(
+                'Bytes exceed the response Content-Length.')
+        }
         if ($count -gt 0) {
             $this.Written = $buffer[$offset..($offset + $count - 1)]
         }
@@ -29,6 +33,7 @@ class TestResponseStream {
 class TestResponse {
     [TestResponseStream] $OutputStream
     [bool] $Closed = $false
+    [long] $ContentLength64 = -1
 
     TestResponse([string] $failure) {
         $this.OutputStream = [TestResponseStream]::new($failure)
@@ -54,8 +59,17 @@ $next = [TestResponse]::new('')
 $sent = Send-HttpListenerResponse -Response $next -Bytes $payload
 Assert-Test $sent 'the response after a disconnect should still be sent'
 Assert-Test $next.Closed 'the successful response should be closed'
+Assert-Test ($next.ContentLength64 -eq $payload.LongLength) `
+    'the response should declare the exact payload length before writing'
 Assert-Test ([Text.Encoding]::UTF8.GetString($next.OutputStream.Written) -eq 'still serving') `
     'the successful response should contain the complete payload'
+
+# HttpListener reports some interrupted responses as a framing violation wrapped by
+# PowerShell instead of an IOException. It is still isolated to that client request.
+$framingFailure = [TestResponse]::new('framing')
+$sent = Send-HttpListenerResponse -Response $framingFailure -Bytes $payload
+Assert-Test (-not $sent) 'an interrupted response framing failure should be recoverable'
+Assert-Test $framingFailure.Closed 'a framing failure response should still be closed'
 
 # Only expected client-disconnect I/O errors are recoverable. A programming error must
 # remain visible instead of turning the local server into a silent failure loop.

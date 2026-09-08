@@ -11,7 +11,10 @@ param(
     [Alias('NoVercelDebug')]
     [switch]$NoApiDebug,
     [string]$BackchannelThreadId = $env:CODEX_THREAD_ID,
-    [switch]$NoBackchannel
+    [switch]$NoBackchannel,
+    [switch]$Detached,
+    [string]$StatusFile = '',
+    [string]$CodexPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +24,136 @@ if ($SitePort -eq $ApiPort) { throw 'SitePort and ApiPort must differ.' }
 $root = $PSScriptRoot
 $siteOrigin = "http://localhost:$SitePort"
 $apiOrigin = "http://localhost:$ApiPort"
+
+# A normal invocation intentionally owns both child servers so Ctrl+C tears the
+# complete preview down. Codex tool terminals run inside a Windows job object,
+# so even Start-Process children are reclaimed with the tool session. Detached
+# previews therefore belong to Task Scheduler instead.
+if ($Detached) {
+    $pwsh = (Get-Process -Id $PID).Path
+    if (-not $NoBackchannel -and -not [string]::IsNullOrWhiteSpace($BackchannelThreadId)) {
+        $parsedThreadId = [guid]::Empty
+        if (-not [guid]::TryParse($BackchannelThreadId, [ref]$parsedThreadId)) {
+            throw 'BackchannelThreadId must be a Codex task UUID.'
+        }
+        $BackchannelThreadId = $parsedThreadId.ToString()
+        if (-not $CodexPath) {
+            $codex = Get-Command codex -ErrorAction SilentlyContinue
+            if (-not $codex) { throw 'Codex CLI was not found in the launching session.' }
+            $CodexPath = $codex.Source
+        }
+        $CodexPath = [IO.Path]::GetFullPath($CodexPath)
+        if (-not (Test-Path -LiteralPath $CodexPath -PathType Leaf)) {
+            throw "Codex CLI does not exist: $CodexPath"
+        }
+    }
+    $taskName = "24sevenfm Local Preview $SitePort"
+    $statusRoot = [IO.Path]::GetFullPath((Join-Path $root '.vercel'))
+    New-Item -ItemType Directory -Path $statusRoot -Force | Out-Null
+    $detachedStatusFile = [IO.Path]::GetFullPath((Join-Path $statusRoot `
+        "preview-$SitePort.status.json"))
+    $arguments = "-NoLogo -NoProfile -File `"$PSCommandPath`"" +
+        " -SitePort $SitePort -ApiPort $ApiPort -StatusFile `"$detachedStatusFile`""
+    if ($NoRender) { $arguments += ' -NoRender' }
+    if ($NoApiDebug) { $arguments += ' -NoApiDebug' }
+    if ($NoBackchannel) {
+        $arguments += ' -NoBackchannel'
+    } elseif (-not [string]::IsNullOrWhiteSpace($BackchannelThreadId)) {
+        $arguments += " -BackchannelThreadId $BackchannelThreadId" +
+            " -CodexPath `"$CodexPath`""
+    }
+    $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($existing) {
+        if ($existing.State -eq 'Running') { Stop-ScheduledTask -TaskName $taskName }
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+    # Task Scheduler can terminate the owning PowerShell before its finally block
+    # runs, leaving the Node watcher or site watcher orphaned. Remove only processes
+    # whose executable and command line both identify this repository's preview.
+    $previewProcesses = Get-CimInstance Win32_Process | Where-Object {
+        $_.ProcessId -ne $PID -and $_.CommandLine -like "*$root*" -and
+        $_.ExecutablePath -in @('C:\Program Files\nodejs\node.exe', $pwsh) -and
+        ($_.CommandLine -like '*installer\local_api_server.js*' -or
+         $_.CommandLine -like '*installer\watch_site.ps1*' -or
+         $_.CommandLine -like '*start_test_server.ps1*')
+    }
+    foreach ($previewProcess in $previewProcesses) {
+        Stop-Process -Id $previewProcess.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    for ($attempt = 1; $attempt -le 50; $attempt++) {
+        $busy = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.LocalPort -in $SitePort, $ApiPort }
+        if (-not $busy) { break }
+        Start-Sleep -Milliseconds 200
+    }
+    Remove-Item -LiteralPath $detachedStatusFile -Force -ErrorAction SilentlyContinue
+    $action = New-ScheduledTaskAction -Execute $pwsh -Argument $arguments `
+        -WorkingDirectory $root
+    # Task Scheduler requires a trigger even though this launcher starts the task
+    # explicitly. Keep that placeholder far away so it cannot fire a second instance
+    # during startup; RestartCount still handles genuine task failures.
+    $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddYears(10)
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -MultipleInstances IgnoreNew -StartWhenAvailable
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+        -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+        -Settings $settings -Principal $principal `
+        -Description "Persistent local 24seven.fm preview on port $SitePort" | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+    function Test-LoopbackPortOpen([int]$Port) {
+        $client = [Net.Sockets.TcpClient]::new()
+        try {
+            return $client.ConnectAsync([Net.IPAddress]::Loopback, $Port).Wait(1000) -and
+                $client.Connected
+        } catch {
+            return $false
+        } finally {
+            $client.Dispose()
+        }
+    }
+    # Task Scheduler and the first Node/CORS warm-up can take over 30 seconds on a
+    # cold Windows session. Give the detached owner enough time without weakening
+    # the readiness checks.
+    for ($attempt = 1; $attempt -le 300; $attempt++) {
+        if (-not (Test-Path -LiteralPath $detachedStatusFile)) {
+            Start-Sleep -Milliseconds 250
+            continue
+        }
+        try {
+            $status = Get-Content $detachedStatusFile -Raw -ErrorAction Stop |
+                ConvertFrom-Json -ErrorAction Stop
+            $backchannelReady = $NoBackchannel -or [string]::IsNullOrWhiteSpace($BackchannelThreadId) `
+                -or $status.backchannelEnabled -eq $true
+            if ($status.siteOrigin -eq $siteOrigin -and $status.apiOrigin -eq $apiOrigin -and
+                    $backchannelReady -and (Test-LoopbackPortOpen $SitePort) -and
+                    (Test-LoopbackPortOpen $ApiPort)) {
+                Write-Host "Persistent local preview ready at $siteOrigin" -ForegroundColor Cyan
+                Write-Host "Scheduled task: $taskName" -ForegroundColor Green
+                if ($status.backchannelEnabled) {
+                    Write-Host "Codex backchannel pairing code: $($status.pairingCode)" `
+                        -ForegroundColor Magenta
+                }
+                exit 0
+            }
+        } catch { }
+        Start-Sleep -Milliseconds 250
+    }
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    throw "Persistent local preview did not become ready (task state: $($task.State))."
+}
+
+$taskTranscriptStarted = $false
+if ($StatusFile) {
+    $taskTranscript = [IO.Path]::GetFullPath($StatusFile + '.task.log')
+    try {
+        Start-Transcript -Path $taskTranscript -Force | Out-Null
+        $taskTranscriptStarted = $true
+    } catch { }
+}
 
 function Test-LoopbackPortAvailable([int]$Port) {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
@@ -60,7 +193,14 @@ if ($backchannelEnabled) {
         throw 'BackchannelThreadId must be a Codex task UUID.'
     }
     $BackchannelThreadId = $parsedThreadId.ToString()
-    $codex = Get-Command codex -ErrorAction SilentlyContinue
+    $codex = if ($CodexPath) {
+        $resolvedCodexPath = [IO.Path]::GetFullPath($CodexPath)
+        if (Test-Path -LiteralPath $resolvedCodexPath -PathType Leaf) {
+            [pscustomobject]@{ Source = $resolvedCodexPath }
+        }
+    } else {
+        Get-Command codex -ErrorAction SilentlyContinue
+    }
     if (-not $codex) {
         Write-Warning 'Codex CLI was not found; the local title backchannel is disabled.'
         $backchannelEnabled = $false
@@ -167,6 +307,25 @@ try {
         throw "Local Node API did not allow origin $siteOrigin."
     }
 
+    if ($StatusFile) {
+        $statusRoot = [IO.Path]::GetFullPath((Join-Path $root '.vercel'))
+        $statusPath = [IO.Path]::GetFullPath($StatusFile)
+        if (-not $statusPath.StartsWith(($statusRoot + [IO.Path]::DirectorySeparatorChar),
+                [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'StatusFile must be inside the repository .vercel directory.'
+        }
+        $status = [ordered]@{
+            processId = $PID
+            apiProcessId = $apiProcess.Id
+            siteOrigin = $siteOrigin
+            apiOrigin = $apiOrigin
+            backchannelEnabled = $backchannelEnabled
+            pairingCode = $(if ($backchannelEnabled) { $pairingCode } else { '' })
+            startedAt = [DateTimeOffset]::Now.ToString('o')
+        } | ConvertTo-Json -Compress
+        [IO.File]::WriteAllText($statusPath, $status, [Text.UTF8Encoding]::new($false))
+    }
+
     Write-Host "Local Node API ready at $apiOrigin (watching api\)" -ForegroundColor Cyan
     Write-Host "Local API logs: $logDirectory" -ForegroundColor DarkCyan
     if ($backchannelEnabled) {
@@ -182,5 +341,8 @@ try {
     if ($apiProcess -and -not $apiProcess.HasExited) {
         try { $apiProcess.Kill($true) } catch { $apiProcess.Kill() }
         $apiProcess.WaitForExit()
+    }
+    if ($taskTranscriptStarted) {
+        try { Stop-Transcript | Out-Null } catch { }
     }
 }

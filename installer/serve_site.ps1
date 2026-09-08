@@ -92,6 +92,7 @@ $mime = @{
 }
 
 $listener = New-Object System.Net.HttpListener
+$listener.IgnoreWriteExceptions = $true
 $listener.Prefixes.Add("http://localhost:$Port/")   # localhost prefix needs no admin/URL-ACL
 $watchProcess = $null
 $watchStateDirectory = ''
