@@ -4542,6 +4542,66 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#status")).toHaveText("");
         expect(resolverRequests).toBe(2);
     });
+    test("automatically retries a transient portrait resolver failure", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/portrait-retry.svg";
+        const sizedCover =
+            "https://streamingsoundtracks.com/images/cover/500/portrait-retry.svg";
+        const backdrop = "https://image.tmdb.org/t/p/w780/portrait-retry.jpg";
+        const orientations = [];
+        let resolverRequests = 0;
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.addInitScript(() => {
+            localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                sstBackdrops: { enabled: true,
+                    options: { providers: ["tmdb"], cover: "show" } },
+            }));
+            const nativeFetch = window.fetch;
+            window.backdropFetchCacheModes = [];
+            window.fetch = function (input, init) {
+                if (new URL(typeof input === "string" ? input : input.url, location.href)
+                        .pathname === "/api/media") {
+                    window.backdropFetchCacheModes.push(init && init.cache || "default");
+                }
+                return nativeFetch.apply(this, arguments);
+            };
+        });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*",
+            (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: "Portrait Retry Movie", Track: "Portrait Cue",
+                    Artist: "Portrait Composer", CoverLink: cover, Length: 0,
+                    PlayStart: "2026-08-13T12:00:00Z",
+                    SystemTime: "2026-08-13T12:00:00Z",
+                } });
+            });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/media\?/, (route) => {
+            resolverRequests++;
+            orientations.push(new URL(route.request().url()).searchParams.get("orientation"));
+            if (resolverRequests === 1)
+                return route.fulfill({ status: 502, json: { error: "temporarily_unavailable" } });
+            return route.fulfill({ json: {
+                media: { id: 42, title: "Portrait Retry Movie", type: "movie" },
+                backdrop, source: "tmdb", tint: [40, 50, 60],
+            } });
+        });
+        await page.route(backdrop, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="2"/>' }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect.poll(() => resolverRequests, { timeout: 8000 }).toBe(2);
+        expect(orientations).toEqual(["portrait", "portrait"]);
+        expect(await page.evaluate(() => window.backdropFetchCacheModes))
+            .toEqual(["default", "reload"]);
+        await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", backdrop);
+        await expect(page.locator("#backdrop-error")).not.toHaveClass(/show/);
+    });
     test("retries a backdrop after a transient image load failure", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/blade-runner-2049.svg";
         const sizedCover =

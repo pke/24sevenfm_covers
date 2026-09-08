@@ -547,6 +547,7 @@ function renderIsCurrent(channel, generation) { return renderGenerations[channel
 var IMAGE_TIMEOUT = 20000, COVER_RETRY_DELAY = 5000, COVER_RETRY_LIMIT = 3;
 var COVER_RETRY_COOLDOWN = 300000;
 var BACKDROP_RETRY_DELAY = 1000, BACKDROP_RETRY_LIMIT = 2;
+var BACKDROP_RESOLVER_RETRY_DELAY = 3000, BACKDROP_RESOLVER_RETRY_LIMIT = 2;
 
 function preloadImage(url, onLoad, onError) {
     var image = new Image(), settled = false;
@@ -2006,6 +2007,7 @@ var movieShown = false; // a screen backdrop is currently visible (drives hide-c
 var activeBackdropOrientation = "";
 var coverHiddenUntilCoverReady = false;
 var backdropImageRetryTimer = null;
+var backdropResolverRetryTimer = null;
 function newMovieCache() { return Object.create(null); }
 var movieCaches = Object.create(null);
 var backdropRequest = null;
@@ -2400,6 +2402,11 @@ function cancelBackdropImageRetry() {
     backdropImageRetryTimer = null;
 }
 
+function cancelBackdropResolverRetry() {
+    clearTimeout(backdropResolverRetryTimer);
+    backdropResolverRetryTimer = null;
+}
+
 function setMovieBackdrop(art, generation, retryFailures) {
     if (!renderIsCurrent("backdrop", generation)) return;
     const isAutomaticRetry = typeof retryFailures === "number";
@@ -2453,11 +2460,13 @@ function setBackdropErrorState(state) {
     backdropErrorEl.setAttribute("aria-hidden", state ? "false" : "true");
 }
 
-function requestBackdrop(cacheMode, prefetchedArt) {
-    const hasPrefetchedResult = arguments.length > 1;
+function requestBackdrop(cacheMode, prefetchedArt, resolverRetryFailures) {
+    const isAutomaticResolverRetry = typeof resolverRetryFailures === "number";
+    const hasPrefetchedResult = arguments.length > 1 && !isAutomaticResolverRetry;
     const generation = nextRenderGeneration("backdrop");
     cancelBackdropRequest();
     cancelBackdropImageRetry();
+    cancelBackdropResolverRetry();
     // Artwork and ratings share the resolver, but not their visible state. If artwork
     // is switched off while ratings stay enabled, start the backdrop fade immediately
     // instead of leaving it visible until that ratings-only request settles.
@@ -2508,7 +2517,8 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     };
     backdropRequest = request;
     Promise.resolve(mediaCapability.resolver(generation, ctl.signal, cacheMode,
-        hasPrefetchedResult ? prefetchedArt : undefined)).then(settled, settled);
+        hasPrefetchedResult ? prefetchedArt : undefined,
+        isAutomaticResolverRetry ? resolverRetryFailures : undefined)).then(settled, settled);
     function settled() {
         clearTimeout(request.kill);
         if (backdropRequest === request) backdropRequest = null;
@@ -2550,7 +2560,8 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode,
     return art;
 }
 
-async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt) {
+async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt,
+        resolverRetryFailures) {
     if (!renderIsCurrent("backdrop", generation)) return;
     try {
         const art = await movieArtFor(currentAlbum, currentTrack, currentArtist, generation, signal,
@@ -2577,6 +2588,19 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
                 && (e === SERVER_ART_UNAVAILABLE || (e && e.name === "AbortError"))) {
             setStatus("Backdrop service is currently unavailable.", "backdrop");
             setBackdropErrorState("error");
+            const failures = (resolverRetryFailures || 0) + 1;
+            if (failures <= BACKDROP_RESOLVER_RETRY_LIMIT) {
+                const album = currentAlbum, track = currentTrack, artist = currentArtist;
+                const orientation = backdropOrientationForStage();
+                backdropResolverRetryTimer = setTimeout(function () {
+                    backdropResolverRetryTimer = null;
+                    if (!renderIsCurrent("backdrop", generation)
+                            || album !== currentAlbum || track !== currentTrack
+                            || artist !== currentArtist || orientation !== backdropOrientationForStage()
+                            || !sstBackdropsEnabled() || stationIdActive) return;
+                    requestBackdrop("reload", undefined, failures);
+                }, BACKDROP_RESOLVER_RETRY_DELAY * Math.pow(2, failures - 1));
+            }
         } else {
             setBackdropErrorState("");
         }
