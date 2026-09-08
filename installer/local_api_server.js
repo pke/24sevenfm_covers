@@ -7,7 +7,7 @@ function defaultRoutes() {
     const credit = require("../api/_lib/credit");
     const { createBackchannelHandler } = require("./backchannel");
     return {
-        "/api/backdrop": backdrop.handler,
+        "/api/media": backdrop.handler,
         "/api/tint": backdrop.tintHandler,
         "/api/credit": credit.handler,
         "/api/backchannel": createBackchannelHandler(),

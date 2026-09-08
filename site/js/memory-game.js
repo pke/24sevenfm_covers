@@ -72,11 +72,6 @@ function decodeText(value) {
     return new DOMParser().parseFromString(safe, "text/html").body.textContent.trim();
 }
 
-function unrotateTitleArticle(title) {
-    return (title || "").replace(
-        /^(.+),\s*(The|A|An)(\s+\((?:18|19|20|21)\d{2}\))?$/i, "$2 $1$3");
-}
-
 function trustedCoverUrl(raw, host) {
     if (typeof raw !== "string" || !raw || /[\u0000-\u001F\u007F]/.test(raw)) return "";
     try {
@@ -94,7 +89,7 @@ function trustedCoverUrl(raw, host) {
 
 function queueEntry(value, source, config) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-    const title = unrotateTitleArticle(decodeText(value.Album));
+    const title = decodeText(value.Album);
     const coverUrl = trustedCoverUrl(value.CoverLink, config.host);
     if (!title || !coverUrl) return null;
     return {

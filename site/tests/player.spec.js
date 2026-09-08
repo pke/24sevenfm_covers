@@ -88,6 +88,16 @@ async function openBackdropSettings(page) {
 }
 
 test.describe("the deployed player page", () => {
+    test.beforeEach(async ({ page }) => {
+        if (!localMode) return;
+        // Metadata normalization is now requested for every track. Keep unrelated
+        // local browser tests hermetic; a test-specific route registered afterwards
+        // overrides this fallback whenever artwork, ratings or canonical fields matter.
+        await page.route(/\/api\/media\?/, (route) => route.fulfill({ json: {
+            media: null, backdrop: null, source: null, tint: [255, 255, 255],
+        } }));
+    });
+
     test("enforces a restrictive player resource policy", async ({ page }) => {
         await mockProviderTestFeed(page);
         let escaped = false;
@@ -104,8 +114,8 @@ test.describe("the deployed player page", () => {
         expect(policy).toContain("https://24covers-api.vercel.app");
         expect(policy).toContain("https://webservice.fanart.tv");
         expect(policy).toContain("https://static.tvmaze.com");
-        await expect(page.locator('meta[name="backdrop-api"]')).toHaveAttribute(
-            "content", /^https:\/\/24covers-api\.vercel\.app\/api\/backdrop\?resolver_version=[a-f0-9]{12}$/);
+        await expect(page.locator('meta[name="media-api"]')).toHaveAttribute(
+            "content", /^https:\/\/24covers-api\.vercel\.app\/api\/media\?resolver_version=[a-f0-9]{12}$/);
         await expect(page.locator('meta[name="tint-api"]')).toHaveAttribute(
             "content", "https://24covers-api.vercel.app/api/tint");
         await expect(page.locator('meta[name="credit-api"]')).toHaveAttribute(
@@ -143,16 +153,17 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => credits.locator("img").evaluate((image) => image.naturalWidth))
             .toBeGreaterThan(0);
     });
-    test("describes backdrop title data without binding the copy to feed fields", async ({ page }) => {
+    test("discloses canonical metadata requests separately from visual providers", async ({ page }) => {
         await mockProviderTestFeed(page);
         await page.goto("/privacy.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator("main")).toContainText(
-            "information about the current and upcoming queued titles");
+            "separate Album, Track and Artist strings");
+        await expect(page.locator("main")).toContainText(
+            "returns before contacting an artwork or catalog provider");
         await expect(page.locator("main")).toContainText(
             "request failures are not cached");
         await expect(page.locator("main")).toContainText(
             "If you press Check, the browser sends it directly to fanart.tv once");
-        await expect(page.locator("main")).not.toContainText("Album and Track fields");
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect(page.locator(".controls .note")).toHaveCount(0);
@@ -818,7 +829,7 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/tint\?/, (route) =>
             route.fulfill({ json: { tint: [40, 50, 60] } }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             resolverRequests.push({
                 album: url.searchParams.get("album"),
@@ -1048,7 +1059,7 @@ test.describe("the deployed player page", () => {
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route(/\/api\/backdrop\?/, (route) => route.fulfill({ json: {
+            await page.route(/\/api\/media\?/, (route) => route.fulfill({ json: {
                 media: { id: 42, title: "Fallback TV", type: "tv" },
                 backdrop: null, source: null, tint: [255, 255, 255],
                 certifications: [{
@@ -1084,7 +1095,7 @@ test.describe("the deployed player page", () => {
             await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
                 route.fulfill({ status: 200, contentType: "image/svg+xml",
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' }));
-            await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
                 const url = new URL(route.request().url());
                 resolverQuery = {
                     album: url.searchParams.get("album"),
@@ -1167,7 +1178,7 @@ test.describe("the deployed player page", () => {
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route("**/api/tint?*", (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route("**/api/backdrop?*", (route) => route.fulfill({ json: {
+            await page.route("**/api/media?*", (route) => route.fulfill({ json: {
                 media: { id: 172265, title: "La Mula", type: "movie" },
                 backdrop: null, source: null, tint: [255, 255, 255],
             } }));
@@ -1275,7 +1286,7 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/tint\?/, (route) =>
             route.fulfill({ json: { tint: [40, 50, 60] } }));
-        await page.route(/\/api\/backdrop\?/, async (route) => {
+        await page.route(/\/api\/media\?/, async (route) => {
             const next = /Next Rating Movie/.test(
                 new URL(route.request().url()).searchParams.get("album"));
             if (!next) {
@@ -1792,7 +1803,7 @@ test.describe("the deployed player page", () => {
             creditRequests++;
             return route.fulfill({ json: { artist: "Enriched Composer" } });
         });
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             backdropArtist = new URL(route.request().url()).searchParams.get("artist");
             return route.fulfill({ json: {
                 media: { id: 77, title: "Enriched Next", type: "movie" },
@@ -1846,7 +1857,7 @@ test.describe("the deployed player page", () => {
             if (creditRequests === 1) return route.fulfill({ status: 503, json: {} });
             return route.fulfill({ json: { artist: "Recovered Composer" } });
         });
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             backdropCalls.push({
                 album: url.searchParams.get("album"),
@@ -3402,7 +3413,7 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(deathSized, (route) => { deathImageRoute = route; });
         await page.route(/\/api\/tint\?/, (route) => route.fulfill({ json: { tint: [20, 40, 60] } }));
-        await page.route(/\/api\/backdrop\?/, (route) => route.fulfill({ json: {
+            await page.route(/\/api\/media\?/, (route) => route.fulfill({ json: {
             media: { id: 1, title: "SST movie", type: "movie" },
             backdrop: movieBackdrop, source: "tmdb", tint: [100, 120, 140],
         } }));
@@ -3460,7 +3471,7 @@ test.describe("the deployed player page", () => {
             await page.route(nextSized, (route) => { nextImageRoute = route; });
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [20, 40, 60] } }));
-            await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
                 const album = new URL(route.request().url()).searchParams.get("album");
                 resolverAlbums.push(album);
                 return route.fulfill({ json: album === "Old backdrop movie" ? {
@@ -3532,7 +3543,7 @@ test.describe("the deployed player page", () => {
         await page.route(/\/api\/tint\?/, (route) =>
             route.fulfill({ json: { tint: [255, 255, 255] } }));
         let resolverRequests = 0;
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             return route.fulfill({ json: {
             media: null, backdrop: null, source: null, tint: [255, 255, 255],
@@ -3575,7 +3586,7 @@ test.describe("the deployed player page", () => {
             window.__resolverAborted = false;
             const nativeFetch = window.fetch;
             window.fetch = function (url, init) {
-                if (String(url).includes("/api/backdrop?")) {
+                if (String(url).includes("/api/media?")) {
                     window.__resolverStarted = true;
                     return new Promise((resolve, reject) => {
                         const abort = () => {
@@ -3653,7 +3664,7 @@ test.describe("the deployed player page", () => {
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route(/\/api\/backdrop\?/, async (route) => {
+            await page.route(/\/api\/media\?/, async (route) => {
                 resolverRequests++;
                 if (resolverRequests > 1) {
                     await ratingsRequestMayFinish;
@@ -3691,11 +3702,11 @@ test.describe("the deployed player page", () => {
             releaseRatingsRequest();
         });
 
-    test("uses the server cover tint without enabling movie backdrops", async ({ page }) => {
+    test("uses cover tint and metadata endpoints without enabling movie backdrops", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/cover-tint.jpg";
         const thumbnail = "https://streamingsoundtracks.com/images/cover/040/cover-tint.jpg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/cover-tint.jpg";
-        let tintRequests = 0, backdropRequests = 0, requestedCover = "";
+        let tintRequests = 0, mediaRequests = 0, requestedCover = "";
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
@@ -3712,15 +3723,21 @@ test.describe("the deployed player page", () => {
             requestedCover = new URL(route.request().url()).searchParams.get("url");
             return route.fulfill({ json: { tint: [31, 63, 127] } });
         });
-        await page.route(/\/api\/backdrop\?/, (route) => {
-            backdropRequests++;
-            return route.abort();
+        await page.route(/\/api\/media\?/, (route) => {
+            mediaRequests++;
+            const url = new URL(route.request().url());
+            expect(url.searchParams.get("art")).toBe("0");
+            expect(url.searchParams.has("ratings")).toBe(false);
+            return route.fulfill({ json: {
+                media: null, backdrop: null, source: null, tint: [255, 255, 255],
+                metadata: { album: "Cover Tint", track: "No Movie Art", artist: "24seven.fm" },
+            } });
         });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => tintRequests).toBe(1);
         expect(requestedCover).toBe(thumbnail);
-        expect(backdropRequests).toBe(0);
+        expect(mediaRequests).toBe(1);
         await expect.poll(() => page.locator("#stage").evaluate((stage) =>
              getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
             .toBe("rgb(31, 63, 127)");
@@ -3790,7 +3807,7 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/tint\?/, (route) =>
             route.fulfill({ json: { tint: [20, 40, 60] } }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             resolverRequests++;
             resolvedAlbum = url.searchParams.get("album");
@@ -3877,7 +3894,7 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [20, 40, 60] } }));
-            await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
                 const url = new URL(route.request().url());
                 const album = url.searchParams.get("album");
                 const orientation = url.searchParams.get("orientation") || "landscape";
@@ -3971,7 +3988,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             album = url.searchParams.get("album");
             track = url.searchParams.get("track");
@@ -4012,7 +4029,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             resolverQuery = url.searchParams.get("album");
             personalKey = url.searchParams.get("client_key");
@@ -4020,6 +4037,10 @@ test.describe("the deployed player page", () => {
                 movie: { id: 429, title: "The Good, the Bad and the Ugly" },
                 backdrop: "https://fanart.tv/good-bad-ugly.jpg",
                 source: "fanart", tint: [200, 210, 220],
+                metadata: {
+                    album: "The Good, The Bad & The Ugly",
+                    track: "The Trio (Main Title)", artist: "Ennio Morricone",
+                },
             } });
         });
         await page.route("https://fanart.tv/good-bad-ugly.jpg", (route) =>
@@ -4054,7 +4075,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverQuery = new URL(route.request().url()).searchParams.get("album");
             return route.fulfill({ json: {
                 movie: { id: 128, title: "Princess Mononoke" }, backdrop,
@@ -4093,11 +4114,16 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverQuery = new URL(route.request().url()).searchParams.get("album");
             return route.fulfill({ json: {
                 movie: { id: 912, title: "The Thomas Crown Affair" }, backdrop,
                 source: "tmdb", tint: [150, 160, 170],
+                metadata: {
+                    album: "The Thomas Crown Affair (1968)",
+                    track: "Theme From The Thomas Crown Affair (The Windmills Of Your Mind) (Perf. By Noel Harrison)",
+                    artist: "Michel Legrand",
+                },
             } });
         });
         await page.route(backdrop, (route) => route.fulfill({ status: 200,
@@ -4134,10 +4160,14 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverAlbum = new URL(route.request().url()).searchParams.get("album");
             return route.fulfill({ json: {
                 media: null, backdrop: null, source: null, tint: [255, 255, 255],
+                metadata: {
+                    album: "The Crown: Season 2", track: "Your Majesty",
+                    artist: "Rupert Gregson-Williams & Lorne Balfe",
+                },
             } });
         });
 
@@ -4166,7 +4196,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverQuery = new URL(route.request().url()).searchParams.get("album");
             return route.fulfill({ json: {
                 media: { id: 3476, title: "Inspector Morse", type: "tv" }, backdrop,
@@ -4204,7 +4234,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             resolverAlbum = url.searchParams.get("album");
             resolverTrack = url.searchParams.get("track");
@@ -4244,7 +4274,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             return route.fulfill({ json: {
                 movie: { id: 13, title: "constructor" },
@@ -4279,7 +4309,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => route.abort());
+        await page.route(/\/api\/media\?/, (route) => route.abort());
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         const warning = "Backdrop service is currently unavailable.";
@@ -4324,7 +4354,7 @@ test.describe("the deployed player page", () => {
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route(/\/api\/backdrop\?/, async (route) => {
+            await page.route(/\/api\/media\?/, async (route) => {
                 const album = new URL(route.request().url()).searchParams.get("album");
                 if (album === "New Boundary Movie") {
                     newResolverRequested = true;
@@ -4396,7 +4426,7 @@ test.describe("the deployed player page", () => {
             window.backdropFetchCacheModes = [];
             window.fetch = function (input, init) {
                 if (new URL(typeof input === "string" ? input : input.url, location.href)
-                        .pathname === "/api/backdrop") {
+                        .pathname === "/api/media") {
                     window.backdropFetchCacheModes.push(init && init.cache || "default");
                 }
                 return nativeFetch.apply(this, arguments);
@@ -4414,7 +4444,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, async (route) => {
+        await page.route(/\/api\/media\?/, async (route) => {
             resolverRequests++;
             if (resolverRequests === 1)
                 return route.fulfill({ status: 503, json: { error: "temporarily_unavailable" } });
@@ -4474,7 +4504,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             return route.fulfill({ json: {
                 media: { id: 335984, title: "Blade Runner 2049", type: "movie" },
@@ -4512,7 +4542,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             expect(new URL(route.request().url()).searchParams.has("client_key")).toBe(false);
             return route.fulfill({ status: 503, json: { error: "resolver_not_configured" } });
@@ -4566,7 +4596,7 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/tint\?/, (route) =>
             route.fulfill({ json: { tint: [20, 40, 60] } }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             const path = resolverRequests === 1 ? "/working.jpg" : "/broken.jpg";
             return route.fulfill({ json: {
@@ -4622,7 +4652,7 @@ test.describe("the deployed player page", () => {
             await page.route(sizedCover, (route) => route.fulfill({ status: 200,
                 contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-            await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
                 resolverRequests++;
                 if (resolverRequests === 1)
                     return route.fulfill({ status, json: { error: "temporary_failure" } });
@@ -4644,7 +4674,8 @@ test.describe("the deployed player page", () => {
             await toggle.click();
             await toggle.click();
 
-            await expect.poll(() => resolverRequests).toBe(2);
+            // Initial art failure, metadata-only provider-toggle state, then art retry.
+            await expect.poll(() => resolverRequests).toBe(3);
             await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(1);
         });
     }
@@ -4673,7 +4704,7 @@ test.describe("the deployed player page", () => {
         await page.route(nextSized, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             resolvedArtist = new URL(route.request().url()).searchParams.get("artist");
             return route.fulfill({ status: 502, json: { error: "provider_unavailable" } });
@@ -4734,7 +4765,7 @@ test.describe("the deployed player page", () => {
             tintUrls.push(new URL(route.request().url()).searchParams.get("url"));
             return route.fulfill({ json: { tint: [40, 50, 60] } });
         });
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             backdropAlbums.push(url.searchParams.get("album"));
             return route.fulfill({ json: {
@@ -4792,7 +4823,7 @@ test.describe("the deployed player page", () => {
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
                 backdropAlbums.push(new URL(route.request().url()).searchParams.get("album"));
                 return route.fulfill({ json: {
                     media: { id: backdropAlbums.length, title: backdropAlbums.at(-1), type: "movie" },
@@ -4845,7 +4876,7 @@ test.describe("the deployed player page", () => {
         await page.route(nextSized, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             const artist = url.searchParams.get("artist");
             artists.push(artist);
@@ -4853,6 +4884,10 @@ test.describe("the deployed player page", () => {
                 media: { id: 12144, title: "The Land Before Time", type: "movie" },
                 backdrop: artist ? definitiveBackdrop : provisionalBackdrop,
                 source: "tmdb", tint: [110, 150, 90],
+                metadata: {
+                    album: "The Land Before Time", track: "The Great Migration",
+                    artist: artist || "",
+                },
             } });
         });
         await page.route(/https:\/\/image\.tmdb\.org\/t\/p\/w1280\/land-before-time-(?:provisional|definitive)\.jpg/,
@@ -4926,7 +4961,7 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route(/\/api\/backdrop\?/, async (route) => {
+            await page.route(/\/api\/media\?/, async (route) => {
                 const artist = new URL(route.request().url()).searchParams.get("artist");
                 resolverArtists.push(artist);
                 if (artist === "Authoritative Composer") await definitiveMayFinish;
@@ -4975,7 +5010,7 @@ test.describe("the deployed player page", () => {
             await expect(page.locator("#rating-de")).toContainText("FSK 12");
 
             const emptyResponse = page.waitForResponse((response) =>
-                response.url().includes("/api/backdrop?")
+                response.url().includes("/api/media?")
                 && new URL(response.url()).searchParams.get("artist")
                     === "Authoritative Composer");
             releaseDefinitive();
@@ -5011,7 +5046,7 @@ test.describe("the deployed player page", () => {
         await page.route(nextSized, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const artist = new URL(route.request().url()).searchParams.get("artist");
             artists.push(artist);
             if (!artist) return route.fulfill({ json: {
@@ -5058,7 +5093,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const providers = new URL(route.request().url()).searchParams.get("providers").split(",");
             expect(providers).toContain("fanart");
             expect(providers).toContain("steamgriddb");
@@ -5093,7 +5128,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             lastPersonalKey = new URL(route.request().url()).searchParams.get("client_key");
             const first = resolverRequests === 1;
@@ -5157,7 +5192,7 @@ test.describe("the deployed player page", () => {
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
                 const url = new URL(route.request().url());
                 const album = url.searchParams.get("album");
                 const providers = url.searchParams.get("providers");
@@ -5252,7 +5287,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             const providers = new URL(route.request().url()).searchParams.get("providers").split(",");
             providerRequests.push(providers);
             const first = providers[0];
@@ -5322,7 +5357,7 @@ test.describe("the deployed player page", () => {
         await page.route(sizedCover, (route) => route.fulfill({ status: 200,
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, async (route) => {
+        await page.route(/\/api\/media\?/, async (route) => {
             const providers = new URL(route.request().url()).searchParams.get("providers");
             providerRequests.push(providers);
             if (providers === "tmdb") await new Promise((resolve) => setTimeout(resolve, 400));
@@ -5400,7 +5435,7 @@ test.describe("the deployed player page", () => {
             window.__resolverAborted = false;
             const nativeFetch = window.fetch;
             window.fetch = function (url, init) {
-                if (String(url).includes("/api/backdrop?")) {
+                if (String(url).includes("/api/media?")) {
                     window.__resolverStarted = true;
                     return new Promise((resolve, reject) => {
                         const abort = () => {
@@ -6133,7 +6168,7 @@ test.describe("the deployed player page", () => {
         await page.route("https://streamingsoundtracks.com/images/cover/500/privacy.svg", (route) =>
             route.fulfill({ status: 200, contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-        await page.route(/\/api\/backdrop\?/, (route) => {
+        await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
             return route.abort();
         });
@@ -6152,7 +6187,7 @@ test.describe("the deployed player page", () => {
         expect(await page.evaluate(() => localStorage.getItem(
             "24sevenfm-covers.player.v2"))).toBeNull();
         await page.waitForTimeout(100);
-        expect(resolverRequests).toBe(0);
+        expect(resolverRequests).toBe(1); // canonical metadata is independent of artwork defaults
     });
     test("ignores a stale audio rejection after a station switch", async ({ page }) => {
         await page.addInitScript(() => {

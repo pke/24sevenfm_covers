@@ -58,12 +58,12 @@ async function withServer(routes, callback) {
 
 test("decodes browser query strings before handing metadata to an API handler", async () => {
     await withServer({
-        "/api/backdrop": (req, res) => {
+        "/api/media": (req, res) => {
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ query: req.query, rawUrl: req.url }));
         },
     }, async (origin) => {
-        const response = await fetch(origin + "/api/backdrop"
+        const response = await fetch(origin + "/api/media"
             + "?album=Defiance+%28Video+Game%29&track=Dark+Woods"
             + "&artist=Bear+McCreary&providers=tmdb%2Csteamgriddb%2Cfanart");
         assert.equal(response.status, 200);

@@ -235,9 +235,9 @@ var OPTION_DEFS = {
             && timestamp <= 8640000000000000 ? timestamp : 0;
     } },
 };
-var backdropApiMeta = document.querySelector('meta[name="backdrop-api"]');
+var backdropApiMeta = document.querySelector('meta[name="media-api"]');
 var BACKDROP_API_URL = (backdropApiMeta && backdropApiMeta.getAttribute("content")
-    || "/api/backdrop").trim();
+    || "/api/media").trim();
 var tintApiMeta = document.querySelector('meta[name="tint-api"]');
 var TINT_API_URL = (tintApiMeta && tintApiMeta.getAttribute("content")
     || "/api/tint").trim();
@@ -478,9 +478,10 @@ function syncSettingsUrl() {
 }
 syncSettingsUrl();
 
-// The feed stores track text HTML-encoded ("R&amp;B", "&#039;") - decode it for
-// display, like lib/coverfetch.cpp's htmlDecode. DOMParser never executes anything,
-// so feeding it untrusted feed text is safe (unlike innerHTML).
+// The browser decodes raw station text only for its immediate, temporary display;
+// /api/media remains the canonical metadata source shared by every client.
+// DOMParser never executes anything here, so feeding it untrusted feed text is safe
+// (unlike assigning it to innerHTML).
 var entityDoc = new DOMParser();
 function htmlDecode(value) {
     var type = typeof value;
@@ -493,12 +494,6 @@ function htmlDecode(value) {
     s = s.replace(/</g, "&lt;");
     return entityDoc.parseFromString(s, "text/html").body.textContent;
 }
-function unrotateTitleArticle(title) {
-    return (title || "").replace(
-        /^(.+),\s*(The|A|An)(\s+\((?:18|19|20|21)\d{2}\))?(\s*[:\-–—]\s*.+)?$/i,
-        "$2 $1$3$4");
-}
-
 function station() { return STATIONS[stationIndex(opts.station)]; }
 function stationCapability(name, selectedStation) {
     var selected = selectedStation || station();
@@ -1248,6 +1243,7 @@ var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
 var retryAt = 0, pollActive = null, lastSuccessfulPollAt = 0;
 var boundaryTrackToken = "", boundaryExpectedEndAt = 0;
 var shownUrl = "", loadingCoverUrl = "", remAnchor = -1, remAnchorAt = 0;
+var currentTrackLengthSeconds = 0;
 var coverRetryUrl = "", coverRetryFailures = 0, coverRetryTimer = null;
 var nextTrack = null, nextTrackToken = "", nextTrackVersion = 0;
 var nextCreditRequest = null, comingNextClearTimer = null, comingNextDisplayedVersion = 0;
@@ -1298,9 +1294,11 @@ function nextTrackFromQueue(value, occurrence) {
     return {
         queueKey: queueKey,
         album: album,
-        displayAlbum: unrotateTitleArticle(album),
+        displayAlbum: album, // replaced with /api/media metadata during prefetch
         track: track,
         artist: artist,
+        displayArtist: artist,
+        metadataResolved: false,
         artistSource: artist ? "queue" : "",
         albumUrl: albumUrl,
         coverUrl: coverUrl,
@@ -1439,7 +1437,8 @@ function maybeResolveNextArtist() {
 
 function setComingNextContent() {
     comingNextAlbumEl.textContent = nextTrack ? nextTrack.displayAlbum : "";
-    comingNextArtistEl.textContent = nextTrack ? nextTrack.artist : "";
+    comingNextArtistEl.textContent = nextTrack
+        ? (nextTrack.displayArtist || nextTrack.artist) : "";
     comingNextDisplayedVersion = nextTrack ? nextTrack.version : 0;
 }
 
@@ -1580,6 +1579,7 @@ async function poll() {
         // remaining = Length(ms)/1000 - |SystemTime - PlayStart|; both stamps come
         // from the same server clock, so any timezone offset cancels in the diff.
         const lengthSec = Math.max(0, Math.floor((parseInt(j.Length, 10) || 0) / 1000));
+        currentTrackLengthSeconds = lengthSec;
         let elapsed = 0;
         const ps = Date.parse(j.PlayStart || ""), st = Date.parse(j.SystemTime || "");
         const timingIsValid = !isNaN(ps) && !isNaN(st);
@@ -1588,7 +1588,7 @@ async function poll() {
         remAnchor = lengthSec > 0 ? remaining : -1;
         remAnchorAt = Date.now();
 
-        const album = htmlDecode(j.Album), displayAlbum = unrotateTitleArticle(album);
+        const album = htmlDecode(j.Album), displayAlbum = album;
         const track = htmlDecode(j.Track), artist = htmlDecode(j.Artist);
         // ONE determination drives everything downstream: no trusted CoverLink means
         // a station ID, unregistered track, or rejected off-origin URL.
@@ -1712,13 +1712,15 @@ function clearStatus(source) { setStatus("", source); }
 
 function queueBackdropPrefetchKey(entry, orientation) {
     var providers = enabledMovieProviders();
-    var includeArt = sstBackdropsEnabled() && providers.length > 0;
+    var mediaAvailable = stationSupports(CAPABILITY_SOUNDTRACK_MEDIA);
+    var includeArt = mediaAvailable && sstBackdropsEnabled() && providers.length > 0;
+    var includeRatings = mediaAvailable && sstRatingsEnabled();
     return JSON.stringify([
         entry && entry.queueKey || "",
         includeArt ? providers : ["tmdb"],
         includeArt && providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
         includeArt,
-        sstRatingsEnabled(),
+        includeRatings,
         includeArt ? (orientation || backdropOrientationForStage()) : "landscape",
         entry && entry.artist || "",
     ]);
@@ -1755,6 +1757,7 @@ function queuedTrackNeedsPrefetch(entry) {
             && !Object.prototype.hasOwnProperty.call(coverTintCache, entry.tintUrl)) return true;
     if (queuedArtistIsNeeded() && !entry.artist && entry.albumUrl && !entry.creditAttempted)
         return true;
+    if (!entry.metadataResolved) return true;
     var orientation = backdropOrientationForStage();
     return stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
         && (sstBackdropsEnabled() || sstRatingsEnabled())
@@ -1787,8 +1790,7 @@ async function prefetchQueuedTrack(entry, signal) {
 
     await resolveQueuedArtist(entry);
     if (signal.aborted) return;
-    if (stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
-            && (sstBackdropsEnabled() || sstRatingsEnabled())) {
+    {
         var orientation = backdropOrientationForStage();
         var configKey = queueBackdropPrefetchKey(entry, orientation);
         if (!queuedBackdropPrefetch(entry, orientation)) {
@@ -1797,6 +1799,12 @@ async function prefetchQueuedTrack(entry, signal) {
             if (signal.aborted || orientation !== backdropOrientationForStage()
                     || queuedTracks.indexOf(entry) < 0
                     || configKey !== queueBackdropPrefetchKey(entry, orientation)) return;
+            entry.metadataResolved = !!(art && art.metadata);
+            if (entry.metadataResolved) {
+                entry.displayAlbum = art.metadata.album;
+                entry.displayArtist = art.metadata.artist;
+                if (entry === nextTrack) setComingNextContent();
+            }
             var image = null;
             if (art && art.url) {
                 image = new Image();
@@ -2329,15 +2337,42 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
         });
     }
     if (!body || typeof body !== "object") return null;
+    var metadata = trustedNormalizedMetadata(body.metadata);
     var certifications = trustedCertifications(body.certifications);
     var resolved = body.backdrop ? trustedResolvedBackdrop(body.backdrop, body.source) : "";
     if (body.backdrop && !resolved) throw SERVER_ART_UNAVAILABLE;
-    return resolved || certifications.length ? {
+    return resolved || certifications.length || metadata ? {
         url: resolved,
         tint: resolved ? validTint(body.tint) : null,
         source: resolved ? body.source : null,
         certifications: certifications,
+        metadata: metadata,
     } : null;
+}
+
+function trustedNormalizedMetadata(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    var fields = ["album", "track", "artist"];
+    var limits = [180, 300, 180];
+    var clean = {};
+    for (var i = 0; i < fields.length; i++) {
+        var text = value[fields[i]];
+        if (typeof text !== "string" || text.length > limits[i]
+                || /[\u0000-\u001F\u007F]/.test(text)) return null;
+        clean[fields[i]] = text;
+    }
+    return clean.album ? clean : null;
+}
+
+function applyResolvedMetadata(metadata) {
+    if (!metadata) return;
+    var title = metadata.album;
+    if (metadata.track) title += " - " + metadata.track;
+    if (currentTrackLengthSeconds > 0) {
+        title += " (" + Math.floor(currentTrackLengthSeconds / 60) + ":"
+            + String(currentTrackLengthSeconds % 60).padStart(2, "0") + ")";
+    }
+    setInfo(title || "—", metadata.artist);
 }
 
 function setPlayerTint(tint) {
@@ -2356,6 +2391,7 @@ function mergeMovieArt(authoritative, fallback) {
         source: hasAuthoritativeBackdrop ? authoritative.source : fallback.source,
         certifications: authoritative.certifications && authoritative.certifications.length
             ? authoritative.certifications : fallback.certifications || [],
+        metadata: authoritative.metadata || fallback.metadata || null,
     };
 }
 
@@ -2435,7 +2471,7 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     }
     // The station-ID flag set by poll() (the one that also picks the logo): never a
     // movie, so no API call - and no leftover backdrop behind the station logo.
-    if (stationIdActive || (!sstBackdropsEnabled() && !sstRatingsEnabled())) {
+    if (stationIdActive) {
         setMovieBackdrop(null, generation);
         setRatings([], generation);
         return;
@@ -2444,6 +2480,21 @@ function requestBackdrop(cacheMode, prefetchedArt) {
     if (!mediaCapability || typeof mediaCapability.resolver !== "function") {
         setMovieBackdrop(null, generation);
         setRatings([], generation);
+        const ctl = new AbortController();
+        const request = {
+            ctl: ctl,
+            kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT)
+        };
+        backdropRequest = request;
+        serverMovieArt(currentAlbum, currentTrack, currentArtist, ["tmdb"], false, false,
+            "landscape", ctl.signal, cacheMode).then(function (result) {
+                if (renderIsCurrent("backdrop", generation))
+                    applyResolvedMetadata(result && result.metadata);
+        }).catch(function () { /* the next station poll retries canonical metadata */ })
+            .finally(function () {
+                clearTimeout(request.kill);
+                if (backdropRequest === request) backdropRequest = null;
+            });
         return;
     } // no media source
     if (hasPrefetchedResult) {
@@ -2476,13 +2527,13 @@ function retryBackdrop() { requestBackdrop("reload"); }
 async function movieArtFor(album, track, artist, generation, signal, cacheMode,
         requestedOrientation) {
     const providers = enabledMovieProviders();
-    const includeArt = sstBackdropsEnabled() && providers.length > 0;
-    const includeRatings = sstRatingsEnabled();
+    const mediaAvailable = stationSupports(CAPABILITY_SOUNDTRACK_MEDIA);
+    const includeArt = mediaAvailable && sstBackdropsEnabled() && providers.length > 0;
+    const includeRatings = mediaAvailable && sstRatingsEnabled();
     const requestedProviders = includeArt ? providers : ["tmdb"];
     const orientation = includeArt
         ? (requestedOrientation || backdropOrientationForStage()) : "landscape";
-    if ((generation !== null && !renderIsCurrent("backdrop", generation)) || !album
-            || (!includeArt && !includeRatings)) return null;
+    if ((generation !== null && !renderIsCurrent("backdrop", generation)) || !album) return null;
     const cache = movieCacheFor(requestedProviders, includeArt, includeRatings, orientation);
     const titleCacheKey = album + "\n" + track + "\n";
     const cacheKey = titleCacheKey + artist;
@@ -2506,6 +2557,7 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
             cacheMode);
         if (!renderIsCurrent("backdrop", generation)) return;
         const renderedArt = mergeMovieArt(art, prefetchedArt);
+        applyResolvedMetadata(renderedArt && renderedArt.metadata);
         clearStatus("backdrop");
         setBackdropErrorState("");
         setMovieBackdrop(sstBackdropsEnabled() ? renderedArt : null, generation);
@@ -3577,7 +3629,7 @@ function applyStation() {
     cancelBackdropRequest();
     setMovieBackdrop(null, backdropGeneration);
     setRatings([], backdropGeneration);
-    shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1;
+    shownUrl = ""; loadingCoverUrl = ""; remAnchor = -1; currentTrackLengthSeconds = 0;
     resetQueuedTracks();
     boundaryTrackToken = ""; boundaryExpectedEndAt = 0; lastSuccessfulPollAt = 0;
     resetCoverRetry("");

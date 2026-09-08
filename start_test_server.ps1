@@ -157,7 +157,7 @@ try {
 
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Method Options -TimeoutSec 60 `
-            -Headers @{ Origin = $siteOrigin } "$apiOrigin/api/backdrop"
+            -Headers @{ Origin = $siteOrigin } "$apiOrigin/api/media"
     } catch {
         $details = ((Get-Content $stdoutLog, $stderrLog -ErrorAction SilentlyContinue) -join "`n").Trim()
         throw "Local Node API failed its CORS preflight: $($_.Exception.Message)`n$details"

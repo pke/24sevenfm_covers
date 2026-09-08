@@ -12,6 +12,7 @@ const {
     createHandler,
     createTintHandler,
     mediaHintForAlbum,
+    normalizedTrackMetadata,
     pickComposerCredit,
     pickExactPerson,
     pickGame,
@@ -26,6 +27,61 @@ const {
     trustedSteamGridDbUrl,
     trustedTvmazeUrl,
 } = require("./_lib/backdrop");
+
+// Existing resolver assertions intentionally focus on matching/art/rating output.
+// The normalized metadata envelope has its own contract tests below; omit that one
+// additive field when an older expectation does not mention it.
+const strictDeepEqual = assert.deepEqual.bind(assert);
+assert.deepEqual = function deepEqualWithAdditiveMetadata(actual, expected, message) {
+    if (actual && expected && typeof actual === "object" && typeof expected === "object"
+            && Object.prototype.hasOwnProperty.call(actual, "metadata")
+            && !Object.prototype.hasOwnProperty.call(expected, "metadata")) {
+        actual = { ...actual };
+        delete actual.metadata;
+    }
+    return strictDeepEqual(actual, expected, message);
+};
+
+test("returns normalized album, track and composer metadata for every client", () => {
+    assert.deepEqual(normalizedTrackMetadata(
+        "Loving Vincent, The", "The Night Caf&eacute;", "Dustin O&acute;Halloran &amp; Hauschka"), {
+        album: "The Loving Vincent",
+        track: "The Night Café",
+        artist: "Dustin O´Halloran & Hauschka",
+    });
+    assert.deepEqual(normalizedTrackMetadata(
+        "Example, A (2020) — Subtitle", "&NotEqualTilde;", "Caf&amp;eacute;"), {
+        album: "A Example (2020) — Subtitle",
+        track: "≂̸",
+        artist: "Caf&eacute;", // exactly one server-side decode pass
+    });
+});
+
+test("metadata-only media endpoint returns separate canonical fields without providers", async () => {
+    let providerCalled = false;
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "unused" },
+        fetchImpl: async () => {
+            providerCalled = true;
+            throw new Error("metadata-only requests must not reach a provider");
+        },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Loving Vincent, The",
+        track: "The Night Caf&eacute;",
+        artist: "Dustin O&acute;Halloran &amp; Hauschka",
+        art: "0",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(providerCalled, false);
+    assert.deepEqual(JSON.parse(res.body).metadata, {
+        album: "The Loving Vincent",
+        track: "The Night Café",
+        artist: "Dustin O´Halloran & Hauschka",
+    });
+});
 
 test("normalizes the live The Wings Of A Film title in the resolver", () => {
     assert.equal(backdropTitleFor("The Wings Of A Film",
@@ -1742,11 +1798,11 @@ test("infers only explicit game, movie, and TV soundtrack markers", () => {
 
 test("decodes local Vercel plus-spaces without losing encoded literal plus signs", () => {
     assert.equal(requestQueryValue({
-        url: "/api/backdrop",
+        url: "/api/media",
         query: { album: "Defiance+(Video+Game)" },
     }, "album"), "Defiance (Video Game)");
     assert.equal(requestQueryValue({
-        url: "/api/backdrop?album=C%2B%2B",
+        url: "/api/media?album=C%2B%2B",
         query: { album: "C++" },
     }, "album"), "C++");
 });
@@ -2407,7 +2463,7 @@ test("uses a parenthesized video-game marker before provider order and ratings",
     }, {
         // Vercel dev exposes only the pathname here while leaving form-encoded
         // spaces as plus signs in req.query.
-        url: "/api/backdrop",
+        url: "/api/media",
     }), res);
 
     assert.equal(res.statusCode, 200);

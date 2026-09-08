@@ -5,6 +5,8 @@ on:
     branches: [master]
     paths:
       - 'api/**'
+      - 'lib/media_resolver.cpp'
+      - 'lib/media_resolver.h'
       - 'package.json'
       - 'package-lock.json'
       - 'vercel.json'
@@ -12,6 +14,8 @@ on:
   pull_request:
     paths:
       - 'api/**'
+      - 'lib/media_resolver.cpp'
+      - 'lib/media_resolver.h'
       - 'package.json'
       - 'package-lock.json'
       - 'vercel.json'
@@ -31,4 +35,4 @@ jobs:
         with:
           node-version: 24
       - name: Run resolver unit tests
-        run: node --test api/backdrop.test.js
+        run: npm ci && npm run test:api

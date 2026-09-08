@@ -27,7 +27,7 @@ function Write-ProductionPlayer {
     $html = @"
 <!doctype html>
 <meta http-equiv="Content-Security-Policy" content="connect-src $productionOrigin">
-<meta name="backdrop-api" content="$productionOrigin/api/backdrop?resolver_version=1">
+<meta name="media-api" content="$productionOrigin/api/media?resolver_version=1">
 "@
     [IO.File]::WriteAllText($playerPath, $html, [Text.UTF8Encoding]::new($false))
 }
@@ -61,14 +61,14 @@ try {
         }
     }
     Assert-Test ($null -ne $response) 'the isolated local server should become reachable'
-    Assert-Test ($response.Content.Contains("$localOrigin/api/backdrop")) `
+    Assert-Test ($response.Content.Contains("$localOrigin/api/media")) `
         'the initial response should use the configured local API origin'
 
     # Reproduce the regression: another renderer overwrites the generated file with the
     # production URL after the preview server has already started.
     Write-ProductionPlayer
     $response = Invoke-WebRequest -Uri $url -UseBasicParsing
-    Assert-Test ($response.Content.Contains("$localOrigin/api/backdrop")) `
+    Assert-Test ($response.Content.Contains("$localOrigin/api/media")) `
         'the response should still use the local API after an external overwrite'
     Assert-Test (-not $response.Content.Contains($productionOrigin)) `
         'the response must not expose the production API after an external overwrite'

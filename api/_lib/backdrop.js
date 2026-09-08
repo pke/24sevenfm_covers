@@ -1,6 +1,7 @@
 "use strict";
 
 const { AsyncLocalStorage } = require("node:async_hooks");
+const he = require("he");
 
 const CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
 const MISS_CACHE_SECONDS = 15 * 60;
@@ -618,6 +619,20 @@ function unrotateTitleArticle(title) {
     return String(title || "").replace(
         /^(.+),\s*(The|A|An)(\s+\((?:18|19|20|21)\d{2}\))?(\s*[:\-–—]\s*.+)?$/i,
         "$2 $1$3$4");
+}
+
+function decodeMetadataText(value) {
+    if (value === null || value === undefined) return "";
+    if (!["string", "number", "boolean"].includes(typeof value)) return "";
+    return he.decode(String(value), { isAttributeValue: false, strict: false }).trim();
+}
+
+function normalizedTrackMetadata(album, track, artist) {
+    return {
+        album: unrotateTitleArticle(decodeMetadataText(album)),
+        track: decodeMetadataText(track),
+        artist: decodeMetadataText(artist),
+    };
 }
 
 function normalizedTitle(title) {
@@ -1930,10 +1945,23 @@ function createHandler(options = {}) {
                 throw new ResolverError("invalid_artist", 400,
                     "artist must be at most 180 characters");
             }
-            const metadataResolution = metadataResolutionFor(titleValue, trackValue, artistValue);
+            const decodedTitle = decodeMetadataText(titleValue);
+            const decodedTrack = decodeMetadataText(trackValue);
+            const decodedArtist = decodeMetadataText(artistValue);
+            if (!decodedTitle || decodedTitle.length > 180
+                    || decodedTrack.length > 300 || decodedArtist.length > 180
+                    || /[\u0000-\u001F\u007F]/.test(decodedTitle + decodedTrack + decodedArtist)) {
+                throw new ResolverError("invalid_metadata", 400,
+                    "decoded metadata is invalid or too long");
+            }
+            // Decode each field exactly once. A doubly encoded value such as
+            // `Caf&amp;eacute;` must stay `Caf&eacute;`, not silently become `Café`.
+            const metadata = normalizedTrackMetadata(titleValue, trackValue, artistValue);
+            const metadataResolution = metadataResolutionFor(
+                decodedTitle, decodedTrack, decodedArtist);
             const titleCandidates = metadataResolution && metadataResolution.title
                 ? [metadataResolution.title]
-                : backdropTitleCandidatesFor(titleValue, trackValue);
+                : backdropTitleCandidatesFor(decodedTitle, decodedTrack);
             const title = titleCandidates[0];
             if (!title || title.length > 160) {
                 throw new ResolverError("invalid_title", 400, "cleaned title is empty or too long");
@@ -1944,45 +1972,59 @@ function createHandler(options = {}) {
             const artOrientation = requestedOrientation(
                 requestQueryValue(req, "orientation"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
-            const quotedFromTitle = quotedFromScreenTitle(trackValue);
-            const quotedAlbumTitle = quotedOriginalMusicTitle(titleValue);
-            const themeFromTitle = leadingThemeFromTitle(trackValue);
-            const mainTitleThemeTitles = mainTitleThemeCandidates(titleValue, trackValue);
-            const tvThemeTitle = tvSeriesThemeTitle(trackValue);
+            const quotedFromTitle = quotedFromScreenTitle(decodedTrack);
+            const quotedAlbumTitle = quotedOriginalMusicTitle(decodedTitle);
+            const themeFromTitle = leadingThemeFromTitle(decodedTrack);
+            const mainTitleThemeTitles = mainTitleThemeCandidates(decodedTitle, decodedTrack);
+            const tvThemeTitle = tvSeriesThemeTitle(decodedTrack);
             const metadataMediaHint = metadataResolution && metadataResolution.hint || "";
             const mediaHint = requestedHint === "auto"
                 ? quotedFromTitle ? "screen" : metadataMediaHint || (tvThemeTitle ? "tv" : "")
                     || (themeFromTitle ? "screen" : "")
                     || (mainTitleThemeTitles.length ? "screen" : "")
-                    || mediaHintForAlbum(titleValue)
+                    || mediaHintForAlbum(decodedTitle)
                 : requestedHint;
             const rawClientKey = requestQueryValue(req, "client_key");
             const clientKey = typeof rawClientKey === "string" ? rawClientKey.trim() : "";
             if (clientKey.length > 128 || /[\u0000-\u001F\u007F]/.test(clientKey)) {
                 throw new ResolverError("invalid_client_key", 400, "client_key is invalid");
             }
+            // Metadata-only requests keep title normalization available to every
+            // player without contacting an artwork/rating provider.
+            if (!includeArt && !ratingCountries.length) {
+                const result = {
+                    media: null,
+                    backdrop: null,
+                    source: null,
+                    tint: [...WHITE_TINT],
+                    metadata,
+                };
+                res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
+                return sendJson(res, 200, result);
+            }
             const result = await resolveBackdrop(title, providers, clientKey, {
                 env, fetchImpl, tintForImage,
             }, mediaHint, metadataResolution && metadataResolution.title
-                ? "" : typeof artistValue === "string" ? artistValue.trim() : "", {
+                ? "" : decodedArtist, {
                 ratingCountries,
                 includeArt,
                 artOrientation,
                 suppress: !!(metadataResolution && metadataResolution.suppress),
                 screenQueries: titleCandidates,
-                requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
-                    || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle
+                requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(decodedTitle))
+                    || !!starTrekSeriesAlias(decodedTitle) || !!quotedFromTitle
                     || !!quotedAlbumTitle
                     || !!themeFromTitle
                     || mainTitleThemeTitles.length > 0
                     || !!tvThemeTitle
                     || !!(metadataResolution && metadataResolution.title),
                 allowGameTitleExtension:
-                    isTrackTitledGameCompilation(cleanMovieTitle(titleValue)),
+                    isTrackTitledGameCompilation(cleanMovieTitle(decodedTitle)),
                 validateExactComposer: requestedHint === "auto" && !quotedFromTitle
                     && !quotedAlbumTitle
                     && !metadataResolution && mediaHint === "auto",
             });
+            result.metadata = metadata;
             const shortCache = !result.media || (includeArt && !result.backdrop);
             debugLog("info", "request.resolved", {
                 duration_ms: Date.now() - startedAt,
@@ -2076,8 +2118,10 @@ module.exports = {
     coverTintForUrl,
     createHandler,
     createTintHandler,
+    decodeMetadataText,
     handler,
     mediaHintForAlbum,
+    normalizedTrackMetadata,
     pickComposerCredit,
     pickExactPerson,
     pickGame,

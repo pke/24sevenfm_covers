@@ -35,7 +35,7 @@ try {
     Assert-Test (Test-Path -LiteralPath (Join-Path $testOutput 'player.html') -PathType Leaf) `
         'the isolated output should contain player.html'
     $renderedPlayer = [IO.File]::ReadAllText((Join-Path $testOutput 'player.html'))
-    Assert-Test ($renderedPlayer.Contains('http://localhost:3000/api/backdrop')) `
+    Assert-Test ($renderedPlayer.Contains('http://localhost:3000/api/media')) `
         'the renderer should write the local API origin directly into player.html'
     Assert-Test ($renderedPlayer.Contains('http://localhost:3000/api/credit')) `
         'the renderer should apply the local API origin to album-credit requests'
