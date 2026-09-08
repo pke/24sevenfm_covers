@@ -231,6 +231,46 @@ test("resolves the Once More, With Feeling episode album to the Buffy TV series"
     });
 });
 
+test("resolves Bruce Broughton's J*A*G cue from the Double Feature album", async () => {
+    const providerQueries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            providerQueries.push({
+                path: parsed.pathname,
+                query: parsed.searchParams.get("query"),
+            });
+            assert.equal(parsed.pathname, "/3/search/multi");
+            return response(200, { results: [{
+                id: 4376,
+                media_type: "tv",
+                name: "JAG",
+                backdrop_path: "/jag.jpg",
+            }] });
+        },
+        tintForImage: async () => [255, 202, 201],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Double Feature",
+        track: "J*A*G",
+        artist: "Bruce Broughton",
+        providers: "tmdb",
+    }), res);
+
+    assert.deepEqual(providerQueries, [{
+        path: "/3/search/multi",
+        query: "JAG",
+    }]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 4376, title: "JAG", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/jag.jpg",
+        source: "tmdb",
+        tint: [255, 202, 201],
+    });
+});
+
 test("resolves the second Stranger Things score album to the TV series", async () => {
     const providerQueries = [];
     const handler = createHandler({

@@ -36,6 +36,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "tv",
     }),
     Object.freeze({
+        album: "Double Feature",
+        track: "J*A*G",
+        artist: "Bruce Broughton",
+        title: "JAG",
+        hint: "tv",
+    }),
+    Object.freeze({
         album: "Stranger Things 2",
         title: "Stranger Things",
         hint: "tv",
