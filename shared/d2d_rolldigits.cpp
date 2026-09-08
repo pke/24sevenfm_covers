@@ -62,7 +62,7 @@ bool ensureFormat(IDWriteFactory* dw, float fontSize) {
     Rel(g_fmt);
     g_fmtSize = 0.0f;
 
-    if (FAILED(dw->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_BOLD,
+    if (FAILED(dw->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_MEDIUM,
                                     DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                     fontSize, L"", &g_fmt)))
         return false;
@@ -112,7 +112,8 @@ void shutdownRollingTime() {
 bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dw,
                      ID2D1SolidColorBrush* bg, ID2D1SolidColorBrush* fg,
                      int remainingSeconds, float cw, float ch, float fontSize,
-                     bool animate, bool atBottom, bool drawBackground) {
+                     bool animate, bool atBottom, bool drawBackground,
+                     bool horizontalCenter) {
     if (!rt || !dw || !bg || !fg) return false;
     if (fontSize < 10.0f) fontSize = 10.0f;
     if (!ensureFormat(dw, fontSize)) return false;
@@ -165,7 +166,7 @@ bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dw,
     const float padX = fontSize * 0.5f, padY = fontSize * 0.25f;
     const float boxW = totalW + padX * 2.0f, boxH = g_cellH + padY * 2.0f;
     const float margin = fontSize * 0.4f;
-    const float boxX = cw - boxW - margin;
+    const float boxX = horizontalCenter ? (cw - boxW) * 0.5f : cw - boxW - margin;
     const float boxY = atBottom ? (ch - boxH - margin) : margin;
     if (drawBackground)
         rt->FillRectangle(D2D1::RectF(boxX, boxY, boxX + boxW, boxY + boxH), bg);

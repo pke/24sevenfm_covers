@@ -23,17 +23,22 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "d2d_renderer.h" // d2d::Transition + render/setCover/...
 #include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
 
 namespace ssc { class CoverMonitor; }
+namespace ssc { struct TrackInfo; }
+namespace ssc { struct MediaResult; }
 
 // Message the host forwards to the engine (posted by the engine to its window).
 #define SSC_WM_NEWCOVER (WM_APP + 1)
+#define SSC_WM_NEWMEDIA (WM_APP + 2)
 
 class CoverEngine {
 public:
+    struct MediaWorkerState; // opaque implementation detail (defined in .cpp)
     // Options the host loads from / saves to its own storage (Winamp INI,
     // foobar cfg_var). The engine only reads them while drawing.
     struct Settings {
@@ -48,6 +53,14 @@ public:
         int  borderRadius = 45;   // poster cover + info box corner radius, per mille of the
                                   // cover's side (INI "borderRadius"; not in the UI).
                                   // 0 = square, 500 = circle.
+        bool backdrops = false;   // SST movie/TV/game artwork; deliberately opt-in
+        bool ratings = false;     // DE/US age classifications, independent of art
+        bool hideCoverWithBackdrop = true;
+        std::string mediaProviders = "fanart,tmdb,tvmaze,steamgriddb";
+        std::string fanartClientKey; // optional listener-owned fanart.tv client_key
+        unsigned long long fanartClientKeyVerifiedAt = 0; // Unix epoch milliseconds
+        bool ratingDE = true;
+        bool ratingUS = true;
     };
     Settings settings;
 
@@ -82,8 +95,13 @@ public:
     // then reconciles + preloads via the monitor. Safe to call repeatedly with an
     // unchanged title (no-op).
     void onTitleChanged(const std::string& title);
+    // Pointer visibility mirrors the web stage: hover reveals ratings in a normal
+    // window; fullscreen becomes idle two seconds after the last movement.
+    void onPointerMove(HWND h, bool fullscreenAutoHide);
+    void onPointerLeave(HWND h);
     void resetTitle();       // playback stopped -> next tune-in reloads
     void repaint();          // request a redraw (e.g. after a settings change)
+    void retryMedia();       // manual retry after resolver/image failure
 
     // Advance to the next demo cover (with the crossfade). No-op unless demo mode is
     // active (the %TEMP%\24seven.fm-covers-demo\ sentinel was present at start()). Hosts
@@ -100,6 +118,7 @@ public:
     void onPaint(HWND h);
     void onTimer(HWND h, UINT_PTR id);
     void onNewCover(HWND h); // SSC_WM_NEWCOVER: decode the pending cover
+    void onNewMedia(HWND h); // SSC_WM_NEWMEDIA: decode/commit backdrop + ratings
 
     // Engine-owned repaint heartbeat (~30fps); the engine sets it on the window and
     // the host just forwards WM_TIMER to onTimer. Drives the crossfade + countdown.
@@ -113,7 +132,23 @@ private:
     void startMonitor();     // create + start the CoverMonitor for settings.station
     void showDemoFrame();    // feed the current demo cover + metadata through the render path
     void decodePending(HWND h);
-    void onCoverChanged(const std::string& url); // monitor bg-thread callback body
+    void onCoverChanged(const std::string& url, const ssc::TrackInfo& info); // monitor callback
+    void startMediaWorker();
+    void stopMediaWorker();
+    void scheduleMedia(const ssc::TrackInfo& current,
+                       const std::vector<ssc::TrackInfo>& queue, bool forceReload = false);
+    void publishMedia(unsigned long long epoch, const std::string& backdropBytes,
+                      const std::vector<d2d::RatingBadge>& ratings, bool imageFailed,
+                      const ssc::MediaResult* mediaResult = nullptr);
+    void publishRatings(unsigned long long epoch,
+                        const std::vector<d2d::RatingBadge>& ratings);
+    void publishMetadata(unsigned long long epoch, const ssc::MediaResult& result,
+                         int lengthSeconds);
+    void clearMedia(unsigned long long epoch);
+    void decodePendingMedia(HWND h);
+    float ratingVisibilityAlpha(DWORD now);
+    void setRatingVisibility(bool visible, DWORD now);
+    void updateRatingVisibility(DWORD now);
     // hwnd_ is written on the UI thread (setWindow) and read on the monitor thread
     // (cover/error callbacks), so it is atomic and snapshotted before every use.
     void invalidate() const;      // InvalidateRect(hwnd_) if still attached
@@ -134,6 +169,14 @@ private:
     std::string shownBytes_;             // bytes of the cover currently shown (guarded)
     int         nextLen_ = -1;
     std::wstring infoTitle_, infoArtist_; // current track title + composer for the poster info box (guarded)
+    std::string pendingBackdropBytes_;
+    std::vector<d2d::RatingBadge> pendingRatings_;
+    bool mediaDirty_ = false, pendingMediaClear_ = false;
+    bool pendingBackdropChange_ = false;
+    bool mediaImageFailed_ = false;
+    int pendingMediaTint_[3] = {255, 255, 255};
+    bool pendingMediaHasTint_ = false;
+    unsigned long long pendingMediaEpoch_ = 0;
 
     std::atomic<int>   remAnchor_{-1};   // remaining seconds at the anchor (-1 = unknown/hidden)
     std::atomic<DWORD> remAnchorAt_{0};  // GetTickCount() when the anchor was set
@@ -143,6 +186,21 @@ private:
     bool  fading_ = false;
     bool  haveCover_ = false;
     DWORD fadeStart_ = 0;
+    bool  mediaFading_ = false;
+    bool  ratingFading_ = false;
+    bool  haveBackdrop_ = false;
+    DWORD mediaFadeStart_ = 0;
+    DWORD ratingFadeStart_ = 0;
+    bool ratingHasContent_ = false;
+    bool ratingPointerInside_ = false;
+    bool ratingPointerAutoHide_ = false;
+    bool ratingVisibilityAnimating_ = false;
+    float ratingVisibilityFrom_ = 0.0f;
+    float ratingVisibilityTo_ = 0.0f;
+    DWORD ratingVisibilityStart_ = 0;
+    DWORD ratingIntroUntil_ = 0;
+    DWORD ratingPointerVisibleUntil_ = 0;
+    unsigned long long ratingIntroEpoch_ = 0;
 
     ssc::CoverMonitor* monitor_ = nullptr;
     std::mutex  monitorLifecycle_;       // serializes start()/stop()/setStation() monitor_ transitions
@@ -151,6 +209,12 @@ private:
     bool demoOn_ = false;                // demo mode active: play demo_ instead of the monitor
     std::atomic<HWND> hwnd_{nullptr};    // render window; UI thread writes, monitor thread reads
     std::string lastTitle_;              // last accepted real title (UI thread)
+    std::atomic<DWORD> coverRetryAt_{0};
+    std::atomic<int> mediaPortrait_{-1};
+    std::string coverRetryUrl_;
+    unsigned coverRetryFailures_ = 0;
+
+    MediaWorkerState* media_ = nullptr;
 };
 
 #endif // SSC_COVER_ENGINE_H

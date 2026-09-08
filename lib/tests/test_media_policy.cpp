@@ -1,0 +1,80 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "doctest.h"
+
+#include "media_policy.h"
+
+TEST_CASE("native retry cadence is identical to the web player") {
+    CHECK(ssc::coverRetryDelayMs(1) == 5000);
+    CHECK(ssc::coverRetryDelayMs(2) == 10000);
+    CHECK(ssc::coverRetryDelayMs(3) == 20000);
+    CHECK(ssc::coverRetryDelayMs(4) == 300000);
+    CHECK(ssc::coverRetryDelayMs(50) == 300000);
+
+    CHECK(ssc::backdropImageRetryDelayMs(1) == 1000);
+    CHECK(ssc::backdropImageRetryDelayMs(2) == 2000);
+    CHECK(ssc::backdropImageRetryDelayMs(3) == -1);
+
+    CHECK(ssc::stationRetryDelayMs(1) == 8000);
+    CHECK(ssc::stationRetryDelayMs(2) == 16000);
+    CHECK(ssc::stationRetryDelayMs(3) == 32000);
+    CHECK(ssc::stationRetryDelayMs(4) == 60000);
+    CHECK(ssc::stationRetryDelayMs(5) == 8000);
+    CHECK(ssc::stationRetryDelayMs(6) == 16000);
+    CHECK(ssc::stationRetryDelayMs(20) == 60000);
+}
+
+TEST_CASE("queue prefetch is immediate once then staggered one item per minute") {
+    CHECK(ssc::kQueuedTrackStoreLimit == 64);
+    CHECK(ssc::queuePrefetchDelayMs(0) == 0);
+    CHECK(ssc::queuePrefetchDelayMs(1) == 60000);
+    CHECK(ssc::queuePrefetchDelayMs(63) == 3780000);
+}
+
+TEST_CASE("media cache identity includes artist and all resolver-affecting options") {
+    ssc::TrackInfo a;
+    a.album = "Same album"; a.track = "Cue"; a.artist = "Composer A";
+    ssc::MediaRequest request;
+    const std::string base = ssc::mediaCacheKey(a, request);
+
+    ssc::TrackInfo b = a; b.artist = "Composer B";
+    CHECK(ssc::mediaCacheKey(b, request) != base);
+    b = a; b.track = "Other cue";
+    CHECK(ssc::mediaCacheKey(b, request) != base);
+
+    ssc::MediaRequest changed = request; changed.portrait = true;
+    CHECK(ssc::mediaCacheKey(a, changed) != base);
+    changed = request; changed.includeArt = false;
+    CHECK(ssc::mediaCacheKey(a, changed) != base);
+    changed = request; changed.includeRatings = false;
+    CHECK(ssc::mediaCacheKey(a, changed) != base);
+    changed = request; changed.providers = "tmdb,fanart";
+    CHECK(ssc::mediaCacheKey(a, changed) != base);
+    changed = request; changed.ratingCountries = "DE";
+    CHECK(ssc::mediaCacheKey(a, changed) != base);
+    changed = request; changed.fanartClientKey = "personal-key";
+    CHECK(ssc::mediaCacheKey(a, changed) != base);
+    changed.providers = "tmdb,tvmaze";
+    CHECK(ssc::mediaCacheKey(a, changed) ==
+          ssc::mediaCacheKey(a, [&] { ssc::MediaRequest r = changed;
+              r.fanartClientKey.clear(); return r; }()));
+}
+
+TEST_CASE("rating visibility follows web intro hover and fullscreen idle policy") {
+    CHECK(ssc::kRatingTrackVisibleMs == 10000);
+    CHECK(ssc::kStageIdleMs == 2000);
+    CHECK(ssc::shouldShowRatings(1000, 2000, false, false, 0));
+    CHECK_FALSE(ssc::shouldShowRatings(2000, 2000, false, false, 0));
+    CHECK(ssc::shouldShowRatings(3000, 0, true, false, 0));
+    CHECK_FALSE(ssc::shouldShowRatings(3000, 0, false, false, 0));
+    CHECK(ssc::shouldShowRatings(3000, 0, true, true, 3001));
+    CHECK_FALSE(ssc::shouldShowRatings(3001, 0, true, true, 3001));
+    // Deadline comparisons remain correct when the 32-bit tick count wraps.
+    CHECK(ssc::shouldShowRatings(0xfffffff0u, 0x00000010u, false, false, 0));
+}
+
+TEST_CASE("rating badge size follows target DPI on fullscreen stages") {
+    CHECK(ssc::ratingLogoHeight(1080.0f, 1.0f) == doctest::Approx(70.5f));
+    CHECK(ssc::ratingLogoHeight(2160.0f, 2.0f) == doctest::Approx(141.0f));
+    CHECK(ssc::ratingLogoHeight(2160.0f, 1.0f) == doctest::Approx(70.5f));
+    CHECK(ssc::ratingLogoHeight(200.0f, 1.5f) == doctest::Approx(42.3f));
+}

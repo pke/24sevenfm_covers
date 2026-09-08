@@ -24,7 +24,8 @@ namespace d2d {
 bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dwrite,
                      ID2D1SolidColorBrush* bgBrush, ID2D1SolidColorBrush* fgBrush,
                      int remainingSeconds, float cw, float ch, float fontSize,
-                     bool animate, bool atBottom, bool drawBackground);
+                     bool animate, bool atBottom, bool drawBackground,
+                     bool horizontalCenter = false);
 
 // Forgets the last value so the next draw shows instantly (no roll from a stale
 // value). Call while the overlay is hidden (remaining unknown / overlay off).

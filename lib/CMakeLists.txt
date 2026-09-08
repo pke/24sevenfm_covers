@@ -8,6 +8,10 @@ add_library(coverfetch STATIC
     coverfetch.cpp
     http_client.cpp
     coverfetch_c.cpp
+    mini_json.cpp
+    media_resolver.cpp
+    media_policy.cpp
+    image_probe.cpp
 )
 
 target_include_directories(coverfetch
@@ -16,7 +20,7 @@ target_include_directories(coverfetch
 
 # Platform sockets / threads.
 if(WIN32)
-    target_link_libraries(coverfetch PUBLIC ws2_32)
+    target_link_libraries(coverfetch PUBLIC ws2_32 windowscodecs ole32)
 else()
     find_package(Threads REQUIRED)
     target_link_libraries(coverfetch PUBLIC Threads::Threads)
@@ -47,4 +51,22 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     # as its own CTest entry, so ctest reports 26/26 cases instead of one opaque exe.
     include(tests/doctest.cmake)
     doctest_discover_tests(coverfetch_tests)
+
+    add_executable(media_resolver_tests tests/test_media_resolver.cpp)
+    target_link_libraries(media_resolver_tests PRIVATE coverfetch)
+    target_include_directories(media_resolver_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    doctest_discover_tests(media_resolver_tests)
+
+    add_executable(media_policy_tests tests/test_media_policy.cpp)
+    target_link_libraries(media_policy_tests PRIVATE coverfetch)
+    target_include_directories(media_policy_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    doctest_discover_tests(media_policy_tests)
+
+    add_executable(rating_assets_tests
+        tests/test_rating_assets.cpp
+        "${CMAKE_CURRENT_SOURCE_DIR}/../shared/rating_assets.cpp")
+    target_link_libraries(rating_assets_tests PRIVATE coverfetch)
+    target_include_directories(rating_assets_tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
+    doctest_discover_tests(rating_assets_tests)
 endif()

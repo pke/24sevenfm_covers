@@ -19,16 +19,17 @@ struct StationInfo {
     const char* id;          // stable key for persistence (never shown to the user)
     const char* displayName; // label in the viewer's station picker
     const char* host;        // JSON + cover host, e.g. "death.fm"
+    const char* logoUrl;     // trusted ident fallback when current-playing has no cover
     const char* desc;        // one-line genre blurb (viewer picker)
 };
 
 // Index 0 is the default (Streaming Soundtracks, the original station).
 static const StationInfo kStations[] = {
-    { "sst",       "StreamingSoundtracks", "streamingsoundtracks.com", "Movie scores, TV themes, anime & game music" },
-    { "1980s",     "1980s.FM",             "1980s.fm",                 "1980s pop, rock & new wave"                  },
-    { "adagio",    "Adagio.FM",            "adagio.fm",                "Classical & ambient"                         },
-    { "death",     "Death.FM",             "death.fm",                 "Extreme & underground metal"                 },
-    { "entranced", "Entranced.FM",         "entranced.fm",             "Trance, ambient & electronic"                },
+    { "sst",       "StreamingSoundtracks", "streamingsoundtracks.com", "https://streamingsoundtracks.com/images/logos/logo-sst-v200x200.png", "Movie scores, TV themes, anime & game music" },
+    { "1980s",     "1980s.FM",             "1980s.fm",                 "https://1980s.fm/images/logos/1980s_logo-200x200.png",                  "1980s pop, rock & new wave"                  },
+    { "adagio",    "Adagio.FM",            "adagio.fm",                "https://adagio.fm/images/logos/logo-afm-200x200.png",                  "Classical & ambient"                         },
+    { "death",     "Death.FM",             "death.fm",                 "https://death.fm/images/logos/logo-dfm-200x200.png",                   "Extreme & underground metal"                 },
+    { "entranced", "Entranced.FM",         "entranced.fm",             "https://entranced.fm/images/logos/logo-efm-g200x200.png",              "Trance, ambient & electronic"                },
 };
 static const int kStationCount = (int)(sizeof(kStations) / sizeof(kStations[0]));
 

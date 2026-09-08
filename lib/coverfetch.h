@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "http_client.h" // HttpResponse (used by the injectable transport)
 
@@ -33,12 +34,17 @@ struct TrackInfo {
     std::string track;
     std::string coverUrl;       // cover image URL handed to the callback (sized, see Config::coverSize)
     std::string originalCover;   // the raw CoverLink value from the server
+    std::string thumbnailUrl;    // trusted ThumbnailLink, when supplied by the feed
+    std::string albumUrl;        // raw SiteLink; validate before requesting it
     std::string asin;            // product id parsed from the cover filename
     int lengthSeconds = 0;       // total track length
     int remainingSeconds = 0;    // seconds left until the track ends (drives the next poll)
+    bool stationIdent = false;   // no trusted CoverLink: station ident/unregistered item
 };
 
-// Fired whenever the cover changes (and once for the first track seen).
+// Fired whenever current track metadata changes (and once for the first item).
+// The historical name is retained for source compatibility. `coverUrl` may be
+// empty for a station ident; TrackInfo still contains authoritative feed metadata.
 // Invoked on the monitor's background thread.
 using CoverChangedCallback = std::function<void(const std::string& coverUrl, const TrackInfo& info)>;
 
@@ -85,6 +91,12 @@ struct Config {
 
     // How long to wait before retrying after a failed fetch.
     int errorRetrySeconds = 30;
+    // Upper bound for the exponential retry cadence. Native players set the web
+    // parity sequence 8,16,32,60 seconds through these two values.
+    int errorRetryMaxSeconds = 60;
+    // The web player restarts its short cadence after the capped attempt instead
+    // of polling a broken station once per minute forever.
+    bool cycleErrorRetryAfterCap = false;
 
     // Socket timeout for a single request.
     int requestTimeoutSeconds = 20;
@@ -150,6 +162,13 @@ public:
     // false on error.
     bool nextCoverUrl(std::string& out, int* lengthSeconds = nullptr) const;
 
+    // Fetches and parses the complete upcoming queue. Invalid rows are skipped;
+    // false means the request or top-level JSON shape failed.
+    bool queue(std::vector<TrackInfo>& out, std::string* error = nullptr) const;
+
+    // Convenience wrapper for the first valid queued item.
+    bool nextTrack(TrackInfo& out, std::string* error = nullptr) const;
+
 private:
     void run();
     void emitError(const std::string& message) const;
@@ -166,7 +185,7 @@ private:
     std::condition_variable cv_;
     bool stopRequested_ = false;
     bool refreshRequested_ = false;
-    std::string lastCoverUrl_;
+    std::string lastTrackToken_;
 };
 
 } // namespace ssc

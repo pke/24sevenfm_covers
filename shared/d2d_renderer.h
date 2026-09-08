@@ -7,10 +7,20 @@
 
 #include <windows.h>
 #include <cstddef>
+#include <string>
+#include <vector>
 
 #include "d2d_transitions.h" // Transition enum
 
 namespace d2d {
+
+struct RatingBadge {
+    std::wstring country;
+    std::wstring system;
+    std::wstring rating;
+    std::wstring label;
+    std::wstring descriptors;
+};
 
 // Creates the Direct2D / WIC / DirectWrite factories. Returns false if Direct2D
 // is unavailable (very old Windows) - caller should then stay on GDI+.
@@ -33,6 +43,15 @@ void setCover(const void* data, size_t len, bool fadeFromCurrent);
 
 // Drops the outgoing cover once a crossfade has finished.
 void endFade();
+
+// Backdrop/rating state is deliberately separate from the square station cover.
+// A clear keeps the outgoing frame until endMediaFade(), so failures and option
+// changes fade back to the normal cover presentation instead of snapping.
+void setBackdrop(const void* data, size_t len, bool fadeFromCurrent,
+                 const int* tintRgb = nullptr);
+void clearBackdrop(bool fadeFromCurrent);
+void setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent);
+void endMediaFade();
 
 // Poster-background Gaussian blur strength (standard deviation, in the blur's ~240px
 // working resolution). Persisted in the INI as "posterBlur" but not exposed in the UI.
@@ -64,7 +83,9 @@ void setCoverRadius(int perMille);
 // `artist` supply the info-box text (may be empty) and the countdown has no backdrop.
 bool render(HWND hwnd, float progress, Transition transition, int remainingSeconds,
             float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
-            int layout, const wchar_t* title, const wchar_t* artist);
+            int layout, const wchar_t* title, const wchar_t* artist,
+            float mediaProgress = 1.0f, bool hideCoverWithBackdrop = true,
+            float ratingProgress = 1.0f, float ratingOpacity = 1.0f);
 
 } // namespace d2d
 

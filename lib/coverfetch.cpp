@@ -3,11 +3,13 @@
 #include "http_client.h"
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <vector>
 
 namespace ssc {
 namespace {
@@ -180,6 +182,82 @@ bool jsonString(const std::string& json, const char* key, std::string& out) {
     return false;
 }
 
+// Same lookup as jsonString(), plus JSON scalar-to-text conversion. This is only
+// transport parsing: it deliberately does not decode HTML character references or
+// reorder title articles. The live feed normally quotes every field, but JSON
+// number/bool/null values should not make native clients diverge.
+bool jsonText(const std::string& json, const char* key, std::string& out) {
+    if (jsonString(json, key, out)) return true;
+    std::string needle = "\"";
+    needle += key;
+    needle += "\"";
+    size_t pos = 0;
+    while ((pos = json.find(needle, pos)) != std::string::npos) {
+        size_t i = pos + needle.size();
+        while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+        if (i >= json.size() || json[i] != ':') { pos = i; continue; }
+        ++i;
+        while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+        const size_t begin = i;
+        if (json.compare(i, 4, "true") == 0) { out = "true"; return true; }
+        if (json.compare(i, 5, "false") == 0) { out = "false"; return true; }
+        if (json.compare(i, 4, "null") == 0) { out.clear(); return true; }
+        if (i < json.size() && (json[i] == '-' || (json[i] >= '0' && json[i] <= '9'))) {
+            if (json[i] == '-') ++i;
+            while (i < json.size() && json[i] >= '0' && json[i] <= '9') ++i;
+            if (i < json.size() && json[i] == '.') {
+                ++i;
+                while (i < json.size() && json[i] >= '0' && json[i] <= '9') ++i;
+            }
+            if (i > begin && (i == json.size() || json[i] == ',' || json[i] == '}'
+                    || std::isspace(static_cast<unsigned char>(json[i])))) {
+                out.assign(json, begin, i - begin);
+                return true;
+            }
+        }
+        pos = begin + 1;
+    }
+    return false;
+}
+
+// Extract flat object rows from a top-level array without treating braces inside
+// JSON strings as structure. GetQueue is exactly this shape.
+bool jsonObjectArray(const std::string& json, std::vector<std::string>& out) {
+    out.clear();
+    size_t i = 0;
+    while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+    if (i >= json.size() || json[i++] != '[') return false;
+    bool inString = false, escaped = false;
+    int depth = 0;
+    size_t begin = std::string::npos;
+    for (; i < json.size(); ++i) {
+        const char c = json[i];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') inString = false;
+            continue;
+        }
+        if (c == '"') { inString = true; continue; }
+        if (c == '{') {
+            if (depth++ == 0) begin = i;
+        } else if (c == '}') {
+            if (depth <= 0) return false;
+            if (--depth == 0 && begin != std::string::npos) {
+                out.push_back(json.substr(begin, i - begin + 1));
+                begin = std::string::npos;
+            }
+        } else if (c == ']' && depth == 0) {
+            ++i;
+            while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+            return i == json.size();
+        } else if (depth == 0 && c != ',' && !std::isspace(static_cast<unsigned char>(c))) {
+            return false;
+        }
+    }
+    return false;
+}
+
 // Parse the feed's "Length" (milliseconds) from an untrusted string. atoll/atol are
 // UNDEFINED on out-of-range input; strtoll is well-defined (clamps to LLONG_MAX and
 // stops at the first non-digit). Reject negatives/garbage and cap at a sane ceiling
@@ -209,47 +287,6 @@ void appendUtf8(std::string& out, unsigned cp) {
         out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
         out += static_cast<char>(0x80 | (cp & 0x3F));
     }
-}
-
-// Decodes the HTML entities the station stores its track text with (e.g.
-// "Rock &#039;n&#039; Roll", "R&amp;B") into UTF-8. Handles the named entities the
-// feed uses plus decimal/hex numeric references; unknown entities are left as-is.
-std::string htmlDecode(const std::string& in) {
-    std::string out;
-    out.reserve(in.size());
-    for (size_t i = 0; i < in.size();) {
-        if (in[i] != '&') { out += in[i++]; continue; }
-        const size_t semi = in.find(';', i + 1);
-        if (semi == std::string::npos || semi - i > 12) { out += in[i++]; continue; }
-        const std::string ent = in.substr(i + 1, semi - i - 1);
-        if (!ent.empty() && ent[0] == '#') { // numeric: &#NN; or &#xHH;
-            unsigned cp = 0; bool ok = false;
-            const bool hex = ent.size() > 1 && (ent[1] == 'x' || ent[1] == 'X');
-            for (size_t k = hex ? 2 : 1; k < ent.size(); ++k) {
-                const char c = ent[k]; int d;
-                if (c >= '0' && c <= '9')                d = c - '0';
-                else if (hex && c >= 'a' && c <= 'f')    d = c - 'a' + 10;
-                else if (hex && c >= 'A' && c <= 'F')    d = c - 'A' + 10;
-                else { ok = false; break; }
-                cp = cp * (hex ? 16u : 10u) + static_cast<unsigned>(d);
-                if (cp > 0x10FFFF) { ok = false; break; } // stop before the accumulator overflows
-                ok = true;
-            }
-            // Reject 0 and the UTF-16 surrogate range (would encode as invalid UTF-8).
-            if (ok && cp > 0 && !(cp >= 0xD800 && cp <= 0xDFFF)) { appendUtf8(out, cp); i = semi + 1; continue; }
-        } else {
-            const char* rep = nullptr;
-            if      (ent == "amp")  rep = "&";
-            else if (ent == "lt")   rep = "<";
-            else if (ent == "gt")   rep = ">";
-            else if (ent == "quot") rep = "\"";
-            else if (ent == "apos") rep = "'";
-            else if (ent == "nbsp") rep = " ";
-            if (rep) { out += rep; i = semi + 1; continue; }
-        }
-        out += in[i++]; // unrecognized -> keep the '&' literally
-    }
-    return out;
 }
 
 // Dispatch a GET through the Config's injected transport if it has one, else the
@@ -340,32 +377,30 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
     const time_t captureNow = std::time(nullptr);
     const std::string& body = response.body;
 
-    std::string cover;
-    if (!jsonString(body, "CoverLink", cover) || cover.empty()) {
-        if (error) *error = "No CoverLink in response";
-        return false;
-    }
-    if (!isTrustedCoverUrl(cover, config_.host)) {
-        if (error) *error = "Rejected untrusted CoverLink (off-domain host or control chars)";
+    std::string backendError;
+    if (jsonText(body, "error", backendError)) {
+        if (error) *error = backendError.empty() ? "Invalid now-playing response" : backendError;
         return false;
     }
 
     TrackInfo info;
-    jsonString(body, "Album", info.album);
-    jsonString(body, "Artist", info.artist);
-    jsonString(body, "Track", info.track);
-    // The feed stores these HTML-encoded ("R&amp;B", "&#039;"); decode for display.
-    info.album  = htmlDecode(info.album);
-    info.artist = htmlDecode(info.artist);
-    info.track  = htmlDecode(info.track);
+    std::string cover;
+    if (!jsonText(body, "Album", info.album) || !jsonText(body, "Artist", info.artist)
+            || !jsonText(body, "Track", info.track) || !jsonText(body, "CoverLink", cover)) {
+        if (error) *error = "Invalid now-playing response";
+        return false;
+    }
+    // Album/Track/Artist deliberately remain exactly as supplied by the station
+    // after JSON transport parsing. /api/media alone decodes HTML character
+    // references and reorders trailing title articles for every client.
 
     // remaining = Length - elapsed, where elapsed = |SystemTime - PlayStart|.
     // NOTE: the JSON feed reports Length in MILLISECONDS (e.g. "150572" = 2:30),
     // unlike the old SOAP field, so we convert to seconds.
     std::string lengthStr, playStartStr, systemTimeStr;
-    jsonString(body, "Length", lengthStr);
-    jsonString(body, "PlayStart", playStartStr);
-    jsonString(body, "SystemTime", systemTimeStr);
+    jsonText(body, "Length", lengthStr);
+    jsonText(body, "PlayStart", playStartStr);
+    jsonText(body, "SystemTime", systemTimeStr);
 
     const long long lengthMs = parseLengthMs(lengthStr);
     info.lengthSeconds = static_cast<int>(lengthMs / 1000);
@@ -379,8 +414,17 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
         remaining = 0;
     info.remainingSeconds = remaining;
 
-    info.originalCover = cover;
-    info.coverUrl = sizedCoverUrl(info.originalCover, config_.coverSize);
+    // Match the web player's station-ident rule: a present but empty/rejected
+    // CoverLink is valid metadata, but must not trigger either an image request or
+    // a third-party media lookup.
+    info.stationIdent = cover.empty() || !isTrustedCoverUrl(cover, config_.host);
+    info.originalCover = info.stationIdent ? std::string() : cover;
+    info.coverUrl = info.stationIdent ? std::string()
+                                      : sizedCoverUrl(info.originalCover, config_.coverSize);
+    std::string thumbnail;
+    if (jsonText(body, "ThumbnailLink", thumbnail)
+            && isTrustedCoverUrl(thumbnail, config_.host)) info.thumbnailUrl = thumbnail;
+    jsonText(body, "SiteLink", info.albumUrl);
     info.asin = parseAsin(info.originalCover);
 
     out = std::move(info);
@@ -388,6 +432,14 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
 }
 
 bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
+    TrackInfo info;
+    if (!nextTrack(info, nullptr) || info.coverUrl.empty()) return false;
+    out = info.coverUrl;
+    if (lengthSeconds) *lengthSeconds = info.lengthSeconds;
+    return true;
+}
+
+bool CoverMonitor::queue(std::vector<TrackInfo>& out, std::string* error) const {
     static std::atomic<unsigned long long> counter{0};
     unsigned long long cb =
         static_cast<unsigned long long>(std::time(nullptr)) * 1000ull + (counter++ % 1000ull);
@@ -395,18 +447,45 @@ bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
     // "Length" are the next track's (jsonString finds the first occurrence).
     std::string requestPath = config_.path + "?action=GetQueue&_t=" + std::to_string(cb);
     HttpResponse response = fetch(config_, requestPath, cancelToken());
-    if (!response.ok())
+    if (!response.ok()) {
+        if (error) *error = response.status == 0 ? response.error
+            : ("HTTP status " + std::to_string(response.status));
         return false;
-    std::string cover;
-    if (!jsonString(response.body, "CoverLink", cover) || cover.empty())
-        return false;
-    if (!isTrustedCoverUrl(cover, config_.host)) return false;
-    out = sizedCoverUrl(cover, config_.coverSize);
-    if (lengthSeconds) {
-        std::string len;
-        jsonString(response.body, "Length", len);
-        *lengthSeconds = static_cast<int>(parseLengthMs(len) / 1000); // Length is in ms
     }
+    std::vector<std::string> rows;
+    if (!jsonObjectArray(response.body, rows)) {
+        if (error) *error = "Invalid queue response";
+        return false;
+    }
+    out.clear();
+    for (const std::string& row : rows) {
+        TrackInfo info;
+        std::string cover, len, thumbnail;
+        if (!jsonText(row, "Album", info.album) || info.album.empty()) continue;
+        jsonText(row, "Track", info.track);
+        jsonText(row, "Artist", info.artist);
+        jsonText(row, "CoverLink", cover);
+        jsonText(row, "ThumbnailLink", thumbnail);
+        jsonText(row, "SiteLink", info.albumUrl);
+        jsonText(row, "Length", len);
+        info.stationIdent = cover.empty() || !isTrustedCoverUrl(cover, config_.host);
+        if (!info.stationIdent) {
+            info.originalCover = cover;
+            info.coverUrl = sizedCoverUrl(cover, config_.coverSize);
+            info.asin = parseAsin(cover);
+        }
+        if (!thumbnail.empty() && isTrustedCoverUrl(thumbnail, config_.host))
+            info.thumbnailUrl = thumbnail;
+        info.lengthSeconds = static_cast<int>(parseLengthMs(len) / 1000);
+        out.push_back(std::move(info));
+    }
+    return true;
+}
+
+bool CoverMonitor::nextTrack(TrackInfo& out, std::string* error) const {
+    std::vector<TrackInfo> tracks;
+    if (!queue(tracks, error) || tracks.empty()) return false;
+    out = std::move(tracks.front());
     return true;
 }
 
@@ -455,7 +534,7 @@ void CoverMonitor::run() {
                 break;
             if (refreshRequested_) {
                 refreshRequested_ = false;
-                lastCoverUrl_.clear(); // force onCoverChanged to re-fire this poll
+                lastTrackToken_.clear(); // force callback to re-fire this poll
             }
         }
 
@@ -463,8 +542,10 @@ void CoverMonitor::run() {
         std::string error;
         if (pollOnce(info, &error)) {
             consecutiveErrors = 0;
-            if (info.coverUrl != lastCoverUrl_) {
-                lastCoverUrl_ = info.coverUrl;
+            const std::string token = info.album + "\n" + info.track + "\n" + info.artist
+                + "\n" + info.coverUrl + "\n" + (info.stationIdent ? "ident" : "track");
+            if (token != lastTrackToken_) {
+                lastTrackToken_ = token;
                 if (onCoverChanged_)
                     onCoverChanged_(info.coverUrl, info);
             }
@@ -506,7 +587,11 @@ void CoverMonitor::run() {
             int shift = consecutiveErrors - 1;
             if (shift > 6) shift = 6; // cap the multiplier at 64x
             long long backoff = static_cast<long long>(config_.errorRetrySeconds) << shift;
-            if (backoff > config_.maxPollSeconds) backoff = config_.maxPollSeconds;
+            const int retryCap = config_.errorRetryMaxSeconds > 0
+                ? config_.errorRetryMaxSeconds : config_.maxPollSeconds;
+            if (backoff > retryCap) backoff = retryCap;
+            if (config_.cycleErrorRetryAfterCap && backoff >= retryCap)
+                consecutiveErrors = 0; // web parity: 8,16,32,60, then 8 again
 
             std::unique_lock<std::mutex> lock(mutex_);
             cv_.wait_for(lock, std::chrono::seconds(static_cast<int>(backoff)),

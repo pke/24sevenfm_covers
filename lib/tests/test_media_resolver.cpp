@@ -1,0 +1,248 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "doctest.h"
+
+#include "../media_resolver.h"
+
+using namespace ssc;
+
+TEST_CASE("native resolver percent-encodes raw UTF-8 metadata") {
+    CHECK(urlEncode("A+B & Caf\xC3\xA9") == "A%2BB%20%26%20Caf%C3%A9");
+}
+
+TEST_CASE("native resolver accepts exactly the web player's artwork hosts") {
+    CHECK(trustedBackdropUrl("https://image.tmdb.org/t/p/w1280/a.jpg", "tmdb"));
+    CHECK(trustedBackdropUrl("https://assets.fanart.tv/fanart/a.jpg", "fanart"));
+    CHECK(trustedBackdropUrl("https://static.tvmaze.com/uploads/a.jpg", "tvmaze"));
+    CHECK(trustedBackdropUrl("https://cdn2.steamgriddb.com/hero/a.png", "steamgriddb"));
+    CHECK_FALSE(trustedBackdropUrl("http://image.tmdb.org/a.jpg", "tmdb"));
+    CHECK_FALSE(trustedBackdropUrl("https://image.tmdb.org.evil.test/a.jpg", "tmdb"));
+    CHECK_FALSE(trustedBackdropUrl("https://image.tmdb.org@evil.test/a.jpg", "tmdb"));
+    CHECK_FALSE(trustedBackdropUrl("https://static.tvmaze.com/a.jpg", "tmdb"));
+    CHECK_FALSE(trustedBackdropUrl("https://127.0.0.1/a.jpg", "fanart"));
+}
+
+TEST_CASE("native resolver sends raw metadata and parses art plus sanitized ratings") {
+    std::string requestedHost, requestedPath;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string& host, unsigned short, const std::string& path,
+                        const std::string&, const std::string&, const std::string&, int) {
+        requestedHost = host; requestedPath = path;
+        HttpResponse r; r.status = 200;
+        r.body = R"JSON({
+          "media":{"id":1,"title":"Am\u00e9lie","type":"movie"},
+          "metadata":{"album":"The Am\u00e9lie Score","track":"A & B","artist":"Composer"},
+          "backdrop":"https://image.tmdb.org/t/p/w1280/a.jpg","source":"tmdb",
+          "tint":[12,34,56],
+          "certifications":[
+            {"country":"DE","system":"FSK","rating":"12","label":"FSK 12"},
+            {"country":"US","system":"MPA","rating":"PG-13","label":"PG-13"},
+            {"country":"XX","system":"Bad","rating":"X","label":"X"}
+          ]})JSON";
+        return r;
+    };
+    MediaResolver resolver(cfg);
+    MediaRequest request;
+    request.album = "Am\xC3\xA9lie + Score";
+    request.track = "A & B";
+    request.artist = "Composer";
+    request.providers = "tmdb,tvmaze";
+    MediaResult result = resolver.resolve(request);
+    CHECK(result.status == MediaResult::Hit);
+    CHECK(result.backdropUrl == "https://image.tmdb.org/t/p/w1280/a.jpg");
+    CHECK(result.source == "tmdb");
+    CHECK(result.mediaTitle == "Am\xC3\xA9lie");
+    CHECK(result.mediaType == "movie");
+    CHECK(result.album == "The Am\xC3\xA9lie Score");
+    CHECK(result.track == "A & B");
+    CHECK(result.artist == "Composer");
+    CHECK(result.hasTint);
+    CHECK(result.tint[0] == 12); CHECK(result.tint[1] == 34); CHECK(result.tint[2] == 56);
+    REQUIRE(result.certifications.size() == 2);
+    CHECK(result.certifications[0].rating == "12");
+    CHECK(result.certifications[1].rating == "PG-13");
+    CHECK(requestedHost == "24covers-api.vercel.app");
+    CHECK(requestedPath.find("/api/media?") == 0);
+    CHECK(requestedPath.find("resolver_version=" + cfg.resolverVersion) != std::string::npos);
+    CHECK(requestedPath.find("album=Am%C3%A9lie%20%2B%20Score") != std::string::npos);
+    CHECK(requestedPath.find("track=A%20%26%20B") != std::string::npos);
+    CHECK(requestedPath.find("providers=tmdb%2Ctvmaze") != std::string::npos);
+    CHECK(requestedPath.find("ratings=DE%2CUS") != std::string::npos);
+}
+
+TEST_CASE("ratings-only requests skip artwork and retain TV descriptors") {
+    std::string requestedPath;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string&, unsigned short, const std::string& path,
+                        const std::string&, const std::string&, const std::string&, int) {
+        requestedPath = path;
+        HttpResponse r; r.status = 200;
+        r.body = R"JSON({"media":{"id":2,"title":"Series","type":"tv"},
+          "backdrop":null,"source":null,"tint":[255,255,255],
+          "certifications":[{"country":"US","system":"TV Parental Guidelines",
+          "rating":"TV-14","label":"TV-14","descriptors":["V","bad","L"]}]})JSON";
+        return r;
+    };
+    MediaRequest request; request.album = "Series"; request.includeArt = false;
+    request.ratingCountries = "US";
+    MediaResult result = MediaResolver(cfg).resolve(request);
+    CHECK(result.status == MediaResult::Hit);
+    CHECK(result.backdropUrl.empty());
+    REQUIRE(result.certifications.size() == 1);
+    REQUIRE(result.certifications[0].descriptors.size() == 2);
+    CHECK(result.certifications[0].descriptors[0] == "L");
+    CHECK(result.certifications[0].descriptors[1] == "V");
+    CHECK(requestedPath.find("art=0") != std::string::npos);
+    CHECK(requestedPath.find("providers=tmdb") != std::string::npos);
+    CHECK(requestedPath.find("orientation=") == std::string::npos);
+}
+
+TEST_CASE("fanart personal key is sent only for enabled fanart artwork") {
+    std::string requestedPath;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string&, unsigned short, const std::string& path,
+                        const std::string&, const std::string&, const std::string&, int) {
+        requestedPath = path;
+        HttpResponse r; r.status = 200;
+        r.body = R"JSON({"media":null,"backdrop":null,"source":null,"certifications":[]})JSON";
+        return r;
+    };
+    MediaRequest request; request.album = "Movie";
+    request.fanartClientKey = "personal + key";
+    MediaResolver(cfg).resolve(request);
+    CHECK(requestedPath.find("client_key=personal%20%2B%20key") != std::string::npos);
+
+    request.providers = "tmdb,tvmaze";
+    MediaResolver(cfg).resolve(request);
+    CHECK(requestedPath.find("client_key=") == std::string::npos);
+    request.includeArt = false;
+    MediaResolver(cfg).resolve(request);
+    CHECK(requestedPath.find("client_key=") == std::string::npos);
+}
+
+TEST_CASE("fanart personal-key check mirrors the web player's direct probe") {
+    std::string requestedHost, requestedPath;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string& host, unsigned short port, const std::string& path,
+                        const std::string&, const std::string&, const std::string&, int) {
+        requestedHost = host; requestedPath = path;
+        CHECK(port == 443);
+        HttpResponse r; r.status = 200; r.body = R"JSON({"tmdb_id":"27205"})JSON";
+        return r;
+    };
+    CHECK(MediaResolver(cfg).checkFanartClientKey("key + one").status
+          == FanartKeyCheckStatus::Accepted);
+    CHECK(requestedHost == "webservice.fanart.tv");
+    CHECK(requestedPath == "/v3/movies/27205?client_key=key%20%2B%20one");
+
+    cfg.transport = [](const std::string&, unsigned short, const std::string&,
+                       const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r; r.status = 401; return r;
+    };
+    CHECK(MediaResolver(cfg).checkFanartClientKey("rejected").status
+          == FanartKeyCheckStatus::Rejected);
+    CHECK(MediaResolver(cfg).checkFanartClientKey("bad\r\nkey").status
+          == FanartKeyCheckStatus::Invalid);
+}
+
+TEST_CASE("native TV descriptors use the web player's rating-specific allowlist") {
+    MediaResolverConfig cfg;
+    cfg.transport = [](const std::string&, unsigned short, const std::string&,
+                       const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r; r.status = 200;
+        r.body = R"JSON({"media":{"title":"Series","type":"tv"},"backdrop":null,
+          "source":null,"certifications":[
+            {"country":"US","system":"TV Parental Guidelines","rating":"TV-G",
+             "label":"TV-G","descriptors":["D","L","S","V","FV"]}]})JSON";
+        return r;
+    };
+    MediaRequest request; request.album = "Series"; request.includeArt = false;
+    MediaResult result = MediaResolver(cfg).resolve(request);
+    REQUIRE(result.certifications.size() == 1);
+    CHECK(result.certifications[0].descriptors.empty());
+}
+
+TEST_CASE("resolver rejects control bytes before any native HTTP request") {
+    int calls = 0;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string&, unsigned short, const std::string&,
+                        const std::string&, const std::string&, const std::string&, int) {
+        ++calls; return HttpResponse();
+    };
+    MediaRequest request; request.album = "Good\r\nInjected";
+    CHECK(MediaResolver(cfg).resolve(request).status == MediaResult::Failure);
+    CHECK(calls == 0);
+}
+
+TEST_CASE("cacheable resolver miss is distinct from retryable endpoint failure") {
+    int calls = 0;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string&, unsigned short, const std::string&,
+                        const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r;
+        if (++calls == 1) {
+            r.status = 200;
+            r.body = R"JSON({"media":null,"backdrop":null,"source":null,"tint":[255,255,255],"certifications":[]})JSON";
+        } else { r.status = 503; }
+        return r;
+    };
+    MediaRequest request; request.album = "Unknown";
+    CHECK(MediaResolver(cfg).resolve(request).status == MediaResult::Miss);
+    MediaResult failure = MediaResolver(cfg).resolve(request);
+    CHECK(failure.status == MediaResult::Failure);
+    CHECK(failure.error.find("503") != std::string::npos);
+}
+
+TEST_CASE("untrusted resolver artwork fails closed") {
+    MediaResolverConfig cfg;
+    cfg.transport = [](const std::string&, unsigned short, const std::string&,
+                       const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r; r.status = 200;
+        r.body = R"JSON({"media":{"id":1,"title":"X","type":"movie"},
+          "backdrop":"https://evil.test/a.jpg","source":"tmdb","tint":[1,2,3]})JSON";
+        return r;
+    };
+    MediaRequest request; request.album = "X";
+    MediaResult result = MediaResolver(cfg).resolve(request);
+    CHECK(result.status == MediaResult::Failure);
+    CHECK(result.error.find("untrusted") != std::string::npos);
+}
+
+TEST_CASE("queue credit accepts only the selected station album URL") {
+    CHECK(trustedAlbumPageUrl(
+        "https://streamingsoundtracks.com/modules.php?name=Album&asin=B000000001",
+        "streamingsoundtracks.com"));
+    CHECK_FALSE(trustedAlbumPageUrl(
+        "https://evil.test/modules.php?name=Album&asin=B000000001",
+        "streamingsoundtracks.com"));
+
+    MediaResolverConfig cfg;
+    cfg.transport = [](const std::string&, unsigned short, const std::string& path,
+                       const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r; r.status = 200;
+        if (path.find("/api/credit?") == 0) r.body = R"({"artist":"Queue Composer"})";
+        return r;
+    };
+    bool success = false;
+    const std::string artist = MediaResolver(cfg).resolveCredit("Album",
+        "https://streamingsoundtracks.com/modules.php?name=Album&asin=B000000001",
+        "streamingsoundtracks.com", &success);
+    CHECK(success);
+    CHECK(artist == "Queue Composer");
+}
+
+TEST_CASE("backdrop download revalidates the URL before direct CDN access") {
+    std::string host, path;
+    MediaResolverConfig cfg;
+    cfg.transport = [&](const std::string& h, unsigned short, const std::string& p,
+                        const std::string&, const std::string&, const std::string&, int) {
+        host = h; path = p;
+        HttpResponse r; r.status = 200; r.body = "png-bytes"; return r;
+    };
+    MediaResult media; media.status = MediaResult::Hit; media.source = "tvmaze";
+    media.backdropUrl = "https://static.tvmaze.com/uploads/a.png";
+    std::string bytes;
+    REQUIRE(MediaResolver(cfg).downloadBackdrop(media, bytes));
+    CHECK(bytes == "png-bytes");
+    CHECK(host == "static.tvmaze.com");
+    CHECK(path == "/uploads/a.png");
+}
