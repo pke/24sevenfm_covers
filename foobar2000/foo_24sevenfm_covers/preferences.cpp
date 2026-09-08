@@ -44,6 +44,8 @@ public:
         MSG_WM_INITDIALOG(OnInitDialog)
         MSG_WM_HSCROLL(OnHScroll)
         COMMAND_CODE_HANDLER_EX(BN_CLICKED, OnControlClick) // all checkboxes + radio groups
+        COMMAND_HANDLER_EX(IDC_OPT_FANART_KEY, EN_CHANGE, OnTextChange)
+        NOTIFY_HANDLER_EX(IDC_OPT_PROVIDERS, LVN_ITEMCHANGED, OnProviderChanged)
     END_MSG_MAP()
 
 private:
@@ -53,14 +55,28 @@ private:
         return FALSE;
     }
     void OnHScroll(UINT, UINT, CScrollBar) { optpanel::onHScroll(*this); onChanged(); }
-    void OnControlClick(UINT, int, CWindow) { optpanel::updateEnabled(*this); onChanged(); }
+    void OnControlClick(UINT id, int, CWindow) {
+        optpanel::onCommand(*this, (int)id);
+        optpanel::updateEnabled(*this); onChanged();
+    }
+    void OnTextChange(UINT, int, CWindow) { onChanged(); }
+    LRESULT OnProviderChanged(LPNMHDR header) {
+        if (optpanel::onNotify(*this, header)) onChanged();
+        return 0;
+    }
 
     bool hasChanged() {
         CoverEngine::Settings d; optpanel::read(*this, d);
         const CoverEngine::Settings& s = CoverEngine::instance().settings;
         return d.showRemaining != s.showRemaining || d.remainingSize != s.remainingSize ||
                d.rollDigits != s.rollDigits || d.transition != s.transition ||
-               d.fadeMs != s.fadeMs || d.layout != s.layout;
+               d.fadeMs != s.fadeMs || d.layout != s.layout ||
+               d.backdrops != s.backdrops || d.ratings != s.ratings ||
+               d.hideCoverWithBackdrop != s.hideCoverWithBackdrop ||
+               d.ratingDE != s.ratingDE || d.ratingUS != s.ratingUS ||
+               d.mediaProviders != s.mediaProviders ||
+               d.fanartClientKey != s.fanartClientKey ||
+               d.fanartClientKeyVerifiedAt != s.fanartClientKeyVerifiedAt;
     }
     void onChanged() { m_callback->on_state_changed(); }
 

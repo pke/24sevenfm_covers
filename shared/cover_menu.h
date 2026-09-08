@@ -20,6 +20,7 @@ enum {
     kFullscreen  = 0x2001,
     kOptions     = 0x2002,
     kPoster      = 0x2003,
+    kRetryMedia  = 0x2004,
     kStationBase = 0x2100, // station i -> kStationBase + i (viewer's station picker)
 };
 

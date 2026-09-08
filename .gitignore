@@ -1,8 +1,10 @@
 # Build & distribution output
 /winamp/build/
+/winamp/build-codex/
 /foobar2000/foo_24sevenfm_covers/build/
 /lib/build/
 /lib/build-tests/
+/lib/build-tests-codex/
 /lib/build-android-*/
 /x64/
 /desktop/build/

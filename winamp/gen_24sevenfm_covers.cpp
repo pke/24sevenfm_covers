@@ -144,6 +144,8 @@ static int  init();
 static void config();
 static void quit();
 static INT_PTR CALLBACK PrefsPageProc(HWND, UINT, WPARAM, LPARAM);
+static INT_PTR CALLBACK OptionsScrollHostProc(HWND, UINT, WPARAM, LPARAM);
+static void showOwnOptions(HWND owner);
 static prefsDlgRec g_prefsRec = {}; // our node in Winamp's Preferences treeview (persistent)
 
 static winampGeneralPurposePlugin g_plugin = {
@@ -209,9 +211,7 @@ static void setFullscreen(bool on) {
     if (on == g_fsWin.active() || !g_hwnd) return;
     if (on) {
         covermenu::Actions act;
-        act.openOptions = [] { // open Winamp Preferences straight to our page
-            if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_OPENPREFSTOPAGE);
-        };
+        act.openOptions = [] { showOwnOptions(g_fsWin.hwnd()); };
         act.persist = [] { saveSettings(); };
         g_fsWin.enter(g_hwnd, act, [] {});
     } else {
@@ -223,6 +223,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case SSC_WM_NEWCOVER:
             eng().onNewCover(hwnd);
+            return 0;
+        case SSC_WM_NEWMEDIA:
+            eng().onNewMedia(hwnd);
             return 0;
         case WM_TIMER: {
             if (wp != kGateTimer) { eng().onTimer(hwnd, wp); return 0; } // engine repaint heartbeat
@@ -301,6 +304,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_LBUTTONDBLCLK: // double-click the cover -> enter fullscreen (Esc/dbl-click there exits)
             setFullscreen(!g_fsWin.active());
+            return 0;
+        case WM_MOUSEMOVE:
+            eng().onPointerMove(hwnd, /*fullscreenAutoHide=*/false);
+            return 0;
+        case WM_MOUSELEAVE:
+            eng().onPointerLeave(hwnd);
             return 0;
         case WM_KEYDOWN:
             if (wp == 'N') { eng().demoNext(); return 0; } // demo mode: next cover (no-op otherwise)
@@ -388,22 +397,27 @@ static int init() {
     // the shared options dialog and applies live - the prefs tree has no per-page OK
     // (Winamp owns the Close button). Removed in quit(). InitCommonControlsEx registers
     // the trackbar class so the duration slider exists when Winamp builds the page.
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES };
+    INITCOMMONCONTROLSEX icc = {
+        sizeof(icc), ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES
+    };
     InitCommonControlsEx(&icc);
     g_prefsRec.hInst = g_hInst;
-    g_prefsRec.dlgID = IDD_OPTIONS_PAGE;
-    g_prefsRec.proc  = (void*)PrefsPageProc;
+    g_prefsRec.dlgID = IDD_PREFS_SCROLL_HOST;
+    g_prefsRec.proc  = (void*)OptionsScrollHostProc;
     g_prefsRec.name  = (char*)"24seven.fm Covers";
     g_prefsRec.where = 0; // General Preferences section
     if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_ADD_PREFS_DLG);
     return 0;
 }
 
-// config() dialog: a tabbed, informational dialog. The options live in Winamp's
-// Preferences tree, so this just has one "About" tab today (room for a Credits tab
-// later) and a Close button - nothing to apply.
-static HWND  g_dlgAbout = nullptr;
+// The own dialog is used both from Configure and from our fullscreen context menu.
+// The latter must not switch to Winamp's host preferences or tear fullscreen down.
 static HFONT g_linkFont = nullptr;
+
+static bool clientAnimationEnabled() {
+    BOOL enabled = TRUE;
+    return !SystemParametersInfoA(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) || enabled;
+}
 
 // Positions a tab page child dialog inside the tab control's display area.
 static void placePage(HWND dlg, HWND tab, HWND page) {
@@ -456,23 +470,72 @@ static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
-static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
+struct ConfigDialogState {
+    HWND options = nullptr;
+    HWND about = nullptr;
+    int selected = 0;
+};
+
+static void selectConfigPage(ConfigDialogState* state, int selected) {
+    if (!state || selected < 0 || selected > 1 || selected == state->selected) return;
+    HWND outgoing = state->selected == 0 ? state->options : state->about;
+    HWND incoming = selected == 0 ? state->options : state->about;
+    const bool animate = clientAnimationEnabled();
+    if (outgoing) {
+        if (animate) AnimateWindow(outgoing, 100, AW_HIDE | AW_BLEND);
+        else ShowWindow(outgoing, SW_HIDE);
+    }
+    state->selected = selected;
+    if (incoming) {
+        if (animate) AnimateWindow(incoming, 100, AW_BLEND);
+        else ShowWindow(incoming, SW_SHOWNA);
+    }
+}
+
+static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    ConfigDialogState* state =
+        reinterpret_cast<ConfigDialogState*>(GetWindowLongPtrA(dlg, GWLP_USERDATA));
     switch (msg) {
         case WM_INITDIALOG: {
+            state = new ConfigDialogState();
+            SetWindowLongPtrA(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
             HWND tab = GetDlgItem(dlg, IDC_TAB);
             TCITEMA ti = {}; ti.mask = TCIF_TEXT;
-            ti.pszText = (char*)"About"; TabCtrl_InsertItem(tab, 0, &ti);
-            g_dlgAbout = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_TAB_ABOUT), dlg, AboutTabProc);
-            placePage(dlg, tab, g_dlgAbout);
-            ShowWindow(g_dlgAbout, SW_SHOW);
+            ti.pszText = (char*)"Options"; TabCtrl_InsertItem(tab, 0, &ti);
+            ti.pszText = (char*)"About";   TabCtrl_InsertItem(tab, 1, &ti);
+            state->options = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_PREFS_SCROLL_HOST),
+                                           dlg, OptionsScrollHostProc);
+            state->about = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_TAB_ABOUT),
+                                         dlg, AboutTabProc);
+            placePage(dlg, tab, state->options);
+            placePage(dlg, tab, state->about);
+            ShowWindow(state->options, SW_SHOWNA);
+            ShowWindow(state->about, SW_HIDE);
+
+            // Owned windows normally follow the owner's z-order, but explicitly join
+            // the topmost band when our owner is the dedicated fullscreen canvas.
+            const HWND owner = GetWindow(dlg, GW_OWNER);
+            if (owner && (GetWindowLongPtrA(owner, GWL_EXSTYLE) & WS_EX_TOPMOST))
+                SetWindowPos(dlg, HWND_TOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             return TRUE;
         }
+        case WM_NOTIFY:
+            if (reinterpret_cast<LPNMHDR>(lp)->idFrom == IDC_TAB &&
+                reinterpret_cast<LPNMHDR>(lp)->code == TCN_SELCHANGE) {
+                selectConfigPage(state, TabCtrl_GetCurSel(GetDlgItem(dlg, IDC_TAB)));
+                return TRUE;
+            }
+            break;
         case WM_COMMAND:
             if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) { // Close (or Esc)
-                if (g_dlgAbout) { DestroyWindow(g_dlgAbout); g_dlgAbout = nullptr; }
                 EndDialog(dlg, LOWORD(wp));
                 return TRUE;
             }
+            break;
+        case WM_DESTROY:
+            delete state;
+            SetWindowLongPtrA(dlg, GWLP_USERDATA, 0);
             break;
     }
     return FALSE;
@@ -482,11 +545,11 @@ static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
 // prefs content pane. The tree has no per-page OK button, so it applies live -
 // every control change is read into engine.settings, persisted, and repainted
 // (the same live-preview model the desktop viewer's Apply uses).
-static INT_PTR CALLBACK PrefsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
+static INT_PTR CALLBACK PrefsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     auto commit = [&]() {
         optpanel::read(dlg, eng().settings);
         saveSettings();
-        if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+        eng().repaint(); // also re-resolves media when provider/key options changed
     };
     switch (msg) {
         case WM_INITDIALOG:
@@ -498,17 +561,119 @@ static INT_PTR CALLBACK PrefsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
             return TRUE;
         case WM_COMMAND:
             // Any control click (checkbox / radio group) may change dependent enabling.
+            optpanel::onCommand(dlg, LOWORD(wp));
             optpanel::updateEnabled(dlg);
             commit(); // live-apply
             return TRUE;
+        case WM_NOTIFY:
+            if (optpanel::onNotify(dlg, reinterpret_cast<LPNMHDR>(lp))) {
+                commit();
+                return TRUE;
+            }
+            break;
+        case WM_MOUSEWHEEL:
+            // The outer host owns vertical scrolling; keep the list view's own wheel
+            // behaviour intact, but forward wheel input over the page background.
+            return SendMessageA(GetParent(dlg), msg, wp, lp);
     }
     return FALSE;
 }
 
+struct OptionsScrollState {
+    HWND page = nullptr;
+    int contentWidth = 0;
+    int contentHeight = 0;
+    int position = 0;
+};
+
+static void layoutOptionsScrollHost(HWND dlg, OptionsScrollState* state) {
+    if (!state || !state->page) return;
+    RECT client = {};
+    GetClientRect(dlg, &client);
+    SCROLLINFO info = { sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS };
+    info.nMin = 0;
+    info.nMax = std::max(0, state->contentHeight - 1);
+    info.nPage = static_cast<UINT>(std::max(0L, client.bottom - client.top));
+    info.nPos = state->position;
+    SetScrollInfo(dlg, SB_VERT, &info, TRUE);
+    info.fMask = SIF_POS;
+    GetScrollInfo(dlg, SB_VERT, &info);
+    state->position = info.nPos;
+    SetWindowPos(state->page, nullptr, 0, -state->position,
+                 std::max(state->contentWidth, static_cast<int>(client.right - client.left)),
+                 state->contentHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+static void scrollOptionsHost(HWND dlg, OptionsScrollState* state, int target) {
+    if (!state) return;
+    state->position = std::max(0, target);
+    layoutOptionsScrollHost(dlg, state);
+}
+
+static INT_PTR CALLBACK OptionsScrollHostProc(HWND dlg, UINT msg, WPARAM wp, LPARAM) {
+    OptionsScrollState* state =
+        reinterpret_cast<OptionsScrollState*>(GetWindowLongPtrA(dlg, GWLP_USERDATA));
+    switch (msg) {
+        case WM_INITDIALOG: {
+            state = new OptionsScrollState();
+            SetWindowLongPtrA(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+            state->page = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_OPTIONS_PAGE),
+                                        dlg, PrefsPageProc);
+            if (state->page) {
+                RECT content = {};
+                GetWindowRect(state->page, &content);
+                state->contentWidth = content.right - content.left;
+                state->contentHeight = content.bottom - content.top;
+                ShowWindow(state->page, SW_SHOWNA);
+                layoutOptionsScrollHost(dlg, state);
+            }
+            return TRUE;
+        }
+        case WM_SIZE:
+            layoutOptionsScrollHost(dlg, state);
+            return TRUE;
+        case WM_VSCROLL: {
+            if (!state) return TRUE;
+            SCROLLINFO info = { sizeof(info), SIF_ALL };
+            GetScrollInfo(dlg, SB_VERT, &info);
+            int target = state->position;
+            switch (LOWORD(wp)) {
+                case SB_LINEUP:      target -= 20; break;
+                case SB_LINEDOWN:    target += 20; break;
+                case SB_PAGEUP:      target -= static_cast<int>(info.nPage); break;
+                case SB_PAGEDOWN:    target += static_cast<int>(info.nPage); break;
+                case SB_THUMBTRACK:
+                case SB_THUMBPOSITION: target = info.nTrackPos; break;
+                case SB_TOP:         target = 0; break;
+                case SB_BOTTOM:      target = state->contentHeight; break;
+                default: return TRUE;
+            }
+            scrollOptionsHost(dlg, state, target);
+            return TRUE;
+        }
+        case WM_MOUSEWHEEL:
+            scrollOptionsHost(dlg, state,
+                state ? state->position - GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA * 40 : 0);
+            return TRUE;
+        case WM_DESTROY:
+            delete state;
+            SetWindowLongPtrA(dlg, GWLP_USERDATA, 0);
+            break;
+    }
+    return FALSE;
+}
+
+static void showOwnOptions(HWND owner) {
+    INITCOMMONCONTROLSEX icc = {
+        sizeof(icc), ICC_TAB_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES
+    };
+    InitCommonControlsEx(&icc);
+    DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(IDD_CONFIG), owner ? owner : g_winamp,
+                    ConfigDlgProc, 0);
+}
+
 static void config() {
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_TAB_CLASSES };
-    InitCommonControlsEx(&icc); // register the tab control class
-    DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(IDD_CONFIG), g_winamp, ConfigDlgProc, 0);
+    showOwnOptions(g_winamp);
 }
 
 static void quit() {

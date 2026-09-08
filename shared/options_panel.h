@@ -30,6 +30,14 @@ void updateEnabled(HWND dlg);
 // Handle a WM_HSCROLL from the duration slider: snap to 100 ms and update the label.
 void onHScroll(HWND dlg);
 
+// Handle provider order/toggle buttons. Returns true when the command changed
+// provider state; hosts use that to mark/apply their preferences page.
+bool onCommand(HWND dlg, int controlId);
+
+// Handle the native list-view checkbox notification. Returns true only for a
+// user-visible provider checkbox change (not while rows are being populated).
+bool onNotify(HWND dlg, const NMHDR* header);
+
 } // namespace optpanel
 
 #endif // SSC_OPTIONS_PANEL_H

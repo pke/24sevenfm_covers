@@ -172,10 +172,15 @@ static INT_PTR CALLBACK OptionsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp
             return TRUE;
         case WM_COMMAND:
             // Any control click (checkbox / radio group) may change dependent enabling.
+            optpanel::onCommand(dlg, LOWORD(wp));
             optpanel::updateEnabled(dlg);
             PropSheet_Changed(GetParent(dlg), dlg); // a setting changed -> enable Apply
             return TRUE;
         case WM_NOTIFY:
+            if (optpanel::onNotify(dlg, reinterpret_cast<LPNMHDR>(lp))) {
+                PropSheet_Changed(GetParent(dlg), dlg);
+                return TRUE;
+            }
             if (reinterpret_cast<LPNMHDR>(lp)->code == PSN_APPLY) { // Apply or OK
                 optpanel::read(dlg, eng().settings);
                 saveSettings();
@@ -296,22 +301,36 @@ static PROPSHEETPAGEA makePage(WORD templateId, DLGPROC proc, const char* title)
 // Page indices in the property sheet below (also the startPage values for openOptions).
 enum { kPageStation = 0, kPageOptions = 1, kPageAbout = 2 };
 
+static int CALLBACK OptionsSheetCallback(HWND sheet, UINT msg, LPARAM) {
+    if (msg == PSCB_INITIALIZED) {
+        // An options sheet owned by our fullscreen popup must join its topmost
+        // band. Ownership keeps it above the canvas; this explicit promotion also
+        // covers Windows 11 shell configurations that do not inherit the band.
+        const HWND owner = GetWindow(sheet, GW_OWNER);
+        if (owner && (GetWindowLongPtrA(owner, GWL_EXSTYLE) & WS_EX_TOPMOST))
+            SetWindowPos(sheet, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    return 0;
+}
+
 // startPage picks the initially-selected tab: the "Options..." menu opens on Options;
 // first-run opens on Station (kPageStation) to prompt for a station.
-static void openOptions(int startPage = kPageOptions) {
+static void openOptions(int startPage = kPageOptions, HWND owner = nullptr) {
     PROPSHEETPAGEA pages[] = {
         makePage(IDD_TAB_STATION,  StationPageProc, "Station"), // viewer-only station picker
         makePage(IDD_OPTIONS_PAGE, OptionsPageProc, "Options"), // shared options page
         makePage(IDD_TAB_ABOUT,    AboutPageProc,   "About"),
     };
     PROPSHEETHEADERA psh = { sizeof(psh) };
-    psh.dwFlags    = PSH_PROPSHEETPAGE | PSH_NOCONTEXTHELP;
-    psh.hwndParent = g_hwnd;
+    psh.dwFlags    = PSH_PROPSHEETPAGE | PSH_NOCONTEXTHELP | PSH_USECALLBACK;
+    psh.hwndParent = owner ? owner : g_hwnd;
     psh.hInstance  = g_hInst;
     psh.pszCaption = "24seven.fm Covers";
     psh.nPages     = ARRAYSIZE(pages);
     psh.nStartPage = (UINT)startPage;
     psh.ppsp       = pages;
+    psh.pfnCallback = OptionsSheetCallback;
     PropertySheetA(&psh);
 }
 
@@ -320,7 +339,7 @@ static void openOptions(int startPage = kPageOptions) {
 // its own right-click menu), then hands rendering back to the main window.
 static void toggleFullscreen(HWND hwnd) {
     covermenu::Actions act;
-    act.openOptions = [] { openOptions(); };
+    act.openOptions = [] { openOptions(kPageOptions, g_fsWin.hwnd()); };
     act.persist     = [] { saveSettings(); };
     g_fsWin.toggle(hwnd, act, [] {}, /*includeStations*/ true); // viewer keeps its station picker
 }
@@ -330,6 +349,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case SSC_WM_NEWCOVER:
             eng().onNewCover(hwnd);
+            return 0;
+        case SSC_WM_NEWMEDIA:
+            eng().onNewMedia(hwnd);
             return 0;
         case WM_TIMER:
             eng().onTimer(hwnd, wp); // engine repaint heartbeat (fade + countdown)
@@ -359,6 +381,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == VK_ESCAPE && g_fsWin.active()) { toggleFullscreen(hwnd); return 0; }
             if (wp == 'N') { eng().demoNext(); return 0; } // demo mode: next cover (no-op otherwise)
             break;
+        case WM_MOUSEMOVE:
+            eng().onPointerMove(hwnd, /*fullscreenAutoHide=*/false);
+            return 0;
+        case WM_MOUSELEAVE:
+            eng().onPointerLeave(hwnd);
+            return 0;
         case WM_CONTEXTMENU: { // right-click the canvas -> popup menu
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             if (pt.x == -1 && pt.y == -1) { // keyboard-invoked (Menu key): use client centre
@@ -402,7 +430,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     // drive still can't be pinned - that's a shell limitation, use the local install.
     SetCurrentProcessExplicitAppUserModelID(L"app.dudesoft.24sevenfmcovers.viewer");
 
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_STANDARD_CLASSES };
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES };
     InitCommonControlsEx(&icc); // trackbar (duration slider) + standard controls
 
     loadSettings();

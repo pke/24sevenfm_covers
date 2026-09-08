@@ -37,7 +37,10 @@ public:
         MSG_WM_CONTEXTMENU(OnContextMenu)
         MSG_WM_LBUTTONDBLCLK(OnLButtonDblClk)
         MSG_WM_KEYDOWN(OnKeyDown)
+        MSG_WM_MOUSEMOVE(OnMouseMove)
+        MESSAGE_HANDLER(WM_MOUSELEAVE, OnMouseLeave)
         MESSAGE_HANDLER(SSC_WM_NEWCOVER, OnNewCover)
+        MESSAGE_HANDLER(SSC_WM_NEWMEDIA, OnNewMedia)
     END_MSG_MAP()
 
     ssc_cover_elem(ui_element_config::ptr cfg, ui_element_instance_callback_ptr cb)
@@ -114,17 +117,28 @@ private:
     void OnKeyDown(TCHAR vk, UINT, UINT) { // demo mode: next cover (no-op otherwise)
         if (vk == 'N') CoverEngine::instance().demoNext(); else SetMsgHandled(FALSE);
     }
+    void OnMouseMove(UINT, CPoint) {
+        CoverEngine::instance().onPointerMove(m_hWnd, /*fullscreenAutoHide=*/false);
+    }
+    LRESULT OnMouseLeave(UINT, WPARAM, LPARAM, BOOL&) {
+        CoverEngine::instance().onPointerLeave(m_hWnd);
+        return 0;
+    }
     // Fullscreen via the shared dedicated per-monitor window: it covers the monitor and
     // the engine renders into it, leaving this embedded element untouched. Because the
     // window is per-monitor DPI aware it covers the physical monitor exactly, even though
     // foobar2000 is only system-DPI aware (no bitmap-stretch seam).
     void toggleFullscreen() {
         covermenu::Actions act;
-        act.openOptions = [] { ui_control::get()->show_preferences(g_ssc_prefs_guid); };
+        act.openOptions = [this] {
+            m_fsWin.exit(); // foobar owns its preferences window, so reveal the host first
+            ui_control::get()->show_preferences(g_ssc_prefs_guid);
+        };
         act.persist     = [] { ssccfg::saveFromEngine(); };
         m_fsWin.toggle(m_hWnd, act, [] {});
     }
     LRESULT OnNewCover(UINT, WPARAM, LPARAM, BOOL&) { CoverEngine::instance().onNewCover(m_hWnd); return 0; }
+    LRESULT OnNewMedia(UINT, WPARAM, LPARAM, BOOL&) { CoverEngine::instance().onNewMedia(m_hWnd); return 0; }
 
     ssc::FullscreenWindow m_fsWin; // dedicated per-monitor fullscreen window
     ui_element_config::ptr m_config;

@@ -5,16 +5,25 @@
 // The "Options" tab page is the shared dialog (also used by the foobar2000 plugin).
 #include "../shared/options_page.rc"
 
-// --- Info dialog (double-click / Configure): a tab control + Close. Options live in
-// Winamp's Preferences tree, so this is informational only (one About tab for now).
-IDD_CONFIG DIALOGEX 0, 0, 231, 164
+// --- Own options dialog. It is also used from the fullscreen popup, where opening
+// Winamp's host preferences would leave fullscreen and hide the relevant settings.
+IDD_CONFIG DIALOGEX 0, 0, 250, 350
 STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "24seven.fm Covers"
 FONT 8, "MS Shell Dlg"
 BEGIN
-    CONTROL        "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 217, 130
-    DEFPUSHBUTTON  "Close", IDOK, 174, 143, 50, 14
+    CONTROL        "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 236, 316
+    DEFPUSHBUTTON  "Close", IDOK, 193, 329, 50, 14
+END
+
+// Winamp's preferences pane is shorter than the shared options page. Host it in a
+// standard scrollable child instead of clipping provider details/key validation.
+IDD_PREFS_SCROLL_HOST DIALOGEX 0, 0, 230, 220
+STYLE DS_CONTROL | WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "MS Shell Dlg"
+BEGIN
 END
 
 // Child page shown inside the "About" tab (sized by placePage to the tab's content area).

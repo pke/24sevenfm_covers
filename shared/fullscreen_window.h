@@ -34,12 +34,18 @@ public:
 
 private:
     static LRESULT CALLBACK proc(HWND, UINT, WPARAM, LPARAM);
+    void wakeCursor(HWND hwnd);
+    void hideCursor(HWND hwnd);
+
+    enum { kCursorIdleTimer = 5 };
 
     HWND hwnd_ = nullptr;              // the fullscreen window (null when inactive)
     HWND host_ = nullptr;             // host cover window to restore the engine to
     covermenu::Actions    menu_;      // host Options/Poster actions
     std::function<void()> onExit_;    // host callback after teardown
     bool stations_ = false;           // show the station picker in the right-click menu
+    bool cursorHidden_ = false;       // web parity: hide after two seconds without movement
+    bool cursorAutoHideSuspended_ = false; // keep pointer visible while a menu/dialog is open
 };
 
 } // namespace ssc

@@ -6,7 +6,7 @@
 #include <commctrl.h>
 #include "options_ids.h"
 
-IDD_OPTIONS_PAGE DIALOGEX 0, 0, 205, 116
+IDD_OPTIONS_PAGE DIALOGEX 0, 0, 230, 320
 STYLE DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg"
 BEGIN
@@ -33,4 +33,38 @@ BEGIN
     CONTROL         "", IDC_OPT_FADE, "msctls_trackbar32",
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP,                       50, 89, 116, 18
     LTEXT           "500 ms",        IDC_OPT_FADEVAL, 170, 92, 30, 10
+
+    GROUPBOX        "StreamingSoundtracks media", -1, 6, 113, 218, 204
+    AUTOCHECKBOX    "Show movie, TV && game &backdrops", IDC_OPT_BACKDROPS, 13, 126, 180, 12, WS_GROUP | WS_TABSTOP
+    AUTOCHECKBOX    "&Hide the square cover when a backdrop is shown", IDC_OPT_HIDECOVER, 24, 140, 194, 12, WS_TABSTOP
+    AUTOCHECKBOX    "Show age &ratings", IDC_OPT_RATINGS, 13, 156, 105, 12, WS_GROUP | WS_TABSTOP
+    AUTOCHECKBOX    "&DE (FSK)", IDC_OPT_RATING_DE, 121, 156, 48, 12, WS_TABSTOP
+    AUTOCHECKBOX    "&US", IDC_OPT_RATING_US, 172, 156, 34, 12, WS_TABSTOP
+    LTEXT           "Artwork providers (top first):", -1, 13, 173, 132, 10
+    CONTROL         "", IDC_OPT_PROVIDERS, "SysListView32",
+                    LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_VSCROLL | WS_TABSTOP,
+                    13, 184, 158, 72
+    PUSHBUTTON      "&Up", IDC_OPT_PROVIDER_UP, 177, 184, 39, 14, WS_TABSTOP
+    PUSHBUTTON      "&Down", IDC_OPT_PROVIDER_DOWN, 177, 202, 39, 14, WS_TABSTOP
+    // Replaced at runtime by IDD_OPT_PROVIDER_DETAILS. Keeping a template control
+    // gives every host the same dialog-unit placement without hard-coded pixels.
+    LTEXT           "", IDC_OPT_PROVIDER_DETAILS, 13, 258, 203, 49
+END
+
+// One real child window contains the selected provider's link, attribution and
+// optional fanart.tv key controls. The shared implementation fades this whole
+// surface between providers so outgoing content remains visible during transition.
+IDD_OPT_PROVIDER_DETAILS DIALOGEX 0, 0, 203, 49
+STYLE DS_CONTROL | WS_CHILD
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "MS Shell Dlg"
+BEGIN
+    LTEXT           "", IDC_OPT_PROVIDER_LINK, 0, 0, 203, 10, SS_NOTIFY | SS_NOPREFIX
+    LTEXT           "", IDC_OPT_PROVIDER_ATTRIBUTION, 0, 13, 203, 28, SS_NOPREFIX
+    LTEXT           "Personal client key:", IDC_OPT_FANART_KEY_LABEL, 0, 13, 91, 10
+    LTEXT           "Why?", IDC_OPT_FANART_KEY_WHY, 94, 13, 25, 10, SS_NOTIFY | SS_NOPREFIX
+    LTEXT           "Get one", IDC_OPT_FANART_KEY_GET, 123, 13, 36, 10, SS_NOTIFY | SS_NOPREFIX
+    EDITTEXT        IDC_OPT_FANART_KEY, 0, 24, 157, 14, ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON      "Check", IDC_OPT_FANART_KEY_CHECK, 162, 24, 41, 14, WS_TABSTOP
+    LTEXT           "", IDC_OPT_FANART_KEY_STATUS, 0, 39, 203, 10, SS_NOPREFIX
 END

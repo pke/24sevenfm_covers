@@ -4,6 +4,7 @@
 
 #define IDD_CONFIG       101  // tabbed info dialog (double-click / Configure)
 #define IDD_TAB_ABOUT    103  // the "About" tab page
+#define IDD_PREFS_SCROLL_HOST 104 // scrollable host for the shared options page
 
 #define IDC_TAB          1010
 #define IDC_ABOUT_VER    1011

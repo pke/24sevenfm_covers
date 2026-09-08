@@ -41,8 +41,13 @@ add_library(gen_24sevenfm_covers SHARED
     "${SHAREDDIR}/cover_menu.cpp"
     "${SHAREDDIR}/fullscreen_window.cpp"
     "${SHAREDDIR}/options_panel.cpp"
+    "${SHAREDDIR}/rating_assets.cpp"
     "${LIBDIR}/coverfetch.cpp"
     "${LIBDIR}/http_client.cpp"
+    "${LIBDIR}/mini_json.cpp"
+    "${LIBDIR}/media_resolver.cpp"
+    "${LIBDIR}/media_policy.cpp"
+    "${LIBDIR}/image_probe.cpp"
 )
 target_include_directories(gen_24sevenfm_covers PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"

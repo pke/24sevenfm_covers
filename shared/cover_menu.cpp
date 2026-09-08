@@ -18,6 +18,8 @@ void appendItems(HMENU m, const CoverEngine::Settings& s,
     if (includeFullscreen)
         AppendMenuA(m, MF_STRING | (fullscreenOn ? MF_CHECKED : MF_UNCHECKED), kFullscreen, "&Fullscreen");
     AppendMenuA(m, MF_STRING | (s.layout == 1 ? MF_CHECKED : MF_UNCHECKED), kPoster, "&Poster mode");
+    if (s.backdrops || s.ratings)
+        AppendMenuA(m, MF_STRING, kRetryMedia, "&Retry backdrop && ratings");
     AppendMenuA(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuA(m, MF_STRING, kOptions, "&Options...");
 }
@@ -36,6 +38,9 @@ bool onCommand(UINT cmd, CoverEngine& eng, const Actions& a) {
             eng.settings.layout = (eng.settings.layout == 1) ? 0 : 1; // Fill <-> Poster
             if (a.persist) a.persist();
             eng.repaint();
+            return true;
+        case kRetryMedia:
+            eng.retryMedia();
             return true;
         case kOptions:
             if (a.openOptions) a.openOptions();
