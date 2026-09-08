@@ -420,6 +420,12 @@ function quotedOriginalMusicTitle(album) {
     return title || "";
 }
 
+function leadingThemeFromTitle(track) {
+    const match = String(track || "").trim().match(/^themes?\s+from\s+(.+)$/i);
+    const title = match && cleanMovieTitle(match[1]);
+    return title || "";
+}
+
 function tvSeriesThemeTitle(track) {
     const match = String(track || "").trim().match(
         /^(.+?)\s+(?:tv|television)\s+series(?:\s+season\s+\d{1,2})?\s+themes?(?:\s*\((?:18|19|20|21)\d{2}\))?\s*$/i);
@@ -501,6 +507,8 @@ function backdropTitleFor(album, track) {
     if (bookIdentity) return bookIdentity.title;
     const quotedFromTitle = quotedFromScreenTitle(track);
     if (quotedFromTitle) return quotedFromTitle;
+    const themeFromTitle = leadingThemeFromTitle(track);
+    if (themeFromTitle) return themeFromTitle;
     const mainTitleThemeTitles = mainTitleThemeCandidates(album, track);
     if (mainTitleThemeTitles.length) return mainTitleThemeTitles[0];
     const tvThemeTitle = tvSeriesThemeTitle(track);
@@ -536,6 +544,8 @@ function backdropTitleCandidatesFor(album, track) {
     const normalizedAlbum = cleanMovieTitle(album);
     const quotedFromTitle = quotedFromScreenTitle(track);
     if (quotedFromTitle) return [quotedFromTitle];
+    const themeFromTitle = leadingThemeFromTitle(track);
+    if (themeFromTitle) return [themeFromTitle];
     const mainTitleThemeTitles = mainTitleThemeCandidates(album, track);
     if (mainTitleThemeTitles.length) return mainTitleThemeTitles;
     const tvThemeTitle = tvSeriesThemeTitle(track);
@@ -1915,11 +1925,13 @@ function createHandler(options = {}) {
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(trackValue);
             const quotedAlbumTitle = quotedOriginalMusicTitle(titleValue);
+            const themeFromTitle = leadingThemeFromTitle(trackValue);
             const mainTitleThemeTitles = mainTitleThemeCandidates(titleValue, trackValue);
             const tvThemeTitle = tvSeriesThemeTitle(trackValue);
             const metadataMediaHint = metadataResolution && metadataResolution.hint || "";
             const mediaHint = requestedHint === "auto"
                 ? quotedFromTitle ? "screen" : metadataMediaHint || (tvThemeTitle ? "tv" : "")
+                    || (themeFromTitle ? "screen" : "")
                     || (mainTitleThemeTitles.length ? "screen" : "")
                     || mediaHintForAlbum(titleValue)
                 : requestedHint;
@@ -1940,6 +1952,7 @@ function createHandler(options = {}) {
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(titleValue))
                     || !!starTrekSeriesAlias(titleValue) || !!quotedFromTitle
                     || !!quotedAlbumTitle
+                    || !!themeFromTitle
                     || mainTitleThemeTitles.length > 0
                     || !!tvThemeTitle
                     || !!(metadataResolution && metadataResolution.title),

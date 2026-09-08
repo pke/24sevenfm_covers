@@ -66,6 +66,67 @@ test("resolves the live The Wings Of A Film album and track contract", async () 
     });
 });
 
+test("resolves a leading Theme From cue instead of its compilation album", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "Boyz N The Hood");
+                return response(200, { results: [{
+                    id: 650,
+                    media_type: "movie",
+                    title: "Boyz n the Hood",
+                    backdrop_path: "/boyz-n-the-hood.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/650/release_dates") {
+                return response(200, { results: [{
+                    iso_3166_1: "US",
+                    release_dates: [{ certification: "R", type: 3 }],
+                }] });
+            }
+            if (parsed.pathname === "/v3/movies/650") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/boyz-n-the-hood.jpg",
+                    lang: "00",
+                    likes: "10",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [194, 231, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "At The Movies",
+        track: "Theme From Boyz N The Hood",
+        artist: "Stanley Clarke",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(backdropTitleFor("At The Movies", "Theme From Boyz N The Hood"),
+        "Boyz N The Hood");
+    assert.deepEqual(backdropTitleCandidatesFor(
+        "At The Movies", "Theme From Boyz N The Hood"), ["Boyz N The Hood"]);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 650, title: "Boyz n the Hood", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/boyz-n-the-hood.jpg",
+        source: "fanart",
+        tint: [194, 231, 255],
+        certifications: [{
+            country: "US",
+            system: "MPA",
+            rating: "R",
+            label: "R",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/6/6b/MPA_R_RATING.svg",
+        }],
+    });
+});
+
 test("resolves the live Music For A Darkened Theatre compilation track", async () => {
     let providerQuery = "";
     const handler = createHandler({
