@@ -40,7 +40,8 @@ class CoverEngine {
 public:
     struct MediaWorkerState; // opaque implementation detail (defined in .cpp)
     // Options the host loads from / saves to its own storage (Winamp INI,
-    // foobar cfg_var). The engine only reads them while drawing.
+    // foobar cfg_var). UI-thread-only: call repaint() after changing them. The
+    // monitor/media threads use a mutex-protected copy, never this mutable object.
     struct Settings {
         bool showRemaining = false; // show the remaining-time countdown
         int  remainingSize = 0;     // 0 small, 1 medium, 2 large
@@ -125,6 +126,7 @@ public:
     static const UINT_PTR kHeartbeat = 4;
 
 private:
+    friend struct CoverEngineTestAccess;
     CoverEngine() = default;
     CoverEngine(const CoverEngine&) = delete;
     CoverEngine& operator=(const CoverEngine&) = delete;
@@ -137,6 +139,9 @@ private:
     void stopMediaWorker();
     void scheduleMedia(const ssc::TrackInfo& current,
                        const std::vector<ssc::TrackInfo>& queue, bool forceReload = false);
+    // Caller holds media_->mutex. Lock order: worker state, then mutex_.
+    void scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackInfo& current,
+                             const std::vector<ssc::TrackInfo>& queue, bool forceReload);
     void publishMedia(unsigned long long epoch, const std::string& backdropBytes,
                       const std::vector<d2d::RatingBadge>& ratings, bool imageFailed,
                       const ssc::MediaResult* mediaResult = nullptr);
@@ -177,6 +182,7 @@ private:
     int pendingMediaTint_[3] = {255, 255, 255};
     bool pendingMediaHasTint_ = false;
     unsigned long long pendingMediaEpoch_ = 0;
+    unsigned long long activeMediaEpoch_ = 0; // guarded by mutex_, including validation + commit
 
     std::atomic<int>   remAnchor_{-1};   // remaining seconds at the anchor (-1 = unknown/hidden)
     std::atomic<DWORD> remAnchorAt_{0};  // GetTickCount() when the anchor was set

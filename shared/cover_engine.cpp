@@ -168,7 +168,7 @@ struct CoverEngine::MediaWorkerState {
     std::thread thread;
     bool stopping = false;
     unsigned long long epoch = 0, order = 0, lru = 0;
-    std::atomic<unsigned long long> activeEpoch{0};
+    Settings settingsSnapshot; // guarded by mutex; only the UI thread copies settings here
     std::shared_ptr<std::atomic<bool> > cancel;
     std::vector<Work> work;
     std::map<std::string, CacheEntry> cache;
@@ -243,6 +243,7 @@ void CoverEngine::startMediaWorker() {
     if (media_) return;
     media_ = new MediaWorkerState();
     MediaWorkerState* state = media_;
+    state->settingsSnapshot = settings;
     state->thread = std::thread([this, state] {
         for (;;) {
             MediaWorkerState::Work item;
@@ -470,6 +471,11 @@ void CoverEngine::stopMediaWorker() {
     {
         std::lock_guard<std::mutex> lock(state->mutex);
         state->stopping = true;
+        {
+            std::lock_guard<std::mutex> publication(mutex_);
+            ++activeMediaEpoch_;
+            mediaDirty_ = false;
+        }
         if (state->cancel) state->cancel->store(true);
         state->work.clear();
         state->cv.notify_all();
@@ -483,14 +489,22 @@ void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
                                 const std::vector<ssc::TrackInfo>& queue, bool forceReload) {
     MediaWorkerState* state = media_;
     if (!state) return;
+    std::lock_guard<std::mutex> lock(state->mutex);
+    scheduleMediaLocked(state, current, queue, forceReload);
+}
+
+void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackInfo& current,
+                                      const std::vector<ssc::TrackInfo>& queue, bool forceReload) {
+    if (state->stopping) return;
+    const Settings& snapshot = state->settingsSnapshot;
     ssc::MediaRequest request;
-    request.providers = settings.mediaProviders;
-    request.fanartClientKey = settings.fanartClientKey;
-    const bool soundtrackMedia = settings.station == 0;
-    request.includeArt = soundtrackMedia && settings.backdrops;
-    request.includeRatings = soundtrackMedia && settings.ratings;
-    request.ratingCountries = settings.ratingDE && settings.ratingUS ? "DE,US"
-        : settings.ratingDE ? "DE" : settings.ratingUS ? "US" : "DE,US";
+    request.providers = snapshot.mediaProviders;
+    request.fanartClientKey = snapshot.fanartClientKey;
+    const bool soundtrackMedia = snapshot.station == 0;
+    request.includeArt = soundtrackMedia && snapshot.backdrops;
+    request.includeRatings = soundtrackMedia && snapshot.ratings;
+    request.ratingCountries = snapshot.ratingDE && snapshot.ratingUS ? "DE,US"
+        : snapshot.ratingDE ? "DE" : snapshot.ratingUS ? "US" : "DE,US";
     RECT client = {};
     const HWND window = hwnd_.load();
     request.portrait = window && GetClientRect(window, &client)
@@ -500,7 +514,6 @@ void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
     // A queue snapshot normally arrives just after current-playing. Attach it to
     // the existing epoch instead of aborting/restarting the current resolver call.
     if (!forceReload) {
-        std::lock_guard<std::mutex> lock(state->mutex);
         const bool sameCurrent = state->epoch != 0
             && state->current.album == current.album && state->current.track == current.track
             && state->current.artist == current.artist && state->current.coverUrl == current.coverUrl
@@ -509,8 +522,10 @@ void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
             if (queue.empty()) return; // current refresh: keep the existing staggered queue
             state->work.erase(std::remove_if(state->work.begin(), state->work.end(),
                 [](const MediaWorkerState::Work& item) { return !item.current; }), state->work.end());
-            state->queue.assign(queue.begin(), queue.begin()
-                + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
+            // repaint/retry can pass the stored queue itself.
+            if (&queue != &state->queue)
+                state->queue.assign(queue.begin(), queue.begin()
+                    + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
             for (size_t i = 0; i < state->queue.size(); ++i) {
                 if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
                 MediaWorkerState::Work queued;
@@ -529,15 +544,20 @@ void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
     unsigned long long epoch;
     std::shared_ptr<std::atomic<bool> > cancel(new std::atomic<bool>(false));
     {
-        std::lock_guard<std::mutex> lock(state->mutex);
         if (state->cancel) state->cancel->store(true);
         state->cancel = cancel;
-        epoch = ++state->epoch;
-        state->activeEpoch.store(epoch);
+        {
+            // Generation changes and publication share the SAME lock. An old
+            // publisher can finish before this boundary, but never after it.
+            std::lock_guard<std::mutex> publication(mutex_);
+            epoch = state->epoch = ++activeMediaEpoch_;
+            mediaDirty_ = false; // discard an old result waiting in the UI mailbox
+        }
         state->work.clear();
         state->current = current;
-        state->queue.assign(queue.begin(), queue.begin()
-            + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
+        if (&queue != &state->queue)
+            state->queue.assign(queue.begin(), queue.begin()
+                + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
         state->request = request;
     }
 
@@ -550,7 +570,6 @@ void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
         return;
     }
 
-    std::lock_guard<std::mutex> lock(state->mutex);
     MediaWorkerState::Work now;
     now.due = MediaWorkerState::Clock::now(); now.order = ++state->order;
     now.epoch = epoch; now.current = true; now.reload = forceReload;
@@ -570,9 +589,9 @@ void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
 void CoverEngine::publishMedia(unsigned long long epoch, const std::string& backdropBytes,
                                const std::vector<d2d::RatingBadge>& ratings, bool imageFailed,
                                const ssc::MediaResult* mediaResult) {
-    if (!media_ || media_->activeEpoch.load() != epoch) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!epoch || activeMediaEpoch_ != epoch) return;
         pendingBackdropBytes_ = backdropBytes;
         pendingRatings_ = ratings;
         pendingMediaClear_ = backdropBytes.empty();
@@ -589,9 +608,9 @@ void CoverEngine::publishMedia(unsigned long long epoch, const std::string& back
 
 void CoverEngine::publishRatings(unsigned long long epoch,
                                  const std::vector<d2d::RatingBadge>& ratings) {
-    if (!media_ || media_->activeEpoch.load() != epoch) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!epoch || activeMediaEpoch_ != epoch) return;
         pendingRatings_ = ratings;
         pendingBackdropChange_ = false;
         pendingMediaEpoch_ = epoch;
@@ -603,7 +622,7 @@ void CoverEngine::publishRatings(unsigned long long epoch,
 
 void CoverEngine::publishMetadata(unsigned long long epoch, const ssc::MediaResult& result,
                                   int lengthSeconds) {
-    if (!media_ || media_->activeEpoch.load() != epoch || result.album.empty()) return;
+    if (result.album.empty()) return;
     std::string title = result.album;
     if (!result.track.empty()) title += " - " + result.track;
     if (lengthSeconds > 0) {
@@ -613,6 +632,7 @@ void CoverEngine::publishMetadata(unsigned long long epoch, const ssc::MediaResu
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!epoch || activeMediaEpoch_ != epoch) return;
         const bool reveal = infoTitle_.empty() && !title.empty();
         infoTitle_ = toWide(title);
         infoArtist_ = toWide(result.artist);
@@ -664,11 +684,6 @@ void CoverEngine::startMonitor() {
         // Keep the outgoing text until /api/media has completed. Its result then
         // supplies canonical metadata or the validated stream fallback; on startup
         // the empty info state therefore remains hidden for the whole request.
-        if (info.stationIdent) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            infoTitle_ = toWide(info.album);
-            infoArtist_ = toWide(info.artist);
-        }
         onCoverChanged(url, info);
     }, cfg);
     monitor_->setErrorCallback([this](const std::string& m) {
@@ -699,6 +714,11 @@ void CoverEngine::setStation(int index) {
     // we don't briefly show the wrong art. Safe on the UI thread: stop() joins the
     // monitor's background thread before we tear it down.
     monitor_->stop(); delete monitor_; monitor_ = nullptr;
+    if (media_) {
+        std::lock_guard<std::mutex> lock(media_->mutex);
+        media_->settingsSnapshot = settings;
+        scheduleMediaLocked(media_, ssc::TrackInfo(), std::vector<ssc::TrackInfo>(), true);
+    }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         coverBytes_.clear(); dirty_ = false;
@@ -707,7 +727,6 @@ void CoverEngine::setStation(int index) {
         infoTitle_.clear(); infoArtist_.clear();
     }
     coverRetryAt_.store(0); coverRetryFailures_ = 0; coverRetryUrl_.clear();
-    scheduleMedia(ssc::TrackInfo(), std::vector<ssc::TrackInfo>());
     resetTitle();          // next accepted title reloads; hide the countdown
     loading_.store(true);  // show "Loading..." until the new station replies
     invalidate();
@@ -806,12 +825,22 @@ void CoverEngine::setWindow(HWND h) {
 void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& info) {
     // Match the web player's ident fallback: an empty/untrusted CoverLink displays
     // the selected station logo. The URL is a project-owned constant, never feed data.
-    const std::string displayUrl = url.empty() ? ssc::station(settings.station).logoUrl : url;
+    int station = 0;
+    if (media_) {
+        std::lock_guard<std::mutex> lock(media_->mutex);
+        station = media_->settingsSnapshot.station;
+    }
+    const std::string displayUrl = url.empty() ? ssc::station(station).logoUrl : url;
     logLine("poll: current cover = " + displayUrl + (url.empty() ? " (station ident)" : ""));
 
     // Start current media resolution immediately and independently. Queue metadata
     // is attached below without restarting this request.
     scheduleMedia(info, std::vector<ssc::TrackInfo>());
+    if (info.stationIdent) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        infoTitle_ = toWide(info.album);
+        infoArtist_ = toWide(info.artist);
+    }
 
     // stop()/setStation() run on the host UI thread and join this (monitor) thread.
     // If we are mid-retry when that happens, abandon the remaining downloads so the
@@ -976,26 +1005,22 @@ void CoverEngine::onPointerLeave(HWND h) {
 
 void CoverEngine::repaint() {
     if (media_) {
-        ssc::TrackInfo current;
-        std::vector<ssc::TrackInfo> queue;
-        {
-            std::lock_guard<std::mutex> lock(media_->mutex);
-            current = media_->current; queue = media_->queue;
-        }
-        if (!current.album.empty()) scheduleMedia(current, queue);
+        std::lock_guard<std::mutex> lock(media_->mutex);
+        media_->settingsSnapshot = settings;
+        // Snapshot + reschedule are one transaction: a monitor callback cannot
+        // insert a newer track between reading current and scheduling it again.
+        if (!media_->current.album.empty())
+            scheduleMediaLocked(media_, media_->current, media_->queue, false);
     }
     invalidate();
 }
 
 void CoverEngine::retryMedia() {
     if (!media_) return;
-    ssc::TrackInfo current;
-    std::vector<ssc::TrackInfo> queue;
-    {
-        std::lock_guard<std::mutex> lock(media_->mutex);
-        current = media_->current; queue = media_->queue;
-    }
-    if (!current.album.empty()) scheduleMedia(current, queue, true);
+    std::lock_guard<std::mutex> lock(media_->mutex);
+    media_->settingsSnapshot = settings;
+    if (!media_->current.album.empty())
+        scheduleMediaLocked(media_, media_->current, media_->queue, true);
 }
 
 bool CoverEngine::currentCover(std::string& out) {
@@ -1026,14 +1051,18 @@ void CoverEngine::decodePending(HWND h) {
 void CoverEngine::onNewCover(HWND h) { decodePending(h); }
 
 void CoverEngine::decodePendingMedia(HWND h) {
+    // Validate AND commit under the publication lock. Epoch advancement cannot
+    // race the renderer after the pending payload has been taken from its mailbox.
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!mediaDirty_) return;
+    mediaDirty_ = false;
+    if (pendingMediaEpoch_ != activeMediaEpoch_) return;
     std::string bytes;
     std::vector<d2d::RatingBadge> ratings;
     bool clear = false, failed = false, backdropChange = false, hasTint = false;
     unsigned long long epoch = 0;
     int tint[3] = {255, 255, 255};
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!mediaDirty_) return;
         bytes.swap(pendingBackdropBytes_);
         ratings.swap(pendingRatings_);
         clear = pendingMediaClear_;
@@ -1042,7 +1071,6 @@ void CoverEngine::decodePendingMedia(HWND h) {
         hasTint = pendingMediaHasTint_;
         epoch = pendingMediaEpoch_;
         for (int i = 0; i < 3; ++i) tint[i] = pendingMediaTint_[i];
-        mediaDirty_ = false;
     }
     const bool fade = transitionAnimates() && h && clientAnimationsEnabled();
     if (backdropChange) {
