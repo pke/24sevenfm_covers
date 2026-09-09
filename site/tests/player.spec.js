@@ -1438,9 +1438,10 @@ test.describe("the deployed player page", () => {
         await expect(badges).not.toHaveClass(/track-intro/);
         await expect(badges).toHaveCSS("opacity", "0");
 
-        await stage.scrollIntoViewIfNeeded();
-        const box = await stage.boundingBox();
-        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        // The page uses smooth scrolling. Finish this navigation synchronously so
+        // it cannot move the stage out from under the pointer after hover succeeds.
+        await stage.evaluate(el => el.scrollIntoView({ behavior: "instant", block: "center" }));
+        await stage.hover();
         await expect(badges).toHaveCSS("opacity", "1");
         await expect(stageAudio).toHaveCSS("opacity", "1");
 
