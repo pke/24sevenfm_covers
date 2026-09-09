@@ -93,10 +93,11 @@ Key points:
   Server-side computation makes the entire CORS problem irrelevant: the client
   never needs pixel access, it just applies the color it is handed - and it has
   the color *before* the image even loads (tint arrives with the URL).
-- **Tint is computed from tiny variants**, not the full image: TMDB `w92`
+- **Tint prefers tiny variants**: TMDB `w92`
   instead of `w1280`, fanart `/preview/` instead of `/fanart/`, and SteamGridDB's
   returned hero thumbnail instead of its full hero - a few KB per *new* work, once
-  per cache lifetime.
+  per cache lifetime. Providers without a thumbnail may require the original;
+  the same bounded download/decode policy applies in either case.
 - **Images keep flowing directly from the CDNs to the client** (`image.tmdb.org`,
   `assets.fanart.tv`, `cdn2.steamgriddb.com`). The endpoint returns URLs + tint only.
 - **Edge caching per title** (`s-maxage`) means the station's finite soundtrack
@@ -112,8 +113,10 @@ Key points:
   exposed. `/api/tint` accepts HTTPS/443 URLs only on five exact station hosts,
   only for the feed's `/images/cover/<file>` and `/images/cover/040/<file>`
   thumbnails, without credentials, query or fragment. It
-  validates every redirect, MIME type, a 2 MB transfer cap, a 4 MP decode cap and
-  a 4 second deadline. CORS is restricted to the site origin. This is
+  validates every redirect, MIME type, an 8 MiB transfer cap, a 4096 × 2160 pixel
+  decode cap and a 3 second download deadline. The transfer cap is enforced while
+  streaming, even without a truthful Content-Length; incomplete images are never
+  decoded for tint. CORS is restricted to the site origin. This is
   what keeps it an app backend under TMDB's terms rather than sublicensed API
   access.
 - **Abuse controls are layered.** Artwork hits are edge-cached for six months and

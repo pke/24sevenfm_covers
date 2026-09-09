@@ -11,8 +11,9 @@ const MISS_CACHE_SECONDS = 15 * 60;
 const PROVIDER_TIMEOUT_MS = 3000;
 const debugLogContext = new AsyncLocalStorage();
 let debugRequestSequence = 0;
-const MAX_TINT_IMAGE_BYTES = 2 * 1024 * 1024;
-const MAX_TINT_IMAGE_PIXELS = 4 * 1000 * 1000;
+const MAX_TINT_IMAGE_BYTES = 8 * 1024 * 1024;
+// Covers UHD (3840x2160), DCI 4K (4096x2160), and rotated portrait equivalents.
+const MAX_TINT_IMAGE_PIXELS = 4096 * 2160;
 const MAX_TINT_URL_LENGTH = 512;
 const MAX_TINT_REDIRECTS = 2;
 const MAX_TRACK_PREFIX_CANDIDATES = 8;
@@ -1434,10 +1435,9 @@ async function defaultTintForImage(fetchImpl, url) {
             duration_ms: Date.now() - startedAt,
         });
         if (!response.ok) return [...WHITE_TINT];
-        const declaredSize = Number(response.headers.get("content-length") || 0);
-        if (declaredSize > MAX_TINT_IMAGE_BYTES) return [...WHITE_TINT];
-        const bytes = Buffer.from(await response.arrayBuffer());
-        if (!bytes.length || bytes.length > MAX_TINT_IMAGE_BYTES) return [...WHITE_TINT];
+        // Enforce the limit while streaming, even without a trustworthy length.
+        // An aborted/partial image must never reach the decoder.
+        const bytes = await limitedImageBytes(response);
         // Load sharp lazily: unit tests inject the tint reader, while Vercel bundles
         // the native dependency only for the production function that needs it.
         const sharp = require("sharp");
@@ -1469,6 +1469,8 @@ function responseHeader(response, name) {
 async function limitedImageBytes(response) {
     const declaredSize = Number(responseHeader(response, "content-length") || 0);
     if (declaredSize > MAX_TINT_IMAGE_BYTES) {
+        if (response.body && typeof response.body.cancel === "function")
+            await response.body.cancel().catch(() => {});
         throw new ResolverError("image_too_large", 413, "image exceeds the byte limit");
     }
     if (!response.body || typeof response.body.getReader !== "function") {

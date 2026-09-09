@@ -190,8 +190,12 @@ badges.
 `/api/tint` is deliberately not a general image fetcher. It accepts only HTTPS/443
 URLs on the exact configured station hosts, only 200 px `/images/cover/<file>` or
 40 px `/images/cover/040/<file>` paths, and rejects URL credentials, query strings,
-fragments and redirects outside that same policy. Fetches have a 4 second deadline,
-2 MB transfer ceiling, supported-image MIME check and 4 MP decode ceiling. Invalid
+fragments and redirects outside that same policy. Fetches have a 3 second download
+deadline, 8 MiB transfer ceiling, supported-image MIME check and 8,847,360-pixel
+(4096 × 2160) decode ceiling, supporting both UHD and DCI 4K. Both cover and media
+tint paths enforce the byte ceiling while streaming, regardless of missing or
+incorrect Content-Length. Exceeding it cancels the download; partial images are
+never passed to the decoder or used for a tint. Invalid
 requests are `no-store`; successful RGB responses are cached at the edge for six
 months.
 

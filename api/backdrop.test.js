@@ -4994,7 +4994,7 @@ test("rejects oversized cover responses before decoding", async () => {
     const handler = createTintHandler({
         env: { TINT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
         fetchImpl: async () => new Response(new Uint8Array([1]), {
-            headers: { "content-type": "image/jpeg", "content-length": String(2 * 1024 * 1024 + 1) },
+            headers: { "content-type": "image/jpeg", "content-length": String(8 * 1024 * 1024 + 1) },
         }),
         tintFromBytes: async () => { decoded = true; return [1, 2, 3]; },
     });
