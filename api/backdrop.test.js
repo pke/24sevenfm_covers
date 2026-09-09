@@ -892,6 +892,48 @@ test("resolves Kreng's Lowlife soundtrack through the composer's credited name",
     }
 });
 
+test("resolves Bear McCreary's Zom-B Movie soundtrack to Chillerama", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            searches.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 79771, title: "Chillerama", release_date: "2011-10-14",
+                backdrop_path: "/chillerama.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [143, 30, 28],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Zom-B Movie",
+        track: "Deathication (Movement #2)",
+        artist: "Bear McCreary",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 79771, title: "Chillerama", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/chillerama.jpg",
+        source: "tmdb",
+        tint: [143, 30, 28],
+    });
+    assert.deepEqual(searches.map((search) => search.pathname).sort(), [
+        "/3/search/movie",
+        "/3/search/tv",
+    ]);
+    for (const search of searches) {
+        assert.equal(search.searchParams.get("query"), "Chillerama");
+        assert.equal(search.searchParams.get(search.pathname.endsWith("/movie")
+            ? "primary_release_year" : "first_air_date_year"), "2011");
+    }
+});
+
 test("resolves the DC compilation Flying Sequence to Superman (1978)", async () => {
     const searches = [];
     const handler = createHandler({

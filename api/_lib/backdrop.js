@@ -242,6 +242,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Lowlife (2017)",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Zom-B Movie",
+        artist: "Bear McCreary",
+        title: "Chillerama (2011)",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
