@@ -742,15 +742,19 @@ var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-err
 var backdropRetryEl = $("backdrop-retry");
 var audioEl = $("audio");
 var infoEl = document.querySelector(".info");
-var infoTitleEl = $("info-title"), backchannelStatusEl = $("backchannel-status");
+var infoTitleEl = $("info-title"), infoAlbumEl = $("info-album"), infoTrackEl = $("info-track");
+var infoTitleSeparatorEl = $("info-title-separator");
+var backchannelStatusEl = $("backchannel-status");
 var backchannelPairingEl = $("backchannel-pairing");
 var backchannelCodeEl = $("backchannel-code"), backchannelCodeLabelEl = $("backchannel-code-label");
 var backchannelCancelEl = $("backchannel-cancel");
 
 // One info box serves both layouts (title, artist, countdown) - overlaid on the
 // stage in fill, sitting below the cover in poster.
-function setInfo(title, artist) {
-    infoTitleEl.textContent = title;
+function setInfo(album, track, artist) {
+    infoAlbumEl.textContent = album;
+    infoTitleSeparatorEl.textContent = album && track ? " - " : "";
+    infoTrackEl.textContent = track;
     $("info-artist").textContent = artist;
 }
 
@@ -760,21 +764,29 @@ function setInfo(title, artist) {
 var currentInfoFallback = null, currentInfoMetadata = null, currentInfoPending = true;
 var infoHandoffGeneration = 0, infoExitTimer = null;
 
-function infoTitleFor(metadata) {
-    if (!metadata) return "—";
-    var title = metadata.album || "";
-    if (title && metadata.track) title += " - " + metadata.track;
-    else if (metadata.track) title = metadata.track;
-    if (title && currentTrackLengthSeconds > 0) {
-        title += " (" + Math.floor(currentTrackLengthSeconds / 60) + ":"
+function infoLinesFor(metadata) {
+    var album = metadata && metadata.album || "";
+    var track = metadata && metadata.track || "";
+    if ((album || track) && currentTrackLengthSeconds > 0) {
+        var duration = " (" + Math.floor(currentTrackLengthSeconds / 60) + ":"
             + String(currentTrackLengthSeconds % 60).padStart(2, "0") + ")";
+        if (track) track += duration;
+        else album += duration;
     }
-    return title || "—";
+    if (!album && !track) album = "—";
+    return { album: album, track: track };
+}
+
+function infoTitleFor(metadata) {
+    var lines = infoLinesFor(metadata);
+    return lines.album && lines.track
+        ? lines.album + " - " + lines.track : lines.album || lines.track;
 }
 
 function renderCurrentInfo() {
     var metadata = currentInfoMetadata || currentInfoFallback;
-    setInfo(infoTitleFor(metadata), metadata && metadata.artist || "");
+    var lines = infoLinesFor(metadata);
+    setInfo(lines.album, lines.track, metadata && metadata.artist || "");
 }
 
 function revealCurrentInfo() {
@@ -788,7 +800,7 @@ function finishInfoExit(generation) {
     if (generation !== infoHandoffGeneration) return;
     infoExitTimer = null;
     // The outgoing text stays mounted until its opacity transition has completed.
-    setInfo("", "");
+    setInfo("", "", "");
     if (!currentInfoPending) revealCurrentInfo();
 }
 
@@ -931,7 +943,7 @@ function currentBackchannelReport() {
         album: currentAlbum,
         track: currentTrack,
         artist: currentArtist,
-        displayedTitle: infoTitleEl.textContent,
+        displayedTitle: infoTitleFor(currentInfoMetadata || currentInfoFallback),
         settings: {
             backdropsEnabled: sstBackdropsEnabled(),
             ratingsEnabled: sstRatingsEnabled(),

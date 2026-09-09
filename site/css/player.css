@@ -199,6 +199,13 @@
     line-height: 1.25;
     transition: opacity .2s ease, outline-color .2s ease;
 }
+.info-album, .info-track { display: block; }
+.info-title-separator { display: none; }
+.info-track {
+    font-size: .88em;
+    font-weight: 500;
+}
+.info-track:not(:empty) { margin-top: .12em; }
 .info .a { opacity: .8; font-size: var(--artist-size, .95rem); }
 .info .t.local-backchannel { cursor: pointer; }
 .info .t.local-backchannel:hover { opacity: .78; }

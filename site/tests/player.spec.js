@@ -1200,6 +1200,21 @@ test.describe("the deployed player page", () => {
             { waitUntil: "domcontentloaded" });
 
             await expect(page.locator("#info-title")).toHaveText("Family Guy - Main Title");
+            await expect(page.locator("#info-album")).toHaveText("Family Guy");
+            await expect(page.locator("#info-track")).toHaveText("Main Title");
+            await expect(page.locator("#info-title-separator")).toBeHidden();
+            const titleLines = await page.locator("#info-title").evaluate((title) => {
+                const album = title.querySelector("#info-album").getBoundingClientRect();
+                const track = title.querySelector("#info-track").getBoundingClientRect();
+                return {
+                    albumTop: album.top,
+                    trackTop: track.top,
+                    albumSize: parseFloat(getComputedStyle(title.querySelector("#info-album")).fontSize),
+                    trackSize: parseFloat(getComputedStyle(title.querySelector("#info-track")).fontSize),
+                };
+            });
+            expect(titleLines.trackTop).toBeGreaterThan(titleLines.albumTop);
+            expect(titleLines.trackSize).toBeLessThan(titleLines.albumSize);
             await expect(page.locator("#info-artist")).toHaveText("Walter Murphy");
             await expect.poll(() => resolverQuery).toEqual({
                 album: "Family Guy", track: "Main Title", artist: "Walter Murphy",
