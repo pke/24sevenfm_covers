@@ -108,6 +108,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Teenage Mutant Ninja Turtles Part II: The Secret Of The Ooze",
+        artist: "John Duprez",
+        title: "Teenage Mutant Ninja Turtles II: The Secret of the Ooze (1991)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Music Of DC Comics, The: Volume 2",
         track: "The Flying Sequence / Can You Read My Mind? (Feat Margot Kidder) (1978)",
         artist: "John Williams",

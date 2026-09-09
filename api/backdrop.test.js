@@ -696,6 +696,76 @@ test("resolves Indy's Very First Adventure to The Last Crusade", async () => {
     });
 });
 
+test("resolves the TMNT Part II score to The Secret of the Ooze", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/movie") {
+                searches.push(parsed);
+                return response(200, { results: [{
+                    id: 1497,
+                    title: "Teenage Mutant Ninja Turtles II: The Secret of the Ooze",
+                    release_date: "1991-03-22",
+                    backdrop_path: "/tmnt-ii.jpg",
+                    poster_path: "/tmnt-ii-poster.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/v3/movies/1497") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/tmnt-ii.jpg",
+                    lang: "", likes: "10",
+                }],
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/tmnt-ii-poster.jpg",
+                    lang: "", likes: "10",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [100, 120, 140],
+    });
+
+    for (const fixture of [
+        {
+            orientation: undefined,
+            backdrop: "https://assets.fanart.tv/fanart/tmnt-ii.jpg",
+        },
+        {
+            orientation: "portrait",
+            backdrop: "https://assets.fanart.tv/fanart/tmnt-ii-poster.jpg",
+        },
+    ]) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Teenage Mutant Ninja Turtles Part II: The Secret Of The Ooze",
+            track: "Main Titles",
+            artist: "John Duprez",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ...(fixture.orientation ? { orientation: fixture.orientation } : {}),
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: {
+                id: 1497,
+                title: "Teenage Mutant Ninja Turtles II: The Secret of the Ooze",
+                type: "movie",
+            },
+            backdrop: fixture.backdrop,
+            source: "fanart",
+            tint: [100, 120, 140],
+        });
+    }
+    assert.equal(searches.length, 2);
+    for (const search of searches) {
+        assert.equal(search.searchParams.get("query"),
+            "Teenage Mutant Ninja Turtles II: The Secret of the Ooze");
+        assert.equal(search.searchParams.get("primary_release_year"), "1991");
+    }
+});
+
 test("resolves verified soundtrack tracks to the 1996 Kansas City film", async () => {
     const searches = [];
     const handler = createHandler({
