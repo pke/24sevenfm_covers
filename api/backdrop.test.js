@@ -2798,6 +2798,78 @@ test("resolves Inon Zur's Crysis soundtrack as the game", async () => {
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves Clint Bajakian's Outlaws soundtrack to the original game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname
+                    === "/api/v2/search/autocomplete/Outlaws%20%2B%20A%20Handful%20of%20Missions") {
+                return response(200, { success: true, data: [{
+                    id: 15409,
+                    name: "Outlaws + A Handful of Missions",
+                    verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/15409") return response(200, {
+                success: true,
+                data: [{
+                    score: 10, width: 1920,
+                    url: "https://cdn2.steamgriddb.com/hero/outlaws.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/outlaws.png",
+                }],
+            });
+            if (parsed.pathname === "/api/v2/grids/game/15409") return response(200, {
+                success: true,
+                data: [{
+                    score: 10, width: 600, height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/outlaws.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/outlaws.jpg",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async (url) => /\/(?:grid|thumb)\//.test(url)
+            ? [232, 190, 123] : [176, 130, 83],
+    });
+
+    for (const fixture of [
+        {
+            orientation: undefined,
+            backdrop: "https://cdn2.steamgriddb.com/hero/outlaws.png",
+            tint: [176, 130, 83],
+        },
+        {
+            orientation: "portrait",
+            backdrop: "https://cdn2.steamgriddb.com/grid/outlaws.jpg",
+            tint: [232, 190, 123],
+        },
+    ]) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Outlaws",
+            track: "Sanctuary",
+            artist: "Clint Bajakian",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ratings: "DE,US",
+            ...(fixture.orientation ? { orientation: fixture.orientation } : {}),
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 15409, title: "Outlaws + A Handful of Missions", type: "game" },
+            backdrop: fixture.backdrop,
+            source: "steamgriddb",
+            tint: fixture.tint,
+            certifications: [],
+        });
+    }
+    assert.equal(requests.filter((url) => url.includes("/search/autocomplete/")).length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
 test("resolves Jack Wall's Myst 3 album to Myst III: Exile", async () => {
     const requests = [];
     const handler = createHandler({
