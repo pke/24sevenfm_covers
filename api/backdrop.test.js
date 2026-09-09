@@ -850,6 +850,48 @@ test("resolves Goblin's Phenomena soundtrack tracks to the 1985 film", async () 
     ]);
 });
 
+test("resolves Kreng's Lowlife soundtrack through the composer's credited name", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            searches.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 461773, title: "Lowlife", release_date: "2017-07-21",
+                backdrop_path: "/lowlife.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 185, 141],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Lowlife",
+        track: "The Legacy Is All",
+        artist: "Kreng",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 461773, title: "Lowlife", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/lowlife.jpg",
+        source: "tmdb",
+        tint: [255, 185, 141],
+    });
+    assert.deepEqual(searches.map((search) => search.pathname).sort(), [
+        "/3/search/movie",
+        "/3/search/tv",
+    ]);
+    for (const search of searches) {
+        assert.equal(search.searchParams.get("query"), "Lowlife");
+        assert.equal(search.searchParams.get(search.pathname.endsWith("/movie")
+            ? "primary_release_year" : "first_air_date_year"), "2017");
+    }
+});
+
 test("resolves the DC compilation Flying Sequence to Superman (1978)", async () => {
     const searches = [];
     const handler = createHandler({

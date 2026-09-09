@@ -7,9 +7,9 @@
    pre-built literal. */
 #define SSC_VER_MAJOR 1
 #define SSC_VER_MINOR 15
-#define SSC_VER_PATCH 12
-#define SSC_VER_NUM   1, 15, 12, 0
-#define SSC_VER_STR   "1.15.12"
+#define SSC_VER_PATCH 13
+#define SSC_VER_NUM   1, 15, 13, 0
+#define SSC_VER_STR   "1.15.13"
 
 #include "../shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
 #endif /* VIEWER_VERSION_H */

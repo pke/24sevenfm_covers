@@ -236,6 +236,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         title: "Phenomena (1985)",
         hint: "movie",
     }),
+    Object.freeze({
+        album: "Lowlife",
+        artist: "Kreng",
+        title: "Lowlife (2017)",
+        hint: "movie",
+    }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
