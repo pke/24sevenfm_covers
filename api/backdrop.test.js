@@ -3129,6 +3129,45 @@ test("resolves Inon Zur's Crysis soundtrack as the game", async () => {
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves Yoann Laulan's Dead Cells soundtrack as the game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Dead%20Cells")) return response(200, {
+                success: true, data: [{ id: 4819, name: "Dead Cells", verified: true }],
+            });
+            if (value.includes("/heroes/game/4819")) return response(200, {
+                success: true, data: [{ score: 8,
+                    url: "https://cdn2.steamgriddb.com/hero/dead-cells.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/dead-cells.png" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [42, 54, 69],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Dead Cells - Soundtrack Part 1",
+        track: "Clocktower",
+        artist: "Yoann Laulan",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 4819, title: "Dead Cells", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/dead-cells.png",
+        source: "steamgriddb",
+        tint: [42, 54, 69],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+    assert.equal(requests.some((url) => url.includes("api.tvmaze.com")), false);
+});
+
 test("resolves Clint Bajakian's Outlaws soundtrack to the original game", async () => {
     const requests = [];
     const handler = createHandler({
