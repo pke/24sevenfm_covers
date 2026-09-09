@@ -632,6 +632,62 @@ test("resolves Jazz Loves Disney's Stay Awake to Mary Poppins", async () => {
     });
 });
 
+test("resolves the Inspector Clouseau theme to The Pink Panther Strikes Again", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/movie") {
+                searches.push(parsed);
+                return response(200, { results: [{
+                    id: 12268,
+                    title: "The Pink Panther Strikes Again",
+                    release_date: "1976-12-15",
+                    backdrop_path: "/pink-panther-strikes-again.jpg",
+                    poster_path: "/pink-panther-strikes-again-poster.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/v3/movies/12268") return response(200, {});
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [222, 240, 255],
+    });
+
+    for (const fixture of [
+        {
+            orientation: undefined,
+            backdrop: "https://image.tmdb.org/t/p/w1280/pink-panther-strikes-again.jpg",
+        },
+        {
+            orientation: "portrait",
+            backdrop: "https://image.tmdb.org/t/p/w780/pink-panther-strikes-again-poster.jpg",
+        },
+    ]) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Midnight, Moonlight & Magic",
+            track: "The Inspector Clouseau Theme",
+            artist: "Henry Mancini",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ...(fixture.orientation ? { orientation: fixture.orientation } : {}),
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 12268, title: "The Pink Panther Strikes Again", type: "movie" },
+            backdrop: fixture.backdrop,
+            source: "tmdb",
+            tint: [222, 240, 255],
+        });
+    }
+    assert.equal(searches.length, 2);
+    for (const search of searches) {
+        assert.equal(search.searchParams.get("query"), "The Pink Panther Strikes Again");
+        assert.equal(search.searchParams.get("primary_release_year"), "1976");
+    }
+});
+
 test("resolves Indy's Very First Adventure to The Last Crusade", async () => {
     const searches = [];
     const handler = createHandler({

@@ -101,6 +101,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Midnight, Moonlight & Magic",
+        track: "The Inspector Clouseau Theme",
+        artist: "Henry Mancini",
+        title: "The Pink Panther Strikes Again (1976)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Indiana Jones: The Soundtracks Collection",
         track: "Indy's Very First Adventure",
         artist: "John Williams",
