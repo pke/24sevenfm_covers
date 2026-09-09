@@ -868,6 +868,72 @@ test("resolves verified soundtrack tracks to the 1996 Kansas City film", async (
     }
 });
 
+test("resolves Queen's A Kind of Magic cue to Highlander in both orientations", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 8009, title: "Highlander", release_date: "1986-03-07",
+                backdrop_path: "/highlander.jpg", poster_path: "/highlander-poster.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [{
+                id: 17575, name: "A Kind of Magic", first_air_date: "1986-01-08",
+                backdrop_path: "/wrong-tv-series.jpg",
+            }] });
+            if (parsed.pathname === "/v3/movies/8009") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/highlander.jpg",
+                    lang: "", likes: "10",
+                }],
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/highlander-poster.jpg",
+                    lang: "", likes: "10",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [189, 217, 255],
+    });
+    const artwork = {
+        landscape: "https://assets.fanart.tv/fanart/highlander.jpg",
+        portrait: "https://assets.fanart.tv/fanart/highlander-poster.jpg",
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Kind Of Magic, A",
+            track: "Who Wants To Live Forever",
+            artist: "Queen",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            orientation,
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 8009, title: "Highlander", type: "movie" },
+            backdrop: artwork[orientation],
+            source: "fanart",
+            tint: [189, 217, 255],
+            metadata: {
+                album: "A Kind Of Magic",
+                track: "Who Wants To Live Forever",
+                artist: "Queen",
+            },
+        });
+    }
+
+    assert.equal(requests.length, 6);
+    const movieSearches = requests.filter(({ pathname }) => pathname === "/3/search/movie");
+    assert.equal(movieSearches.length, 2);
+    for (const request of movieSearches) {
+        assert.equal(request.searchParams.get("query"), "Highlander");
+        assert.equal(request.searchParams.get("primary_release_year"), "1986");
+    }
+});
+
 test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", async () => {
     const searches = [];
     const handler = createHandler({

@@ -42,6 +42,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Kind Of Magic, A",
+        track: "Who Wants To Live Forever",
+        artist: "Queen",
+        title: "Highlander (1986)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Medal Of Honor",
         track: "Attack On Fort Schmerzen",
         hint: "game",
