@@ -27,6 +27,7 @@
 
 #include "d2d_renderer.h" // d2d::Transition + render/setCover/...
 #include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
+#include "info_presentation.h"
 
 namespace ssc { class CoverMonitor; }
 namespace ssc { struct TrackInfo; }
@@ -113,7 +114,7 @@ public:
 
     // The JPEG bytes of the cover currently on screen, for handing to a host's own
     // album-art system (foobar's album_art_fallback). False if nothing shown yet.
-    bool currentCover(std::string& out);
+    bool currentCover(std::string& out, int stationIndex);
 
     // --- window messages (forwarded by the host) ---------------------------
     void onPaint(HWND h);
@@ -172,8 +173,10 @@ private:
     bool        dirty_ = false;
     std::string shownUrl_, nextUrl_, nextBytes_; // preload state (guarded)
     std::string shownBytes_;             // bytes of the cover currently shown (guarded)
+    int shownStation_ = -1;              // identity belongs to these bytes, not UI settings
     int         nextLen_ = -1;
-    std::wstring infoTitle_, infoArtist_; // current track title + composer for the poster info box (guarded)
+    ssc::InfoPresentation info_;         // guarded, including animation state
+    int infoFadeMs_ = 0;                 // coherent settings snapshot for publishers
     std::string pendingBackdropBytes_;
     std::vector<d2d::RatingBadge> pendingRatings_;
     bool mediaDirty_ = false, pendingMediaClear_ = false;
@@ -193,7 +196,6 @@ private:
     bool  haveCover_ = false;
     DWORD fadeStart_ = 0;
     bool  mediaFading_ = false;
-    std::atomic<DWORD> infoRevealAt_{0};
     bool  ratingFading_ = false;
     bool  haveBackdrop_ = false;
     DWORD mediaFadeStart_ = 0;

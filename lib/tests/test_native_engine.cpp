@@ -8,6 +8,7 @@
 struct CoverEngineTestAccess {
     CoverEngine engine;
     CoverEngineTestAccess() {
+        engine.settings.transition = 0; // deterministic publication tests; fades are tested below
         engine.media_ = new CoverEngine::MediaWorkerState();
         engine.media_->settingsSnapshot = engine.settings;
     }
@@ -28,8 +29,8 @@ struct CoverEngineTestAccess {
         engine.publishRatings(epoch, ratings);
     }
     void checkNoOldData() {
-        CHECK(engine.infoTitle_.empty());
-        CHECK(engine.infoArtist_.empty());
+        CHECK(engine.info_.title().empty());
+        CHECK(engine.info_.artist().empty());
         CHECK_FALSE(engine.mediaDirty_);
         CHECK_FALSE(engine.haveBackdrop_);
         CHECK_FALSE(engine.ratingHasContent_);
@@ -77,13 +78,122 @@ struct CoverEngineTestAccess {
         publish(old);
         checkNoOldData();
         publish(fresh);
-        CHECK(engine.infoTitle_ == L"Old album (1:00)");
+        CHECK(engine.info_.title() == L"Old album (1:00)");
         CHECK(engine.mediaDirty_);
         engine.decodePendingMedia(nullptr);
         CHECK(engine.ratingHasContent_);
         CHECK(engine.ratingIntroEpoch_ == fresh);
     }
+    void stationIdentLabel(int selected, const std::string& album, const std::string& expected) {
+        // The callback uses the monitor snapshot, not mutable UI settings. Mark
+        // its logo as already shown to exercise the real path without networking.
+        state().settingsSnapshot.station = selected;
+        engine.settings.station = (selected + 1) % ssc::kStationCount;
+        engine.shownUrl_ = ssc::station(selected).logoUrl;
+        ssc::TrackInfo info;
+        info.album = album; info.track = "Station Jingle"; info.artist = "24seven.fm";
+        info.stationIdent = true;
+        engine.onCoverChanged("", info);
+        CHECK(engine.info_.title() == toWide(expected));
+        CHECK(engine.info_.artist() == (expected.empty() ? L"" : L"24seven.fm"));
+        CHECK(state().current.album == album); // no mutation of raw identity
+        CHECK(state().work.empty()); // jingles never need a media/provider request
+    }
+    void canonicalRetry() {
+        auto epoch = schedule("Crown, The");
+        ssc::MediaResult canonical; canonical.album = "The Crown";
+        canonical.artist = "Composer"; canonical.hasMetadata = true;
+        engine.publishMetadata(epoch, canonical, 60);
+        epoch = schedule("Crown, The", true);
+        ssc::MediaResult raw; raw.album = "Crown, The"; raw.artist = "Raw artist";
+        engine.publishMetadata(epoch, raw, 60);
+        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        CHECK(engine.info_.artist() == L"Composer");
+        // A settled older endpoint response (Miss) has the same fallback policy.
+        raw.status = ssc::MediaResult::Miss;
+        engine.publishMetadata(epoch, raw, 60);
+        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        const auto next = schedule("Next track");
+        CHECK(engine.info_.title().empty());
+        engine.publishMetadata(epoch, canonical, 60); // late previous-track response
+        CHECK(engine.info_.title().empty());
+        raw.album = "Next track";
+        engine.publishMetadata(next, raw, 60);
+        CHECK(engine.info_.title() == L"Next track (1:00)");
+    }
+    void coverStation() {
+        engine.shownBytes_ = "SST image"; engine.shownStation_ = 0;
+        engine.settings.station = 1; // mutable UI selection is NOT byte identity
+        std::string bytes = "stale";
+        CHECK_FALSE(engine.currentCover(bytes, 1));
+        CHECK(bytes.empty());
+        CHECK(engine.currentCover(bytes, 0));
+        CHECK(bytes == "SST image");
+        CHECK_FALSE(engine.currentCover(bytes, -1));
+    }
 };
+
+TEST_CASE("native canonical metadata survives retries and resets only for a different track") {
+    CoverEngineTestAccess test; test.canonicalRetry();
+}
+TEST_CASE("native album art exports bytes only for their owning station") {
+    CoverEngineTestAccess test; test.coverStation();
+}
+TEST_CASE("native info handoff retains outgoing text until exit and reveals settled replacement") {
+    ssc::InfoPresentation info;
+    info.begin("old", 100, 1000);
+    CHECK(info.title().empty());
+    info.settle(L"Old title", L"Old artist", true, 100, 1000);
+    CHECK(info.advance(600, 1000) == doctest::Approx(.5f));
+    CHECK(info.advance(1100, 1000) == 1.0f);
+    info.begin("new", 1200, 1000);
+    info.settle(L"New title", L"New artist", true, 1300, 1000);
+    CHECK(info.advance(1700, 1000) == doctest::Approx(.5f));
+    CHECK(info.title() == L"Old title");
+    CHECK(info.artist() == L"Old artist");
+    CHECK(info.advance(2200, 1000) == 0.0f);
+    CHECK(info.title() == L"New title");
+    CHECK(info.advance(2700, 1000) == doctest::Approx(.5f));
+    CHECK(info.advance(3200, 1000) == 1.0f);
+    CHECK_FALSE(info.animating());
+}
+TEST_CASE("native info stays hidden after exit until a slow resolver settles") {
+    ssc::InfoPresentation info;
+    info.begin("old", 100, 0); info.settle(L"Old", L"Artist", true, 100, 0);
+    info.begin("new", 200, 1000);
+    CHECK(info.advance(1200, 1000) == 0.0f);
+    CHECK(info.title().empty());
+    CHECK(info.advance(12000, 1000) == 0.0f);
+    info.settle(L"Raw fallback", L"Artist", false, 12000, 1000);
+    CHECK(info.advance(12500, 1000) == doctest::Approx(.5f));
+    CHECK(info.title() == L"Raw fallback");
+    // A live reduced-motion change completes the animation immediately.
+    CHECK(info.advance(12500, 0) == 1.0f);
+    CHECK_FALSE(info.animating());
+}
+TEST_CASE("native info cancels obsolete pending metadata during rapid track changes") {
+    ssc::InfoPresentation info;
+    info.begin("old", 100, 0); info.settle(L"Old", L"", true, 100, 0);
+    info.begin("intermediate", 200, 1000);
+    info.settle(L"Never shown", L"", true, 250, 1000);
+    info.begin("latest", 300, 1000);
+    info.advance(2000, 1000);
+    CHECK(info.title().empty());
+    info.settle(L"Latest", L"", true, 2100, 0);
+    CHECK(info.title() == L"Latest");
+}
+
+TEST_CASE("native station jingles display the selected station name without changing raw metadata") {
+    CoverEngineTestAccess test;
+    for (int i = 0; i < ssc::kStationCount; ++i)
+        for (const char* marker : {"StationID", "Station ID", " \tstationid\r\n"})
+            test.stationIdentLabel(i, marker, ssc::station(i).displayName);
+}
+TEST_CASE("native station ident labels preserve real album titles and empty metadata") {
+    CoverEngineTestAccess test;
+    for (const char* album : {"Station Identity", "StationID Live", "An Unregistered Album", ""})
+        test.stationIdentLabel(0, album, album);
+}
 
 TEST_CASE("native blocked publishers validate the epoch inside the publication lock") {
     CoverEngineTestAccess test;

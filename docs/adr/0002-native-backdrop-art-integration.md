@@ -59,6 +59,10 @@ The shared resolver:
    a 20-second request timeout.
 2. Strictly parses `metadata`, `media`, `backdrop`, `source`, `tint` and `certifications` and
    accepts only the known FSK, MPA and TV Parental Guidelines vocabulary.
+   Text must be valid UTF-8; limits count UTF-16 code units like JavaScript, not
+   UTF-8 bytes (Album/Artist 180, Track 300). Canonical metadata is accepted atomically
+   only after all three fields pass validation, with explicit provenance retained
+   separately from raw fallback values.
 3. Accepts direct HTTPS images only from the web player's provider mapping:
    `image.tmdb.org`, fanart.tv artwork hosts, `static.tvmaze.com` and
    `cdn2.steamgriddb.com`.
@@ -66,7 +70,7 @@ The shared resolver:
    server-side. A listener may optionally persist a fanart.tv personal `client_key`
    locally. It is sent to the project resolver only when fanart.tv artwork is enabled;
    the explicit Check action sends it once directly to fanart.tv's stable movie probe,
-   matching the web player. Keys are trimmed, limited to 128 control-free bytes and
+   matching the web player. Keys are trimmed, limited to 128 control-free UTF-16 units and
    never included in diagnostics or share state. A native request sends no browser
    `Origin`, so browser CORS policy is not used as native auth.
 5. Revalidates the provider URL before the CDN request and retains the existing WIC
@@ -88,8 +92,10 @@ and decode failures are not.
 
 Every station/track/configuration/orientation snapshot gets an epoch and cancellation
 token. Late work may not install pixels or badges for an older epoch. Backdrop state
-is independent of square-cover state, so `CoverEngine::currentCover()` continues to
-return the station cover for foobar2000 album-art fallback.
+is independent of square-cover state. `CoverEngine::currentCover(bytes, stationIndex)`
+returns a square cover for foobar2000 only when its station identity matches the
+request; identity and bytes are checked under the same lock. Mixed-station selections
+are rejected rather than borrowing the globally active station's cover.
 
 The public settings object belongs exclusively to the host UI thread. Startup,
 `repaint()` and manual retry copy it into the worker's mutex-protected snapshot;
@@ -242,7 +248,10 @@ derived. Release builds compile the same shared implementation into all three ho
 
 Windows CTest additionally runs the production engine scheduler/publication path
 against concurrent settings edits, blocked stale publishers, pending UI results,
-worker restarts and retry/queue preservation without networking. Native off-screen
+worker restarts and retry/queue preservation without networking. Deterministic
+tests also cover accepted canonical metadata surviving failed/legacy retries, retained
+exit and entry fades, rapid handoffs, reduced motion, UTF-16-equivalent text bounds,
+and station-scoped album-art export. Native off-screen
 dialog tests exercise actual WTL button routing, provider ordering, the mandatory
 rating-country selection, details/key persistence, opacity interpolation, rapid
 page changes, timer and parent-destruction cleanup, repaint clipping and no-animation

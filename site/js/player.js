@@ -1676,7 +1676,7 @@ async function poll() {
         remAnchor = lengthSec > 0 ? remaining : -1;
         remAnchorAt = Date.now();
 
-        const album = htmlDecode(j.Album), displayAlbum = album;
+        const album = htmlDecode(j.Album);
         const track = htmlDecode(j.Track), artist = htmlDecode(j.Artist);
         // ONE determination drives everything downstream: no trusted CoverLink means
         // a station ID, unregistered track, or rejected off-origin URL.
@@ -1687,6 +1687,10 @@ async function poll() {
         const tintCover = trustedCoverUrl(j.ThumbnailLink) || trustedCoverUrl(j.CoverLink);
         const displayCover = sizedCoverUrl(j.CoverLink);
         const isStationId = !displayCover && !localNowPlayingPreview;
+        // This feed marker is a station label, not an album to resolve. Keep raw
+        // identity unchanged and mirror the native station-ident presentation.
+        const displayAlbum = isStationId && /^station ?id$/i.test(album.trim())
+            ? station().name : album;
         const trackIdentityChanged = album !== currentAlbum || track !== currentTrack
             || isStationId !== stationIdActive;
         const prefetchedArt = trackIdentityChanged && !isStationId

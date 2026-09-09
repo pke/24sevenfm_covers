@@ -18,25 +18,45 @@ std::string lower(std::string value) {
     return value;
 }
 
+// API/JS limits count UTF-16 code units, not UTF-8 bytes. Validate the encoding
+// while counting so malformed/overlong UTF-8 cannot sneak through native inputs.
+bool cleanRequestText(const std::string& value, size_t maxLength, bool required) {
+    if (required && value.empty()) return false;
+    size_t units = 0;
+    for (size_t i = 0; i < value.size();) {
+        unsigned cp = static_cast<unsigned char>(value[i++]);
+        unsigned trailing = 0, minimum = 0;
+        if (cp < 0x80) {
+            if (cp < 0x20 || cp == 0x7F) return false;
+        } else if (cp >= 0xC2 && cp <= 0xDF) { cp &= 0x1F; trailing = 1; minimum = 0x80; }
+        else if (cp >= 0xE0 && cp <= 0xEF) { cp &= 0x0F; trailing = 2; minimum = 0x800; }
+        else if (cp >= 0xF0 && cp <= 0xF4) { cp &= 7; trailing = 3; minimum = 0x10000; }
+        else return false;
+        if (value.size() - i < trailing) return false;
+        for (unsigned j = 0; j < trailing; ++j) {
+            const unsigned next = static_cast<unsigned char>(value[i++]);
+            if ((next & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (next & 0x3F);
+        }
+        if (cp < minimum || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return false;
+        units += cp > 0xFFFF ? 2 : 1;
+        if (units > maxLength) return false;
+    }
+    return true;
+}
+
 bool cleanText(const JsonValue* value, std::string& out, size_t maxLength) {
     if (!value || value->type != JsonValue::String || value->string.empty()
-            || value->string.size() > maxLength) return false;
-    for (unsigned char c : value->string) if (c < 0x20 || c == 0x7F) return false;
+            || !cleanRequestText(value->string, maxLength, true)) return false;
     out = value->string;
     return true;
 }
 
 bool cleanOptionalText(const JsonValue* value, std::string& out, size_t maxLength) {
-    if (!value || value->type != JsonValue::String || value->string.size() > maxLength)
+    if (!value || value->type != JsonValue::String
+            || !cleanRequestText(value->string, maxLength, false))
         return false;
-    for (unsigned char c : value->string) if (c < 0x20 || c == 0x7F) return false;
     out = value->string;
-    return true;
-}
-
-bool cleanRequestText(const std::string& value, size_t maxLength, bool required) {
-    if ((required && value.empty()) || value.size() > maxLength) return false;
-    for (unsigned char c : value) if (c < 0x20 || c == 0x7F) return false;
     return true;
 }
 
@@ -161,12 +181,15 @@ bool parseResponse(const std::string& body, MediaResult& out) {
 
     const JsonValue* metadata = root.get("metadata");
     if (metadata && metadata->type == JsonValue::Object) {
-        if (!cleanText(metadata->get("album"), out.album, 180)
-                || !cleanOptionalText(metadata->get("track"), out.track, 300)
-                || !cleanOptionalText(metadata->get("artist"), out.artist, 180)) {
+        std::string album, track, artist;
+        if (!cleanText(metadata->get("album"), album, 180)
+                || !cleanOptionalText(metadata->get("track"), track, 300)
+                || !cleanOptionalText(metadata->get("artist"), artist, 180)) {
             out.error = "invalid normalized metadata";
             return false;
         }
+        out.album = album; out.track = track; out.artist = artist;
+        out.hasMetadata = true;
     } else if (metadata) {
         out.error = "invalid normalized metadata";
         return false;

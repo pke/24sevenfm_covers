@@ -52,7 +52,7 @@ public:
     album_art_extractor_instance_ptr open(file_ptr, const char* p_path, abort_callback&) override {
         if (!isStationPath(p_path)) throw exception_album_art_not_found();
         std::string bytes;
-        if (!CoverEngine::instance().currentCover(bytes) || bytes.empty())
+        if (!CoverEngine::instance().currentCover(bytes, ssc::stationIndexForText(p_path)))
             throw exception_album_art_not_found();
         album_art_data::ptr data = album_art_data_impl::g_create(bytes.data(), bytes.size());
         return new service_impl_t<ssc_art_instance>(data);
@@ -65,10 +65,15 @@ public:
     album_art_extractor_instance_v2::ptr open(metadb_handle_list_cref items,
                                               pfc::list_base_const_t<GUID> const& ids,
                                               abort_callback&) override {
-        bool station = false;
-        for (t_size i = 0; i < items.get_count(); ++i)
-            if (isStationPath(items[i]->get_path())) { station = true; break; }
-        if (!station) throw exception_album_art_not_found();
+        int station = -1;
+        for (t_size i = 0; i < items.get_count(); ++i) {
+            const int itemStation = ssc::stationIndexForText(items[i]->get_path());
+            // A mixed selection cannot share one station's current artwork.
+            if (itemStation < 0 || (station >= 0 && station != itemStation))
+                throw exception_album_art_not_found();
+            station = itemStation;
+        }
+        if (station < 0) throw exception_album_art_not_found();
 
         bool wantFront = false;
         for (t_size i = 0; i < ids.get_count(); ++i)
@@ -76,7 +81,7 @@ public:
         if (!wantFront) throw exception_album_art_not_found();
 
         std::string bytes;
-        if (!CoverEngine::instance().currentCover(bytes) || bytes.empty())
+        if (!CoverEngine::instance().currentCover(bytes, station))
             throw exception_album_art_not_found();
 
         album_art_data::ptr data = album_art_data_impl::g_create(bytes.data(), bytes.size());

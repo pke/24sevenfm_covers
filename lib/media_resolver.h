@@ -49,6 +49,7 @@ struct MediaResult {
     std::string track;
     std::string artist;
     int tint[3] = {255, 255, 255};
+    bool hasMetadata = false; // validated canonical fields, not the raw outage fallback
     bool hasTint = false;
     std::vector<Certification> certifications;
     std::string error;

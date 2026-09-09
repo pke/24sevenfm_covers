@@ -552,6 +552,11 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             std::lock_guard<std::mutex> publication(mutex_);
             epoch = state->epoch = ++activeMediaEpoch_;
             mediaDirty_ = false; // discard an old result waiting in the UI mailbox
+            infoFadeMs_ = snapshot.transition != 0 && clientAnimationsEnabled()
+                ? snapshot.fadeMs : 0;
+            info_.begin(std::to_string(snapshot.station) + "\n" + current.album + "\n"
+                + current.track + "\n" + current.artist + (current.stationIdent ? "\nident" : "\ntrack"),
+                GetTickCount(), infoFadeMs_);
         }
         state->work.clear();
         state->current = current;
@@ -633,10 +638,8 @@ void CoverEngine::publishMetadata(unsigned long long epoch, const ssc::MediaResu
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!epoch || activeMediaEpoch_ != epoch) return;
-        const bool reveal = infoTitle_.empty() && !title.empty();
-        infoTitle_ = toWide(title);
-        infoArtist_ = toWide(result.artist);
-        if (reveal) infoRevealAt_.store(GetTickCount());
+        info_.settle(toWide(title), toWide(result.artist), result.hasMetadata,
+            GetTickCount(), infoFadeMs_);
     }
     invalidate();
 }
@@ -722,9 +725,8 @@ void CoverEngine::setStation(int index) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         coverBytes_.clear(); dirty_ = false;
-        shownUrl_.clear(); shownBytes_.clear();
+        shownUrl_.clear(); shownBytes_.clear(); shownStation_ = -1;
         nextUrl_.clear(); nextBytes_.clear(); nextLen_ = -1;
-        infoTitle_.clear(); infoArtist_.clear();
     }
     coverRetryAt_.store(0); coverRetryFailures_ = 0; coverRetryUrl_.clear();
     resetTitle();          // next accepted title reloads; hide the countdown
@@ -766,8 +768,9 @@ void CoverEngine::showDemoFrame() {
             const int mm = f.seconds / 60, ss = f.seconds % 60;
             t += " (" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "") + std::to_string(ss) + ")";
         }
-        infoTitle_  = toWide(t);
-        infoArtist_ = toWide(f.artist);
+        const int duration = settings.transition != 0 && clientAnimationsEnabled() ? settings.fadeMs : 0;
+        info_.begin("demo\n" + t + "\n" + f.artist, GetTickCount(), duration);
+        info_.settle(toWide(t), toWide(f.artist), true, GetTickCount(), duration);
     }
     setRemaining(f.seconds > 0 ? f.seconds : -1); // seconds>0: countdown + auto-advance; 0: static
     loading_.store(false);
@@ -838,8 +841,8 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
     scheduleMedia(info, std::vector<ssc::TrackInfo>());
     if (info.stationIdent) {
         std::lock_guard<std::mutex> lock(mutex_);
-        infoTitle_ = toWide(info.album);
-        infoArtist_ = toWide(info.artist);
+        info_.settle(toWide(ssc::stationIdentAlbumLabel(info.album, station)),
+            toWide(info.artist), false, GetTickCount(), infoFadeMs_);
     }
 
     // stop()/setStation() run on the host UI thread and join this (monitor) thread.
@@ -872,7 +875,8 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
             logLine("current cover retry in " + std::to_string(delay) + " ms");
             invalidate();
         } else {
-            { std::lock_guard<std::mutex> lock(mutex_); coverBytes_ = img; dirty_ = true; shownUrl_ = displayUrl; shownBytes_ = img; }
+            { std::lock_guard<std::mutex> lock(mutex_); coverBytes_ = img; dirty_ = true;
+                shownUrl_ = displayUrl; shownBytes_ = img; shownStation_ = station; }
             coverRetryFailures_ = 0; coverRetryUrl_.clear(); coverRetryAt_.store(0);
             notifyNewCover();
         }
@@ -1023,9 +1027,10 @@ void CoverEngine::retryMedia() {
         scheduleMediaLocked(media_, media_->current, media_->queue, true);
 }
 
-bool CoverEngine::currentCover(std::string& out) {
+bool CoverEngine::currentCover(std::string& out, int stationIndex) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (shownBytes_.empty()) return false;
+    out.clear();
+    if (stationIndex < 0 || stationIndex != shownStation_ || shownBytes_.empty()) return false;
     out = shownBytes_;
     return true;
 }
@@ -1141,16 +1146,7 @@ void CoverEngine::onPaint(HWND h) {
             ratingAlpha = (float)el / settings.fadeMs;
         }
     }
-    float infoAlpha = 1.0f;
-    const DWORD infoRevealAt = infoRevealAt_.load();
-    if (infoRevealAt) {
-        const DWORD el = GetTickCount() - infoRevealAt;
-        if (!clientAnimationsEnabled() || settings.fadeMs <= 0 || el >= (DWORD)settings.fadeMs) {
-            infoRevealAt_.store(0);
-        } else {
-            infoAlpha = (float)el / settings.fadeMs;
-        }
-    }
+    float infoAlpha = 0.0f;
     const DWORD now = GetTickCount();
     updateRatingVisibility(now);
     const float ratingOpacity = ratingVisibilityAlpha(now);
@@ -1161,7 +1157,12 @@ void CoverEngine::onPaint(HWND h) {
     const int rem = (settings.showRemaining && haveCover_) ? currentRemaining() : -1;
     const wchar_t* status = loading_.load() ? L"Loading cover..." : nullptr; // no "Playing" label
     std::wstring title, artist;
-    if (poster) { std::lock_guard<std::mutex> lock(mutex_); title = infoTitle_; artist = infoArtist_; }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        infoAlpha = info_.advance(now, settings.transition != 0 && clientAnimationsEnabled()
+            ? settings.fadeMs : 0);
+        if (poster) { title = info_.title(); artist = info_.artist(); }
+    }
     d2d::setPosterBlur(settings.posterBlur);
     d2d::setCoverRadius(settings.borderRadius);
     d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(),
@@ -1190,7 +1191,9 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
         const int portrait = (rc.bottom - rc.top) > (rc.right - rc.left) ? 1 : 0;
         if (portrait != mediaPortrait_.load()) repaint();
     }
-    if (fading_ || mediaFading_ || infoRevealAt_.load() || ratingFading_
+    bool infoAnimating;
+    { std::lock_guard<std::mutex> lock(mutex_); infoAnimating = info_.animating(); }
+    if (fading_ || mediaFading_ || infoAnimating || ratingFading_
             || ratingVisibilityAnimating_ || loading_.load()
             || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);

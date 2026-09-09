@@ -3210,6 +3210,62 @@ test.describe("the deployed player page", () => {
         expect(hostileRequested).toBe(false);
     });
 
+    for (const [id, name, host, album] of [
+        ["sst", "StreamingSoundtracks", "streamingsoundtracks.com", "StationID"],
+        ["1980s", "1980s.FM", "1980s.fm", "Station ID"],
+        ["adagio", "Adagio.FM", "adagio.fm", " stationid "],
+        ["death", "Death.FM", "death.fm", "StationID"],
+        ["entranced", "Entranced.FM", "entranced.fm", "Station ID"],
+    ]) {
+        test(`labels a StationID jingle with the station name on ${id}`, async ({ page }) => {
+            let mediaRequests = 0;
+            await page.route(/\/api\/media\?/, (route) => {
+                mediaRequests++;
+                return route.fulfill({ json: { media: null, metadata: null } });
+            });
+            await page.route(`https://${host}/soap/FM24sevenJSON.php?*`, (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                return route.fulfill({ json: action === "GetQueue" ? [] : {
+                    Album: album, Track: "Station Jingle", Artist: "24seven.fm",
+                    CoverLink: "", Length: 0,
+                    PlayStart: "2026-09-09T00:00:00Z", SystemTime: "2026-09-09T00:00:00Z",
+                } });
+            });
+            await page.route(`https://${host}/images/logos/*`, (route) => route.fulfill({
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+            }));
+            await page.goto(`/player.html?station=${id}`, { waitUntil: "domcontentloaded" });
+            await expect(page.locator(".info")).toHaveAttribute("aria-hidden", "false");
+            await expect(page.locator("#info-album")).toHaveText(name);
+            await expect(page.locator("#info-track")).toHaveText("Station Jingle");
+            await expect(page.locator("#info-artist")).toHaveText("24seven.fm");
+            expect(mediaRequests).toBe(0);
+        });
+    }
+    for (const [album, hasCover] of [["Station Identity", false], ["StationID", true]]) {
+        test(`preserves a real album label ${album} with cover=${hasCover}`, async ({ page }) => {
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                return route.fulfill({ json: action === "GetQueue" ? [] : {
+                    Album: album, Track: "Real Track", Artist: "Real Artist",
+                    CoverLink: hasCover ? "https://streamingsoundtracks.com/images/cover/real.svg" : "",
+                    Length: 0, PlayStart: "2026-09-09T00:00:00Z", SystemTime: "2026-09-09T00:00:00Z",
+                } });
+            });
+            await page.route("https://streamingsoundtracks.com/images/**", (route) => route.fulfill({
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+            }));
+            await page.route(/\/api\/media\?/, (route) => route.fulfill({ json: {
+                metadata: { album, track: "Real Track", artist: "Real Artist" }, media: null,
+            } }));
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect(page.locator(".info")).toHaveAttribute("aria-hidden", "false");
+            await expect(page.locator("#info-album")).toHaveText(album);
+        });
+    }
+
     test("blocks a trusted cover URL from redirecting off the image allowlist", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/redirect.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/redirect.svg";

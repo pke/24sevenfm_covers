@@ -9,6 +9,49 @@ TEST_CASE("native resolver percent-encodes raw UTF-8 metadata") {
     CHECK(urlEncode("A+B & Caf\xC3\xA9") == "A%2BB%20%26%20Caf%C3%A9");
 }
 
+TEST_CASE("native metadata limits match JavaScript UTF-16 units, not UTF-8 bytes") {
+    std::string bmp, astral;
+    for (int i = 0; i < 180; ++i) bmp += "\xE9\x9F\xB3";
+    for (int i = 0; i < 90; ++i) astral += "\xF0\x9F\x8E\xB5";
+    unsigned requests = 0;
+    MediaResolverConfig config;
+    config.transport = [&](const std::string&, unsigned short, const std::string&,
+            const std::string&, const std::string&, const std::string&, int) {
+        ++requests;
+        HttpResponse r; r.status = 200;
+        r.body = "{\"metadata\":{\"album\":\"" + bmp + "\",\"track\":\"\",\"artist\":\"" + astral + "\"}}";
+        return r;
+    };
+    MediaRequest request; request.album = bmp;
+    auto result = MediaResolver(config).resolve(request);
+    CHECK(result.status == MediaResult::Miss);
+    CHECK(result.hasMetadata);
+    CHECK(result.album == bmp); CHECK(result.artist == astral);
+    request.album = astral;
+    CHECK(MediaResolver(config).resolve(request).hasMetadata);
+    CHECK(requests == 2);
+    for (const auto& invalid : {bmp + "a", astral + "a", std::string("\xC0\xAF"),
+            std::string("\xED\xA0\x80"), std::string("\xF4\x90\x80\x80"), std::string("\xE9\x9F")}) {
+        request.album = invalid;
+        CHECK(MediaResolver(config).resolve(request).status == MediaResult::Failure);
+    }
+    CHECK(requests == 2);
+}
+
+TEST_CASE("invalid canonical metadata preserves all raw fallback fields atomically") {
+    MediaResolverConfig config;
+    config.transport = [](const std::string&, unsigned short, const std::string&,
+            const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r; r.status = 200;
+        r.body = R"({"metadata":{"album":"Normalized","track":"Valid","artist":42}})";
+        return r;
+    };
+    MediaRequest request; request.album = "Raw"; request.track = "Raw track"; request.artist = "Raw artist";
+    auto result = MediaResolver(config).resolve(request);
+    CHECK(result.status == MediaResult::Failure); CHECK_FALSE(result.hasMetadata);
+    CHECK(result.album == request.album); CHECK(result.track == request.track); CHECK(result.artist == request.artist);
+}
+
 TEST_CASE("native resolver accepts exactly the web player's artwork hosts") {
     CHECK(trustedBackdropUrl("https://image.tmdb.org/t/p/w1280/a.jpg", "tmdb"));
     CHECK(trustedBackdropUrl("https://assets.fanart.tv/fanart/a.jpg", "fanart"));
