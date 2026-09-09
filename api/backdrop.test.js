@@ -2883,6 +2883,52 @@ test("resolves the Enderal soundtrack to Enderal: Forgotten Stories", async () =
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves the Witcher 3 Blood and Wine soundtrack through its base game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname.includes(
+                "/search/autocomplete/The%20Witcher%203%3A%20Wild%20Hunt")) {
+                return response(200, { success: true, data: [{
+                    id: 4265, name: "The Witcher 3: Wild Hunt", verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/4265") {
+                assert.equal(parsed.searchParams.get("styles"), "alternate");
+                return response(200, { success: true, data: [{
+                    score: 20, width: 1920, style: "alternate",
+                    url: "https://cdn2.steamgriddb.com/hero/witcher-3.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/witcher-3.png",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [112, 128, 144],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Witcher 3, The: Wild Hunt - Blood And Wine",
+        track: "I Cannot Let You Leave",
+        artist: "Mikolai Stroinski",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 4265, title: "The Witcher 3: Wild Hunt", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/witcher-3.png",
+        source: "steamgriddb",
+        tint: [112, 128, 144],
+        certifications: [],
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
 test("resolves The Journey Hunter Returns soundtrack to FIFA 18", async () => {
     const requests = [];
     const handler = createHandler({

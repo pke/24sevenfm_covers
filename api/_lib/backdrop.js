@@ -145,6 +145,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Witcher 3, The: Wild Hunt - Blood And Wine",
+        title: "The Witcher 3: Wild Hunt",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Journey, The: Hunter Returns",
         artist: "Junkie XL",
         title: "FIFA 18",
