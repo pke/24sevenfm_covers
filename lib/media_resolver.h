@@ -29,8 +29,17 @@ struct MediaRequest {
     std::string ratingCountries = "DE,US";
     bool includeArt = true;
     bool includeRatings = true;
-    bool portrait = false;
+    int width = 0, height = 0; // physical client pixels; zero/zero omits the hint
 };
+
+inline bool wantsPortraitArtwork(const MediaRequest& request) {
+    return request.includeArt && request.width > 0 && request.height > request.width;
+}
+
+inline bool wants4kArtwork(const MediaRequest& request) {
+    return request.includeArt && request.width > 0 && request.height > 0
+        && (request.width > 1920 || request.height > 1080);
+}
 
 enum class FanartKeyCheckStatus { Accepted, Rejected, Invalid, Failure };
 
@@ -61,7 +70,7 @@ struct MediaResolverConfig {
     std::string apiHost = "24covers-api.vercel.app";
     // First 12 SHA-256 hex chars of api/_lib/backdrop.js, matching the web
     // renderer's RESOLVER_V cache buster at the time this native build ships.
-    std::string resolverVersion = "02bafbcd113c";
+    std::string resolverVersion = "e639fb809978";
     unsigned short apiPort = 443;
     int timeoutSeconds = 20;
     using Transport = std::function<HttpResponse(

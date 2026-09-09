@@ -207,7 +207,8 @@ bool sameResolverConfig(const ssc::MediaRequest& a, const ssc::MediaRequest& b) 
     return a.providers == b.providers && a.ratingCountries == b.ratingCountries
         && effectiveFanartKey(a) == effectiveFanartKey(b)
         && a.includeArt == b.includeArt && a.includeRatings == b.includeRatings
-        && a.portrait == b.portrait;
+        && ssc::wantsPortraitArtwork(a) == ssc::wantsPortraitArtwork(b)
+        && ssc::wants4kArtwork(a) == ssc::wants4kArtwork(b);
 }
 
 } // namespace
@@ -507,9 +508,15 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
         : snapshot.ratingDE ? "DE" : snapshot.ratingUS ? "US" : "DE,US";
     RECT client = {};
     const HWND window = hwnd_.load();
-    request.portrait = window && GetClientRect(window, &client)
-        && (client.bottom - client.top) > (client.right - client.left);
-    mediaPortrait_.store(request.portrait ? 1 : 0);
+    // The shared renderer/fullscreen window uses physical client coordinates,
+    // so do not multiply these by the window DPI a second time.
+    if (window && GetClientRect(window, &client)
+            && client.right > client.left && client.bottom > client.top) {
+        request.width = (std::min)(8192L, client.right - client.left);
+        request.height = (std::min)(8192L, client.bottom - client.top);
+    }
+    mediaPortrait_.store(ssc::wantsPortraitArtwork(request) ? 1 : 0);
+    mediaResolutionClass_.store(ssc::wants4kArtwork(request) ? 1 : 0);
 
     // A queue snapshot normally arrives just after current-playing. Attach it to
     // the existing epoch instead of aborting/restarting the current resolver call.
@@ -1188,8 +1195,15 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     }
     RECT rc = {};
     if (media_ && mediaPortrait_.load() >= 0 && GetClientRect(h, &rc)) {
-        const int portrait = (rc.bottom - rc.top) > (rc.right - rc.left) ? 1 : 0;
-        if (portrait != mediaPortrait_.load()) repaint();
+        ssc::MediaRequest viewport;
+        viewport.includeArt = settings.station == 0 && settings.backdrops;
+        if (rc.right > rc.left && rc.bottom > rc.top) {
+            viewport.width = (std::min)(8192L, rc.right - rc.left);
+            viewport.height = (std::min)(8192L, rc.bottom - rc.top);
+        }
+        const int portrait = ssc::wantsPortraitArtwork(viewport) ? 1 : 0;
+        const int resolution = ssc::wants4kArtwork(viewport) ? 1 : 0;
+        if (portrait != mediaPortrait_.load() || resolution != mediaResolutionClass_.load()) repaint();
     }
     bool infoAnimating;
     { std::lock_guard<std::mutex> lock(mutex_); infoAnimating = info_.animating(); }

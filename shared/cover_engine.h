@@ -220,6 +220,7 @@ private:
     std::string lastTitle_;              // last accepted real title (UI thread)
     std::atomic<DWORD> coverRetryAt_{0};
     std::atomic<int> mediaPortrait_{-1};
+    std::atomic<int> mediaResolutionClass_{-1};
     std::string coverRetryUrl_;
     unsigned coverRetryFailures_ = 0;
 

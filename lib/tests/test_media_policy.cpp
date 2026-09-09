@@ -2,6 +2,15 @@
 #include "doctest.h"
 
 #include "media_policy.h"
+#include "../../shared/image_limits.h"
+
+TEST_CASE("native image limits accept UHD and DCI 4K backdrops") {
+    CHECK(ssc::coverDimsOk(3840, 2160));
+    CHECK(ssc::coverDimsOk(4096, 2160));
+    CHECK(ssc::coverDimsOk(2160, 4096));
+    CHECK_FALSE(ssc::coverDimsOk(4097, 2160));
+    CHECK_FALSE(ssc::coverDimsOk(3840, 8192));
+}
 
 TEST_CASE("native retry cadence is identical to the web player") {
     CHECK(ssc::coverRetryDelayMs(1) == 5000);
@@ -41,7 +50,7 @@ TEST_CASE("media cache identity includes artist and all resolver-affecting optio
     b = a; b.track = "Other cue";
     CHECK(ssc::mediaCacheKey(b, request) != base);
 
-    ssc::MediaRequest changed = request; changed.portrait = true;
+    ssc::MediaRequest changed = request; changed.width = 600; changed.height = 900;
     CHECK(ssc::mediaCacheKey(a, changed) != base);
     changed = request; changed.includeArt = false;
     CHECK(ssc::mediaCacheKey(a, changed) != base);
@@ -57,6 +66,37 @@ TEST_CASE("media cache identity includes artist and all resolver-affecting optio
     CHECK(ssc::mediaCacheKey(a, changed) ==
           ssc::mediaCacheKey(a, [&] { ssc::MediaRequest r = changed;
               r.fanartClientKey.clear(); return r; }()));
+}
+
+TEST_CASE("artwork caches separate HD and 4K without fragmenting for every resized pixel") {
+    ssc::TrackInfo track; track.album = "Interstellar";
+    ssc::MediaRequest request; request.width = 1920; request.height = 1080;
+    const auto hd = ssc::mediaCacheKey(track, request);
+    CHECK_FALSE(ssc::wants4kArtwork(request));
+    request.width = 2560; request.height = 1440;
+    const auto uhd = ssc::mediaCacheKey(track, request);
+    CHECK(ssc::wants4kArtwork(request)); CHECK(uhd != hd);
+    request.width = 3840; request.height = 2160;
+    CHECK(ssc::mediaCacheKey(track, request) == uhd);
+    request.width = 4096;
+    CHECK(ssc::mediaCacheKey(track, request) == uhd);
+    request.includeArt = false;
+    const auto metadata = ssc::mediaCacheKey(track, request);
+    request.width = 800; request.height = 600;
+    CHECK(ssc::mediaCacheKey(track, request) == metadata);
+    request.width = 600; request.height = 800;
+    CHECK(ssc::mediaCacheKey(track, request) == metadata);
+}
+
+TEST_CASE("native artwork format follows dimensions and squares stay landscape") {
+    ssc::MediaRequest request;
+    CHECK_FALSE(ssc::wantsPortraitArtwork(request));
+    request.width = 1000; request.height = 1000;
+    CHECK_FALSE(ssc::wantsPortraitArtwork(request));
+    request.height = 1001;
+    CHECK(ssc::wantsPortraitArtwork(request));
+    request.includeArt = false;
+    CHECK_FALSE(ssc::wantsPortraitArtwork(request));
 }
 
 TEST_CASE("rating visibility follows web intro hover and fullscreen idle policy") {

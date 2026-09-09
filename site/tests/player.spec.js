@@ -4015,6 +4015,90 @@ test.describe("the deployed player page", () => {
             getComputedStyle(stage).getPropertyValue("--player-tint").trim()))
             .toBe("rgb(131, 172, 255)");
     });
+    test.describe("physical artwork resolution", () => {
+        test.use({ deviceScaleFactor: 2, viewport: { width: 900, height: 600 } });
+        test("sends DPI-aware dimensions and separates current and queued HD/4K caches", async ({ page }) => {
+            const requests = [];
+            const cover = "https://streamingsoundtracks.com/images/cover/4k.svg";
+            await page.addInitScript(() => {
+                window.artworkDpiQueries = [];
+                const match = window.matchMedia;
+                window.matchMedia = function (query) {
+                    const result = match.call(window, query);
+                    if (query.startsWith("(resolution:")) window.artworkDpiQueries.push(result);
+                    return result;
+                };
+            });
+            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                JSON.stringify({sstBackdrops:{enabled:true,options:{providers:["fanart"],cover:"show"}}})));
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", route => {
+                const queued = new URL(route.request().url()).searchParams.get("action") === "GetQueue";
+                const item = {Album: queued ? "Queued 4K" : "Interstellar", Track:"Cue",Artist:"Hans Zimmer",
+                    CoverLink:cover,Length:0,PlayStart:"2026-08-20T12:00:00Z",SystemTime:"2026-08-20T12:00:00Z"};
+                return route.fulfill({json:queued?[item]:item});
+            });
+            const image = route => route.fulfill({contentType:"image/svg+xml",
+                body:'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="9"/>'});
+            await page.route("https://streamingsoundtracks.com/images/cover/**", image);
+            await page.route("https://assets.fanart.tv/**", image);
+            await page.route(/\/api\/tint\?/, route => route.fulfill({json:{tint:[80,100,120]}}));
+            await page.route(/\/api\/media\?/, route => {
+                const q = new URL(route.request().url()).searchParams;
+                expect(q.has("orientation")).toBe(false);
+                const width=Number(q.get("width")), height=Number(q.get("height")), album=q.get("album");
+                const resolution=width>1920||height>1080 ? "4k" : "hd";
+                requests.push({album,width,height,resolution});
+                return route.fulfill({json:{metadata:{album:"Canonical " + album,track:"Cue",artist:"Hans Zimmer"},
+                    media:{id:157336,title:album,type:"movie"},source:"fanart",tint:[80,100,120],
+                    backdrop:"https://assets.fanart.tv/fanart/"+(album==="Interstellar"?"current":"queued")+"-"+resolution+".jpg"}});
+            });
+            await page.goto("/player.html",{waitUntil:"domcontentloaded"});
+            const stage=page.locator("#stage"), shown=page.locator("#movieA.show, #movieB.show");
+            await expect(shown).toHaveAttribute("src",/current-hd\.jpg/);
+            await expect.poll(()=>requests.some(r=>r.album==="Queued 4K"&&r.resolution==="hd")).toBe(true);
+            const bounds=await stage.boundingBox();
+            expect(requests.find(r=>r.album==="Interstellar").width).toBe(Math.ceil(bounds.width*2));
+            const resize = (width,height) => stage.evaluate((el,size)=>{
+                for(const [key,value] of Object.entries({width:size.width+"px",height:size.height+"px",
+                    "max-width":"none","max-height":"none",transition:"none"})) el.style.setProperty(key,value,"important");
+            },{width,height});
+            await resize(1920,1080);
+            await expect(shown).toHaveAttribute("src",/current-4k\.jpg/);
+            await expect.poll(()=>requests.some(r=>r.album==="Queued 4K"&&r.resolution==="4k")).toBe(true);
+            expect(requests.find(r=>r.album==="Interstellar"&&r.resolution==="4k"))
+                .toMatchObject({width:3840,height:2160});
+            await expect(page.locator("#info-title")).toContainText("Canonical Interstellar");
+            await resize(1800,1000);
+            await resize(800,450);
+            await expect(shown).toHaveAttribute("src",/current-hd\.jpg/);
+            await expect(page.locator("#info-title")).toContainText("Canonical Interstellar");
+            // Moving between monitors can change only DPI, not stage CSS dimensions.
+            // CDP changes DPR and query.matches but does not emit the native change
+            // event. Deliver it to the real query registered by the production code.
+            const cdp = await page.context().newCDPSession(page);
+            const notifyDpi = () => page.evaluate(() => {
+                const query = window.artworkDpiQueries.at(-1);
+                query.dispatchEvent(new MediaQueryListEvent("change", {
+                    media:query.media,matches:query.matches,
+                }));
+            });
+            await cdp.send("Emulation.setDeviceMetricsOverride", {
+                width:900,height:600,deviceScaleFactor:3,mobile:false,
+            });
+            await notifyDpi();
+            await expect(shown).toHaveAttribute("src",/current-4k\.jpg/);
+            expect((await stage.boundingBox()).width).toBe(800);
+            await cdp.send("Emulation.setDeviceMetricsOverride", {
+                width:900,height:600,deviceScaleFactor:2,mobile:false,
+            });
+            await notifyDpi();
+            await expect(shown).toHaveAttribute("src",/current-hd\.jpg/);
+            await cdp.detach();
+            await page.waitForTimeout(500);
+            for(const album of ["Interstellar","Queued 4K"]) for(const resolution of ["hd","4k"])
+                expect(requests.filter(r=>r.album===album&&r.resolution===resolution)).toHaveLength(1);
+        });
+    });
     test("loads and queue-prefetches artwork only for the current stage orientation",
         async ({ page }) => {
             const cover = "https://streamingsoundtracks.com/images/cover/orientation.svg";
@@ -4051,7 +4135,9 @@ test.describe("the deployed player page", () => {
         await page.route(/\/api\/media\?/, (route) => {
                 const url = new URL(route.request().url());
                 const album = url.searchParams.get("album");
-                const orientation = url.searchParams.get("orientation") || "landscape";
+                expect(url.searchParams.has("orientation")).toBe(false);
+                const orientation = Number(url.searchParams.get("height"))
+                    > Number(url.searchParams.get("width")) ? "portrait" : "landscape";
                 requests.push({ album, orientation });
                 const slug = album === "Orientation Movie" ? "current" : "queued";
                 const size = orientation === "portrait" ? "w780" : "w1280";
@@ -4363,7 +4449,8 @@ test.describe("the deployed player page", () => {
         await page.route(/\/api\/media\?/, (route) => {
             const url = new URL(route.request().url());
             resolverAlbum = url.searchParams.get("album");
-            if (url.searchParams.get("orientation") === "portrait") {
+            expect(url.searchParams.has("orientation")).toBe(false);
+            if (Number(url.searchParams.get("height")) > Number(url.searchParams.get("width"))) {
                 portraitRoute = route;
                 return;
             }
@@ -4740,7 +4827,10 @@ test.describe("the deployed player page", () => {
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/media\?/, (route) => {
             resolverRequests++;
-            orientations.push(new URL(route.request().url()).searchParams.get("orientation"));
+            const dimensions = new URL(route.request().url()).searchParams;
+            expect(dimensions.has("orientation")).toBe(false);
+            orientations.push(Number(dimensions.get("height")) > Number(dimensions.get("width"))
+                ? "portrait" : "landscape");
             if (resolverRequests === 1)
                 return route.fulfill({ status: 502, json: { error: "temporarily_unavailable" } });
             return route.fulfill({ json: {

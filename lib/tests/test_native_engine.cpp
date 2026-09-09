@@ -131,8 +131,55 @@ struct CoverEngineTestAccess {
         CHECK(bytes == "SST image");
         CHECK_FALSE(engine.currentCover(bytes, -1));
     }
+    void artworkResize() {
+        struct HiddenWindow {
+            HWND value = CreateWindowExW(0, L"STATIC", L"Artwork resolution test",
+                WS_POPUP, 0, 0, 1280, 720, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            ~HiddenWindow() { if (value) DestroyWindow(value); }
+        } window;
+        REQUIRE(window.value != nullptr);
+        engine.hwnd_.store(window.value);
+        engine.settings.station = 0; engine.settings.backdrops = true;
+        state().settingsSnapshot = engine.settings;
+        ssc::TrackInfo current, queued;
+        current.album = "Crown, The"; queued.album = "Queued";
+        engine.scheduleMedia(current, {queued});
+        const auto hdEpoch = state().epoch;
+        CHECK(state().request.width == 1280);
+        CHECK(state().request.height == 720);
+        CHECK_FALSE(ssc::wants4kArtwork(state().request));
+        ssc::MediaResult canonical; canonical.album = "The Crown"; canonical.hasMetadata = true;
+        engine.publishMetadata(hdEpoch, canonical, 60);
+
+        SetWindowPos(window.value, nullptr, 0, 0, 3840, 2160, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        engine.onTimer(window.value, CoverEngine::kHeartbeat);
+        const auto uhdEpoch = state().epoch;
+        CHECK(uhdEpoch > hdEpoch);
+        CHECK(state().request.width == 3840);
+        CHECK(state().request.height == 2160);
+        CHECK(state().work.size() == 2); // current and queue use the new variant
+        for (const auto& work : state().work) CHECK(ssc::wants4kArtwork(work.request));
+        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        ssc::MediaResult fallback; fallback.album = "Crown, The";
+        engine.publishMetadata(uhdEpoch, fallback, 60);
+        CHECK(engine.info_.title() == L"The Crown (1:00)");
+
+        SetWindowPos(window.value, nullptr, 0, 0, 2560, 1440, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        engine.onTimer(window.value, CoverEngine::kHeartbeat);
+        CHECK(state().epoch == uhdEpoch); // no per-pixel request churn
+        SetWindowPos(window.value, nullptr, 0, 0, 2160, 3840, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        engine.onTimer(window.value, CoverEngine::kHeartbeat);
+        CHECK(state().epoch > uhdEpoch);
+        CHECK(ssc::wantsPortraitArtwork(state().request));
+        CHECK(ssc::wants4kArtwork(state().request));
+        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        engine.hwnd_.store(nullptr);
+    }
 };
 
+TEST_CASE("native resize updates current and queue resolution without downgrading metadata") {
+    CoverEngineTestAccess test; test.artworkResize();
+}
 TEST_CASE("native canonical metadata survives retries and resets only for a different track") {
     CoverEngineTestAccess test; test.canonicalRetry();
 }

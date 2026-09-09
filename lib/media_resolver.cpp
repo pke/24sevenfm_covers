@@ -304,6 +304,8 @@ MediaResult MediaResolver::resolve(const MediaRequest& request,
             || !cleanRequestText(request.artist, 180, false)
             || (useFanartClientKey && !cleanRequestText(request.fanartClientKey, 128, false))
             || (request.includeArt && !knownProviderList(request.providers))
+            || (request.includeArt && (request.width != 0 || request.height != 0)
+                && (request.width < 1 || request.height < 1 || request.width > 8192 || request.height > 8192))
             || (request.includeRatings && !knownCountries(request.ratingCountries))) {
         result.error = "invalid native media request";
         return result;
@@ -320,7 +322,8 @@ MediaResult MediaResolver::resolve(const MediaRequest& request,
     if (!request.artist.empty()) path += "&artist=" + urlEncode(request.artist);
     path += "&providers=" + urlEncode(request.includeArt ? request.providers : "tmdb");
     if (!request.includeArt) path += "&art=0";
-    else if (request.portrait) path += "&orientation=portrait";
+    if (request.includeArt && request.width > 0 && request.height > 0)
+        path += "&width=" + std::to_string(request.width) + "&height=" + std::to_string(request.height);
     if (useFanartClientKey)
         path += "&client_key=" + urlEncode(request.fanartClientKey);
     if (request.includeRatings) path += "&ratings=" + urlEncode(request.ratingCountries);

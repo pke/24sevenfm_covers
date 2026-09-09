@@ -9,7 +9,7 @@ ADR 0001 introduced the project-owned resolver used by the web player:
 
 ```text
 GET /api/media?album=<raw album>&track=<raw track>&artist=<raw artist>
-    &providers=<ordered providers>&ratings=DE,US&orientation=<landscape|portrait>
+    &providers=<ordered providers>&ratings=DE,US&width=<physical pixels>&height=<physical pixels>
 ```
 
 It owns soundtrack-title cleanup, compilation exceptions, movie/TV/game
@@ -85,7 +85,7 @@ third-party provider call.
 
 Cache identity contains raw album, track and artist plus ordered provider list,
 enabled artwork/ratings features, rating countries and landscape/portrait
-orientation. While fanart.tv artwork is enabled it also contains the personal client
+orientation and the HD/4K resolution class. While fanart.tv artwork is enabled it also contains the personal client
 key, so changing that key cannot reuse results resolved with the previous identity.
 Hits and authoritative misses are cached. Endpoint, transport, image
 and decode failures are not.
@@ -96,6 +96,13 @@ is independent of square-cover state. `CoverEngine::currentCover(bytes, stationI
 returns a square cover for foobar2000 only when its station identity matches the
 request; identity and bytes are checked under the same lock. Mixed-station selections
 are rejected rather than borrowing the globally active station's cover.
+
+Artwork requests include the rendering HWND's client width and height in physical
+pixels (bounded to 8192), following ADR 0001. No explicit poster/orientation or DPI
+parameter is sent: the API derives portrait from `height > width`. Local cache
+keys use that same rule. The shared timer observes orientation
+and HD/4K threshold changes, including fullscreen and monitor moves; sizes inside one
+class reuse the same current and queue entries. Metadata-only requests omit the hint.
 
 The public settings object belongs exclusively to the host UI thread. Startup,
 `repaint()` and manual retry copy it into the worker's mutex-protected snapshot;
@@ -251,7 +258,7 @@ against concurrent settings edits, blocked stale publishers, pending UI results,
 worker restarts and retry/queue preservation without networking. Deterministic
 tests also cover accepted canonical metadata surviving failed/legacy retries, retained
 exit and entry fades, rapid handoffs, reduced motion, UTF-16-equivalent text bounds,
-and station-scoped album-art export. Native off-screen
+HD/4K request/cache separation and station-scoped album-art export. Native off-screen
 dialog tests exercise actual WTL button routing, provider ordering, the mandatory
 rating-country selection, details/key persistence, opacity interpolation, rapid
 page changes, timer and parent-destruction cleanup, repaint clipping and no-animation

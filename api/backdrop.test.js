@@ -19,7 +19,7 @@ const {
     pickMedia,
     pickMovie,
     requestQueryValue,
-    requestedOrientation,
+    requestedViewport,
     requestedRatings,
     tintFromMeans,
     tintPreviewUrl,
@@ -27,6 +27,12 @@ const {
     trustedSteamGridDbUrl,
     trustedTvmazeUrl,
 } = require("./_lib/backdrop");
+
+function viewportQuery(orientation) {
+    return orientation === "portrait"
+        ? { width: "1080", height: "1920" }
+        : { width: "1920", height: "1080" };
+}
 
 // Existing resolver assertions intentionally focus on matching/art/rating output.
 // The normalized metadata envelope has its own contract tests below; omit that one
@@ -681,7 +687,7 @@ test("resolves the Inspector Clouseau theme to The Pink Panther Strikes Again", 
             track: "The Inspector Clouseau Theme",
             artist: "Henry Mancini",
             providers: "fanart,tmdb,tvmaze,steamgriddb",
-            ...(fixture.orientation ? { orientation: fixture.orientation } : {}),
+            ...viewportQuery(fixture.orientation),
         }), res);
 
         assert.equal(res.statusCode, 200);
@@ -810,7 +816,7 @@ test("resolves the TMNT Part II score to The Secret of the Ooze", async () => {
             track: "Main Titles",
             artist: "John Duprez",
             providers: "fanart,tmdb,tvmaze,steamgriddb",
-            ...(fixture.orientation ? { orientation: fixture.orientation } : {}),
+            ...viewportQuery(fixture.orientation),
         }), res);
 
         assert.equal(res.statusCode, 200);
@@ -919,7 +925,7 @@ test("resolves Queen's A Kind of Magic cue to Highlander in both orientations", 
             track: "Who Wants To Live Forever",
             artist: "Queen",
             providers: "fanart,tmdb,tvmaze,steamgriddb",
-            orientation,
+            ...viewportQuery(orientation),
         }), res);
 
         assert.equal(res.statusCode, 200);
@@ -986,7 +992,7 @@ test("resolves Thomas Newman's Up Close & Personal score to the 1996 film", asyn
             track: "Cafe",
             artist: "Thomas Newman",
             providers: "fanart,tmdb,tvmaze,steamgriddb",
-            orientation,
+            ...viewportQuery(orientation),
         }), res);
 
         assert.equal(res.statusCode, 200);
@@ -1039,7 +1045,7 @@ test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", 
             track: "Fratelli Chase",
             artist: "Dave Grusin",
             providers: "tmdb,tvmaze,steamgriddb",
-            orientation,
+            ...viewportQuery(orientation),
         }), res);
 
         assert.deepEqual(JSON.parse(res.body), {
@@ -1292,7 +1298,7 @@ test("resolves John Williams' Superman: The Movie album to the 1978 film", async
             track: "The Fortess Of Solitude",
             artist: "John Williams",
             providers: "fanart,tmdb,tvmaze,steamgriddb",
-            orientation,
+            ...viewportQuery(orientation),
         }), res);
 
         assert.equal(res.statusCode, 200);
@@ -1575,7 +1581,7 @@ test("removes a TV volume and chapter range before rotating its title article", 
         artist: "Joseph Shirley & Ludwig Goransson",
         providers: "tmdb",
         ratings: "US",
-        orientation: "portrait",
+        ...viewportQuery("portrait"),
     }), res);
 
     assert.equal(res.statusCode, 200);
@@ -2472,7 +2478,7 @@ test("resolves a dated Film Music anthology track with an alternate title", asyn
         artist: "Ennio Morricone",
         providers: "tmdb",
         ratings: "US",
-        orientation: "portrait",
+        ...viewportQuery("portrait"),
     }), res);
 
     assert.equal(res.statusCode, 200);
@@ -2670,11 +2676,14 @@ test("uses tiny provider-specific tint images", () => {
         "https://assets.fanart.tv/preview/movies/1/a.jpg");
 });
 
-test("accepts only explicit backdrop orientations", () => {
-    assert.equal(requestedOrientation(undefined), "landscape");
-    assert.equal(requestedOrientation("portrait"), "portrait");
-    assert.throws(() => requestedOrientation("square"), (error) =>
-        error && error.code === "invalid_orientation" && error.status === 400);
+test("accepts optional, paired and bounded physical viewport dimensions", () => {
+    assert.equal(requestedViewport(undefined, undefined), null);
+    assert.deepEqual(requestedViewport("1", "8192"), { width: 1, height: 8192 });
+    for (const [width, height] of [["0", "1"], ["1", undefined], ["8193", "1"],
+        ["1.5", "2"], ["01", "2"], [["1", "2"], "3"], ["1", "1e3"]]) {
+        assert.throws(() => requestedViewport(width, height), (error) =>
+            error && error.code === "invalid_viewport" && error.status === 400);
+    }
 });
 
 test("accepts only static SteamGridDB hero and grid CDN URLs", () => {
@@ -2877,7 +2886,7 @@ test("resolves a portrait game request through a SteamGridDB vertical grid", asy
     await handler(mockRequest({
         title: "Hades (Original Video Game Soundtrack)",
         providers: "steamgriddb",
-        orientation: "portrait",
+        ...viewportQuery("portrait"),
     }), res);
 
     assert.equal(res.statusCode, 200);
@@ -3224,7 +3233,7 @@ test("resolves Clint Bajakian's Outlaws soundtrack to the original game", async 
             artist: "Clint Bajakian",
             providers: "fanart,tmdb,tvmaze,steamgriddb",
             ratings: "DE,US",
-            ...(fixture.orientation ? { orientation: fixture.orientation } : {}),
+            ...viewportQuery(fixture.orientation),
         }), res);
 
         assert.equal(res.statusCode, 200);
@@ -3316,7 +3325,7 @@ test("resolves the Hyrule Symphony album to Ocarina of Time portrait art", async
         artist: "Koji Kondo",
         providers: "fanart,tmdb,tvmaze,steamgriddb",
         ratings: "DE,US",
-        orientation: "portrait",
+        ...viewportQuery("portrait"),
     }), res);
 
     assert.equal(res.statusCode, 200);
@@ -3489,7 +3498,7 @@ test("resolves The Journey Hunter Returns soundtrack to FIFA 18", async () => {
         artist: "Junkie XL",
         providers: "fanart,tmdb,tvmaze,steamgriddb",
         ratings: "US",
-        orientation: "portrait",
+        ...viewportQuery("portrait"),
     }), res);
 
     assert.equal(res.statusCode, 200);
@@ -4635,7 +4644,7 @@ test("resolves fanart first and returns a precomputed tint", async () => {
         + ", s-maxage=" + CACHE_SECONDS + ", stale-while-revalidate=86400");
 });
 
-test("uses a fanart poster only for an explicit portrait request", async () => {
+test("uses a fanart poster for a tall viewport", async () => {
     const handler = createHandler({
         env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
         fetchImpl: async (url) => {
@@ -4660,7 +4669,7 @@ test("uses a fanart poster only for an explicit portrait request", async () => {
     });
     const res = mockResponse();
     await handler(mockRequest({
-        title: "Arrival", providers: "fanart,tmdb", orientation: "portrait",
+        title: "Arrival", providers: "fanart,tmdb", ...viewportQuery("portrait"),
     }), res);
 
     assert.deepEqual(JSON.parse(res.body), {
@@ -4695,7 +4704,7 @@ test("falls back to TMDB when fanart is unavailable", async () => {
     });
 });
 
-test("uses TMDB poster_path for an explicit portrait request", async () => {
+test("uses TMDB poster_path for a tall viewport", async () => {
     let tintUrl = "";
     const handler = createHandler({
         env: { TMDB_API_KEY: "key" },
@@ -4707,7 +4716,7 @@ test("uses TMDB poster_path for an explicit portrait request", async () => {
     });
     const res = mockResponse();
     await handler(mockRequest({
-        title: "Arrival", providers: "tmdb", orientation: "portrait",
+        title: "Arrival", providers: "tmdb", ...viewportQuery("portrait"),
     }), res);
 
     assert.deepEqual(JSON.parse(res.body), {
@@ -4843,7 +4852,7 @@ test("resolves TVmaze landscape and portrait art through the exact TheTVDB id", 
 
     const portraitRes = mockResponse();
     await handler(mockRequest({
-        title: "Inspector Morse", providers: "tvmaze,tmdb", orientation: "portrait",
+        title: "Inspector Morse", providers: "tvmaze,tmdb", ...viewportQuery("portrait"),
     }), portraitRes);
     const poster = "https://static.tvmaze.com/uploads/images/original_untouched/poster.jpg";
     assert.deepEqual(JSON.parse(portraitRes.body), {

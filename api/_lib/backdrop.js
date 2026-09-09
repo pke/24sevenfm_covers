@@ -360,7 +360,7 @@ function debugRequestQuery(req) {
     const query = req && req.query && typeof req.query === "object" ? req.query : {};
     const result = {};
     for (const key of ["resolver_version", "album", "track", "title", "artist", "providers",
-        "ratings", "media_hint", "orientation", "art"]) {
+        "ratings", "media_hint", "art", "width", "height"]) {
         const value = query[key];
         if (typeof value === "string") result[key] = value.slice(0, 300);
         else if (Array.isArray(value)) result[key] = value.map((part) => String(part).slice(0, 300));
@@ -901,14 +901,15 @@ function requestedArt(value) {
     throw new ResolverError("invalid_art", 400, "art must be 0 or 1");
 }
 
-function requestedOrientation(value) {
-    const orientation = typeof value === "string" && value
-        ? value.trim().toLowerCase() : "landscape";
-    if (orientation !== "landscape" && orientation !== "portrait") {
-        throw new ResolverError("invalid_orientation", 400,
-            "orientation must be landscape or portrait");
-    }
-    return orientation;
+// Physical render pixels, including devicePixelRatio on the web. Both dimensions
+// are optional together; an absent hint preserves the existing HD selection.
+function requestedViewport(width, height) {
+    if (width === undefined && height === undefined) return null;
+    const dimension = value => typeof value === "string" && /^[1-9][0-9]{0,3}$/.test(value)
+        && Number(value) <= 8192;
+    if (!dimension(width) || !dimension(height))
+        throw new ResolverError("invalid_viewport", 400, "width and height must be integers from 1 to 8192");
+    return { width: Number(width), height: Number(height) };
 }
 
 function requestedMediaHint(value) {
@@ -1309,7 +1310,7 @@ function trustedFanartUrl(raw) {
     }
 }
 
-async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId) {
+async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId, prefer4k = false) {
     if (!env.FANART_API_KEY) return null;
     const type = mediaType(media);
     let fanartId = String(media && media.id || "");
@@ -1348,7 +1349,8 @@ async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId) {
         return "";
     };
     return {
-        landscape: best(type === "tv" ? "showbackground" : "moviebackground"),
+        landscape: (prefer4k ? best(type === "tv" ? "show4kbackground" : "movie4kbackground") : "")
+            || best(type === "tv" ? "showbackground" : "moviebackground"),
         portrait: best(type === "tv" ? "tvposter" : "movieposter"),
     };
 }
@@ -1582,7 +1584,7 @@ function hasSteamGridDbCredential(env) {
 }
 
 async function screenArt(fetchImpl, media, providers, clientKey, env,
-    orientation = "landscape") {
+    orientation = "landscape", prefer4k = false) {
     let tvdbIdPromise = null;
     let landscapeFallback = null;
     const tvdbId = () => {
@@ -1596,7 +1598,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
         let artwork = null;
         if (provider === "fanart") {
             artwork = await fanartArtwork(fetchImpl, media, clientKey, env,
-                mediaType(media) === "tv" && env.FANART_API_KEY ? await tvdbId() : undefined);
+                mediaType(media) === "tv" && env.FANART_API_KEY ? await tvdbId() : undefined, prefer4k);
         } else if (provider === "tmdb") {
             artwork = {
                 landscape: tmdbImageUrl(media.backdrop_path, "w1280"),
@@ -1731,7 +1733,11 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     artist = "", options = {}) {
     const ratingCountries = Array.isArray(options.ratingCountries) ? options.ratingCountries : [];
     const includeArt = options.includeArt !== false;
-    const artOrientation = options.artOrientation === "portrait" ? "portrait" : "landscape";
+    const viewport = options.viewport;
+    // Format and quality both derive from the same physical render dimensions.
+    // No client-supplied poster/orientation flag can override the aspect ratio.
+    const artOrientation = viewport && viewport.height > viewport.width ? "portrait" : "landscape";
+    const prefer4k = !!(viewport && (viewport.width > 1920 || viewport.height > 1080));
     const screenQueries = Array.isArray(options.screenQueries) && options.screenQueries.length
         ? options.screenQueries : [query];
     const requireExactScreenMatch = options.requireExactScreenMatch === true;
@@ -1887,7 +1893,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     dependencies.env).catch(() => [])
                 : Promise.resolve([]);
             const art = includeArt ? await screenArt(dependencies.fetchImpl, match.media, providers,
-                clientKey, dependencies.env, artOrientation) : null;
+                clientKey, dependencies.env, artOrientation, prefer4k) : null;
             if (art) return resolvedArtResponse(media, art, dependencies,
                 certifications, ratingCountries);
             matchedWithoutArt = matchedWithoutArt || media;
@@ -1948,7 +1954,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 dependencies.env).catch(() => [])
             : Promise.resolve([]);
         const art = includeArt ? await screenArt(dependencies.fetchImpl, screenFallback, providers,
-            clientKey, dependencies.env, artOrientation) : null;
+            clientKey, dependencies.env, artOrientation, prefer4k) : null;
         if (art) return resolvedArtResponse(media, art, dependencies,
             certifications, ratingCountries);
         matchedWithoutArt = matchedWithoutArt || media;
@@ -2063,8 +2069,8 @@ function createHandler(options = {}) {
             const providers = requestedProviders(requestQueryValue(req, "providers"));
             const ratingCountries = requestedRatings(requestQueryValue(req, "ratings"));
             const includeArt = requestedArt(requestQueryValue(req, "art"));
-            const artOrientation = requestedOrientation(
-                requestQueryValue(req, "orientation"));
+            const viewport = requestedViewport(requestQueryValue(req, "width"),
+                requestQueryValue(req, "height"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
             const quotedFromTitle = quotedFromScreenTitle(decodedTrack);
             const quotedAlbumTitle = quotedOriginalMusicTitle(decodedTitle);
@@ -2102,7 +2108,7 @@ function createHandler(options = {}) {
                 ? "" : decodedArtist, {
                 ratingCountries,
                 includeArt,
-                artOrientation,
+                viewport,
                 suppress: !!(metadataResolution && metadataResolution.suppress),
                 screenQueries: titleCandidates,
                 requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(decodedTitle))
@@ -2224,7 +2230,7 @@ module.exports = {
     requestQueryValue,
     requestedProviders,
     requestedRatings,
-    requestedOrientation,
+    requestedViewport,
     requestedMediaHint,
     resolveBackdrop,
     tintFromMeans,

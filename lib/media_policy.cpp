@@ -51,7 +51,8 @@ std::string mediaCacheKey(const TrackInfo& track, const MediaRequest& request) {
             ? request.fanartClientKey : std::string()) + "\n"
         + (request.includeArt ? "art" : "no-art") + "\n"
         + (request.includeRatings ? "ratings" : "no-ratings") + "\n"
-        + (request.portrait ? "portrait" : "landscape");
+        + (wantsPortraitArtwork(request) ? "portrait" : "landscape") + "\n"
+        + (wants4kArtwork(request) ? "4k" : "hd");
 }
 
 int coverRetryDelayMs(unsigned failure) {

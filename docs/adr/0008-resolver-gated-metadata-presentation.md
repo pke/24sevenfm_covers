@@ -30,7 +30,7 @@ Treat station metadata and display metadata as separate state:
 - **Canonical metadata** is the validated `metadata` object returned by
   `/api/media`. It is the preferred display value and remains authoritative for the
   current track once accepted.
-- **Artwork state** is independent. Landscape and portrait artwork may have
+- **Artwork state** is independent. Landscape/portrait and HD/4K artwork may have
   separate cache entries, requests and retries without resetting display metadata.
 
 Clients use the following handoff states:
@@ -87,12 +87,12 @@ the extra display latency outweighs centralizing this small, deterministic rule.
 - Metadata cache identity starts with the raw Album, Track and Artist plus the
   resolver cache version. A result from a different track must never be reused.
 - Artwork cache identity additionally includes provider configuration and
-  landscape/portrait orientation. These artwork dimensions do not make canonical
+  landscape/portrait orientation and HD/4K resolution class. These artwork dimensions do not make canonical
   metadata layout-specific.
 - A same-track station poll may refresh duration and the raw fallback, but it must
   not overwrite accepted canonical metadata.
-- An orientation change keeps the accepted title visible while the newly active
-  artwork orientation is loaded. It must neither re-hide the panel nor restore raw
+- An orientation or resolution-class change keeps the accepted title visible while the newly active
+  artwork variant is loaded. It must neither re-hide the panel nor restore raw
   spelling.
 - Landscape and portrait queue caches may both be retained for fast switching, but
   an entry is reusable only while its raw track identity still matches the

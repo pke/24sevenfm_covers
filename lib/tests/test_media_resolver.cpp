@@ -9,6 +9,29 @@ TEST_CASE("native resolver percent-encodes raw UTF-8 metadata") {
     CHECK(urlEncode("A+B & Caf\xC3\xA9") == "A%2BB%20%26%20Caf%C3%A9");
 }
 
+TEST_CASE("native resolver sends bounded physical viewport hints only for artwork") {
+    std::string path;
+    MediaResolverConfig config;
+    config.transport = [&](const std::string&, unsigned short, const std::string& p,
+            const std::string&, const std::string&, const std::string&, int) {
+        path = p; HttpResponse r; r.status = 200; r.body = "{}"; return r;
+    };
+    MediaRequest request; request.album = "Interstellar"; request.width = 3840; request.height = 2160;
+    MediaResolver(config).resolve(request);
+    CHECK(path.find("&width=3840&height=2160") != std::string::npos);
+    CHECK(path.find("orientation=") == std::string::npos);
+    request.width = 2160; request.height = 3840;
+    MediaResolver(config).resolve(request);
+    CHECK(path.find("&width=2160&height=3840") != std::string::npos);
+    CHECK(path.find("orientation=") == std::string::npos);
+    request.includeArt = false; MediaResolver(config).resolve(request);
+    CHECK(path.find("&width=") == std::string::npos);
+    request.includeArt = true; request.height = 0;
+    CHECK(MediaResolver(config).resolve(request).error == "invalid native media request");
+    request.height = 2160; request.width = 8193;
+    CHECK(MediaResolver(config).resolve(request).error == "invalid native media request");
+}
+
 TEST_CASE("native metadata limits match JavaScript UTF-16 units, not UTF-8 bytes") {
     std::string bmp, astral;
     for (int i = 0; i < 180; ++i) bmp += "\xE9\x9F\xB3";

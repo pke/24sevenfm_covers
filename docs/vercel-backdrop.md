@@ -21,6 +21,17 @@ content descriptors supplied by TMDB.
 With `art=0` and no `ratings`, `/api/media` performs metadata normalization only and
 returns before any artwork or catalog provider call.
 
+Artwork requests can add `width=3840&height=2160` to describe the current render
+surface in physical pixels. Both dimensions must be integers from 1 to 8192; omit
+both for HD landscape artwork. The server selects portrait when `height > width`;
+wide and square surfaces select landscape. Above 1920 pixels wide or 1080 pixels high,
+fanart.tv's movie/TV 4K backgrounds are preferred, with ordinary HD backgrounds as
+fallback. Portrait surfaces prefer real posters before landscape fallbacks. There
+is no separate orientation/poster or DPI parameter. Web multiplies stage CSS
+dimensions by devicePixelRatio; native clients send HWND client pixels. Current and
+queued artwork caches distinguish HD/4K classes rather than every window size.
+Tint still uses the selected fanart image's small preview, including for 4K artwork.
+
 ## Project settings
 
 Set the Vercel project's Root Directory to the repository root and add these
@@ -123,12 +134,12 @@ rewritten.
 Otherwise TMDB's matched result supplies `movie` versus `tv`, and SteamGridDB
 supplies `game`.
 
-Artwork requests default to `orientation=landscape`, which preserves the original
-backdrop contract. An explicit `orientation=portrait` selects fanart.tv movie/TV
+Artwork requests without dimensions default to HD landscape. A viewport whose
+`height` exceeds its `width` selects fanart.tv movie/TV
 posters, TMDB `poster_path`, TVmaze poster images, or a vertical SteamGridDB grid in
 the configured provider order. If every enabled provider lacks portrait art, the
-resolver retains the first valid landscape image as a fallback. The web player sends
-the portrait parameter only while its rendered stage is taller than it is wide. The
+resolver retains the first valid landscape image as a fallback. An obsolete
+`orientation` query value is ignored, even if it conflicts with the dimensions. The
 player keeps separate result and queue-prefetch caches for both orientations. On an
 aspect-ratio crossing it immediately reuses valid entries for the same title or exact
 queue identity and fills only missing entries for the newly active orientation. A
@@ -241,7 +252,7 @@ After deployment, verify a known soundtrack without printing any configured key:
 
 ```powershell
 curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Arrival"
-curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Arrival" --data-urlencode "orientation=portrait"
+curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Arrival" --data-urlencode "width=1080" --data-urlencode "height=1920"
 curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Hades" --data-urlencode "media_hint=game"
 curl.exe --get "https://YOUR-DOMAIN/api/media" --data-urlencode "title=Game Of Thrones" --data-urlencode "providers=tmdb" --data-urlencode "ratings=DE,US" --data-urlencode "art=0"
 curl.exe --get "https://YOUR-DOMAIN/api/tint" --data-urlencode "url=https://streamingsoundtracks.com/images/cover/040/B000FBFTCS.jpg"

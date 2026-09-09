@@ -124,6 +124,37 @@ Key points:
   mitigation remains the outer layer, and a WAF rate-limit rule covers `/api/*`.
   CORS is not treated as authentication or rate limiting.
 
+### Resolution-aware fanart.tv artwork (2026-09-10)
+
+Artwork requests may include `width` and `height`, the current rendering surface's
+dimensions in physical pixels. Both must be integers from 1 through 8192; omitting
+both selects HD landscape artwork. The server alone derives the artwork format:
+`height > width` selects portrait; wide and square surfaces select landscape. There
+is no separate poster/orientation or DPI parameter; obsolete `orientation` query
+values are ignored and cannot override the dimensions.
+
+A width above 1920 or a height above 1080
+prefers fanart.tv's `movie4kbackground` / `show4kbackground` collection, preserving
+the existing textless/likes ranking and falling back to the ordinary background
+collection when 4K is absent. This does not change provider ordering. Portrait mode
+still prefers actual posters, including a later provider's poster, before using a
+landscape background as fallback.
+
+The provider's [official API implementation](https://github.com/fanart-tv/fanart.tv-api)
+defines those separate 3840 × 2160 collections; the existing v3 endpoint already
+returns them. No separate endpoint, application key or client-side provider request
+is required. Tint continues to use the selected image's small `/preview/` variant,
+not its full 4K download. The 8 MiB and 8,847,360-pixel decode bounds also accommodate
+complete UHD and DCI 4K sources when no thumbnail is available.
+
+Web uses stage CSS dimensions multiplied by devicePixelRatio; native clients use
+the render HWND's client pixels without applying DPI a second time. Clients observe
+orientation and the HD/4K threshold on resize/fullscreen/DPI changes. Their current
+and queue caches separate these variants but do not split entries for every pixel
+of window size. Actual dimensions still travel in the request, so edge cache URLs
+can differ across sizes. Metadata-only requests omit the dimensions, and accepted
+canonical metadata remains independent of artwork resolution (ADR 0008).
+
 ## Consequences
 
 - The web player's user IP and each new cover-thumbnail URL flow through Vercel
