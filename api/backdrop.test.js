@@ -934,6 +934,72 @@ test("resolves Queen's A Kind of Magic cue to Highlander in both orientations", 
     }
 });
 
+test("resolves Thomas Newman's Up Close & Personal score to the 1996 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 9302, title: "Up Close & Personal", release_date: "1996-03-01",
+                backdrop_path: "/up-close-personal.jpg",
+                poster_path: "/up-close-personal-poster.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            if (parsed.pathname === "/v3/movies/9302") return response(200, {
+                moviebackground: [],
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/up-close-personal-poster.jpg",
+                    lang: "", likes: "5",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [181, 207, 230],
+    });
+    const artwork = {
+        landscape: {
+            backdrop: "https://image.tmdb.org/t/p/w1280/up-close-personal.jpg",
+            source: "tmdb",
+        },
+        portrait: {
+            backdrop: "https://assets.fanart.tv/fanart/up-close-personal-poster.jpg",
+            source: "fanart",
+        },
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Up Close & Personal",
+            track: "Cafe",
+            artist: "Thomas Newman",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            orientation,
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 9302, title: "Up Close & Personal", type: "movie" },
+            backdrop: artwork[orientation].backdrop,
+            source: artwork[orientation].source,
+            tint: [181, 207, 230],
+            metadata: {
+                album: "Up Close & Personal",
+                track: "Cafe",
+                artist: "Thomas Newman",
+            },
+        });
+    }
+
+    const movieSearches = requests.filter(({ pathname }) => pathname === "/3/search/movie");
+    assert.equal(movieSearches.length, 2);
+    for (const request of movieSearches) {
+        assert.equal(request.searchParams.get("query"), "Up Close & Personal");
+        assert.equal(request.searchParams.get("primary_release_year"), "1996");
+    }
+});
+
 test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", async () => {
     const searches = [];
     const handler = createHandler({

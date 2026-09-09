@@ -49,6 +49,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Up Close & Personal",
+        track: "Cafe",
+        artist: "Thomas Newman",
+        title: "Up Close & Personal (1996)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Medal Of Honor",
         track: "Attack On Fort Schmerzen",
         hint: "game",
