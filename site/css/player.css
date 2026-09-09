@@ -152,8 +152,18 @@
     backdrop-filter: blur(6px);
     color: var(--player-tint);
     text-align: center;
-    transition: color var(--backdrop-fade-duration) var(--backdrop-fade-easing),
+    opacity: 1;
+    visibility: visible;
+    transition: opacity var(--backdrop-fade-duration) var(--backdrop-fade-easing),
+                visibility 0s linear 0s,
+                color var(--backdrop-fade-duration) var(--backdrop-fade-easing),
                 margin-bottom .4s ease;
+}
+.info.metadata-pending {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition-delay: 0s, var(--backdrop-fade-duration), 0s, 0s;
 }
 .layout-poster .coverbox {
     grid-column: 1;

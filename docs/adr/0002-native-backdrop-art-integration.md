@@ -41,6 +41,11 @@ they format only the returned values and duration. This keeps composer names cor
 as well as titles and makes future normalization fixes available without a client
 release.
 
+ADR 0008 defines the shared visible-state handoff for these fields, including the
+resolver-gated startup panel, raw fallback, queue-prefetch reuse and orientation
+independence. It is normative for the web and Windows clients and for future React
+Native clients.
+
 ## Decision
 
 Implement resolver access, ratings, cache/queue policy and visual state once in the

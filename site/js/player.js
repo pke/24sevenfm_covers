@@ -741,6 +741,7 @@ var comingNextAlbumEl = $("coming-next-album"), comingNextArtistEl = $("coming-n
 var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
 var backdropRetryEl = $("backdrop-retry");
 var audioEl = $("audio");
+var infoEl = document.querySelector(".info");
 var infoTitleEl = $("info-title"), backchannelStatusEl = $("backchannel-status");
 var backchannelPairingEl = $("backchannel-pairing");
 var backchannelCodeEl = $("backchannel-code"), backchannelCodeLabelEl = $("backchannel-code-label");
@@ -751,6 +752,77 @@ var backchannelCancelEl = $("backchannel-cancel");
 function setInfo(title, artist) {
     infoTitleEl.textContent = title;
     $("info-artist").textContent = artist;
+}
+
+// The station feed is the fallback, while /api/media owns the canonical display
+// metadata. Keep that state independent from the orientation-specific artwork cache:
+// resizing the stage may fetch a different image, but it must never restore `, The`.
+var currentInfoFallback = null, currentInfoMetadata = null, currentInfoPending = true;
+var infoHandoffGeneration = 0, infoExitTimer = null;
+
+function infoTitleFor(metadata) {
+    if (!metadata) return "—";
+    var title = metadata.album || "";
+    if (title && metadata.track) title += " - " + metadata.track;
+    else if (metadata.track) title = metadata.track;
+    if (title && currentTrackLengthSeconds > 0) {
+        title += " (" + Math.floor(currentTrackLengthSeconds / 60) + ":"
+            + String(currentTrackLengthSeconds % 60).padStart(2, "0") + ")";
+    }
+    return title || "—";
+}
+
+function renderCurrentInfo() {
+    var metadata = currentInfoMetadata || currentInfoFallback;
+    setInfo(infoTitleFor(metadata), metadata && metadata.artist || "");
+}
+
+function revealCurrentInfo() {
+    renderCurrentInfo();
+    infoEl.classList.remove("metadata-pending");
+    infoEl.setAttribute("aria-hidden", "false");
+    infoEl.removeAttribute("inert");
+}
+
+function finishInfoExit(generation) {
+    if (generation !== infoHandoffGeneration) return;
+    infoExitTimer = null;
+    // The outgoing text stays mounted until its opacity transition has completed.
+    setInfo("", "");
+    if (!currentInfoPending) revealCurrentInfo();
+}
+
+function beginCurrentInfoResolution(fallback) {
+    currentInfoFallback = fallback || null;
+    currentInfoMetadata = null;
+    currentInfoPending = true;
+    var generation = ++infoHandoffGeneration;
+    clearTimeout(infoExitTimer);
+    infoExitTimer = null;
+    var alreadyHidden = infoEl.classList.contains("metadata-pending");
+    infoEl.classList.add("metadata-pending");
+    infoEl.setAttribute("aria-hidden", "true");
+    infoEl.setAttribute("inert", "");
+    var duration = alreadyHidden || reducedMotion.matches ? 0
+        : cssTimeMs(getComputedStyle(infoEl).getPropertyValue("--backdrop-fade-duration"));
+    if (!duration) {
+        finishInfoExit(generation);
+        return;
+    }
+    infoExitTimer = setTimeout(function () { finishInfoExit(generation); }, duration);
+}
+
+function updateCurrentInfoFallback(fallback) {
+    currentInfoFallback = fallback || null;
+    if (!currentInfoPending && !currentInfoMetadata) renderCurrentInfo();
+}
+
+function settleCurrentInfo(metadata) {
+    if (metadata) currentInfoMetadata = metadata;
+    else if (!currentInfoPending) return false;
+    currentInfoPending = false;
+    if (!infoExitTimer) revealCurrentInfo();
+    return !!metadata;
 }
 
 var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -1610,6 +1682,7 @@ async function poll() {
         // Prefer the feed's 40 px thumbnail for the whole-image colour mean. Keep
         // CoverLink as a compatibility fallback and the /500/ variant for display.
         updateCoverTint(isStationId ? "" : tintCover);
+        const rawInfo = { album: displayAlbum, track: track, artist: artist };
         if (album !== currentAlbum || track !== currentTrack || artist !== currentArtist
                 || isStationId !== stationIdActive) {
             const metadataChanged = trackIdentityChanged || artist !== currentArtist;
@@ -1622,19 +1695,20 @@ async function poll() {
             }
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
+            if (metadataChanged) {
+                beginCurrentInfoResolution(rawInfo);
+                // Station IDs are deliberately never sent to /api/media.
+                if (isStationId) settleCurrentInfo(null);
+            } else {
+                updateCurrentInfoFallback(rawInfo);
+            }
             if (metadataChanged) prepareRatingTrackVisibility(trackIdentityChanged);
             // Promote the prepared queue result in the same generation that starts
             // current-track revalidation. With no valid result, null clears the old
             // track through the normal fade before the resolver response arrives.
             if (trackIdentityChanged) updateBackdrop(prefetchedArt || null);
             else updateBackdrop();
-        }
-        let title = displayAlbum;
-        if (displayAlbum && track) title = displayAlbum + " - " + track;
-        else if (track) title = track;
-        if (title && lengthSec > 0)
-            title += " (" + Math.floor(lengthSec / 60) + ":" + String(lengthSec % 60).padStart(2, "0") + ")";
-        setInfo(title || "—", artist);
+        } else updateCurrentInfoFallback(rawInfo);
 
         const cover = isStationId ? station().logo : displayCover || station().logo;
         if (cover && cover !== shownUrl && cover !== loadingCoverUrl) showCover(cover);
@@ -2370,14 +2444,7 @@ function trustedNormalizedMetadata(value) {
 }
 
 function applyResolvedMetadata(metadata) {
-    if (!metadata) return;
-    var title = metadata.album;
-    if (metadata.track) title += " - " + metadata.track;
-    if (currentTrackLengthSeconds > 0) {
-        title += " (" + Math.floor(currentTrackLengthSeconds / 60) + ":"
-            + String(currentTrackLengthSeconds % 60).padStart(2, "0") + ")";
-    }
-    setInfo(title || "—", metadata.artist);
+    return settleCurrentInfo(metadata);
 }
 
 function setPlayerTint(tint) {
@@ -2502,7 +2569,9 @@ function requestBackdrop(cacheMode, prefetchedArt, resolverRetryFailures) {
             "landscape", ctl.signal, cacheMode).then(function (result) {
                 if (renderIsCurrent("backdrop", generation))
                     applyResolvedMetadata(result && result.metadata);
-        }).catch(function () { /* the next station poll retries canonical metadata */ })
+        }).catch(function () {
+            if (renderIsCurrent("backdrop", generation)) settleCurrentInfo(null);
+        })
             .finally(function () {
                 clearTimeout(request.kill);
                 if (backdropRequest === request) backdropRequest = null;
@@ -2510,6 +2579,8 @@ function requestBackdrop(cacheMode, prefetchedArt, resolverRetryFailures) {
         return;
     } // no media source
     if (hasPrefetchedResult) {
+        if (prefetchedArt && prefetchedArt.metadata)
+            applyResolvedMetadata(prefetchedArt.metadata);
         setMovieBackdrop(sstBackdropsEnabled() ? prefetchedArt : null, generation);
         setRatings(prefetchedArt && prefetchedArt.certifications || [], generation);
     }
@@ -2578,6 +2649,7 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
         setRatings(renderedArt && renderedArt.certifications || [], generation);
     } catch (e) {
         if (!renderIsCurrent("backdrop", generation)) return;
+        settleCurrentInfo(null);
         if (prefetchedArt) {
             // Queue artwork is already validated and visible. A best-effort refinement
             // must never turn that successful state back into the cover or empty badges.
@@ -3663,7 +3735,7 @@ function applyStation() {
     // The resolver is per-station now - always re-evaluate after a switch, even if
     // the new station plays an identically named album.
     currentAlbum = ""; currentTrack = ""; currentArtist = "";
-    setInfo("Loading…", "");
+    beginCurrentInfoResolution(null);
     setStatus("");
     if (audioWanted) setAudio(true); // retune the stream
     poll();
@@ -4232,7 +4304,7 @@ updateRefreshEl.addEventListener("click", function () {
 // --- go ----------------------------------------------------------------------
 applyLayout();
 enableLocalBackchannel();
-setInfo("Loading…", "");
+beginCurrentInfoResolution(null);
 document.addEventListener("visibilitychange", function () {
     if (!document.hidden) {
         resynchronizeStationIfStale();

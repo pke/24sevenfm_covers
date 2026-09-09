@@ -1462,9 +1462,10 @@ test.describe("the deployed player page", () => {
         // the outgoing badge concealed until the destination logo is ready. Even a
         // pointer wake during that wait may not reveal the stale front/back faces.
         secondTrack = true;
-        await expect(page.locator("#info-title"))
-            .toContainText("Next Rating Movie - Second Cue", { timeout: 7000 });
+        await expect(page.locator("#stage .info"))
+            .toHaveClass(/metadata-pending/, { timeout: 10000 });
         await expect.poll(() => secondResolverRequested).toBe(true);
+        await expect(page.locator("#stage .info")).not.toBeVisible();
         await expect(badges).toHaveClass(/track-handoff/);
         await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
         await page.mouse.move(fullscreenBox.x + fullscreenBox.width / 4,
@@ -1474,6 +1475,8 @@ test.describe("the deployed player page", () => {
         await expect(badges).toBeHidden();
 
         releaseSecondResolver();
+        await expect(page.locator("#info-title"))
+            .toContainText("Next Rating Movie - Second Cue");
         await expect(page.locator("#rating-de")).toHaveAttribute("aria-label", "Germany: FSK 16");
         await expect(badges).not.toHaveClass(/track-handoff/);
         await expect(badges).toHaveClass(/track-intro/);
@@ -3163,7 +3166,9 @@ test.describe("the deployed player page", () => {
         await expect(front).toHaveAttribute("src", /streamingsoundtracks\.com\/images\/logos\//);
         expect(await front.evaluate((img) => getComputedStyle(img).filter)).toContain("grayscale(1)");
         await expect.poll(() => pollRequests, { timeout: 10000 }).toBe(2);
-        await expect(page.locator("#info-title")).toHaveText("Loading…");
+        await expect(page.locator("#stage .info")).toHaveAttribute("aria-hidden", "true");
+        await expect(page.locator("#stage .info")).not.toBeVisible();
+        await expect(page.locator("#info-title")).toHaveText("");
         expect(logoRequested).toBe(true);
     });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
@@ -4087,6 +4092,43 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /cdn2\.steamgriddb\.com\/hero\/hades\.jpg/);
     });
+    test("reveals raw station metadata only after the media request fails", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/info-fallback.svg";
+        const sizedCover =
+            "https://streamingsoundtracks.com/images/cover/500/info-fallback.svg";
+        let mediaRoute = null;
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Fallback, The", Track: "Main Title", Artist: "Test Composer",
+                CoverLink: cover, Length: 132000,
+                PlayStart: "2026-08-20T12:00:00Z", SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/media\?/, (route) => { mediaRoute = route; });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => mediaRoute !== null).toBe(true);
+        const info = page.locator("#stage .info");
+        await expect(info).toHaveClass(/metadata-pending/);
+        await expect(info).toHaveAttribute("aria-hidden", "true");
+        await expect(info).not.toBeVisible();
+        expect(await info.evaluate((element) =>
+            getComputedStyle(element).transitionProperty.split(", ")))
+            .toContain("opacity");
+
+        await mediaRoute.fulfill({ status: 404, contentType: "application/json",
+            body: JSON.stringify({ error: "not_found" }) });
+        await expect(info).not.toHaveClass(/metadata-pending/);
+        await expect(info).toHaveAttribute("aria-hidden", "false");
+        await expect(info).toBeVisible();
+        await expect(page.locator("#info-title"))
+            .toHaveText("Fallback, The - Main Title (2:12)");
+    });
     test("normalizes the live rotated conjunction title for the resolver", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/history-title.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/history-title.svg";
@@ -4220,13 +4262,22 @@ test.describe("the deployed player page", () => {
         const cover = "https://streamingsoundtracks.com/images/cover/crown-season-2.svg";
         const sizedCover =
             "https://streamingsoundtracks.com/images/cover/500/crown-season-2.svg";
-        let resolverAlbum = "";
+        let resolverAlbum = "", pollRequests = 0, portraitRoute = null;
+        const resolvedBody = {
+            media: null, backdrop: null, source: null, tint: [255, 255, 255],
+            metadata: {
+                album: "The Crown: Season 2", track: "Your Majesty",
+                artist: "Rupert Gregson-Williams & Lorne Balfe",
+            },
+        };
+        await page.setViewportSize({ width: 1280, height: 800 });
         await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
             JSON.stringify({ sstBackdrops: { enabled: true,
                 options: { providers: ["tmdb"], cover: "show" } } })));
         await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
             const action = new URL(route.request().url()).searchParams.get("action");
             if (action === "GetQueue") return route.fulfill({ json: [] });
+            pollRequests++;
             return route.fulfill({ json: {
                 Album: "Crown, The: Season 2", Track: "Your Majesty",
                 Artist: "Rupert Gregson-Williams & Lorne Balfe",
@@ -4238,14 +4289,13 @@ test.describe("the deployed player page", () => {
             contentType: "image/svg+xml",
             body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
         await page.route(/\/api\/media\?/, (route) => {
-            resolverAlbum = new URL(route.request().url()).searchParams.get("album");
-            return route.fulfill({ json: {
-                media: null, backdrop: null, source: null, tint: [255, 255, 255],
-                metadata: {
-                    album: "The Crown: Season 2", track: "Your Majesty",
-                    artist: "Rupert Gregson-Williams & Lorne Balfe",
-                },
-            } });
+            const url = new URL(route.request().url());
+            resolverAlbum = url.searchParams.get("album");
+            if (url.searchParams.get("orientation") === "portrait") {
+                portraitRoute = route;
+                return;
+            }
+            return route.fulfill({ json: resolvedBody });
         });
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
@@ -4253,6 +4303,23 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#info-title"))
             .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
         await expect.poll(() => resolverAlbum).toBe("Crown, The: Season 2");
+
+        // A same-track station refresh must not restore the raw `, The` spelling.
+        await page.waitForTimeout(2100);
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await expect.poll(() => pollRequests).toBeGreaterThanOrEqual(2);
+        await expect(page.locator("#info-title"))
+            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+
+        // Portrait art has a separate cache/request, but title metadata does not.
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect.poll(() => portraitRoute !== null).toBe(true);
+        await expect(page.locator("#stage .info")).toBeVisible();
+        await expect(page.locator("#info-title"))
+            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await portraitRoute.fulfill({ json: resolvedBody });
+        await expect(page.locator("#info-title"))
+            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
     });
     test("maps a compilation album to its canonical TV series title", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/inspector-morse.svg";
@@ -4453,14 +4520,16 @@ test.describe("the deployed player page", () => {
                 `#movieA[src="${oldBackdrop}"], #movieB[src="${oldBackdrop}"]`);
             await expect(oldImage).toHaveClass(/show/);
 
-            await expect(page.locator("#info-title"))
-                .toContainText("New Boundary Movie", { timeout: 4000 });
             await expect.poll(() => newResolverRequested).toBe(true);
+            await expect(page.locator("#stage .info")).toHaveClass(/metadata-pending/);
+            await expect(page.locator("#stage .info")).not.toBeVisible();
             await expect(oldImage).not.toHaveClass(/show/);
             await expect(oldImage).toHaveAttribute("src", oldBackdrop);
             expect(queueRequests).toBe(2);
 
             releaseNewResolver();
+            await expect(page.locator("#info-title"))
+                .toContainText("New Boundary Movie");
             await expect(page.locator("#movieA.show, #movieB.show"))
                 .toHaveAttribute("src", newBackdrop);
         });
