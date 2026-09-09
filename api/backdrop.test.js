@@ -1244,6 +1244,68 @@ test("resolves the DC compilation Flying Sequence to Superman (1978)", async () 
     assert.equal(searches[0].searchParams.get("primary_release_year"), "1978");
 });
 
+test("resolves John Williams' Superman: The Movie album to the 1978 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 1924, title: "Superman", release_date: "1978-12-14",
+                backdrop_path: "/superman.jpg", poster_path: "/superman-poster.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            if (parsed.pathname === "/v3/movies/1924") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/superman.jpg",
+                    lang: "", likes: "10",
+                }],
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/superman-poster.jpg",
+                    lang: "", likes: "10",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [142, 169, 204],
+    });
+    const artwork = {
+        landscape: "https://assets.fanart.tv/fanart/superman.jpg",
+        portrait: "https://assets.fanart.tv/fanart/superman-poster.jpg",
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Superman: The Movie",
+            track: "The Fortess Of Solitude",
+            artist: "John Williams",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            orientation,
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 1924, title: "Superman", type: "movie" },
+            backdrop: artwork[orientation],
+            source: "fanart",
+            tint: [142, 169, 204],
+            metadata: {
+                album: "Superman: The Movie",
+                track: "The Fortess Of Solitude",
+                artist: "John Williams",
+            },
+        });
+    }
+
+    const movieSearches = requests.filter(({ pathname }) => pathname === "/3/search/movie");
+    assert.equal(movieSearches.length, 2);
+    for (const request of movieSearches) {
+        assert.equal(request.searchParams.get("query"), "Superman");
+        assert.equal(request.searchParams.get("primary_release_year"), "1978");
+    }
+});
+
 test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
     const providerQueries = [];
     const handler = createHandler({

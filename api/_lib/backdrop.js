@@ -142,6 +142,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Superman: The Movie",
+        artist: "John Williams",
+        title: "Superman (1978)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Kansas City",
         track: "Lullaby Of The Leaves",
         title: "Kansas City (1996)",
