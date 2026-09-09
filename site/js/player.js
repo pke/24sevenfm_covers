@@ -1104,7 +1104,10 @@ function makeRatingSlot(slot) {
         var commit = function (logo) {
             if (version !== currentVersion || !renderIsCurrent("backdrop", generation)) return;
             setFace(back, certification, logo);
-            token = nextToken;
+            // A text fallback after an image error is usable, but it is not a
+            // successful rendering of the logo-bearing token. Leave that token
+            // uncached so the same certification gets another preload attempt.
+            token = logo || !certification.logo ? nextToken : "";
             reveal(back === faces[0] ? "a" : "b", certification, replaceWhileHidden);
         };
         if (certification.logo) {

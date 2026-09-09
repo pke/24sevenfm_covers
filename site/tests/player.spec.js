@@ -1093,10 +1093,10 @@ test.describe("the deployed player page", () => {
         await usTvSlot.focus();
         await expect(descriptorBubble).toBeVisible();
     });
-    test("falls back to the existing US TV text badge when its logo cannot load",
+    test("falls back to US rating text and retries its logo on the next render",
         async ({ page }) => {
             const logo = "https://upload.wikimedia.org/wikipedia/commons/3/34/TV-MA_icon.svg";
-            let logoRequested = false;
+            let logoRequests = 0;
             await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
                 JSON.stringify({
                     sstRatings: { enabled: true, options: { countries: ["US"] } },
@@ -1127,12 +1127,15 @@ test.describe("the deployed player page", () => {
                 }],
             } }));
             await page.route(logo, (route) => {
-                logoRequested = true;
-                return route.fulfill({ status: 404, contentType: "text/plain", body: "missing" });
+                logoRequests++;
+                if (logoRequests === 1)
+                    return route.fulfill({ status: 404, contentType: "text/plain", body: "missing" });
+                return route.fulfill({ status: 200, contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>' });
             });
 
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            await expect.poll(() => logoRequested).toBe(true);
+            await expect.poll(() => logoRequests).toBe(1);
             const slot = page.locator("#rating-us");
             await expect(slot).toHaveClass(/show/);
             await expect(slot).toHaveAttribute("aria-label", "United States: TV-MA");
@@ -1141,6 +1144,21 @@ test.describe("the deployed player page", () => {
             await expect(slot).not.toHaveAttribute("tabindex", "0");
             await expect(slot.locator(".rating-face.has-logo")).toHaveCount(0);
             await expect(slot.locator(".rating-face img[src]")).toHaveCount(0);
+
+            // Re-render the unchanged certification. A previous image failure must
+            // not poison the token cache and permanently pin the text fallback.
+            await page.evaluate(() => {
+                const input = document.querySelector("#rating-us-enabled");
+                input.checked = false;
+                input.dispatchEvent(new Event("change"));
+                input.checked = true;
+                input.dispatchEvent(new Event("change"));
+            });
+            await expect.poll(() => logoRequests).toBeGreaterThanOrEqual(2);
+            await expect.poll(() => slot.locator(".rating-face.has-logo").count())
+                .toBeGreaterThan(0);
+            await expect(slot.locator(".rating-face.has-logo img").first())
+                .toHaveAttribute("src", logo);
         });
     test("previews local now-playing metadata from query parameters without polling the station",
         async ({ page }) => {
