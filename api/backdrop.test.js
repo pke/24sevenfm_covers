@@ -57,6 +57,17 @@ test("returns normalized album, track and composer metadata for every client", (
     });
 });
 
+test("corrects the malformed Jurassic World end-credits track separator", () => {
+    assert.deepEqual(normalizedTrackMetadata(
+        "Jurassic World: Fallen Kingdom",
+        "At Jurassic World's End Credits\\Suite",
+        "Michael Giacchino"), {
+        album: "Jurassic World: Fallen Kingdom",
+        track: "At Jurassic World's End Credits / Suite",
+        artist: "Michael Giacchino",
+    });
+});
+
 test("metadata-only media endpoint returns separate canonical fields without providers", async () => {
     let providerCalled = false;
     const handler = createHandler({

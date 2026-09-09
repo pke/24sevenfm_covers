@@ -288,6 +288,17 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
 ]);
+// Exact corrections for malformed station track metadata. Keep these separate
+// from METADATA_RESOLUTIONS: presentation-only fixes must not alter provider
+// matching, media hints, or composer validation.
+const TRACK_METADATA_CORRECTIONS = Object.freeze([
+    Object.freeze({
+        album: "Jurassic World: Fallen Kingdom",
+        track: "At Jurassic World's End Credits\\Suite",
+        artist: "Michael Giacchino",
+        canonicalTrack: "At Jurassic World's End Credits / Suite",
+    }),
+]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
     "streamingsoundtracks.com",
     "1980s.fm",
@@ -689,10 +700,17 @@ function decodeMetadataText(value) {
 }
 
 function normalizedTrackMetadata(album, track, artist) {
+    const decodedAlbum = decodeMetadataText(album);
+    const decodedTrack = decodeMetadataText(track);
+    const decodedArtist = decodeMetadataText(artist);
+    const correction = TRACK_METADATA_CORRECTIONS.find((entry) =>
+        normalizedTitle(entry.album) === normalizedTitle(decodedAlbum)
+            && normalizedTitle(entry.track) === normalizedTitle(decodedTrack)
+            && normalizedTitle(entry.artist) === normalizedTitle(decodedArtist));
     return {
-        album: unrotateTitleArticle(decodeMetadataText(album)),
-        track: decodeMetadataText(track),
-        artist: decodeMetadataText(artist),
+        album: unrotateTitleArticle(decodedAlbum),
+        track: correction ? correction.canonicalTrack : decodedTrack,
+        artist: decodedArtist,
     };
 }
 
