@@ -209,6 +209,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Fable",
+        track: "Fable Theme",
+        artist: "Danny Elfman",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Dead Cells - Soundtrack Part 1",
         artist: "Yoann Laulan",
         title: "Dead Cells",

@@ -3411,6 +3411,68 @@ test("resolves Inon Zur's Crysis soundtrack as the game", async () => {
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves Danny Elfman's Fable theme only through the game provider", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Fable")) return response(200, {
+                success: true, data: [{
+                    id: 5360022,
+                    name: "Fable",
+                    release_date: 1095120000,
+                    verified: true,
+                }],
+            });
+            if (value.includes("/heroes/game/5360022")) return response(200, {
+                success: true, data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/fable.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/fable.png" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [250, 240, 230],
+    });
+
+    const tmdbOnly = mockResponse();
+    await handler(mockRequest({
+        album: "Fable",
+        track: "Fable Theme",
+        artist: "Danny Elfman",
+        providers: "tmdb",
+        ratings: "DE,US",
+    }), tmdbOnly);
+
+    assert.deepEqual(JSON.parse(tmdbOnly.body), {
+        media: null,
+        backdrop: null,
+        source: null,
+        tint: [255, 255, 255],
+        certifications: [],
+    });
+    assert.equal(requests.length, 0);
+
+    const withGames = mockResponse();
+    await handler(mockRequest({
+        album: "Fable",
+        track: "Fable Theme",
+        artist: "Danny Elfman",
+        providers: "tmdb,steamgriddb",
+        ratings: "DE,US",
+    }), withGames);
+
+    assert.deepEqual(JSON.parse(withGames.body), {
+        media: { id: 5360022, title: "Fable", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/fable.png",
+        source: "steamgriddb",
+        tint: [250, 240, 230],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+});
+
 test("resolves Yoann Laulan's Dead Cells soundtrack as the game", async () => {
     const requests = [];
     const handler = createHandler({
