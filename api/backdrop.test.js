@@ -1072,6 +1072,74 @@ test("resolves Thomas Newman's Up Close & Personal score to the 1996 film", asyn
     }
 });
 
+test("resolves Armand Amar's Home score to the 2009 documentary", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: {
+            TMDB_API_KEY: "tmdb-key",
+            FANART_API_KEY: "fanart-key",
+            STEAMGRIDDB_API_KEY: "sgdb-key",
+        },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") {
+                assert.equal(parsed.searchParams.get("query"), "Home");
+                assert.equal(parsed.searchParams.get("primary_release_year"), "2009");
+                return response(200, { results: [{
+                    id: 62320,
+                    title: "Home",
+                    release_date: "2009-06-05",
+                    backdrop_path: "/home-2009.jpg",
+                    poster_path: "/home-2009-poster.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                assert.equal(parsed.searchParams.get("query"), "Home");
+                assert.equal(parsed.searchParams.get("first_air_date_year"), "2009");
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/movie/62320/release_dates") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/v3/movies/62320") return response(200, {
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/home-2009-poster.jpg",
+                    lang: "",
+                    likes: "8",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [246, 235, 219],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Home",
+        track: "Cum Dederit",
+        artist: "Armand Amar",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+        width: "1080",
+        height: "1920",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 62320, title: "Home", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/home-2009-poster.jpg",
+        source: "fanart",
+        tint: [246, 235, 219],
+        certifications: [],
+        metadata: {
+            album: "Home",
+            track: "Cum Dederit",
+            artist: "Armand Amar",
+        },
+    });
+    assert.equal(requests.some((request) => request.hostname === "www.steamgriddb.com"), false);
+});
+
 test("resolves Mark Suozzo's Love & Friendship soundtrack to the 2016 film", async () => {
     const requests = [];
     const handler = createHandler({

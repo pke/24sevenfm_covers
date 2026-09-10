@@ -163,6 +163,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Home",
+        track: "Cum Dederit",
+        artist: "Armand Amar",
+        title: "Home (2009)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Kansas City",
         track: "Lullaby Of The Leaves",
         title: "Kansas City (1996)",
