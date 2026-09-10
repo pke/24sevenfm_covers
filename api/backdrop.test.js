@@ -1017,6 +1017,68 @@ test("resolves Thomas Newman's Up Close & Personal score to the 1996 film", asyn
     }
 });
 
+test("resolves Mark Suozzo's Love & Friendship soundtrack to the 2016 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 296360, title: "Love & Friendship", release_date: "2016-05-13",
+                backdrop_path: "/love-friendship.jpg",
+                poster_path: "/love-friendship-poster.jpg",
+            }] });
+            if (parsed.pathname === "/v3/movies/296360") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/love-friendship.jpg",
+                    lang: "", likes: "8",
+                }],
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/love-friendship-poster.jpg",
+                    lang: "", likes: "6",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 241, 242],
+    });
+    const artwork = {
+        landscape: "https://assets.fanart.tv/fanart/love-friendship.jpg",
+        portrait: "https://assets.fanart.tv/fanart/love-friendship-poster.jpg",
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Love & Friendship",
+            track: "String Quartet",
+            artist: "Mark Suozzo",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ...viewportQuery(orientation),
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 296360, title: "Love & Friendship", type: "movie" },
+            backdrop: artwork[orientation],
+            source: "fanart",
+            tint: [255, 241, 242],
+            metadata: {
+                album: "Love & Friendship",
+                track: "String Quartet",
+                artist: "Mark Suozzo",
+            },
+        });
+    }
+
+    const movieSearches = requests.filter(({ pathname }) => pathname === "/3/search/movie");
+    assert.equal(movieSearches.length, 2);
+    for (const request of movieSearches) {
+        assert.equal(request.searchParams.get("query"), "Love & Friendship");
+        assert.equal(request.searchParams.get("primary_release_year"), "2016");
+    }
+});
+
 test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", async () => {
     const searches = [];
     const handler = createHandler({

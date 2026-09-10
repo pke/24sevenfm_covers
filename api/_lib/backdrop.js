@@ -59,6 +59,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Love & Friendship",
+        artist: "Mark Suozzo",
+        title: "Love & Friendship (2016)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Medal Of Honor",
         track: "Attack On Fort Schmerzen",
         hint: "game",
