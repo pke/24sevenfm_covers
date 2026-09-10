@@ -195,6 +195,104 @@ test("falls back to an exact MusicBrainz ASIN when the station page is blocked",
         + ", s-maxage=" + CREDIT_CACHE_SECONDS + ", stale-while-revalidate=86400");
 });
 
+test("falls back to an exact MusicBrainz track credit when the station page is blocked",
+    async () => {
+        const requests = [];
+        const waits = [];
+        const handler = createCreditHandler({
+            env: { ALBUM_CREDIT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
+            waitImpl: async (milliseconds) => { waits.push(milliseconds); },
+            fetchImpl: async (url) => {
+                const parsed = new URL(url);
+                requests.push(parsed);
+                if (parsed.hostname === "streamingsoundtracks.com") {
+                    return new Response("blocked", { status: 403,
+                        headers: { "content-type": "text/html" } });
+                }
+                if (parsed.searchParams.has("query")) return Response.json({ releases: [{
+                    asin: "B00R3TMCNO",
+                    "artist-credit": [{ name: "Wrong release artist" }],
+                    "release-group": { id: "02aab3c1-162f-452a-b24a-fc314f7fa804" },
+                }] });
+                assert.equal(parsed.searchParams.get("release-group"),
+                    "02aab3c1-162f-452a-b24a-fc314f7fa804");
+                assert.equal(parsed.searchParams.get("inc"), "recordings+artist-credits");
+                return Response.json({ releases: [
+                    {
+                        asin: "B00R3TMCNO",
+                        media: [{ tracks: [{
+                            title: "The Journey",
+                            "artist-credit": [{ name: "Ólafur Arnalds" }],
+                            recording: {
+                                title: "The Journey",
+                                "artist-credit": [{ name: "Wrong recording artist" }],
+                            },
+                        }] }],
+                    },
+                    {
+                        asin: "ANOTHER123",
+                        media: [{ tracks: [{
+                            title: "The Journey",
+                            "artist-credit": [{ name: "Unrelated Artist" }],
+                        }] }],
+                    },
+                ] });
+            },
+        });
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Broadchurch",
+            track: "The Journey",
+            url: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00R3TMCNO",
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), { artist: "Ólafur Arnalds" });
+        assert.equal(requests.length, 3);
+        assert.deepEqual(waits, [1100]);
+        assert.equal(res.headers.get("cache-control"), "public, max-age="
+            + CREDIT_CACHE_SECONDS + ", s-maxage=" + CREDIT_CACHE_SECONDS
+            + ", stale-while-revalidate=86400");
+    });
+
+test("does not substitute a MusicBrainz release artist for a missing exact track", async () => {
+    const handler = createCreditHandler({
+        env: { ALBUM_CREDIT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
+        waitImpl: async () => {},
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.hostname === "streamingsoundtracks.com") {
+                return new Response("blocked", { status: 403,
+                    headers: { "content-type": "text/html" } });
+            }
+            if (parsed.searchParams.has("query")) return Response.json({ releases: [{
+                asin: "B00R3TMCNO",
+                "artist-credit": [{ name: "Wrong release artist" }],
+                "release-group": { id: "02aab3c1-162f-452a-b24a-fc314f7fa804" },
+            }] });
+            return Response.json({ releases: [{
+                asin: "B00R3TMCNO",
+                media: [{ tracks: [{
+                    title: "Another Track",
+                    "artist-credit": [{ name: "Wrong track artist" }],
+                }] }],
+            }] });
+        },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Broadchurch",
+        track: "The Journey",
+        url: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00R3TMCNO",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), { artist: "" });
+    assert.equal(res.headers.get("cache-control"), "public, max-age="
+        + CREDIT_MISS_CACHE_SECONDS + ", s-maxage=" + CREDIT_MISS_CACHE_SECONDS
+        + ", stale-while-revalidate=60");
+});
+
 test("does not send custom station album ids to MusicBrainz", async () => {
     let requests = 0;
     const handler = createCreditHandler({

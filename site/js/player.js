@@ -2612,6 +2612,12 @@ function trustedNormalizedMetadata(value) {
 }
 
 function applyResolvedMetadata(metadata) {
+    // Canonical title normalization must not erase a composer already supplied by
+    // the station feed. The resolver can legitimately return an empty artist when
+    // its credit lookup is unavailable, while album/track normalization succeeded.
+    if (metadata && !metadata.artist && currentInfoFallback && currentInfoFallback.artist) {
+        metadata = Object.assign({}, metadata, { artist: currentInfoFallback.artist });
+    }
     return settleCurrentInfo(metadata);
 }
 

@@ -4546,6 +4546,36 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#info-title"))
             .toHaveText("Fallback, The - Main Title (2:12)");
     });
+    test("keeps the station composer when normalized metadata has no artist", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/composer-fallback.svg";
+        const sizedCover =
+            "https://streamingsoundtracks.com/images/cover/500/composer-fallback.svg";
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+            const action = new URL(route.request().url()).searchParams.get("action");
+            if (action === "GetQueue") return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Crown, The: Season 2", Track: "Your Majesty",
+                Artist: "Rupert Gregson-Williams & Lorne Balfe", CoverLink: cover,
+                Length: 254000, PlayStart: "2026-08-20T12:00:00Z",
+                SystemTime: "2026-08-20T12:00:00Z",
+            } });
+        });
+        await page.route(sizedCover, (route) => route.fulfill({ status: 200,
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(/\/api\/media\?/, (route) => route.fulfill({ json: {
+            media: { id: 65494, title: "The Crown", type: "tv" },
+            backdrop: null, source: null,
+            metadata: { album: "The Crown: Season 2", track: "Your Majesty", artist: "" },
+        } }));
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+
+        await expect(page.locator("#info-title"))
+            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await expect(page.locator("#info-artist"))
+            .toHaveText("Rupert Gregson-Williams & Lorne Balfe");
+    });
     test("normalizes the live rotated conjunction title for the resolver", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/history-title.svg";
         const sizedCover = "https://streamingsoundtracks.com/images/cover/500/history-title.svg";

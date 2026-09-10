@@ -5,6 +5,7 @@ const { AsyncLocalStorage } = require("node:async_hooks");
 const CREDIT_CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
 const CREDIT_MISS_CACHE_SECONDS = 15 * 60;
 const CREDIT_TIMEOUT_MS = 3000;
+const MUSICBRAINZ_TRACK_TIMEOUT_MS = 7500;
 const MUSICBRAINZ_RETRY_MS = 1100;
 const debugLogContext = new AsyncLocalStorage();
 let debugRequestSequence = 0;
@@ -167,19 +168,44 @@ function artistFromAlbumHtml(html, album, track) {
     return "";
 }
 
+function musicBrainzCredit(credit) {
+    const artist = (Array.isArray(credit) ? credit : []).map((entry) => {
+        if (!entry || typeof entry !== "object") return "";
+        const name = String(entry.name || entry.artist && entry.artist.name || "");
+        return name + String(entry.joinphrase || "");
+    }).join("").replace(/\s+/g, " ").trim();
+    return artist && artist.length <= 180 && !/[\u0000-\u001F\u007F]/.test(artist)
+        ? artist : "";
+}
+
 function musicBrainzArtist(releases, asin) {
     const artists = new Set();
     for (const release of Array.isArray(releases) ? releases : []) {
         if (!release || String(release.asin || "").toUpperCase() !== asin) continue;
-        const credit = Array.isArray(release["artist-credit"])
-            ? release["artist-credit"] : [];
-        const artist = credit.map((entry) => {
-            if (!entry || typeof entry !== "object") return "";
-            const name = String(entry.name || entry.artist && entry.artist.name || "");
-            return name + String(entry.joinphrase || "");
-        }).join("").replace(/\s+/g, " ").trim();
+        const artist = musicBrainzCredit(release["artist-credit"]);
         if (artist && artist.length <= 180 && !/[\u0000-\u001F\u007F]/.test(artist))
             artists.add(artist);
+    }
+    return artists.size === 1 ? artists.values().next().value : "";
+}
+
+function musicBrainzTrackArtist(releases, asin, track) {
+    const wantedTrack = normalizedCreditText(track);
+    if (!wantedTrack) return "";
+    const artists = new Set();
+    for (const release of Array.isArray(releases) ? releases : []) {
+        if (!release || String(release.asin || "").toUpperCase() !== asin) continue;
+        for (const medium of Array.isArray(release.media) ? release.media : []) {
+            for (const candidate of Array.isArray(medium && medium.tracks)
+                ? medium.tracks : []) {
+                const recording = candidate && candidate.recording;
+                const titles = [candidate && candidate.title, recording && recording.title];
+                if (!titles.some((title) => normalizedCreditText(title) === wantedTrack)) continue;
+                const artist = musicBrainzCredit(candidate["artist-credit"])
+                    || musicBrainzCredit(recording && recording["artist-credit"]);
+                if (artist) artists.add(artist);
+            }
+        }
     }
     return artists.size === 1 ? artists.values().next().value : "";
 }
@@ -270,17 +296,12 @@ async function fetchAlbumArtist(fetchImpl, url, album, track) {
     return artistFromAlbumHtml(new TextDecoder(encoding).decode(bytes), album, track);
 }
 
-async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
-    const asin = new URL(albumUrl).searchParams.get("asin").toUpperCase();
-    if (!AMAZON_ASIN.test(asin)) return null;
-    const url = new URL("https://musicbrainz.org/ws/2/release/");
-    url.searchParams.set("query", "asin:" + asin);
-    url.searchParams.set("fmt", "json");
-    url.searchParams.set("limit", "5");
+async function fetchMusicBrainzJson(fetchImpl, url, asin, waitImpl, phase,
+    attempts = 2, timeoutMs = CREDIT_TIMEOUT_MS, retryTimeouts = true) {
     const startedAt = Date.now();
-    debugLog("info", "fallback.request", { provider: "musicbrainz", asin });
+    debugLog("info", "fallback.request", { provider: "musicbrainz", asin, phase });
     let response;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
         try {
             response = await fetchImpl(url, {
                 redirect: "manual",
@@ -288,13 +309,15 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
                     "Accept": "application/json",
                     "User-Agent": MUSICBRAINZ_USER_AGENT,
                 },
-                signal: AbortSignal.timeout(CREDIT_TIMEOUT_MS),
+                signal: AbortSignal.timeout(timeoutMs),
             });
         } catch (error) {
-            if (attempt === 0) {
+            if (attempt + 1 < attempts
+                    && (retryTimeouts || error && error.name !== "TimeoutError")) {
                 debugLog("warn", "fallback.retry", {
                     provider: "musicbrainz",
                     asin,
+                    phase,
                     reason: error && error.name || "network_error",
                     delay_ms: MUSICBRAINZ_RETRY_MS,
                 });
@@ -304,6 +327,7 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
             debugLog("warn", "fallback.failure", {
                 provider: "musicbrainz",
                 asin,
+                phase,
                 duration_ms: Date.now() - startedAt,
                 error_name: error && error.name || "Error",
                 error_message: error && error.message || "request failed",
@@ -311,10 +335,11 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
             throw error;
         }
         const retryable = response.status === 429 || response.status >= 500;
-        if (attempt === 0 && retryable) {
+        if (attempt + 1 < attempts && retryable) {
             debugLog("warn", "fallback.retry", {
                 provider: "musicbrainz",
                 asin,
+                phase,
                 reason: "http_" + response.status,
                 delay_ms: MUSICBRAINZ_RETRY_MS,
             });
@@ -327,6 +352,7 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
         debugLog("warn", "fallback.rejected", {
             provider: "musicbrainz",
             asin,
+            phase,
             status: response && response.status || 0,
             duration_ms: Date.now() - startedAt,
         });
@@ -339,10 +365,45 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
     let body;
     try { body = JSON.parse(new TextDecoder("utf-8").decode(bytes)); }
     catch (error) { throw new CreditError("credit_lookup_unavailable", 502); }
-    const artist = musicBrainzArtist(body && body.releases, asin);
+    return body;
+}
+
+async function fetchMusicBrainzArtist(fetchImpl, albumUrl, track, waitImpl) {
+    const asin = new URL(albumUrl).searchParams.get("asin").toUpperCase();
+    if (!AMAZON_ASIN.test(asin)) return null;
+    const searchUrl = new URL("https://musicbrainz.org/ws/2/release/");
+    searchUrl.searchParams.set("query", "asin:" + asin);
+    searchUrl.searchParams.set("fmt", "json");
+    searchUrl.searchParams.set("limit", "25");
+    const startedAt = Date.now();
+    const exactTrack = !!String(track || "").trim();
+    const search = await fetchMusicBrainzJson(fetchImpl, searchUrl, asin, waitImpl,
+        "release-search", 2,
+        exactTrack ? MUSICBRAINZ_TRACK_TIMEOUT_MS : CREDIT_TIMEOUT_MS, !exactTrack);
+    let artist;
+    if (exactTrack) {
+        const releaseGroups = new Set((Array.isArray(search && search.releases)
+            ? search.releases : []).filter((release) => release
+                && String(release.asin || "").toUpperCase() === asin)
+            .map((release) => release["release-group"] && release["release-group"].id)
+            .filter(Boolean));
+        if (releaseGroups.size !== 1) return "";
+        await waitImpl(MUSICBRAINZ_RETRY_MS);
+        const releasesUrl = new URL("https://musicbrainz.org/ws/2/release/");
+        releasesUrl.searchParams.set("release-group", releaseGroups.values().next().value);
+        releasesUrl.searchParams.set("inc", "recordings+artist-credits");
+        releasesUrl.searchParams.set("fmt", "json");
+        releasesUrl.searchParams.set("limit", "100");
+        const releases = await fetchMusicBrainzJson(fetchImpl, releasesUrl, asin, waitImpl,
+            "release-tracks", 2, MUSICBRAINZ_TRACK_TIMEOUT_MS, false);
+        artist = musicBrainzTrackArtist(releases && releases.releases, asin, track);
+    } else {
+        artist = musicBrainzArtist(search && search.releases, asin);
+    }
     debugLog("info", "fallback.response", {
         provider: "musicbrainz",
         asin,
+        exact_track: exactTrack,
         has_artist: !!artist,
         duration_ms: Date.now() - startedAt,
     });
@@ -353,14 +414,11 @@ async function fetchAlbumArtistWithFallback(fetchImpl, url, album, track, waitIm
     try {
         return await fetchAlbumArtist(fetchImpl, url, album, track);
     } catch (stationError) {
-        // MusicBrainz's release-level artist is not a safe substitute for a requested
-        // track credit. Retry the station page later instead of returning a wrong name.
-        if (String(track || "").trim()) throw stationError;
         const canFallback = !(stationError instanceof CreditError)
             || stationError.code === "album_page_unavailable";
         if (!canFallback) throw stationError;
         try {
-            const artist = await fetchMusicBrainzArtist(fetchImpl, url, waitImpl);
+            const artist = await fetchMusicBrainzArtist(fetchImpl, url, track, waitImpl);
             if (artist !== null) return artist;
         } catch (fallbackError) {
             debugLog("warn", "fallback.unavailable", {
