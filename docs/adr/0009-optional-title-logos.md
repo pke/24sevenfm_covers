@@ -43,6 +43,12 @@ renderer established by ADR 0002. Metadata handoffs follow ADR 0008.
   top of the panel. Its full image height does not increase panel height. While a
   logo is visible, panel width is determined by the remaining visible text rather
   than the hidden album heading.
+- The web player's Poster analyzer is anchored to the stage's bottom edge and grows
+  upward, allowing peaks to reach into the lower part of the information panel.
+  Spectrum and Oscilloscope use the same strip height. The panel keeps its normal
+  geometry without extra analyzer padding or clearance.
+  This is the permanent placement for Spectrum and Oscilloscope, regardless of
+  logo availability or setting. Fill keeps its corner.
 - Fade album text and logos, retain outgoing pixels until the exit completes, and
   interpolate panel dimensions. Rapid toggles continue from the current visible
   state. Respect browser reduced motion and Windows client-animation preferences.

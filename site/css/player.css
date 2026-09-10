@@ -564,8 +564,10 @@
 }
 .layout-poster .stage-spectrum {
     left: 50%;
-    top: var(--spectrum-top, 72%);
-    transform: translate(-50%, -50%);
+    /* Grow upward from the stage edge; peaks may reach into the compact panel. */
+    top: auto;
+    bottom: 0;
+    transform: translateX(-50%);
 }
 .layout-poster.no-cover .stage-spectrum {
     width: min(var(--cover-side, 12rem), var(--info-width, var(--cover-side, 12rem)));

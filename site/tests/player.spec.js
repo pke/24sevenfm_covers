@@ -266,6 +266,71 @@ test.describe("the deployed player page", () => {
         }
     });
 
+    test("anchors both analyzers to the stage bottom without enlarging the info box", async ({ page }) => {
+        await mockTitleLogoFeed(page);
+        await page.route("https://assets.fanart.tv/fanart/docked-logo.svg", route =>
+            route.fulfill({ contentType: "image/svg+xml", headers: { "access-control-allow-origin": "*" },
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="250"><rect width="600" height="250" fill="white"/></svg>' }));
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+            media: null, backdrop: null, source: null,
+            logo: new URL(route.request().url()).searchParams.get("logos") === "1"
+                ? { url: "https://assets.fanart.tv/fanart/docked-logo.svg", source: "fanart" } : null,
+            metadata: { album: "The Empire Strikes Back", track: "The Battle of Hoth", artist: "John Williams" },
+        } }));
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1&sstTitleLogos=1&analyzer=spectrum&remaining=rolldown");
+        await expect(page.locator(".info")).toHaveClass(/has-media-logo/);
+        for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 },
+            { width: 844, height: 390 }]) {
+            await page.setViewportSize(viewport);
+            const infoByLogo = new Map();
+            let spectrumHeight;
+            for (const type of ["spectrum", "oscilloscope"]) {
+                await openSettingsTab(page, "Visualizations");
+                await page.locator(`label.seg:has(input[name="analyzer-type"][value="${type}"])`).click();
+                for (const logo of [true, false]) {
+                    await openSettingsTab(page, "Station");
+                    await page.locator("#title-logos-enabled").setChecked(logo);
+                    if (logo) await expect(page.locator(".info"),
+                        `${type}, ${viewport.width}x${viewport.height}, logo enabled`).toHaveClass(/has-media-logo/);
+                    else await expect(page.locator(".info")).not.toHaveClass(/has-media-logo/);
+                    await page.locator("#stage").evaluate(element =>
+                        element.scrollIntoView({ block: "center", behavior: "instant" }));
+                    const boxes = await stableElementRects(page, {
+                        stage: "#stage", info: ".info", analyzer: "#stage-spectrum",
+                        countdown: "#countdown", artist: "#info-artist", track: "#info-track",
+                        audio: "#stage-audio", fullscreen: "#fullscreen",
+                    });
+                    expect(Math.abs(boxes.analyzer.bottom - boxes.stage.bottom))
+                        .toBeLessThanOrEqual(1);
+                    if (type === "spectrum") spectrumHeight = boxes.analyzer.height;
+                    else expect(boxes.analyzer.height).toBeCloseTo(spectrumHeight, 0);
+                    for (const [name, id] of [["audio", "stage-audio"], ["fullscreen", "fullscreen"]]) {
+                        const control = boxes[name];
+                        const hit = await page.evaluate(({ x, y }) =>
+                            document.elementFromPoint(x, y)?.closest(".stage-button")?.id,
+                        { x: (control.left + control.right) * .5, y: (control.top + control.bottom) * .5 });
+                        expect(hit).toBe(id);
+                    }
+                    const infoGeometry = { top: boxes.info.top - boxes.stage.top, height: boxes.info.height };
+                    if (infoByLogo.has(logo)) {
+                        expect(infoGeometry.top).toBeCloseTo(infoByLogo.get(logo).top, 0);
+                        expect(infoGeometry.height).toBeCloseTo(infoByLogo.get(logo).height, 0);
+                    } else infoByLogo.set(logo, infoGeometry);
+                    expect(boxes.info.top).toBeGreaterThanOrEqual(boxes.stage.top);
+                    if (logo) {
+                        const artwork = await page.locator("#media-logo canvas").boundingBox();
+                        expect(artwork.y + artwork.height).toBeLessThan(boxes.analyzer.top);
+                    }
+                }
+            }
+        }
+        await openSettingsTab(page, "Common");
+        await page.locator('label.seg:has(input[name="layout"][value="0"])').click();
+        await expect(page.locator("#stage > #stage-spectrum")).toHaveCount(1);
+        await page.locator('label.seg:has(input[name="layout"][value="1"])').click();
+        await expect(page.locator("#stage > #stage-spectrum")).toHaveCount(1);
+    });
+
     test("falls back to the album text when a title logo cannot load", async ({ page }) => {
         await mockTitleLogoFeed(page);
         await page.route("https://assets.fanart.tv/fanart/broken-title.png", route => route.abort());
@@ -2714,26 +2779,21 @@ test.describe("the deployed player page", () => {
                 getComputedStyle(info).color.match(/[\d.]+/g).slice(0, 3).map(Number));
             expect(rendered.runs).toBe(24);
             expect(rendered.first).toEqual(infoTint);
-            const expectSpectrumClearOfInfo = async () => {
+            const expectSpectrumAtStageBottom = async () => {
                 // Fullscreen changes the stage before ResizeObserver has necessarily
-                // recomputed the spectrum gap. Require three animation frames with
+                // recomputed the canvas dimensions. Require three animation frames with
                 // unchanged boxes and no running geometry transition, then assert the
                 // exact snapshot that satisfied that condition.
                 const boxes = await stableElementRects(page, {
                     stage: "#stage", spectrum: "#stage-spectrum",
-                    cover: "#coverbox", info: ".info",
+                    cover: "#coverbox", info: ".info", artist: "#info-artist",
                 });
                 expect(boxes.spectrum.left).toBeGreaterThanOrEqual(boxes.stage.left);
                 expect(boxes.spectrum.top).toBeGreaterThanOrEqual(boxes.stage.top);
                 expect(boxes.spectrum.right).toBeLessThanOrEqual(boxes.stage.right);
                 expect(boxes.spectrum.bottom).toBeLessThanOrEqual(boxes.stage.bottom);
-                const overlapsInfo = !(boxes.spectrum.right <= boxes.info.left
-                    || boxes.spectrum.left >= boxes.info.right
-                    || boxes.spectrum.bottom <= boxes.info.top
-                    || boxes.spectrum.top >= boxes.info.bottom);
-                expect(overlapsInfo).toBe(false);
-                expect(boxes.spectrum.top).toBeGreaterThanOrEqual(boxes.cover.bottom - 1);
-                expect(boxes.spectrum.bottom).toBeLessThanOrEqual(boxes.info.top + 1);
+                expect(Math.abs(boxes.spectrum.bottom - boxes.stage.bottom))
+                    .toBeLessThanOrEqual(1);
                 const spectrumCenter = (boxes.spectrum.left + boxes.spectrum.right) * 0.5;
                 const coverCenter = (boxes.cover.left + boxes.cover.right) * 0.5;
                 const infoCenter = (boxes.info.left + boxes.info.right) * 0.5;
@@ -2742,7 +2802,7 @@ test.describe("the deployed player page", () => {
                 expect(Math.abs(spectrumCenter - coverCenter)).toBeLessThanOrEqual(1);
                 expect(Math.abs(spectrumCenter - infoCenter)).toBeLessThanOrEqual(1);
             };
-            await expectSpectrumClearOfInfo();
+            await expectSpectrumAtStageBottom();
             await spectrum.click();
             const spectrumOptions = page.locator("#spectrum-options");
             await expect(spectrumOptions).toBeVisible();
@@ -2768,7 +2828,7 @@ test.describe("the deployed player page", () => {
             await page.locator("#fullscreen").click();
             await expect.poll(() => page.evaluate(() =>
                 document.fullscreenElement && document.fullscreenElement.id)).toBe("stage");
-            await expectSpectrumClearOfInfo();
+            await expectSpectrumAtStageBottom();
             await spectrum.click();
             await expect(spectrumOptions).toBeVisible();
             await expect(page.locator("#spectrum-options > #spectrum-settings")).toHaveCount(1);
@@ -2794,7 +2854,10 @@ test.describe("the deployed player page", () => {
                         data.filter((value, index) => index % 4 === 3 && value).length);
                     if (window.__spectrumReleaseSamples.length < 40) requestAnimationFrame(sample);
                 };
-                requestAnimationFrame(sample);
+                // Start sampling at the stop click; scrolling to the button can
+                // otherwise use up the frame budget before the release begins.
+                document.querySelector("#stage-audio").addEventListener("click", sample,
+                    { once: true, capture: true });
             });
             await page.locator("#stage-audio").click();
             await expect(spectrum).toHaveClass(/active/);
@@ -2866,10 +2929,21 @@ test.describe("the deployed player page", () => {
             await expect(analyzer).toHaveAttribute("data-analyzer-type", "spectrum");
             await expect.poll(() => page.evaluate(() => window.__frequencyReads))
                 .toBeGreaterThan(0);
+            const spectrumBoxes = await stableElementRects(page, { spectrum: "#stage-spectrum" });
 
+            await analyzer.evaluate((canvas) => {
+                window.__retainedSpectrumTransition = false;
+                const observer = new MutationObserver(() => {
+                    if (canvas.dataset.modeTransition === "crossfading"
+                            && canvas.dataset.outgoingAnalyzer === "spectrum") {
+                        window.__retainedSpectrumTransition = true;
+                        observer.disconnect();
+                    }
+                });
+                observer.observe(canvas, { attributes: true });
+            });
             await page.locator("label.seg", { hasText: "Oscilloscope" }).click();
-            await expect(analyzer).toHaveAttribute("data-mode-transition", "crossfading");
-            await expect(analyzer).toHaveAttribute("data-outgoing-analyzer", "spectrum");
+            await expect.poll(() => page.evaluate(() => window.__retainedSpectrumTransition)).toBe(true);
             await expect(analyzer).toHaveAttribute("data-analyzer-type", "oscilloscope");
             await expect.poll(() => page.evaluate(() => window.__timeDomainReads))
                 .toBeGreaterThan(0);
@@ -2879,11 +2953,12 @@ test.describe("the deployed player page", () => {
             await expect(analyzer).not.toHaveAttribute("data-outgoing-analyzer");
 
             const scopeBoxes = await stableElementRects(page, {
-                scope: "#stage-spectrum", cover: "#coverbox", info: ".info",
+                scope: "#stage-spectrum", cover: "#coverbox", stage: "#stage",
             });
-            expect(scopeBoxes.scope.height).toBeGreaterThan(48);
+            expect(scopeBoxes.scope.height).toBeCloseTo(spectrumBoxes.spectrum.height, 0);
             expect(scopeBoxes.scope.top).toBeGreaterThanOrEqual(scopeBoxes.cover.bottom - 1);
-            expect(scopeBoxes.scope.bottom).toBeLessThanOrEqual(scopeBoxes.info.top + 1);
+            expect(Math.abs(scopeBoxes.scope.bottom - scopeBoxes.stage.bottom))
+                .toBeLessThanOrEqual(1);
 
             const waveform = await analyzer.evaluate((canvas) => {
                 const data = canvas.getContext("2d")
@@ -6288,7 +6363,7 @@ test.describe("the deployed player page", () => {
             expect(Math.abs(withoutCover.analyzer.width - withoutCover.info.width))
                 .toBeLessThanOrEqual(1);
 
-            await page.locator("#info-title").evaluate((title) => {
+            await page.locator("#info-album").evaluate((title) => {
                 title.textContent = "A longer title widens the information box";
             });
             const afterTitleChange = await stableElementRects(page, selectors);

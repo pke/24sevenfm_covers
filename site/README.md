@@ -119,6 +119,12 @@ the panel narrows to fit the remaining visible text. The album text stays in the
 title tooltip, and remains visible if a logo is missing or cannot be loaded/read.
 Logo and text transitions retain outgoing content and respect reduced motion.
 
+In Poster layout, Spectrum and Oscilloscope share the same height, are permanently
+anchored to the stage's bottom edge and grow upward. Peaks may extend into the lower
+part of the information panel, which retains its normal size, padding and position.
+This placement applies with both album text and title logos. Fill layout retains
+its corner placement.
+
 The API sends optional logo URLs only with `logos=1`; current and queue response
 caches distinguish that option. A common server metadata cache reuses matching and
 artwork work across both response variants, while logo-only TMDB and SteamGridDB

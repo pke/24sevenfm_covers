@@ -2954,16 +2954,16 @@ function sizeStage() {
     // square by both dimensions without breaking the aspect ratio on portrait
     // screens), leaving room below for the info box in poster layout. Because it is
     // sized off the stage, fullscreen scales everything with no extra rules.
-    // The taller oscilloscope borrows a small amount of the poster cover's vertical
-    // budget. A four-percent cover reduction creates a readable scope strip without
-    // moving the title box or letting either element overlap it.
-    var expandedOscilloscope = opts.spectrumEnabled
-        && opts.analyzerType === "oscilloscope";
-    var posterCoverFraction = expandedOscilloscope ? 0.555 : 0.58;
     var baseSide = opts.layout === 1
-        ? Math.min(r.height * posterCoverFraction, r.width * 0.86)
+        ? Math.min(r.height * 0.58, r.width * 0.86)
         : Math.min(r.height * 0.96, r.width * 0.96);
     var infoEl = document.querySelector(".info");
+    // Both poster renderers share the same strip at the stage edge. A taller
+    // oscilloscope would lift its midline into the compact panel's countdown.
+    var analyzerHeight = opts.layout === 0 && opts.analyzerType === "oscilloscope"
+        ? Math.min(72, Math.max(56, baseSide * 0.22))
+        : Math.min(48, Math.max(32, r.height * 0.075));
+    stage.style.setProperty("--analyzer-height", analyzerHeight + "px");
     // Typography follows the normal cover scale, independent of a temporary vertical
     // squeeze. That keeps the flex layout stable instead of creating a feedback loop
     // where a smaller cover shrinks the info and then makes the cover larger again.
@@ -2995,33 +2995,11 @@ function sizeStage() {
     var infoRect = infoEl.getBoundingClientRect();
     stage.style.setProperty("--info-width", infoRect.width + "px");
     var infoHeight = infoRect.height;
-    var infoTop = infoRect.top - r.top;
     var coverShift = opts.layout === 1
         ? portraitStage ? 0
             : r.height * 0.07 - infoHeight * 0.25
         : 0;
-    // Lift the slightly smaller cover as the scope expands. Its top has ample room in
-    // the 72% artwork row; spending that room here creates a true 60px waveform lane
-    // instead of squeezing the requested height back down to the old 48px strip.
-    if (opts.layout === 1 && expandedOscilloscope && !portraitStage)
-        coverShift -= Math.min(16, r.height * 0.03);
     stage.style.setProperty("--cover-shift", coverShift + "px");
-    if (opts.layout === 1) {
-        var coverBottom = portraitStage
-            ? coverBox.offsetTop + coverBox.offsetHeight
-            : r.height * 0.36 + coverShift + side * 0.5;
-        var availableAnalyzerHeight = Math.max(32, infoTop - coverBottom - 4);
-        var desiredAnalyzerHeight = opts.analyzerType === "oscilloscope"
-            ? Math.min(72, Math.max(56, side * 0.22))
-            : Math.min(48, Math.max(32, r.height * 0.075));
-        stage.style.setProperty("--analyzer-height",
-            Math.min(desiredAnalyzerHeight, availableAnalyzerHeight) + "px");
-        stage.style.setProperty("--spectrum-top", ((coverBottom + infoTop) * 0.5) + "px");
-    } else {
-        stage.style.setProperty("--analyzer-height", (opts.analyzerType === "oscilloscope"
-            ? Math.min(72, Math.max(56, side * 0.22))
-            : Math.min(48, Math.max(32, r.height * 0.075))) + "px");
-    }
     // The D2D pass blurs at a ~240px working resolution and upscales, so its strength
     // is relative to size. A fixed CSS pixel blur reads far too mild on a big stage -
     // scale it the same way: posterBlur px at 240, proportionally more at stage width.
