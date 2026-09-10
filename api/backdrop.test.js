@@ -3220,6 +3220,49 @@ test("resolves Adam Gubman's Pirates of the Burning Sea volume as the game", asy
     assert.equal(requests.some((url) => url.includes("api.tvmaze.com")), false);
 });
 
+test("resolves Jamie Christopherson's Battle for Middle-earth II soundtrack as the game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/The%20Lord%20of%20the%20Rings%3A%20The%20Battle%20for%20Middle-earth%20II")) {
+                return response(200, { success: true, data: [{
+                    id: 36140,
+                    name: "The Lord of the Rings: The Battle for Middle-earth II",
+                    verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/36140")) return response(200, {
+                success: true, data: [{ score: 8,
+                    url: "https://cdn2.steamgriddb.com/hero/battle-for-middle-earth-ii.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/battle-for-middle-earth-ii.jpg" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [248, 255, 205],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Lord Of The Rings, The: The Battle For Middle-Earth 2",
+        track: "Men Of The West",
+        artist: "Jamie Christopherson",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 36140, title: "The Lord of the Rings: The Battle for Middle-earth II", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/battle-for-middle-earth-ii.jpg",
+        source: "steamgriddb",
+        tint: [248, 255, 205],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+    assert.equal(requests.some((url) => url.includes("api.tvmaze.com")), false);
+});
+
 test("resolves Clint Bajakian's Outlaws soundtrack to the original game", async () => {
     const requests = [];
     const handler = createHandler({

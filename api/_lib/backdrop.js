@@ -207,6 +207,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Lord Of The Rings, The: The Battle For Middle-Earth 2",
+        artist: "Jamie Christopherson",
+        title: "The Lord of the Rings: The Battle for Middle-earth II",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Outlaws",
         artist: "Clint Bajakian",
         title: "Outlaws + A Handful of Missions",
