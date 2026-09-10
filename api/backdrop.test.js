@@ -1113,30 +1113,32 @@ test("resolves Armand Amar's Home score to the 2009 documentary", async () => {
         },
         tintForImage: async () => [246, 235, 219],
     });
-    const res = mockResponse();
-    await handler(mockRequest({
-        album: "Home",
-        track: "Cum Dederit",
-        artist: "Armand Amar",
-        providers: "fanart,tmdb,tvmaze,steamgriddb",
-        ratings: "DE,US",
-        width: "1080",
-        height: "1920",
-    }), res);
-
-    assert.equal(res.statusCode, 200);
-    assert.deepEqual(JSON.parse(res.body), {
-        media: { id: 62320, title: "Home", type: "movie" },
-        backdrop: "https://assets.fanart.tv/fanart/home-2009-poster.jpg",
-        source: "fanart",
-        tint: [246, 235, 219],
-        certifications: [],
-        metadata: {
+    for (const track of ["Cum Dederit", "Epi"]) {
+        const res = mockResponse();
+        await handler(mockRequest({
             album: "Home",
-            track: "Cum Dederit",
+            track,
             artist: "Armand Amar",
-        },
-    });
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ratings: "DE,US",
+            width: "1080",
+            height: "1920",
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 62320, title: "Home", type: "movie" },
+            backdrop: "https://assets.fanart.tv/fanart/home-2009-poster.jpg",
+            source: "fanart",
+            tint: [246, 235, 219],
+            certifications: [],
+            metadata: {
+                album: "Home",
+                track,
+                artist: "Armand Amar",
+            },
+        });
+    }
     assert.equal(requests.some((request) => request.hostname === "www.steamgriddb.com"), false);
 });
 

@@ -164,7 +164,6 @@ const METADATA_RESOLUTIONS = Object.freeze([
     }),
     Object.freeze({
         album: "Home",
-        track: "Cum Dederit",
         artist: "Armand Amar",
         title: "Home (2009)",
         hint: "movie",
