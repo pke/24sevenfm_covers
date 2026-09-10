@@ -169,6 +169,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Riverdance",
+        artist: "Bill Whelan",
+        title: "Riverdance: The Show (1995)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Kansas City",
         track: "Lullaby Of The Leaves",
         title: "Kansas City (1996)",

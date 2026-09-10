@@ -1142,6 +1142,58 @@ test("resolves Armand Amar's Home score to the 2009 documentary", async () => {
     assert.equal(requests.some((request) => request.hostname === "www.steamgriddb.com"), false);
 });
 
+test("resolves Bill Whelan's Riverdance album to the original stage show", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") {
+                assert.equal(parsed.searchParams.get("query"), "Riverdance: The Show");
+                assert.equal(parsed.searchParams.get("primary_release_year"), "1995");
+                return response(200, { results: [{
+                    id: 16115,
+                    title: "Riverdance: The Show",
+                    release_date: "1995-01-01",
+                    backdrop_path: "/riverdance-show.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                assert.equal(parsed.searchParams.get("query"), "Riverdance: The Show");
+                assert.equal(parsed.searchParams.get("first_air_date_year"), "1995");
+                return response(200, { results: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [218, 192, 165],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Riverdance",
+        track: "Riverdance",
+        artist: "Bill Whelan",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 16115, title: "Riverdance: The Show", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/riverdance-show.jpg",
+        source: "tmdb",
+        tint: [218, 192, 165],
+        metadata: {
+            album: "Riverdance",
+            track: "Riverdance",
+            artist: "Bill Whelan",
+        },
+    });
+    assert.deepEqual(requests.map((request) => request.pathname).sort(), [
+        "/3/search/movie",
+        "/3/search/tv",
+    ]);
+});
+
 test("resolves Mark Suozzo's Love & Friendship soundtrack to the 2016 film", async () => {
     const requests = [];
     const handler = createHandler({
