@@ -815,6 +815,14 @@ function containsWordSequence(words, sequence) {
     return false;
 }
 
+function titleWordSequences(value) {
+    const words = titleWords(value);
+    if (/^(?:a|an|the)$/.test(words[0] || "") && words.length > 1) {
+        return [words, words.slice(1)];
+    }
+    return [words];
+}
+
 function pickComposerCredit(combinedCredits, album) {
     const albumWords = titleWords(album);
     const matches = new Map();
@@ -825,10 +833,11 @@ function pickComposerCredit(combinedCredits, album) {
                 || (credit.media_type !== "movie" && credit.media_type !== "tv")
                 || !Number.isSafeInteger(id) || id <= 0) continue;
         const title = mediaTitle(credit);
-        const words = titleWords(title);
+        const wordSequences = titleWordSequences(title).filter((words) =>
+            normalizedTitle(words.join(" ")).length >= 4);
         // Reject tiny one-word titles such as Up, It, Her, or Us. Even with a verified
         // composer they are too weak to infer safely from a soundtrack-album phrase.
-        if (normalizedTitle(title).length < 4 || !containsWordSequence(albumWords, words)) continue;
+        if (!wordSequences.some((words) => containsWordSequence(albumWords, words))) continue;
         const key = credit.media_type + ":" + id;
         if (!matches.has(key)) matches.set(key, credit);
     }

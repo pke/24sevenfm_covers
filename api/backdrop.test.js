@@ -2288,6 +2288,68 @@ test("matches the album against exact-name composers before accepting a title", 
     });
 });
 
+test("matches a composer credit when the station album omits a leading article", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "Devil's Advocate");
+                return response(200, { results: [{
+                    id: 1813,
+                    media_type: "movie",
+                    title: "The Devil's Advocate",
+                    backdrop_path: "/devils-advocate.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/person") {
+                assert.equal(parsed.searchParams.get("query"), "James Newton Howard");
+                return response(200, { results: [{
+                    id: 1532,
+                    name: "James Newton Howard",
+                    known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/person/1532/combined_credits") {
+                return response(200, { crew: [{
+                    id: 1813,
+                    media_type: "movie",
+                    title: "The Devil's Advocate",
+                    job: "Original Music Composer",
+                    backdrop_path: "/devils-advocate.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [88, 74, 67],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Devil's Advocate",
+        track: "Montage",
+        artist: "James Newton Howard",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 1813, title: "The Devil's Advocate", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/devils-advocate.jpg",
+        source: "tmdb",
+        tint: [88, 74, 67],
+        metadata: {
+            album: "Devil's Advocate",
+            track: "Montage",
+            artist: "James Newton Howard",
+        },
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi", "/3/search/person", "/3/person/1532/combined_credits",
+    ]));
+});
+
 test("validates the requested rating countries", () => {
     assert.deepEqual(requestedRatings(undefined), []);
     assert.deepEqual(requestedRatings("de,US,DE"), ["DE", "US"]);
@@ -3050,6 +3112,15 @@ test("matches a unique whole-title composer crew credit inside an album title", 
         cast: [{ ...dune, job: undefined }],
         crew: [dune, { ...dune }],
     }, "The Dune Sketchbook"), dune);
+
+    const devilsAdvocate = {
+        id: 1813,
+        media_type: "movie",
+        title: "The Devil's Advocate",
+        job: "Original Music Composer",
+    };
+    assert.equal(pickComposerCredit({ crew: [devilsAdvocate] }, "Devil's Advocate"),
+        devilsAdvocate);
 });
 
 test("rejects unsafe composer-credit fallbacks", () => {
@@ -3064,6 +3135,8 @@ test("rejects unsafe composer-credit fallbacks", () => {
         "The Dune Sketchbook"), null);
     assert.equal(pickComposerCredit({ crew: [credit(1, "Up")] },
         "The Up Sketchbook"), null);
+    assert.equal(pickComposerCredit({ crew: [credit(1, "The Up")] },
+        "Up Sketchbook"), null);
     assert.equal(pickComposerCredit({ cast: [credit(1, "Dune")] },
         "The Dune Sketchbook"), null);
 });
