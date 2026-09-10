@@ -4,6 +4,7 @@
 #include "image_limits.h"   // coverDimsOk - reject decompression-bomb covers
 #include "media_policy.h"   // DPI-aware rating geometry shared with tests
 #include "rating_assets.h"  // compiled-in PNG logos; no native SVG/network dependency
+#include "title_logo_presentation.h"
 
 #include <d2d1.h>
 #include <d2d1_1.h>       // ID2D1Device/DeviceContext + effects (real Gaussian blur)
@@ -80,6 +81,12 @@ bool            g_backdropPrevHasTint = false;
 std::vector<RatingBadge> g_ratingsCur, g_ratingsPrev;
 struct RatingBitmap { std::wstring key; ID2D1Bitmap* bitmap = nullptr; };
 std::vector<RatingBitmap> g_ratingBitmaps;
+ssc::TitleLogoPresentation g_titleLogo;
+ID2D1Bitmap* g_titleLogoBmp = nullptr;
+std::string g_titleLogoDecodedBytes;
+D2D1_RECT_F g_albumHitRect = {}, g_logoHitRect = {};
+HWND g_albumHitWindow = nullptr;
+bool g_albumHitVisible = false;
 
 // A legible tint derived from the current cover's average colour, used for the poster
 // info box's title/artist and the countdown text so they read as part of the artwork.
@@ -91,6 +98,9 @@ void discardDeviceResources() {
     SafeRelease(g_blurBmp);
     SafeRelease(g_backdropCurBmp);
     SafeRelease(g_backdropPrevBmp);
+    SafeRelease(g_titleLogoBmp);
+    g_titleLogoDecodedBytes.clear();
+    g_albumHitVisible = false;
     for (size_t i = 0; i < g_ratingBitmaps.size(); ++i) SafeRelease(g_ratingBitmaps[i].bitmap);
     g_ratingBitmaps.clear();
     SafeRelease(g_bgBrush);
@@ -144,7 +154,8 @@ D2D1_COLOR_F playerTint(float mediaProgress) {
 
 // Decodes JPEG bytes into a D2D bitmap tied to `rt`. If tintOut is non-null, also
 // writes the cover's average-colour tint there.
-ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_COLOR_F* tintOut) {
+ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_COLOR_F* tintOut,
+                         bool trimAlpha = false) {
     if (!rt || !g_wic || bytes.empty())
         return nullptr;
     IWICStream* stream = nullptr;
@@ -168,7 +179,36 @@ ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_
                                    WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut))) {
         // Only tint once the bitmap actually decoded - a failed CreateBitmap must
         // not leave the full-res image being dragged through overlayTintFrom.
-        if (SUCCEEDED(rt->CreateBitmapFromWicBitmap(conv, nullptr, &bmp)) && bmp && tintOut)
+        if (trimAlpha) {
+            // Match the web's bounded alpha scan; provider padding does not count as artwork.
+            IWICBitmapScaler* scaler = nullptr;
+            IWICBitmapSource* source = conv;
+            const float scale = 1600.0f / (fw > fh ? fw : fh);
+            bool ready = true;
+            if (scale < 1) {
+                fw = static_cast<UINT>(fw * scale); fh = static_cast<UINT>(fh * scale);
+                if (!fw) fw = 1; if (!fh) fh = 1;
+                ready = SUCCEEDED(g_wic->CreateBitmapScaler(&scaler))
+                    && SUCCEEDED(scaler->Initialize(conv, fw, fh, WICBitmapInterpolationModeFant));
+                if (ready) source = scaler;
+            }
+            std::vector<BYTE> pixels(static_cast<size_t>(fw) * fh * 4);
+            if (ready && SUCCEEDED(source->CopyPixels(nullptr, fw * 4,
+                    static_cast<UINT>(pixels.size()), pixels.data()))) {
+                UINT left = fw, top = fh, right = 0, bottom = 0;
+                for (UINT y = 0; y < fh; ++y) for (UINT x = 0; x < fw; ++x) {
+                    if (pixels[(static_cast<size_t>(y) * fw + x) * 4 + 3] < 16) continue;
+                    if (x < left) left = x; if (x + 1 > right) right = x + 1;
+                    if (y < top) top = y; if (y + 1 > bottom) bottom = y + 1;
+                }
+                if (right > left && bottom > top)
+                    rt->CreateBitmap(D2D1::SizeU(right - left, bottom - top),
+                        pixels.data() + (static_cast<size_t>(top) * fw + left) * 4, fw * 4,
+                        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                            D2D1_ALPHA_MODE_PREMULTIPLIED)), &bmp);
+            }
+            SafeRelease(scaler);
+        } else if (SUCCEEDED(rt->CreateBitmapFromWicBitmap(conv, nullptr, &bmp)) && bmp && tintOut)
             *tintOut = overlayTintFrom(conv);
     }
     SafeRelease(conv);
@@ -475,7 +515,8 @@ void drawCover(const D2D1_RECT_F& dest, Transition transition, float progress, f
 bool renderPoster(float cw, float ch, Transition transition, float progress,
                   int remainingSeconds, float overlayFontFrac, bool rollDigits,
                   const wchar_t* title, const wchar_t* artist, const wchar_t* status,
-                  float mediaProgress, bool hideCoverWithBackdrop, float infoOpacity) {
+                  float mediaProgress, bool hideCoverWithBackdrop, float infoOpacity,
+                  const wchar_t* album, const wchar_t* track, float logoAlpha, float dpiScale) {
     drawBlurredBackground(cw, ch); // stable fallback remains underneath the fade
     const bool mediaVisible = g_backdropCurBmp || g_backdropPrevBmp;
     if (mediaVisible) {
@@ -491,8 +532,8 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     if (baseSide > cw * 0.86f) baseSide = cw * 0.86f;
     if (baseSide < 1.0f) baseSide = 1.0f;
     float coverS = baseSide;
-    const float boxW = baseSide;
-    const float boxX = (cw - boxW) * 0.5f;
+    float boxW = baseSide;
+    float boxX = (cw - boxW) * 0.5f;
     const bool showInfo = title && *title;
     if (infoOpacity < 0.0f) infoOpacity = 0.0f;
     if (infoOpacity > 1.0f) infoOpacity = 1.0f;
@@ -505,23 +546,47 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     float titleSize = baseSide * 0.072f, artistSize = baseSide * 0.058f;
     if (titleSize < 16.0f) titleSize = 16.0f;
     if (artistSize < 13.0f) artistSize = 13.0f;
+    const wchar_t* albumText = album && *album ? album : title;
+    const bool showLogo = g_titleLogoBmp && album && g_titleLogo.album() == album;
+    const float logoMix = showLogo ? logoAlpha : 0;
+    const D2D1_SIZE_F bitmapSize = showLogo ? g_titleLogoBmp->GetSize() : D2D1::SizeF(0, 0);
+    const ssc::TitleLogoSize logoSize = ssc::titleLogoSize(bitmapSize.width, bitmapSize.height,
+        cw, ch, titleSize, dpiScale);
     IDWriteTextFormat* tf = g_dwrite ? makeFormat(titleSize, DWRITE_FONT_WEIGHT_SEMI_BOLD, true) : nullptr;
+    IDWriteTextFormat* cf = g_dwrite ? makeFormat(titleSize * .88f, DWRITE_FONT_WEIGHT_MEDIUM, true) : nullptr;
     IDWriteTextFormat* af = g_dwrite ? makeFormat(artistSize, DWRITE_FONT_WEIGHT_NORMAL, true) : nullptr;
     IDWriteTextLayout* tl = nullptr; float titleH = 0;
     IDWriteTextLayout* al = nullptr; float artistH = 0;
+    IDWriteTextLayout* cl = nullptr; float trackH = 0;
+    float albumW = 0, trackW = 0, artistW = 0;
     if (showInfo && tf &&
-        SUCCEEDED(g_dwrite->CreateTextLayout(title, (UINT32)lstrlenW(title), tf, textW, 10000, &tl))) {
-        DWRITE_TEXT_METRICS mt = {}; tl->GetMetrics(&mt); titleH = mt.height;
+        SUCCEEDED(g_dwrite->CreateTextLayout(albumText, (UINT32)lstrlenW(albumText), tf, textW, 10000, &tl))) {
+        DWRITE_TEXT_METRICS mt = {}; tl->GetMetrics(&mt); titleH = mt.height; albumW = mt.width;
+    }
+    if (showInfo && cf && track && *track &&
+        SUCCEEDED(g_dwrite->CreateTextLayout(track, (UINT32)lstrlenW(track), cf, textW, 10000, &cl))) {
+        DWRITE_TEXT_METRICS mt = {}; cl->GetMetrics(&mt); trackH = mt.height + titleSize * .12f; trackW = mt.width;
     }
     if (showInfo && af && artist && *artist &&
         SUCCEEDED(g_dwrite->CreateTextLayout(artist, (UINT32)lstrlenW(artist), af, textW, 10000, &al))) {
-        DWRITE_TEXT_METRICS ma = {}; al->GetMetrics(&ma); artistH = ma.height;
+        DWRITE_TEXT_METRICS ma = {}; al->GetMetrics(&ma); artistH = ma.height; artistW = ma.width;
     }
     const float lineGap = artistSize * 0.35f;
     float cdFont = baseSide * overlayFontFrac;
     if (cdFont < 12.0f) cdFont = 12.0f;
     const float statusH = showInfo && remainingSeconds >= 0 ? cdFont * 1.2f + 6.4f : 0.0f;
-    const float boxH = showInfo ? padY + titleH + (artistH > 0 ? lineGap + artistH : 0)
+    float contentW = trackW > artistW ? trackW : artistW;
+    if (statusH > 0 && contentW < cdFont * 3.6f) contentW = cdFont * 3.6f;
+    if (contentW < 40 * dpiScale) contentW = 40 * dpiScale;
+    const float fullW = albumW > contentW ? albumW : contentW;
+    const float measuredW = fullW + (contentW - fullW) * logoMix + 2 * padX + 2;
+    if (measuredW < boxW) boxW = measuredW;
+    boxX = (cw - boxW) * .5f;
+    if (tl) tl->SetMaxWidth(boxW - 2 * padX);
+    if (cl) cl->SetMaxWidth(boxW - 2 * padX);
+    if (al) al->SetMaxWidth(boxW - 2 * padX);
+    const float albumRowH = titleH + (logoSize.rowHeight - titleH) * logoMix;
+    const float boxH = showInfo ? padY + albumRowH + trackH + (artistH > 0 ? lineGap + artistH : 0)
                      + (statusH > 0 ? 6.4f + statusH : 0) + padY : 0.0f;
 
     const float bottomGap = m > 12.0f ? m : 12.0f;
@@ -587,7 +652,31 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
         g_fgBrush->SetOpacity(infoOpacity);
     }
     float ty = boxY + padY;
-    if (tl) { g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, ty), tl, g_fgBrush); ty += titleH + (artistH > 0 ? lineGap : 0); }
+    g_albumHitVisible = showInfo && infoOpacity > .01f && album && *album;
+    g_albumHitRect = D2D1::RectF(boxX + padX, ty, boxX + boxW - padX, ty + albumRowH);
+    g_logoHitRect = D2D1::RectF(0, 0, 0, 0);
+    if (tl && logoMix < 1) {
+        g_fgBrush->SetOpacity(infoOpacity * (1 - logoMix));
+        g_rt->PushAxisAlignedClip(D2D1::RectF(boxX + padX, ty,
+            boxX + boxW - padX, ty + albumRowH), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, ty), tl, g_fgBrush);
+        g_rt->PopAxisAlignedClip();
+    }
+    if (showLogo && logoMix > 0) {
+        const float bottom = ty + albumRowH - 8 * dpiScale;
+        const float height = logoSize.height < bottom ? logoSize.height : bottom;
+        const float width = logoSize.height > 0 ? logoSize.width * height / logoSize.height : 0;
+        g_logoHitRect = D2D1::RectF((cw - width) * .5f, bottom - height, (cw + width) * .5f, bottom);
+        g_rt->DrawBitmap(g_titleLogoBmp, g_logoHitRect, logoMix * infoOpacity,
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+    ty += albumRowH;
+    g_fgBrush->SetOpacity(infoOpacity);
+    if (cl) {
+        g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, ty + titleSize * .12f), cl, g_fgBrush);
+        ty += trackH;
+    }
+    if (artistH > 0) ty += lineGap;
     if (al) {
         if (g_fgBrush) g_fgBrush->SetOpacity(0.8f * infoOpacity);
         g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, ty), al, g_fgBrush);
@@ -597,7 +686,7 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
         g_fgBrush->SetOpacity(1.0f);
         g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
     }
-    SafeRelease(tl); SafeRelease(al); SafeRelease(tf); SafeRelease(af);
+    SafeRelease(tl); SafeRelease(al); SafeRelease(cl); SafeRelease(tf); SafeRelease(af); SafeRelease(cf);
 
     // Bottom row of the box: "Loading..." while fetching, else the live countdown -
     // the SAME rolling widget the fill overlay uses, translated into the box (no
@@ -702,6 +791,7 @@ void shutdown() {
     g_prevBytes.clear();
     g_backdropCurBytes.clear();
     g_backdropPrevBytes.clear();
+    g_titleLogo = ssc::TitleLogoPresentation();
     g_backdropCurHasTint = g_backdropPrevHasTint = false;
     g_ratingsCur.clear();
     g_ratingsPrev.clear();
@@ -786,11 +876,29 @@ void setPosterBlur(int standardDeviation) {
 // Nothing cached to invalidate: the radius is applied per frame when the cover is clipped.
 void setCoverRadius(int perMille) { g_coverRadius = perMille; }
 
+void setTitleLogo(const std::string& bytes, const std::wstring& album, int fadeMs) {
+    g_titleLogo.set(bytes, album, GetTickCount(), fadeMs);
+}
+
+bool titleLogoAnimating() { return g_titleLogo.animating(); }
+
+bool albumHitTest(HWND hwnd, int x, int y) {
+    if (!g_albumHitVisible || hwnd != g_albumHitWindow) return false;
+    const auto inside = [x, y](const D2D1_RECT_F& r) {
+        return r.right > r.left && r.bottom > r.top
+            && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    return inside(g_albumHitRect) || inside(g_logoHitRect);
+}
+
 bool render(HWND hwnd, float progress, Transition transition, int remainingSeconds,
             float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
             int layout, const wchar_t* title, const wchar_t* artist,
             float mediaProgress, bool hideCoverWithBackdrop, float ratingProgress,
-            float ratingOpacity, float infoOpacity) {
+            float ratingOpacity, float infoOpacity, const wchar_t* album,
+            const wchar_t* track, int logoFadeMs) {
+    g_albumHitWindow = hwnd;
+    g_albumHitVisible = false;
     if (!g_factory)
         return false;
 
@@ -829,13 +937,20 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     if (!g_backdropPrevBmp && !g_backdropPrevBytes.empty())
         g_backdropPrevBmp = createBitmap(g_backdropPrevBytes, false);
 
+    const float logoAlpha = g_titleLogo.advance(GetTickCount(), logoFadeMs);
+    if (g_titleLogoDecodedBytes != g_titleLogo.bytes()) {
+        SafeRelease(g_titleLogoBmp);
+        g_titleLogoDecodedBytes = g_titleLogo.bytes();
+        g_titleLogoBmp = decodeBitmap(g_rt, g_titleLogoDecodedBytes, nullptr, true);
+    }
     g_rt->BeginDraw();
     g_rt->Clear(D2D1::ColorF(D2D1::ColorF::Black));
     bool overlayAnimating = false;
     if (layout == 1) {
         overlayAnimating = renderPoster((float)cw, (float)ch, transition, progress,
                                         remainingSeconds, overlayFontFrac, rollDigits, title, artist,
-                                        statusText, mediaProgress, hideCoverWithBackdrop, infoOpacity);
+                                        statusText, mediaProgress, hideCoverWithBackdrop, infoOpacity,
+                                        album, track, logoAlpha, windowDpiScale(hwnd));
     } else {
         overlayAnimating = renderCover((float)cw, (float)ch, transition, progress,
                                        remainingSeconds, overlayFontFrac, rollDigits, statusText,

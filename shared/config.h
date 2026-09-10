@@ -64,6 +64,7 @@ inline bool load(CoverEngine::Settings& s, ConfigStore& store) {
     // keeps a typo like 4500 from being silently treated as something meaningful.
     s.borderRadius  = clampInt(store.readInt("borderRadius", 45), 0, 500);
     s.backdrops     = store.readInt("backdrops", 0) != 0;
+    s.titleLogos    = store.readInt("titleLogos", 0) != 0;
     s.ratings       = store.readInt("ratings", 0) != 0;
     s.hideCoverWithBackdrop = store.readInt("hideCoverWithBackdrop", 1) != 0;
     s.ratingDE      = store.readInt("ratingDE", 1) != 0;
@@ -92,6 +93,7 @@ inline void save(const CoverEngine::Settings& s, ConfigStore& store) {
     store.writeInt("posterBlur",    s.posterBlur);
     store.writeInt("borderRadius",  s.borderRadius);
     store.writeInt("backdrops",     s.backdrops ? 1 : 0);
+    store.writeInt("titleLogos",    s.titleLogos ? 1 : 0);
     store.writeInt("ratings",       s.ratings ? 1 : 0);
     store.writeInt("hideCoverWithBackdrop", s.hideCoverWithBackdrop ? 1 : 0);
     store.writeInt("ratingDE",      s.ratingDE ? 1 : 0);

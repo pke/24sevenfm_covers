@@ -209,6 +209,16 @@ bool parseResponse(const std::string& body, MediaResult& out) {
         out.error = "untrusted backdrop URL"; return false;
     }
 
+    // An optional invalid logo must not discard valid metadata/backdrops/ratings.
+    const JsonValue* logo = root.get("logo");
+    if (logo && logo->type == JsonValue::Object) {
+        std::string url, provider;
+        if (cleanText(logo->get("url"), url, 2048)
+                && cleanText(logo->get("source"), provider, 32)
+                && trustedBackdropUrl(url, provider)) {
+            out.titleLogoUrl = url; out.titleLogoSource = provider;
+        }
+    }
     const JsonValue* tint = root.get("tint");
     if (tint && tint->type == JsonValue::Array && tint->array.size() == 3) {
         bool valid = true;
@@ -240,7 +250,7 @@ bool parseResponse(const std::string& body, MediaResult& out) {
         out.certifications.push_back(std::move(cert));
     }
 
-    out.status = (!out.backdropUrl.empty() || !out.certifications.empty())
+    out.status = (!out.backdropUrl.empty() || !out.titleLogoUrl.empty() || !out.certifications.empty())
         ? MediaResult::Hit : MediaResult::Miss;
     return true;
 }
@@ -322,6 +332,7 @@ MediaResult MediaResolver::resolve(const MediaRequest& request,
     if (!request.artist.empty()) path += "&artist=" + urlEncode(request.artist);
     path += "&providers=" + urlEncode(request.includeArt ? request.providers : "tmdb");
     if (!request.includeArt) path += "&art=0";
+    if (request.includeArt && request.includeTitleLogo) path += "&logos=1";
     if (request.includeArt && request.width > 0 && request.height > 0)
         path += "&width=" + std::to_string(request.width) + "&height=" + std::to_string(request.height);
     if (useFanartClientKey)
@@ -391,6 +402,18 @@ std::string MediaResolver::resolveCredit(const std::string& album, const std::st
     if (!cleanText(root.get("artist"), artist, 180)) artist.clear();
     if (requestSucceeded) *requestSucceeded = true;
     return artist;
+}
+
+bool MediaResolver::downloadTitleLogo(const MediaResult& media, std::string& bytes,
+                                      const std::atomic<bool>* cancel) const {
+    bytes.clear();
+    std::string host, path;
+    if (media.status != MediaResult::Hit
+            || !trustedBackdropUrl(media.titleLogoUrl, media.titleLogoSource, &host, &path)) return false;
+    const HttpResponse response = get(host, 443, path, cancel);
+    if (!response.ok() || response.body.empty()) return false;
+    bytes = response.body;
+    return true;
 }
 
 bool MediaResolver::downloadBackdrop(const MediaResult& media, std::string& bytes,

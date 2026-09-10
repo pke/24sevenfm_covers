@@ -21,6 +21,10 @@ static const std::uint32_t kRatingVisibilityFadeMs = 350;
 // logical rating range by the target window DPI before deriving the logo height.
 float ratingLogoHeight(float stageHeight, float dpiScale);
 
+struct TitleLogoSize { float width, height, rowHeight; };
+TitleLogoSize titleLogoSize(float pixelWidth, float pixelHeight, float stageWidth,
+                           float stageHeight, float titleSize, float dpiScale);
+
 struct RatingLogoSize {
     float width;
     float height;

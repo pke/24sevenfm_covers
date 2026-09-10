@@ -374,7 +374,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             EndPaint(hwnd, &ps);
             return 0;
         }
+        case WM_LBUTTONDOWN:
+            if (eng().onAlbumClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) saveSettings();
+            return 0;
         case WM_LBUTTONDBLCLK: // double-click the canvas -> toggle fullscreen
+            if (d2d::albumHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             toggleFullscreen(hwnd);
             return 0;
         case WM_KEYDOWN:

@@ -5,6 +5,35 @@
 
 using namespace ssc;
 
+TEST_CASE("native resolver validates optional title logos independently and rechecks CDN URLs") {
+    std::string body = R"({"logo":{"url":"https://assets.fanart.tv/fanart/title.png","source":"fanart"}})";
+    unsigned downloads = 0;
+    MediaResolverConfig config;
+    config.transport = [&](const std::string& host, unsigned short, const std::string&,
+            const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse response; response.status = 200;
+        if (host == "assets.fanart.tv") { ++downloads; response.body = "image"; }
+        else response.body = body;
+        return response;
+    };
+    MediaResolver resolver(config);
+    MediaRequest request; request.album = "Pirates";
+    auto result = resolver.resolve(request);
+    CHECK(result.status == MediaResult::Hit);
+    CHECK(result.titleLogoSource == "fanart");
+    std::string bytes;
+    CHECK(resolver.downloadTitleLogo(result, bytes));
+    CHECK(bytes == "image");
+    result.titleLogoUrl = "https://evil.test/title.png";
+    CHECK_FALSE(resolver.downloadTitleLogo(result, bytes));
+    CHECK(bytes.empty()); CHECK(downloads == 1);
+    body = R"({"logo":{"url":"https://evil.test/title.png","source":"fanart"},"metadata":{"album":"Pirates","track":"Cue","artist":"Hans Zimmer"}})";
+    result = resolver.resolve(request);
+    CHECK(result.titleLogoUrl.empty());
+    CHECK(result.hasMetadata);
+    CHECK(result.album == "Pirates");
+}
+
 TEST_CASE("native resolver percent-encodes raw UTF-8 metadata") {
     CHECK(urlEncode("A+B & Caf\xC3\xA9") == "A%2BB%20%26%20Caf%C3%A9");
 }
@@ -20,6 +49,14 @@ TEST_CASE("native resolver sends bounded physical viewport hints only for artwor
     MediaResolver(config).resolve(request);
     CHECK(path.find("&width=3840&height=2160") != std::string::npos);
     CHECK(path.find("orientation=") == std::string::npos);
+    CHECK(path.find("logos=") == std::string::npos);
+    request.includeTitleLogo = true;
+    MediaResolver(config).resolve(request);
+    CHECK(path.find("&logos=1") != std::string::npos);
+    request.includeArt = false;
+    MediaResolver(config).resolve(request);
+    CHECK(path.find("logos=") == std::string::npos);
+    request.includeArt = true;
     request.width = 2160; request.height = 3840;
     MediaResolver(config).resolve(request);
     CHECK(path.find("&width=2160&height=3840") != std::string::npos);

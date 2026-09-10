@@ -303,7 +303,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             covermenu::showPopup(hwnd, pt, eng(), act, /*includeFullscreen*/ true, g_fsWin.active());
             return 0;
         }
+        case WM_LBUTTONDOWN:
+            if (eng().onAlbumClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) saveSettings();
+            return 0;
         case WM_LBUTTONDBLCLK: // double-click the cover -> enter fullscreen (Esc/dbl-click there exits)
+            if (d2d::albumHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             setFullscreen(!g_fsWin.active());
             return 0;
         case WM_MOUSEMOVE:

@@ -39,6 +39,8 @@ static cfg_int cfg_layout(g_guid_layout, 0);
 static cfg_int cfg_pblur(g_guid_pblur, 24);
 static cfg_int cfg_radius(g_guid_radius, 45);
 static cfg_int cfg_backdrop(g_guid_backdrop, 0);
+static const GUID g_guid_titlelogos = { 0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x11 } };
+static cfg_int cfg_titlelogos(g_guid_titlelogos, 0);
 static cfg_int cfg_ratings(g_guid_ratings, 0);
 static cfg_int cfg_hidecover(g_guid_hidecover, 1);
 static cfg_int cfg_ratingde(g_guid_ratingde, 1);
@@ -81,6 +83,7 @@ private:
         if (!std::strcmp(key, "posterBlur"))    return &cfg_pblur;
         if (!std::strcmp(key, "borderRadius"))  return &cfg_radius;
         if (!std::strcmp(key, "backdrops"))     return &cfg_backdrop;
+        if (!std::strcmp(key, "titleLogos"))    return &cfg_titlelogos;
         if (!std::strcmp(key, "ratings"))       return &cfg_ratings;
         if (!std::strcmp(key, "hideCoverWithBackdrop")) return &cfg_hidecover;
         if (!std::strcmp(key, "ratingDE"))      return &cfg_ratingde;

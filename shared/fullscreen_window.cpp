@@ -96,7 +96,12 @@ LRESULT CALLBACK FullscreenWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
             break;
+        case WM_LBUTTONDOWN:
+            if (self && CoverEngine::instance().onAlbumClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))
+                    && self->menu_.persist) self->menu_.persist();
+            return 0;
         case WM_LBUTTONDBLCLK:
+            if (d2d::albumHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             if (self) self->exit();
             return 0;
         case WM_KEYDOWN:

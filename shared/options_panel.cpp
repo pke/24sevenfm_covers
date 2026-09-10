@@ -444,6 +444,7 @@ void setValues(HWND dlg, const CoverEngine::Settings& s) {
     setRadio(dlg, IDC_OPT_TRANS, 4, s.transition);
     SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPOS, TRUE, clampi(s.fadeMs, 500, 2000));
     CheckDlgButton(dlg, IDC_OPT_BACKDROPS, s.backdrops ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(dlg, IDC_OPT_TITLELOGOS, s.titleLogos ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, IDC_OPT_RATINGS, s.ratings ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, IDC_OPT_HIDECOVER, s.hideCoverWithBackdrop ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, IDC_OPT_RATING_DE, s.ratingDE ? BST_CHECKED : BST_UNCHECKED);
@@ -472,6 +473,7 @@ void read(HWND dlg, CoverEngine::Settings& s) {
     const int fade = (int)SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_GETPOS, 0, 0);
     s.fadeMs = clampi(((fade + 50) / 100) * 100, 500, 2000); // snap to 100 ms
     s.backdrops = IsDlgButtonChecked(dlg, IDC_OPT_BACKDROPS) == BST_CHECKED;
+    s.titleLogos = IsDlgButtonChecked(dlg, IDC_OPT_TITLELOGOS) == BST_CHECKED;
     s.ratings = IsDlgButtonChecked(dlg, IDC_OPT_RATINGS) == BST_CHECKED;
     s.hideCoverWithBackdrop = IsDlgButtonChecked(dlg, IDC_OPT_HIDECOVER) == BST_CHECKED;
     s.ratingDE = IsDlgButtonChecked(dlg, IDC_OPT_RATING_DE) == BST_CHECKED;
@@ -496,6 +498,7 @@ void updateEnabled(HWND dlg) {
     EnableWindow(GetDlgItem(dlg, IDC_OPT_FADEVAL), animated);
     const BOOL backdrop = IsDlgButtonChecked(dlg, IDC_OPT_BACKDROPS) == BST_CHECKED;
     EnableWindow(GetDlgItem(dlg, IDC_OPT_HIDECOVER), backdrop);
+    EnableWindow(GetDlgItem(dlg, IDC_OPT_TITLELOGOS), backdrop);
     EnableWindow(GetDlgItem(dlg, IDC_OPT_PROVIDERS), backdrop);
     EnableWindow(GetDlgItem(dlg, IDC_OPT_PROVIDER_UP), backdrop);
     EnableWindow(GetDlgItem(dlg, IDC_OPT_PROVIDER_DOWN), backdrop);

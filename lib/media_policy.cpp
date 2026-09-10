@@ -2,6 +2,26 @@
 
 namespace ssc {
 
+TitleLogoSize titleLogoSize(float pixelWidth, float pixelHeight, float stageWidth,
+                           float stageHeight, float titleSize, float dpiScale) {
+    if (dpiScale <= 0) dpiScale = 1;
+    if (pixelWidth <= 0 || pixelHeight <= 0 || stageWidth <= 0 || stageHeight <= 0)
+        return {0, 0, 0};
+    float height = titleSize * 2.8f;
+    if (height < 96 * dpiScale) height = 96 * dpiScale;
+    if (height > 160 * dpiScale) height = 160 * dpiScale;
+    if (height > stageHeight * .24f) height = stageHeight * .24f;
+    float width = stageWidth * .72f;
+    if (width > 512 * dpiScale) width = 512 * dpiScale;
+    float scale = height / pixelHeight;
+    if (scale > width / pixelWidth) scale = width / pixelWidth;
+    if (scale > 1) scale = 1; // same intrinsic-size limit as the web canvas
+    float row = titleSize * 1.3f;
+    if (row < 40 * dpiScale) row = 40 * dpiScale;
+    if (row > 72 * dpiScale) row = 72 * dpiScale;
+    return {pixelWidth * scale, pixelHeight * scale, row};
+}
+
 float ratingLogoHeight(float stageHeight, float dpiScale) {
     if (dpiScale <= 0.0f) dpiScale = 1.0f;
     float fontSize = stageHeight / 24.0f;
@@ -50,6 +70,7 @@ std::string mediaCacheKey(const TrackInfo& track, const MediaRequest& request) {
         + (request.includeArt && hasProvider(request.providers, "fanart")
             ? request.fanartClientKey : std::string()) + "\n"
         + (request.includeArt ? "art" : "no-art") + "\n"
+        + (request.includeArt && request.includeTitleLogo ? "logos" : "no-logos") + "\n"
         + (request.includeRatings ? "ratings" : "no-ratings") + "\n"
         + (wantsPortraitArtwork(request) ? "portrait" : "landscape") + "\n"
         + (wants4kArtwork(request) ? "4k" : "hd");

@@ -56,6 +56,7 @@ public:
                                   // cover's side (INI "borderRadius"; not in the UI).
                                   // 0 = square, 500 = circle.
         bool backdrops = false;   // SST movie/TV/game artwork; deliberately opt-in
+        bool titleLogos = false;  // replace album text; independent opt-in within backdrops
         bool ratings = false;     // DE/US age classifications, independent of art
         bool hideCoverWithBackdrop = true;
         std::string mediaProviders = "fanart,tmdb,tvmaze,steamgriddb";
@@ -101,6 +102,7 @@ public:
     // window; fullscreen becomes idle two seconds after the last movement.
     void onPointerMove(HWND h, bool fullscreenAutoHide);
     void onPointerLeave(HWND h);
+    bool onAlbumClick(HWND h, int x, int y); // true when toggled; host persists settings
     void resetTitle();       // playback stopped -> next tune-in reloads
     void repaint();          // request a redraw (e.g. after a settings change)
     void retryMedia();       // manual retry after resolver/image failure
@@ -151,6 +153,7 @@ private:
     void publishMetadata(unsigned long long epoch, const ssc::MediaResult& result,
                          int lengthSeconds);
     void clearMedia(unsigned long long epoch);
+    void publishTitleLogo(unsigned long long epoch, const std::string& bytes, const std::string& album);
     void decodePendingMedia(HWND h);
     float ratingVisibilityAlpha(DWORD now);
     void setRatingVisibility(bool visible, DWORD now);
@@ -178,6 +181,9 @@ private:
     ssc::InfoPresentation info_;         // guarded, including animation state
     int infoFadeMs_ = 0;                 // coherent settings snapshot for publishers
     std::string pendingBackdropBytes_;
+    std::string pendingTitleLogoBytes_, pendingTitleLogoAlbum_;
+    bool titleLogoDirty_ = false;
+    unsigned long long pendingTitleLogoEpoch_ = 0;
     std::vector<d2d::RatingBadge> pendingRatings_;
     bool mediaDirty_ = false, pendingMediaClear_ = false;
     bool pendingBackdropChange_ = false;

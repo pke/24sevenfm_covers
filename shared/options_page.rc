@@ -6,7 +6,7 @@
 #include <commctrl.h>
 #include "options_ids.h"
 
-IDD_OPTIONS_PAGE DIALOGEX 0, 0, 230, 320
+IDD_OPTIONS_PAGE DIALOGEX 0, 0, 230, 336
 STYLE DS_CONTROL | WS_CHILD
 FONT 8, "MS Shell Dlg"
 BEGIN
@@ -34,21 +34,22 @@ BEGIN
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP,                       50, 89, 116, 18
     LTEXT           "500 ms",        IDC_OPT_FADEVAL, 170, 92, 30, 10
 
-    GROUPBOX        "StreamingSoundtracks media", -1, 6, 113, 218, 204
+    GROUPBOX        "StreamingSoundtracks media", -1, 6, 113, 218, 220
     AUTOCHECKBOX    "Show movie, TV && game &backdrops", IDC_OPT_BACKDROPS, 13, 126, 180, 12, WS_GROUP | WS_TABSTOP
     AUTOCHECKBOX    "&Hide the square cover when a backdrop is shown", IDC_OPT_HIDECOVER, 24, 140, 194, 12, WS_TABSTOP
-    AUTOCHECKBOX    "Show age &ratings", IDC_OPT_RATINGS, 13, 156, 105, 12, WS_GROUP | WS_TABSTOP
-    AUTOCHECKBOX    "&DE (FSK)", IDC_OPT_RATING_DE, 121, 156, 48, 12, WS_TABSTOP
-    AUTOCHECKBOX    "&US", IDC_OPT_RATING_US, 172, 156, 34, 12, WS_TABSTOP
-    LTEXT           "Artwork providers (top first):", -1, 13, 173, 132, 10
+    AUTOCHECKBOX    "Replace album title with &logo", IDC_OPT_TITLELOGOS, 24, 156, 194, 12, WS_TABSTOP
+    AUTOCHECKBOX    "Show age &ratings", IDC_OPT_RATINGS, 13, 172, 105, 12, WS_GROUP | WS_TABSTOP
+    AUTOCHECKBOX    "&DE (FSK)", IDC_OPT_RATING_DE, 121, 172, 48, 12, WS_TABSTOP
+    AUTOCHECKBOX    "&US", IDC_OPT_RATING_US, 172, 172, 34, 12, WS_TABSTOP
+    LTEXT           "Artwork providers (top first):", -1, 13, 189, 132, 10
     CONTROL         "", IDC_OPT_PROVIDERS, "SysListView32",
                     LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_VSCROLL | WS_TABSTOP,
-                    13, 184, 158, 72
-    PUSHBUTTON      "&Up", IDC_OPT_PROVIDER_UP, 177, 184, 39, 14, WS_TABSTOP
-    PUSHBUTTON      "&Down", IDC_OPT_PROVIDER_DOWN, 177, 202, 39, 14, WS_TABSTOP
+                    13, 200, 158, 72
+    PUSHBUTTON      "&Up", IDC_OPT_PROVIDER_UP, 177, 200, 39, 14, WS_TABSTOP
+    PUSHBUTTON      "&Down", IDC_OPT_PROVIDER_DOWN, 177, 218, 39, 14, WS_TABSTOP
     // Replaced at runtime by IDD_OPT_PROVIDER_DETAILS. Keeping a template control
     // gives every host the same dialog-unit placement without hard-coded pixels.
-    LTEXT           "", IDC_OPT_PROVIDER_DETAILS, 13, 258, 203, 49
+    LTEXT           "", IDC_OPT_PROVIDER_DETAILS, 13, 274, 203, 49
 END
 
 // One real child window contains the selected provider's link, attribution and

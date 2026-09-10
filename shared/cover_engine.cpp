@@ -172,6 +172,7 @@ struct CoverEngine::MediaWorkerState {
     std::shared_ptr<std::atomic<bool> > cancel;
     std::vector<Work> work;
     std::map<std::string, CacheEntry> cache;
+    std::map<std::string, std::string> titleLogoCache; // decoded-safe bytes, bounded like queue art
     ssc::TrackInfo current;
     std::vector<ssc::TrackInfo> queue;
     ssc::MediaRequest request;
@@ -207,6 +208,7 @@ bool sameResolverConfig(const ssc::MediaRequest& a, const ssc::MediaRequest& b) 
     return a.providers == b.providers && a.ratingCountries == b.ratingCountries
         && effectiveFanartKey(a) == effectiveFanartKey(b)
         && a.includeArt == b.includeArt && a.includeRatings == b.includeRatings
+        && a.includeTitleLogo == b.includeTitleLogo
         && ssc::wantsPortraitArtwork(a) == ssc::wantsPortraitArtwork(b)
         && ssc::wants4kArtwork(a) == ssc::wants4kArtwork(b);
 }
@@ -274,6 +276,27 @@ void CoverEngine::startMediaWorker() {
             }
             if (!item.cancel || item.cancel->load()) continue;
 
+            const auto prepareTitleLogo = [&](const ssc::MediaResult& result) {
+                if (!item.request.includeArt) return;
+                std::string bytes;
+                if (!result.titleLogoUrl.empty()) {
+                    {
+                        std::lock_guard<std::mutex> lock(state->mutex);
+                        const auto found = state->titleLogoCache.find(result.titleLogoUrl);
+                        if (found != state->titleLogoCache.end()) bytes = found->second;
+                    }
+                    if (bytes.empty() && state->resolver.downloadTitleLogo(result, bytes, item.cancel.get())
+                            && ssc::decodableImage(bytes) && !item.cancel->load()) {
+                        std::lock_guard<std::mutex> lock(state->mutex);
+                        state->titleLogoCache[result.titleLogoUrl] = bytes;
+                        while (state->titleLogoCache.size() > ssc::kQueuedTrackStoreLimit)
+                            state->titleLogoCache.erase(state->titleLogoCache.begin());
+                    } else if (bytes.empty() || !ssc::decodableImage(bytes)) bytes.clear();
+                }
+                if (item.current && !item.cancel->load())
+                    publishTitleLogo(item.epoch, bytes, result.album);
+            };
+
             if (item.kind == MediaWorkerState::Work::Resolve) {
                 // Queue rows can omit composer credit. Use the same project-owned
                 // credit endpoint as web before resolving, never scrape arbitrary URLs.
@@ -318,8 +341,9 @@ void CoverEngine::startMediaWorker() {
                     }
                 }
                 if (haveCached) {
+                    if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
+                    prepareTitleLogo(haveCachedFallback ? cachedFallback.result : cached.result);
                     if (item.current) {
-                        publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
                         if (haveCachedFallback) {
                             ssc::MediaResult merged = cachedFallback.result;
                             if (!cached.result.certifications.empty())
@@ -358,9 +382,11 @@ void CoverEngine::startMediaWorker() {
                                 }
                             }
                         }
-                        if (haveFallback)
+                        if (haveFallback) {
+                            prepareTitleLogo(fallback.result);
                             publishMedia(item.epoch, fallback.bytes, ratingBadges(fallback.result), false,
                                          &fallback.result);
+                        }
                     }
                     const unsigned failure = item.attempt + 1;
                     item.attempt = failure;
@@ -377,6 +403,8 @@ void CoverEngine::startMediaWorker() {
                 }
                 if (item.current)
                     publishMetadata(item.epoch, resolved, item.track.lengthSeconds);
+                prepareTitleLogo(resolved);
+                if (item.cancel->load()) continue;
 
                 if (resolved.status == ssc::MediaResult::Miss || !resolved.hasBackdrop()) {
                     MediaWorkerState::CacheEntry fallback;
@@ -399,6 +427,7 @@ void CoverEngine::startMediaWorker() {
                     }
                     if (item.current) {
                         if (haveFallback) {
+                            if (resolved.titleLogoUrl.empty()) prepareTitleLogo(fallback.result);
                             ssc::MediaResult merged = fallback.result;
                             if (!resolved.certifications.empty()) merged.certifications = resolved.certifications;
                             publishMedia(item.epoch, fallback.bytes, ratingBadges(merged), false,
@@ -503,6 +532,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
     request.fanartClientKey = snapshot.fanartClientKey;
     const bool soundtrackMedia = snapshot.station == 0;
     request.includeArt = soundtrackMedia && snapshot.backdrops;
+    request.includeTitleLogo = request.includeArt && snapshot.titleLogos;
     request.includeRatings = soundtrackMedia && snapshot.ratings;
     request.ratingCountries = snapshot.ratingDE && snapshot.ratingUS ? "DE,US"
         : snapshot.ratingDE ? "DE" : snapshot.ratingUS ? "US" : "DE,US";
@@ -524,6 +554,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
         const bool sameCurrent = state->epoch != 0
             && state->current.album == current.album && state->current.track == current.track
             && state->current.artist == current.artist && state->current.coverUrl == current.coverUrl
+            && state->request.includeTitleLogo == request.includeTitleLogo
             && sameResolverConfig(state->request, request);
         if (sameCurrent) {
             if (queue.empty()) return; // current refresh: keep the existing staggered queue
@@ -559,6 +590,14 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             std::lock_guard<std::mutex> publication(mutex_);
             epoch = state->epoch = ++activeMediaEpoch_;
             mediaDirty_ = false; // discard an old result waiting in the UI mailbox
+            titleLogoDirty_ = false;
+            if (!request.includeTitleLogo || state->current.album != current.album
+                    || state->current.track != current.track || state->current.artist != current.artist
+                    || current.stationIdent) {
+                pendingTitleLogoBytes_.clear(); pendingTitleLogoAlbum_.clear();
+                pendingTitleLogoEpoch_ = epoch; titleLogoDirty_ = true;
+                if (window) PostMessageA(window, SSC_WM_NEWMEDIA, 0, 0);
+            }
             infoFadeMs_ = snapshot.transition != 0 && clientAnimationsEnabled()
                 ? snapshot.fadeMs : 0;
             info_.begin(std::to_string(snapshot.station) + "\n" + current.album + "\n"
@@ -636,23 +675,38 @@ void CoverEngine::publishMetadata(unsigned long long epoch, const ssc::MediaResu
                                   int lengthSeconds) {
     if (result.album.empty()) return;
     std::string title = result.album;
+    std::string track = result.track;
     if (!result.track.empty()) title += " - " + result.track;
     if (lengthSeconds > 0) {
         const int mm = lengthSeconds / 60, ss = lengthSeconds % 60;
-        title += " (" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "")
+        const std::string duration = "(" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "")
             + std::to_string(ss) + ")";
+        title += " " + duration;
+        track += (track.empty() ? "" : " ") + duration;
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!epoch || activeMediaEpoch_ != epoch) return;
         info_.settle(toWide(title), toWide(result.artist), result.hasMetadata,
-            GetTickCount(), infoFadeMs_);
+            GetTickCount(), infoFadeMs_, toWide(result.album), toWide(track));
     }
     invalidate();
 }
 
 void CoverEngine::clearMedia(unsigned long long epoch) {
+    publishTitleLogo(epoch, "", "");
     publishMedia(epoch, std::string(), std::vector<d2d::RatingBadge>(), false);
+}
+
+void CoverEngine::publishTitleLogo(unsigned long long epoch, const std::string& bytes,
+                                   const std::string& album) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!epoch || epoch != activeMediaEpoch_) return;
+        pendingTitleLogoBytes_ = bytes; pendingTitleLogoAlbum_ = album;
+        pendingTitleLogoEpoch_ = epoch; titleLogoDirty_ = true;
+    }
+    if (HWND w = hwnd_.load()) PostMessageA(w, SSC_WM_NEWMEDIA, 0, 0);
 }
 
 void CoverEngine::start(bool autoAdvance) {
@@ -1026,6 +1080,14 @@ void CoverEngine::repaint() {
     invalidate();
 }
 
+bool CoverEngine::onAlbumClick(HWND h, int x, int y) {
+    if (h != hwnd_.load() || settings.station != 0 || !settings.backdrops
+            || settings.layout != 1 || !d2d::albumHitTest(h, x, y)) return false;
+    settings.titleLogos = !settings.titleLogos;
+    repaint();
+    return true;
+}
+
 void CoverEngine::retryMedia() {
     if (!media_) return;
     std::lock_guard<std::mutex> lock(media_->mutex);
@@ -1066,6 +1128,14 @@ void CoverEngine::decodePendingMedia(HWND h) {
     // Validate AND commit under the publication lock. Epoch advancement cannot
     // race the renderer after the pending payload has been taken from its mailbox.
     std::lock_guard<std::mutex> lock(mutex_);
+    if (titleLogoDirty_) {
+        titleLogoDirty_ = false;
+        if (pendingTitleLogoEpoch_ == activeMediaEpoch_)
+            d2d::setTitleLogo(settings.titleLogos && settings.backdrops
+                    ? pendingTitleLogoBytes_ : std::string(), toWide(pendingTitleLogoAlbum_),
+                transitionAnimates() && h && clientAnimationsEnabled() ? settings.fadeMs : 0);
+        if (h) InvalidateRect(h, nullptr, FALSE);
+    }
     if (!mediaDirty_) return;
     mediaDirty_ = false;
     if (pendingMediaEpoch_ != activeMediaEpoch_) return;
@@ -1163,19 +1233,23 @@ void CoverEngine::onPaint(HWND h) {
     // same "Show remaining time overlay" option. The renderer formats + rolls it.
     const int rem = (settings.showRemaining && haveCover_) ? currentRemaining() : -1;
     const wchar_t* status = loading_.load() ? L"Loading cover..." : nullptr; // no "Playing" label
-    std::wstring title, artist;
+    std::wstring title, artist, album, track;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         infoAlpha = info_.advance(now, settings.transition != 0 && clientAnimationsEnabled()
             ? settings.fadeMs : 0);
-        if (poster) { title = info_.title(); artist = info_.artist(); }
+        if (poster) {
+            title = info_.title(); artist = info_.artist();
+            album = info_.album(); track = info_.track();
+        }
     }
     d2d::setPosterBlur(settings.posterBlur);
     d2d::setCoverRadius(settings.borderRadius);
     d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(),
                 settings.rollDigits && clientAnimationsEnabled(), status,
                 settings.layout, title.c_str(), artist.c_str(), mediaAlpha,
-                settings.hideCoverWithBackdrop, ratingAlpha, ratingOpacity, infoAlpha);
+                settings.hideCoverWithBackdrop, ratingAlpha, ratingOpacity, infoAlpha,
+                album.c_str(), track.c_str(), transitionAnimates() && clientAnimationsEnabled() ? settings.fadeMs : 0);
 }
 
 // The engine's repaint heartbeat: redraw only while something is actually changing -
@@ -1207,7 +1281,7 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     }
     bool infoAnimating;
     { std::lock_guard<std::mutex> lock(mutex_); infoAnimating = info_.animating(); }
-    if (fading_ || mediaFading_ || infoAnimating || ratingFading_
+    if (fading_ || mediaFading_ || infoAnimating || ratingFading_ || d2d::titleLogoAnimating()
             || ratingVisibilityAnimating_ || loading_.load()
             || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);

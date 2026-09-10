@@ -3,6 +3,46 @@
 
 #include "media_policy.h"
 #include "../../shared/image_limits.h"
+#include "../../shared/title_logo_presentation.h"
+
+TEST_CASE("title logos share generous aspect-preserving bounds without enlarging their row") {
+    for (const float width : {390.0f, 1280.0f}) {
+        const auto logo = ssc::titleLogoSize(704, 290, width, 844, 24, 1);
+        CHECK(logo.width / logo.height == doctest::Approx(704.0f / 290));
+        CHECK(logo.height > logo.rowHeight * 2);
+        CHECK(logo.width <= width * .72f);
+        CHECK(logo.height <= 844 * .24f);
+    }
+    const auto tall = ssc::titleLogoSize(120, 280, 390, 844, 24, 1);
+    CHECK(tall.height > tall.width);
+    CHECK(tall.height > tall.rowHeight * 2);
+    const auto wide = ssc::titleLogoSize(1600, 80, 390, 844, 24, 1);
+    CHECK(wide.width <= 390 * .72f);
+    CHECK(wide.width / wide.height == doctest::Approx(20));
+}
+
+TEST_CASE("title logo fades retain outgoing bytes and reverse rapid toggles without snapping") {
+    ssc::TitleLogoPresentation logo;
+    logo.set("first", L"Album", 100, 1000);
+    CHECK(logo.advance(600, 1000) == doctest::Approx(.5));
+    CHECK(logo.bytes() == "first");
+    logo.set("", L"", 600, 1000);
+    CHECK(logo.advance(1100, 1000) == doctest::Approx(.25));
+    CHECK(logo.bytes() == "first");
+    logo.set("first", L"Album", 1100, 1000);
+    CHECK(logo.advance(1100, 1000) == doctest::Approx(.25));
+    CHECK(logo.advance(2100, 1000) == 1);
+    logo.set("second", L"Next", 2100, 1000);
+    CHECK(logo.advance(2600, 1000) == doctest::Approx(.5));
+    CHECK(logo.album() == L"Album");
+    CHECK(logo.advance(3100, 1000) == 0);
+    CHECK(logo.bytes() == "second");
+    CHECK(logo.album() == L"Next");
+    CHECK(logo.advance(3100, 0) == 1); // system reduced motion takes effect immediately
+    logo.set("", L"", 3200, 0);
+    CHECK(logo.bytes().empty());
+    CHECK_FALSE(logo.animating());
+}
 
 TEST_CASE("native image limits accept UHD and DCI 4K backdrops") {
     CHECK(ssc::coverDimsOk(3840, 2160));

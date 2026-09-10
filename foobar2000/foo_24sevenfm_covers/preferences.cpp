@@ -74,6 +74,7 @@ private:
                d.rollDigits != s.rollDigits || d.transition != s.transition ||
                d.fadeMs != s.fadeMs || d.layout != s.layout ||
                d.backdrops != s.backdrops || d.ratings != s.ratings ||
+               d.titleLogos != s.titleLogos ||
                d.hideCoverWithBackdrop != s.hideCoverWithBackdrop ||
                d.ratingDE != s.ratingDE || d.ratingUS != s.ratingUS ||
                d.mediaProviders != s.mediaProviders ||

@@ -28,6 +28,7 @@ struct MediaRequest {
     std::string fanartClientKey;
     std::string ratingCountries = "DE,US";
     bool includeArt = true;
+    bool includeTitleLogo = false; // response variant; server provider metadata stays shared
     bool includeRatings = true;
     int width = 0, height = 0; // physical client pixels; zero/zero omits the hint
 };
@@ -53,6 +54,7 @@ struct MediaResult {
     std::string mediaTitle;
     std::string mediaType;
     std::string backdropUrl;
+    std::string titleLogoUrl, titleLogoSource;
     std::string source;
     std::string album;
     std::string track;
@@ -70,7 +72,7 @@ struct MediaResolverConfig {
     std::string apiHost = "24covers-api.vercel.app";
     // First 12 SHA-256 hex chars of api/_lib/backdrop.js, matching the web
     // renderer's RESOLVER_V cache buster at the time this native build ships.
-    std::string resolverVersion = "e639fb809978";
+    std::string resolverVersion = "1b9d6df51fff";
     unsigned short apiPort = 443;
     int timeoutSeconds = 20;
     using Transport = std::function<HttpResponse(
@@ -102,6 +104,8 @@ public:
     // Downloads only a URL accepted by the same source/host policy as resolve().
     bool downloadBackdrop(const MediaResult& media, std::string& bytes,
                           const std::atomic<bool>* cancel = nullptr) const;
+    bool downloadTitleLogo(const MediaResult& media, std::string& bytes,
+                           const std::atomic<bool>* cancel = nullptr) const;
 
 private:
     HttpResponse get(const std::string& host, unsigned short port, const std::string& path,

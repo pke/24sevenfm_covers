@@ -36,6 +36,7 @@ public:
         MSG_WM_TIMER(OnTimer)
         MSG_WM_CONTEXTMENU(OnContextMenu)
         MSG_WM_LBUTTONDBLCLK(OnLButtonDblClk)
+        MSG_WM_LBUTTONDOWN(OnLButtonDown)
         MSG_WM_KEYDOWN(OnKeyDown)
         MSG_WM_MOUSEMOVE(OnMouseMove)
         MESSAGE_HANDLER(WM_MOUSELEAVE, OnMouseLeave)
@@ -111,7 +112,12 @@ private:
         covermenu::showPopup(m_hWnd, pt, CoverEngine::instance(), act,
                              /*includeFullscreen*/ true, m_fsWin.active()); // no station list
     }
-    void OnLButtonDblClk(UINT, CPoint) { // double-click the cover -> enter fullscreen (Esc there exits)
+    void OnLButtonDown(UINT, CPoint point) {
+        if (m_callback->is_edit_mode_enabled()) { SetMsgHandled(FALSE); return; }
+        if (CoverEngine::instance().onAlbumClick(m_hWnd, point.x, point.y)) ssccfg::saveFromEngine();
+    }
+    void OnLButtonDblClk(UINT, CPoint point) { // double-click the cover -> enter fullscreen (Esc there exits)
+        if (d2d::albumHitTest(m_hWnd, point.x, point.y)) return;
         if (!m_callback->is_edit_mode_enabled()) toggleFullscreen();
     }
     void OnKeyDown(TCHAR vk, UINT, UINT) { // demo mode: next cover (no-op otherwise)

@@ -8,6 +8,8 @@ class InfoPresentation {
 public:
     const std::wstring& title() const { return title_; }
     const std::wstring& artist() const { return artist_; }
+    const std::wstring& album() const { return album_; }
+    const std::wstring& track() const { return track_; }
     bool animating() const { return phase_ == Exiting || phase_ == Entering; }
     bool canonical() const { return canonical_; }
 
@@ -22,11 +24,13 @@ public:
     }
 
     void settle(const std::wstring& title, const std::wstring& artist, bool canonical,
-                std::uint32_t now, int fadeMs) {
+                std::uint32_t now, int fadeMs,
+                const std::wstring& album = L"", const std::wstring& track = L"") {
         if (title.empty() || (canonical_ && !canonical)) return;
         const float alpha = advance(now, fadeMs);
         canonical_ = canonical_ || canonical;
         nextTitle_ = title; nextArtist_ = artist; settled_ = true;
+        nextAlbum_ = album; nextTrack_ = track;
         if ((phase_ == Visible || phase_ == Entering)
                 && (title_ != title || artist_ != artist)) exit(alpha, now, fadeMs);
         if (phase_ == Waiting) reveal(now, fadeMs);
@@ -37,7 +41,7 @@ public:
             const auto elapsed = now - started_;
             if (fadeMs > 0 && elapsed < static_cast<std::uint32_t>(fadeMs))
                 return exitFrom_ * (1.0f - static_cast<float>(elapsed) / fadeMs);
-            title_.clear(); artist_.clear(); phase_ = Waiting;
+            title_.clear(); artist_.clear(); album_.clear(); track_.clear(); phase_ = Waiting;
             if (settled_) reveal(now, fadeMs);
         }
         if (phase_ == Entering) {
@@ -55,15 +59,17 @@ private:
         if (!title_.empty() && alpha > 0.0f && fadeMs > 0) {
             phase_ = Exiting; started_ = now; exitFrom_ = alpha;
         } else {
-            title_.clear(); artist_.clear(); phase_ = Waiting;
+            title_.clear(); artist_.clear(); album_.clear(); track_.clear(); phase_ = Waiting;
         }
     }
     void reveal(std::uint32_t now, int fadeMs) {
         title_ = nextTitle_; artist_ = nextArtist_;
+        album_ = nextAlbum_; track_ = nextTrack_;
         started_ = now; phase_ = fadeMs > 0 ? Entering : Visible;
     }
     std::string identity_;
     std::wstring title_, artist_, nextTitle_, nextArtist_;
+    std::wstring album_, track_, nextAlbum_, nextTrack_;
     bool canonical_ = false, settled_ = false;
     std::uint32_t started_ = 0;
     float exitFrom_ = 1.0f;

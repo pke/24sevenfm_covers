@@ -53,6 +53,22 @@ struct Dialogs {
 };
 }
 
+TEST_CASE("native title-logo option defaults off and follows the backdrop dependency") {
+    Dialogs dialogs;
+    CoverEngine::Settings settings;
+    CHECK_FALSE(settings.titleLogos);
+    settings.backdrops = true;
+    optpanel::setValues(dialogs.options, settings);
+    CHECK(IsDlgButtonChecked(dialogs.options, IDC_OPT_TITLELOGOS) == BST_UNCHECKED);
+    SendDlgItemMessageW(dialogs.options, IDC_OPT_TITLELOGOS, BM_CLICK, 0, 0);
+    optpanel::read(dialogs.options, settings);
+    CHECK(settings.titleLogos);
+    SendDlgItemMessageW(dialogs.options, IDC_OPT_BACKDROPS, BM_CLICK, 0, 0);
+    CHECK_FALSE(IsWindowEnabled(GetDlgItem(dialogs.options, IDC_OPT_TITLELOGOS)));
+    optpanel::read(dialogs.options, settings);
+    CHECK(settings.titleLogos); // parent switch retains the preference
+}
+
 TEST_CASE("foobar WTL clicks forward provider button IDs and enforce a rating country") {
     Dialogs d;
     REQUIRE(d.options != nullptr);

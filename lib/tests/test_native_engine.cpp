@@ -2,6 +2,7 @@
 #include "doctest.h"
 #include <future>
 #include "../../shared/cover_engine.cpp"
+#include "../../shared/rating_assets.h"
 
 // Exercise the production scheduler/publication path without starting network or
 // a GPU window. The real renderer's byte/ratings setters do not require a device.
@@ -34,6 +35,7 @@ struct CoverEngineTestAccess {
         CHECK_FALSE(engine.mediaDirty_);
         CHECK_FALSE(engine.haveBackdrop_);
         CHECK_FALSE(engine.ratingHasContent_);
+        CHECK(engine.pendingTitleLogoBytes_.empty());
     }
     void blockedPublication(int kind) {
         const auto epoch = schedule("Old album");
@@ -47,7 +49,8 @@ struct CoverEngineTestAccess {
                 engine.publishMetadata(epoch, result, 60);
             } else if (kind == 1)
                 engine.publishMedia(epoch, "old image bytes", std::vector<d2d::RatingBadge>(1), false);
-            else engine.publishRatings(epoch, std::vector<d2d::RatingBadge>(1));
+            else if (kind == 2) engine.publishRatings(epoch, std::vector<d2d::RatingBadge>(1));
+            else engine.publishTitleLogo(epoch, "old logo bytes", "Old album");
         });
         ready.wait();
         // The publisher cannot complete while the publication mutex is held.
@@ -131,6 +134,67 @@ struct CoverEngineTestAccess {
         CHECK(bytes == "SST image");
         CHECK_FALSE(engine.currentCover(bytes, -1));
     }
+    void queuedTitleLogos() {
+        engine.stopMediaWorker();
+        engine.settings.backdrops = true;
+        engine.startMediaWorker();
+        const void* png = nullptr; size_t length = 0;
+        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
+        const std::string image(static_cast<const char*>(png), length);
+        std::atomic<unsigned> resolutions{0}, downloads{0};
+        ssc::MediaResolverConfig config;
+        config.transport = [&](const std::string& host, unsigned short, const std::string& path,
+                const std::string&, const std::string&, const std::string&, int) {
+            ssc::HttpResponse response; response.status = 200;
+            if (host == "assets.fanart.tv") { ++downloads; response.body = image; }
+            else {
+                ++resolutions;
+                const std::string album = path.find("Queued") == std::string::npos ? "Current" : "Queued";
+                response.body = "{\"metadata\":{\"album\":\"" + album + "\",\"track\":\"Cue\",\"artist\":\"\"}";
+                if (path.find("&logos=1") != std::string::npos)
+                    response.body += ",\"logo\":{\"url\":\"https://assets.fanart.tv/fanart/" + album + ".png\",\"source\":\"fanart\"}";
+                response.body += "}";
+            }
+            return response;
+        };
+        { std::lock_guard<std::mutex> lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
+        struct JoinWorker { std::function<void()> stop; ~JoinWorker() { stop(); } };
+        JoinWorker join{[&] { engine.stopMediaWorker(); }};
+        ssc::TrackInfo current, queued;
+        current.album = "Current"; current.track = "Cue";
+        queued.album = "Queued"; queued.track = "Cue";
+        engine.scheduleMedia(current, {queued});
+        const auto waitFor = [&](size_t metadataCount, size_t logoCount) {
+            for (unsigned i = 0; i < 1000; ++i) {
+                {
+                    std::lock_guard<std::mutex> lock(state().mutex);
+                    if (state().cache.size() == metadataCount && state().titleLogoCache.size() == logoCount)
+                        return true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return false;
+        };
+        REQUIRE(waitFor(2, 0));
+        CHECK(downloads == 0); CHECK(resolutions == 2);
+        engine.settings.titleLogos = true; engine.repaint();
+        REQUIRE(waitFor(4, 2));
+        CHECK(downloads == 2); CHECK(resolutions == 4);
+        engine.settings.titleLogos = false; engine.repaint();
+        engine.settings.titleLogos = true; engine.repaint();
+        engine.scheduleMedia(queued, {}); // promote the prepared queue item
+        for (unsigned i = 0; i < 1000; ++i) {
+            bool ready;
+            { std::lock_guard<std::mutex> lock(engine.mutex_);
+              ready = engine.pendingTitleLogoAlbum_ == "Queued" && !engine.pendingTitleLogoBytes_.empty(); }
+            if (ready) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        { std::lock_guard<std::mutex> lock(engine.mutex_);
+          CHECK(engine.pendingTitleLogoAlbum_ == "Queued"); }
+        engine.stopMediaWorker(); // join before captured fixtures leave scope
+        CHECK(downloads == 2); CHECK(resolutions == 4);
+    }
     void artworkResize() {
         struct HiddenWindow {
             HWND value = CreateWindowExW(0, L"STATIC", L"Artwork resolution test",
@@ -179,6 +243,9 @@ struct CoverEngineTestAccess {
 
 TEST_CASE("native resize updates current and queue resolution without downgrading metadata") {
     CoverEngineTestAccess test; test.artworkResize();
+}
+TEST_CASE("native title logos prepare queued images and reuse metadata across toggles and promotion") {
+    CoverEngineTestAccess test; test.queuedTitleLogos();
 }
 TEST_CASE("native canonical metadata survives retries and resets only for a different track") {
     CoverEngineTestAccess test; test.canonicalRetry();
@@ -247,6 +314,7 @@ TEST_CASE("native blocked publishers validate the epoch inside the publication l
     SUBCASE("metadata") { test.blockedPublication(0); }
     SUBCASE("artwork") { test.blockedPublication(1); }
     SUBCASE("ratings") { test.blockedPublication(2); }
+    SUBCASE("title logo") { test.blockedPublication(3); }
 }
 TEST_CASE("native track change discards pending artwork and ratings before UI commit") {
     CoverEngineTestAccess test;

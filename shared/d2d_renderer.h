@@ -52,6 +52,9 @@ void setBackdrop(const void* data, size_t len, bool fadeFromCurrent,
 void clearBackdrop(bool fadeFromCurrent);
 void setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent);
 void endMediaFade();
+void setTitleLogo(const std::string& bytes, const std::wstring& album, int fadeMs);
+bool titleLogoAnimating();
+bool albumHitTest(HWND hwnd, int x, int y);
 
 // Poster-background Gaussian blur strength (standard deviation, in the blur's ~240px
 // working resolution). Persisted in the INI as "posterBlur" but not exposed in the UI.
@@ -86,7 +89,8 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             int layout, const wchar_t* title, const wchar_t* artist,
             float mediaProgress = 1.0f, bool hideCoverWithBackdrop = true,
             float ratingProgress = 1.0f, float ratingOpacity = 1.0f,
-            float infoOpacity = 1.0f);
+            float infoOpacity = 1.0f, const wchar_t* album = nullptr,
+            const wchar_t* track = nullptr, int logoFadeMs = 0);
 
 } // namespace d2d
 
