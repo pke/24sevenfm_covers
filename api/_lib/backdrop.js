@@ -1246,11 +1246,14 @@ function trustedSteamGridDbUrl(raw, kind) {
             ? /^\/(?:hero_thumb|thumb|file\/sgdb-cdn\/(?:hero_thumb|thumb))\//
             : kind === "grid"
                 ? /^\/(?:grid|file\/sgdb-cdn\/grid)\//
-                : /^\/(?:hero|file\/sgdb-cdn\/hero)\//;
+                : kind === "logo"
+                    ? /^\/(?:logo|file\/sgdb-cdn\/logo)\//
+                    : /^\/(?:hero|file\/sgdb-cdn\/hero)\//;
+        const allowedExtension = kind === "logo" ? /\.(?:png|webp)$/i : /\.(?:jpe?g|png|webp)$/i;
         if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "cdn2.steamgriddb.com"
                 || url.username || url.password || url.search || url.hash
                 || !allowedPath.test(url.pathname)
-                || !/\.(?:jpe?g|png|webp)$/i.test(url.pathname)) return "";
+                || !allowedExtension.test(url.pathname)) return "";
         return url.href;
     } catch (error) {
         return "";
@@ -1321,6 +1324,41 @@ function steamGridDbArtwork(fetchImpl, game, env, orientation) {
     return orientation === "portrait"
         ? steamGridDbGrid(fetchImpl, game, env)
         : steamGridDbHero(fetchImpl, game, env);
+}
+
+async function steamGridDbTitleLogo(fetchImpl, game, env) {
+    if (!game) return "";
+    const url = new URL("https://www.steamgriddb.com/api/v2/logos/game/"
+        + encodeURIComponent(game.id));
+    url.searchParams.set("mimes", "image/png,image/webp");
+    url.searchParams.set("types", "static");
+    url.searchParams.set("nsfw", "false");
+    url.searchParams.set("humor", "false");
+    url.searchParams.set("epilepsy", "false");
+    let body;
+    try {
+        body = await fetchJson(fetchImpl, url, steamGridDbRequest(env), "steamgriddb");
+    } catch (error) {
+        return "";
+    }
+    const languageRank = candidate => candidate && candidate.language === "en" ? 0
+        : !candidate || !candidate.language || candidate.language === "00" ? 1 : 2;
+    const styleRank = candidate => candidate && candidate.style === "official" ? 0
+        : candidate && candidate.style === "custom" ? 1
+            : candidate && candidate.style === "white" ? 2 : 3;
+    const candidates = Array.isArray(body && body.data) ? body.data.slice() : [];
+    candidates.sort((a, b) => languageRank(a) - languageRank(b)
+        || styleRank(a) - styleRank(b)
+        || (Number(b && b.score) || 0) - (Number(a && a.score) || 0)
+        || (Number(b && b.upvotes) || 0) - (Number(a && a.upvotes) || 0)
+        || (Number(b && b.width) || 0) * (Number(b && b.height) || 0)
+            - (Number(a && a.width) || 0) * (Number(a && a.height) || 0)
+        || (Number(a && a.id) || 0) - (Number(b && b.id) || 0));
+    for (const candidate of candidates) {
+        const logo = trustedSteamGridDbUrl(candidate && candidate.url, "logo");
+        if (logo) return logo;
+    }
+    return "";
 }
 
 async function steamGridDbBaseGameArtwork(fetchImpl, query, exactGame, env, orientation) {
@@ -1470,6 +1508,36 @@ async function tvmazeArtwork(fetchImpl, media, tvdbId) {
 function tmdbImageUrl(path, size) {
     if (typeof path !== "string" || !/^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(path)) return "";
     return "https://image.tmdb.org/t/p/" + size + path;
+}
+
+async function tmdbTitleLogo(fetchImpl, media, env) {
+    const type = mediaType(media);
+    const id = Number(media && media.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return "";
+    const url = new URL("https://api.themoviedb.org/3/" + type + "/"
+        + encodeURIComponent(id) + "/images");
+    // Keep the existing English/textless title-logo policy. Other localized
+    // languages remain a future client-locale extension rather than a guess here.
+    url.searchParams.set("include_image_language", "en,null");
+    let body;
+    try {
+        body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
+    } catch (error) {
+        return "";
+    }
+    const languageRank = candidate => candidate && candidate.iso_639_1 === "en" ? 0
+        : !candidate || !candidate.iso_639_1 ? 1 : 2;
+    const candidates = Array.isArray(body && body.logos) ? body.logos.slice() : [];
+    candidates.sort((a, b) => languageRank(a) - languageRank(b)
+        || (Number(b && b.vote_average) || 0) - (Number(a && a.vote_average) || 0)
+        || (Number(b && b.vote_count) || 0) - (Number(a && a.vote_count) || 0)
+        || (Number(b && b.width) || 0) * (Number(b && b.height) || 0)
+            - (Number(a && a.width) || 0) * (Number(a && a.height) || 0));
+    for (const candidate of candidates) {
+        const logo = tmdbImageUrl(candidate && candidate.file_path, "original");
+        if (logo && /\.(?:png|webp)$/i.test(new URL(logo).pathname)) return logo;
+    }
+    return "";
 }
 
 function tintPreviewUrl(source, backdrop, tmdbPath) {
@@ -1691,6 +1759,49 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
         }
     }
     return landscapeFallback;
+}
+
+async function titleLogoForResolvedMedia(fetchImpl, resolved, providers, clientKey, env) {
+    const media = resolved && resolved.media;
+    if (!media) return null;
+    if (media.type === "game") {
+        if (!providers.includes("steamgriddb")) return null;
+        const url = await steamGridDbTitleLogo(fetchImpl, {
+            id: media.id,
+            name: media.title,
+        }, env);
+        return url ? { url, source: "steamgriddb" } : null;
+    }
+    if (media.type !== "movie" && media.type !== "tv") return null;
+
+    const providerMedia = media.type === "tv"
+        ? { id: media.id, name: media.title, media_type: "tv" }
+        : { id: media.id, title: media.title, media_type: "movie" };
+    const selectedIndex = providers.indexOf(resolved.source);
+    const logoProviders = selectedIndex >= 0 ? providers.slice(selectedIndex) : providers;
+    let tvdbIdPromise = null;
+    const tvdbId = () => {
+        if (!tvdbIdPromise) {
+            tvdbIdPromise = tvdbIdForTmdbSeries(fetchImpl, media.id, env).catch(() => "");
+        }
+        return tvdbIdPromise;
+    };
+    for (const provider of logoProviders) {
+        let url = "";
+        if (provider === "tmdb") {
+            url = await tmdbTitleLogo(fetchImpl, providerMedia, env);
+        } else if (provider === "fanart" && provider !== resolved.source) {
+            const artwork = await fanartArtwork(fetchImpl, providerMedia, clientKey, env,
+                media.type === "tv" ? await tvdbId() : undefined);
+            url = artwork && artwork.logo || "";
+        } else if (provider === "tvmaze" && media.type === "tv"
+                && provider !== resolved.source) {
+            const artwork = await tvmazeArtwork(fetchImpl, providerMedia, await tvdbId());
+            url = artwork && artwork.logo || "";
+        }
+        if (url) return { url, source: provider };
+    }
+    return null;
 }
 
 function cleanCertification(raw, country) {
@@ -2045,6 +2156,7 @@ function createHandler(options = {}) {
     const tintForImage = options.tintForImage
         || ((url) => defaultTintForImage(fetchImpl, url));
     const cachedMetadata = createMetadataCache();
+    const cachedTitleLogo = createMetadataCache();
 
     async function handleBackdropRequest(req, res) {
         const startedAt = Date.now();
@@ -2191,7 +2303,8 @@ function createHandler(options = {}) {
                     && !metadataResolution && mediaHint === "auto",
             };
             // The display option is deliberately absent: both HTTP response
-            // variants reuse the same provider work and optional logo metadata.
+            // variants reuse matching/artwork work and any piggybacked logo metadata.
+            // Logo-only endpoints have a separate cache under this same identity.
             // Hash credentials so the cache key cannot expose them in diagnostics.
             const key = createHash("sha256").update(JSON.stringify([
                 title, providers, providers.includes("fanart") ? clientKey : "", mediaHint,
@@ -2212,7 +2325,14 @@ function createHandler(options = {}) {
             // Project into a fresh object: stripping a logo must never mutate the
             // common cache or another in-flight client's response.
             const result = { ...resolved, metadata };
-            if (!includeLogos) delete result.logo;
+            if (includeLogos && !result.logo && result.media) {
+                result.logo = await cachedTitleLogo(key, () => titleLogoForResolvedMedia(
+                    fetchImpl, resolved, providers, clientKey, env),
+                logo => logo ? CACHE_SECONDS : MISS_CACHE_SECONDS, reload);
+                if (!result.logo) delete result.logo;
+            } else if (!includeLogos) {
+                delete result.logo;
+            }
             const shortCache = !result.media || (includeArt && !result.backdrop);
             debugLog("info", "request.resolved", {
                 duration_ms: Date.now() - startedAt,

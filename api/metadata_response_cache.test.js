@@ -64,7 +64,7 @@ test("shared metadata cache separates provider settings, credentials, ratings an
         assert.equal((await request(variant)).statusCode, 200);
         assert.ok(calls.length > before, JSON.stringify(variant));
         const cached = calls.length;
-        await request({ ...variant, logos: "1" });
+        await request({ ...variant, logos: "0" });
         assert.equal(calls.length, cached);
     }
 });

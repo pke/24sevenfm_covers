@@ -32,10 +32,13 @@ dimensions by devicePixelRatio; native clients send HWND client pixels. Current 
 queued artwork caches distinguish HD/4K classes rather than every window size.
 Tint still uses the selected fanart image's small preview, including for 4K artwork.
 
-`logos=1` adds an optional `logo: { url, source }` from the selected providers'
-existing artwork payloads. Without that option, or with `logos=0`/`art=0`, the
-response omits title logos. Clients keep separate response variants and prepare
-current/queue logo images only when the API returns a validated URL.
+`logos=1` adds an optional `logo: { url, source }`. The resolver reuses fanart.tv
+and TVmaze logos found in artwork payloads; otherwise it can query TMDB for the
+already matched movie/TV ID or SteamGridDB for the already matched game ID. It never
+uses SteamGridDB to identify a film or series. Without that option, or with
+`logos=0`/`art=0`, the response omits title logos and does not call a logo-only
+endpoint. Clients keep separate response variants and prepare current/queue logo
+images only when the API returns a validated URL.
 
 Both variants share a server metadata cache before response projection. Matching
 inputs, provider order, credentials, rating countries and artwork orientation/HD/4K
@@ -46,6 +49,8 @@ failures are retried rather than cached. The cache holds up to 256 LRU entries p
 warm server instance, using the existing six-month hit and 15-minute miss TTLs.
 Explicit cache-reload headers refresh the entry. Cold starts and separate instances
 have independent caches; existing CDN response caching remains in place.
+Logo-only endpoint results use a second cache with the same key inputs, reload
+behavior, capacity and TTL rules, and are populated only by `logos=1` requests.
 See [ADR 0009](adr/0009-optional-title-logos.md).
 
 ## Project settings

@@ -106,13 +106,12 @@ With SST backdrops enabled, **Replace album title with logo** in the SST setting
 can replace the album text with a title logo returned by the media resolver. This
 setting is off by default, is saved locally, and uses `sstTitleLogos=1` in settings
 links when enabled. Turning it off fades back to the album text; disabled players
-do not load title-logo images. The first implementation reuses fanart.tv's
-HD/legacy movie and TV logos and TVmaze's typography assets from existing artwork
-responses. Logo and backdrop sources may differ when an earlier provider has only
-a logo; providers after the selected backdrop are not queried just for logos yet.
-TMDB and SteamGridDB logo endpoints are not integrated yet. Clicking the album
-heading or protruding logo toggles the same preference; keyboard activation works
-through the album button. Local Codex diagnostics now use the track heading.
+do not load title-logo images or trigger logo-only provider requests. Movie and TV
+logos can come from fanart.tv, TMDB and TVmaze; game logos can come from
+SteamGridDB. Logo endpoints reuse the already matched movie, series or game ID, so
+they cannot change the resolved media identity. Clicking the album heading or
+protruding logo toggles the same preference; keyboard activation works through the
+album button. Local Codex diagnostics now use the track heading.
 
 Transparent padding is trimmed before display. Logos of every aspect ratio may
 extend above the glass panel while keeping a small title row. With a visible logo,
@@ -121,10 +120,11 @@ title tooltip, and remains visible if a logo is missing or cannot be loaded/read
 Logo and text transitions retain outgoing content and respect reduced motion.
 
 The API sends optional logo URLs only with `logos=1`; current and queue response
-caches distinguish that option. A common server metadata cache reuses provider
-results across both response variants. Queue preparation downloads only returned
-logo URLs and retains successful image loads for reuse. The Windows viewer,
-Winamp and foobar2000 implement the same behavior through shared native code.
+caches distinguish that option. A common server metadata cache reuses matching and
+artwork work across both response variants, while logo-only TMDB and SteamGridDB
+responses have their own cache. Queue preparation downloads only returned logo URLs
+and retains successful image loads for reuse. The Windows viewer, Winamp and
+foobar2000 implement the same behavior through shared native code.
 See [ADR 0009](../docs/adr/0009-optional-title-logos.md) for the cache and UI contract.
 
 For the interactive web player, start the static site and a persistent local Node API

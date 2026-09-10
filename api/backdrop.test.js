@@ -2799,7 +2799,7 @@ test("accepts optional, paired and bounded physical viewport dimensions", () => 
     }
 });
 
-test("accepts only static SteamGridDB hero and grid CDN URLs", () => {
+test("accepts only static SteamGridDB hero, grid and transparent logo CDN URLs", () => {
     assert.equal(trustedSteamGridDbUrl(
         "https://cdn2.steamgriddb.com/hero/abc123.jpg", "hero"),
     "https://cdn2.steamgriddb.com/hero/abc123.jpg");
@@ -2812,10 +2812,17 @@ test("accepts only static SteamGridDB hero and grid CDN URLs", () => {
     assert.equal(trustedSteamGridDbUrl(
         "https://cdn2.steamgriddb.com/thumb/abc123.jpg", "thumb"),
     "https://cdn2.steamgriddb.com/thumb/abc123.jpg");
+    assert.equal(trustedSteamGridDbUrl(
+        "https://cdn2.steamgriddb.com/logo/abc123.png", "logo"),
+    "https://cdn2.steamgriddb.com/logo/abc123.png");
     assert.equal(trustedSteamGridDbUrl("https://evil.example/hero/abc.jpg", "hero"), "");
     assert.equal(trustedSteamGridDbUrl("https://cdn2.steamgriddb.com/hero/abc.gif", "hero"), "");
     assert.equal(trustedSteamGridDbUrl(
         "https://cdn2.steamgriddb.com/hero/abc.jpg", "grid"), "");
+    assert.equal(trustedSteamGridDbUrl(
+        "https://cdn2.steamgriddb.com/hero/abc.png", "logo"), "");
+    assert.equal(trustedSteamGridDbUrl(
+        "https://cdn2.steamgriddb.com/logo/abc.jpg", "logo"), "");
 });
 
 test("resolves an explicitly marked game through SteamGridDB hero art", async () => {
@@ -2858,6 +2865,159 @@ test("resolves an explicitly marked game through SteamGridDB hero art", async ()
     });
     assert.equal(requests.length, 2);
     assert.equal(tintUrl, "https://cdn2.steamgriddb.com/hero_thumb/hades.jpg");
+});
+
+test("loads and caches an official SteamGridDB title logo only when requested", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname.includes("/search/autocomplete/Metal%20Gear%20Solid%203%3A%20Snake%20Eater")) {
+                return response(200, { success: true, data: [{
+                    id: 37286, name: "Metal Gear Solid 3: Snake Eater", verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/37286") return response(200, {
+                success: true,
+                data: [{
+                    url: "https://cdn2.steamgriddb.com/hero/mgs3.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/mgs3.png",
+                }],
+            });
+            if (parsed.pathname === "/api/v2/logos/game/37286") return response(200, {
+                success: true,
+                data: [
+                    { id: 1, style: "custom", language: "en", score: 100, width: 4000,
+                        height: 1000, url: "https://cdn2.steamgriddb.com/logo/custom.png" },
+                    { id: 2, style: "official", language: "en", score: 0, width: 1500,
+                        height: 400, url: "https://cdn2.steamgriddb.com/logo/official.png" },
+                ],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [1, 2, 3],
+    });
+    const query = {
+        title: "Metal Gear Solid 3: Snake Eater (Original Video Game Soundtrack)",
+        providers: "steamgriddb",
+    };
+    const without = mockResponse();
+    await handler(mockRequest(query), without);
+    assert.equal(without.statusCode, 200);
+    assert.equal(Object.hasOwn(JSON.parse(without.body), "logo"), false);
+    assert.equal(requests.filter(url => url.pathname.includes("/logos/")).length, 0);
+
+    const withLogo = mockResponse();
+    await handler(mockRequest({ ...query, logos: "1" }), withLogo);
+    assert.deepEqual(JSON.parse(withLogo.body).logo, {
+        url: "https://cdn2.steamgriddb.com/logo/official.png",
+        source: "steamgriddb",
+    });
+    const logoRequest = requests.find(url => url.pathname === "/api/v2/logos/game/37286");
+    assert.equal(logoRequest.searchParams.get("mimes"), "image/png,image/webp");
+    assert.equal(logoRequest.searchParams.get("types"), "static");
+    assert.equal(logoRequest.searchParams.get("nsfw"), "false");
+    const cached = mockResponse();
+    await handler(mockRequest({ ...query, logos: "1" }), cached);
+    assert.deepEqual(JSON.parse(cached.body).logo, JSON.parse(withLogo.body).logo);
+    assert.equal(requests.filter(url => url.pathname.includes("/logos/")).length, 1);
+});
+
+test("uses TMDB's matched media identity for movie and TV title logos", async () => {
+    for (const fixture of [
+        { type: "movie", id: 87, title: "Indiana Jones and the Temple of Doom" },
+        { type: "tv", id: 62017, title: "The Man in the High Castle" },
+    ]) {
+        const requests = [];
+        const handler = createHandler({
+            env: { TMDB_API_KEY: "tmdb-key" },
+            fetchImpl: async (url) => {
+                const parsed = new URL(url);
+                requests.push(parsed);
+                if (parsed.pathname.includes("/search/")) return response(200, { results: [{
+                    id: fixture.id,
+                    media_type: fixture.type,
+                    title: fixture.type === "movie" ? fixture.title : undefined,
+                    name: fixture.type === "tv" ? fixture.title : undefined,
+                    backdrop_path: "/backdrop.jpg",
+                }] });
+                if (parsed.pathname === "/3/" + fixture.type + "/" + fixture.id + "/images") {
+                    return response(200, { logos: [
+                        { file_path: "/localized.png", iso_639_1: "de", vote_average: 10,
+                            width: 4000, height: 1000 },
+                        { file_path: "/english.png", iso_639_1: "en", vote_average: 1,
+                            width: 1600, height: 400 },
+                    ] });
+                }
+                throw new Error("unexpected request " + parsed.href);
+            },
+            tintForImage: async () => [4, 5, 6],
+        });
+        const query = { album: fixture.title, providers: "tmdb", media_hint: fixture.type };
+        const without = mockResponse();
+        await handler(mockRequest(query), without);
+        assert.equal(Object.hasOwn(JSON.parse(without.body), "logo"), false);
+        assert.equal(requests.filter(url => url.pathname.endsWith("/images")).length, 0);
+
+        const withLogo = mockResponse();
+        await handler(mockRequest({ ...query, logos: "1" }), withLogo);
+        assert.deepEqual(JSON.parse(withLogo.body).logo, {
+            url: "https://image.tmdb.org/t/p/original/english.png",
+            source: "tmdb",
+        });
+        const logoRequest = requests.find(url => url.pathname.endsWith("/images"));
+        assert.equal(logoRequest.searchParams.get("include_image_language"), "en,null");
+    }
+});
+
+test("falls through from a missing TMDB TV logo to Fanart without changing the backdrop", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname.includes("/search/")) return response(200, { results: [{
+                id: 62017, media_type: "tv", name: "The Man in the High Castle",
+                backdrop_path: "/high-castle.jpg",
+            }] });
+            if (parsed.pathname === "/3/tv/62017/images") return response(200, { logos: [] });
+            if (parsed.pathname === "/3/tv/62017/external_ids") {
+                return response(200, { tvdb_id: 295829 });
+            }
+            if (parsed.pathname === "/v3/tv/295829") return response(200, {
+                hdtvlogo: [{
+                    url: "https://assets.fanart.tv/fanart/high-castle-logo.png",
+                    lang: "en", likes: "3",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [7, 8, 9],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "The Man in the High Castle",
+        providers: "tmdb,fanart",
+        media_hint: "tv",
+        logos: "1",
+    }), res);
+
+    const result = JSON.parse(res.body);
+    assert.equal(result.backdrop, "https://image.tmdb.org/t/p/w1280/high-castle.jpg");
+    assert.equal(result.source, "tmdb");
+    assert.deepEqual(result.logo, {
+        url: "https://assets.fanart.tv/fanart/high-castle-logo.png",
+        source: "fanart",
+    });
+    assert.deepEqual(requests.map(url => url.pathname), [
+        "/3/search/multi",
+        "/3/tv/62017/images",
+        "/3/tv/62017/external_ids",
+        "/v3/tv/295829",
+    ]);
 });
 
 test("uses regular Dragon Age Veilguard art instead of its material hero", async () => {
