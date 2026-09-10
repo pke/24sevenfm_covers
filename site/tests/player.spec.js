@@ -98,6 +98,188 @@ test.describe("the deployed player page", () => {
         } }));
     });
 
+    async function mockTitleLogoFeed(page) {
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", route => {
+            if (new URL(route.request().url()).searchParams.get("action") === "GetQueue")
+                return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "The Empire Strikes Back", Track: "The Battle of Hoth", Artist: "John Williams",
+                CoverLink: "https://streamingsoundtracks.com/images/cover/title-logo.svg", Length: 3600000,
+                PlayStart: "2026-08-13T12:00:00Z", SystemTime: "2026-08-13T12:00:00Z",
+            } });
+        });
+        await page.route(/streamingsoundtracks\.com\/images\/cover\/.*title-logo\.svg/, route =>
+            route.fulfill({ contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+    }
+
+    test("keeps title logos off by default and persists their switch with a smooth exit", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await mockTitleLogoFeed(page);
+        const logo = "https://assets.fanart.tv/fanart/portrait-title.svg";
+        let logoRequests = 0, mediaRequests = 0;
+        page.on("request", request => {
+            if (request.url() === logo) logoRequests++;
+            if (/\/api\/media\?/.test(request.url())) mediaRequests++;
+        });
+        await page.route(logo, route => route.fulfill({
+            contentType: "image/svg+xml", headers: { "access-control-allow-origin": "*" },
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="310"><rect x="340" y="15" width="120" height="280" fill="white"/></svg>',
+        }));
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+            media: { id: 1891, title: "The Empire Strikes Back", type: "movie" },
+            backdrop: null, source: null,
+            logo: new URL(route.request().url()).searchParams.get("logos") === "1"
+                ? { url: logo, source: "fanart" } : null,
+            metadata: { album: "The Empire Strikes Back", track: "The Battle of Hoth", artist: "John Williams" },
+        } }));
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1");
+        const info = page.locator(".info"), canvas = page.locator("#media-logo canvas");
+        await expect(page.locator("#info-album")).toHaveText("The Empire Strikes Back");
+        await expect(info).not.toHaveClass(/has-media-logo/);
+        expect(logoRequests).toBe(0);
+        await openSettingsTab(page, "Station");
+        const logoSwitch = page.locator("#title-logos-enabled");
+        await expect(logoSwitch).not.toBeChecked();
+        const requestsBeforeToggle = mediaRequests;
+        await logoSwitch.check();
+        await expect(info).toHaveClass(/has-media-logo/);
+        expect(mediaRequests).toBe(requestsBeforeToggle + 1);
+        expect(new URL(page.url()).searchParams.get("sstTitleLogos")).toBe("1");
+        expect(await page.evaluate(() => JSON.parse(localStorage.getItem(
+            "24sevenfm-covers.player.v2")).sstTitleLogos)).toBe(true);
+        await expect(canvas).toHaveAttribute("width", "120");
+        await expect(canvas).toHaveAttribute("height", "280");
+        const rects = await stableElementRects(page, {
+            info: ".info", logo: "#media-logo canvas", track: "#info-track",
+        });
+        expect(rects.logo.top).toBeLessThan(rects.info.top);
+        expect(rects.logo.bottom).toBeLessThanOrEqual(rects.track.top);
+        await expect(page.locator("#info-album")).toHaveText("The Empire Strikes Back");
+        await expect(page.locator("#info-title")).toHaveAttribute("title", "The Empire Strikes Back");
+        await logoSwitch.uncheck();
+        await expect(info).not.toHaveClass(/has-media-logo/);
+        await expect(canvas).toBeAttached();
+        await expect(canvas).toHaveCount(0, { timeout: 5000 });
+        await expect(page.locator("#info-album")).toBeVisible();
+        expect(new URL(page.url()).searchParams.has("sstTitleLogos")).toBe(false);
+        expect(await page.evaluate(() => JSON.parse(localStorage.getItem(
+            "24sevenfm-covers.player.v2")).sstTitleLogos)).toBeUndefined();
+        await logoSwitch.check();
+        await expect(info).toHaveClass(/has-media-logo/);
+        await page.goto("/player.html"); // Restore the saved preference without a URL preset.
+        await expect(logoSwitch).toBeChecked();
+        await expect(info).toHaveClass(/has-media-logo/);
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1");
+        await expect(page.locator("#info-album")).toHaveText("The Empire Strikes Back");
+        await expect(logoSwitch).not.toBeChecked(); // Sparse presets also default to off.
+        await expect(info).not.toHaveClass(/has-media-logo/);
+    });
+
+    test("caches queue logo response variants and narrows the panel on album and keyboard toggles", async ({ page }) => {
+        const album = "Pirates Of The Caribbean: Dead Man's Chest";
+        const images = [], requests = [];
+        const cover = "https://streamingsoundtracks.com/images/cover/cache-logo.svg";
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", route => {
+            if (new URL(route.request().url()).searchParams.get("action") === "GetQueue")
+                return route.fulfill({ json: [{ Album: "Queued Film", Track: "Next Cue",
+                    Artist: "Hans Zimmer", CoverLink: "", SiteLink: "" }] });
+            return route.fulfill({ json: { Album: album, Track: "The Kraken", Artist: "Hans Zimmer",
+                CoverLink: cover, Length: 3600000, PlayStart: "2026-08-13T12:00:00Z",
+                SystemTime: "2026-08-13T12:00:00Z" } });
+        });
+        await page.route(/streamingsoundtracks\.com\/images\/cover\/.*cache-logo\.svg/, route =>
+            route.fulfill({ contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route("https://streamingsoundtracks.com/images/logos/*", route =>
+            route.fulfill({ contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route("https://assets.fanart.tv/fanart/cache-*.svg", route => {
+            images.push(route.request().url());
+            return route.fulfill({ contentType: "image/svg+xml",
+                headers: { "access-control-allow-origin": "*" },
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="250"><rect width="600" height="250" fill="white"/></svg>' });
+        });
+        await page.route(/\/api\/media\?/, route => {
+            const query = new URL(route.request().url()).searchParams;
+            requests.push(query.get("album") + ":" + query.get("logos"));
+            return route.fulfill({ json: { media: null, backdrop: null, source: null,
+                metadata: { album: query.get("album"), track: query.get("track"), artist: "Hans Zimmer" },
+                ...(query.get("logos") === "1" ? { logo: { source: "fanart",
+                    url: "https://assets.fanart.tv/fanart/cache-" + (query.get("album") === album ? "current" : "queue") + ".svg" } } : {}),
+            } });
+        });
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1&comingNext=1");
+        const toggle = page.locator("#info-album-toggle"), info = page.locator(".info");
+        await expect(page.locator("#info-album")).toHaveText(album);
+        await expect.poll(() => requests.length).toBe(2);
+        expect(images).toHaveLength(0);
+        const before = await stableElementRects(page, { info: ".info" });
+        await toggle.click();
+        await expect(info).toHaveClass(/has-media-logo/);
+        await expect.poll(() => images.length).toBe(2); // current and queue images
+        expect(requests).toHaveLength(4); // separate off/on API responses
+        const withLogo = await stableElementRects(page, { info: ".info" });
+        expect(withLogo.info.width).toBeLessThan(before.info.width * .8);
+        await page.locator("#media-logo canvas").click(); // includes artwork protruding above the panel
+        await expect(toggle).toHaveAttribute("aria-pressed", "false");
+        await expect(page.locator("#media-logo canvas")).toHaveCount(0);
+        const restored = await stableElementRects(page, { info: ".info" });
+        expect(restored.info.width).toBeCloseTo(before.info.width, 0);
+        await toggle.focus();
+        await toggle.press("Enter");
+        await expect(info).toHaveClass(/has-media-logo/);
+        await stableElementRects(page, { info: ".info" });
+        expect(requests).toHaveLength(4); // toggling back reuses both variants
+        expect(images).toHaveLength(2);
+        await toggle.press("Space");
+        await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    });
+
+    test("lets wide title logos protrude above a compact info box on desktop and mobile", async ({ page }) => {
+        await mockTitleLogoFeed(page);
+        const logo = "https://assets.fanart.tv/fanart/wide-title.svg";
+        await page.route(logo, route => route.fulfill({
+            contentType: "image/svg+xml", headers: { "access-control-allow-origin": "*" },
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="310"><rect x="100" y="30" width="600" height="250" fill="white"/></svg>',
+        }));
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+            media: null, backdrop: null, source: null, logo: { url: logo, source: "fanart" },
+            metadata: { album: "The Empire Strikes Back", track: "The Battle of Hoth", artist: "John Williams" },
+        } }));
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1&sstTitleLogos=1");
+        await expect(page.locator(".info")).toHaveClass(/has-media-logo/);
+        for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+            await page.setViewportSize(viewport);
+            const rects = await stableElementRects(page, {
+                info: ".info", logo: "#media-logo canvas", row: "#media-logo",
+                track: "#info-track", stage: "#stage",
+            });
+            // Most of the extra artwork height belongs above the glass, not in its row.
+            expect(rects.info.top - rects.logo.top).toBeGreaterThan(rects.logo.height * .4);
+            expect(rects.logo.height).toBeGreaterThan(rects.row.height * 2);
+            expect(rects.logo.bottom).toBeLessThanOrEqual(rects.track.top);
+            expect(rects.logo.top).toBeGreaterThanOrEqual(rects.stage.top);
+            expect(rects.logo.left).toBeGreaterThanOrEqual(rects.stage.left);
+            expect(rects.logo.right).toBeLessThanOrEqual(rects.stage.right);
+            expect(rects.logo.width / rects.logo.height).toBeCloseTo(2.4, 1);
+        }
+    });
+
+    test("falls back to the album text when a title logo cannot load", async ({ page }) => {
+        await mockTitleLogoFeed(page);
+        await page.route("https://assets.fanart.tv/fanart/broken-title.png", route => route.abort());
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+            media: null, backdrop: null, source: null,
+            logo: { url: "https://assets.fanart.tv/fanart/broken-title.png", source: "fanart" },
+            metadata: { album: "The Empire Strikes Back", track: "The Battle of Hoth", artist: "John Williams" },
+        } }));
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1&sstTitleLogos=1");
+        await expect(page.locator("#info-album")).toHaveText("The Empire Strikes Back");
+        await expect(page.locator("#info-album")).toBeVisible();
+        await expect(page.locator(".info")).not.toHaveClass(/has-media-logo/);
+    });
+
     test("enforces a restrictive player resource policy", async ({ page }) => {
         await mockProviderTestFeed(page);
         let escaped = false;
@@ -1196,12 +1378,12 @@ test.describe("the deployed player page", () => {
 
             await page.goto("/player.html?preset=1&station=sst&sstRatings=1"
                 + "&sstRatingCountries=US&previewAlbum=Family%20Guy"
-                + "&previewTrack=Main%20Title&previewArtist=Walter%20Murphy",
+                + "&previewTrack=Main%20Title&previewArtist=Walter%20Murphy&previewLength=884631",
             { waitUntil: "domcontentloaded" });
 
-            await expect(page.locator("#info-title")).toHaveText("Family Guy - Main Title");
+            await expect(page.locator("#info-title")).toHaveText("Family Guy - Main Title (14:44)");
             await expect(page.locator("#info-album")).toHaveText("Family Guy");
-            await expect(page.locator("#info-track")).toHaveText("Main Title");
+            await expect(page.locator("#info-track")).toHaveText("Main Title (14:44)");
             await expect(page.locator("#info-title-separator")).toBeHidden();
             const titleLines = await page.locator("#info-title").evaluate((title) => {
                 const album = title.querySelector("#info-album").getBoundingClientRect();
@@ -1235,6 +1417,7 @@ test.describe("the deployed player page", () => {
             expect(params.get("previewAlbum")).toBe("Family Guy");
             expect(params.get("previewTrack")).toBe("Main Title");
             expect(params.get("previewArtist")).toBe("Walter Murphy");
+            expect(params.get("previewLength")).toBe("884631");
         });
     test("pairs on the first local title click and sends a bounded report to this Codex task",
         async ({ page }) => {
@@ -1288,8 +1471,8 @@ test.describe("the deployed player page", () => {
             });
 
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            const title = page.locator("#info-title");
-            await expect(title).toContainText("La Mula - El Tocadiscos");
+            const title = page.locator("#info-track");
+            await expect(title).toContainText("El Tocadiscos");
             await expect(title).toHaveAttribute("role", "button");
             await expect(title).toHaveClass(/local-backchannel/);
             await expect(title).toHaveAttribute("tabindex", "0");
@@ -6449,7 +6632,7 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html?preset=1&station=sst&layout=fill"
             + "&remaining=countdown&remainingSize=large&comingNext=1"
             + "&sstBackdrops=1&sstBackdropProviders=tmdb,fanart"
-            + "&sstBackdropCover=hide&sstRatings=1&sstRatingCountries=US&bpm=1",
+            + "&sstBackdropCover=hide&sstTitleLogos=1&sstRatings=1&sstRatingCountries=US&bpm=1",
         { waitUntil: "domcontentloaded" });
 
         await expect(page.locator('input[name="station"][value="sst"]')).toBeChecked();
@@ -6490,6 +6673,7 @@ test.describe("the deployed player page", () => {
             bpm: "1",
             sstBackdrops: "1",
             sstBackdropProviders: "tmdb,fanart",
+            sstTitleLogos: "1",
             sstRatings: "1",
             sstRatingCountries: "US",
         });

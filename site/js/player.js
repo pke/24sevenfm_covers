@@ -222,6 +222,8 @@ var OPTION_DEFS = {
         default: { enabled: false, options: DEFAULT_BACKDROP_OPTIONS },
         coerce: featureOption(DEFAULT_BACKDROP_OPTIONS, backdropOptions)
     },
+    sstTitleLogos: { optional: true, coerce: optionalTrueOption,
+        effect: applyTitleLogosEnabled },
     sstRatings: {
         default: { enabled: false, options: DEFAULT_RATING_OPTIONS },
         coerce: featureOption(DEFAULT_RATING_OPTIONS, ratingOptions)
@@ -274,12 +276,16 @@ function localPreviewText(key, maxLength) {
 }
 
 // A local-only metadata fixture makes visual QA reproducible without touching the
-// station feed. previewAlbum is the opt-in; the other two fields are optional.
+// station feed. previewAlbum is the opt-in; the other fields are optional.
 var previewAlbum = localPreviewText("previewAlbum", 160);
+var previewLengthText = localPreviewText("previewLength", 8);
+var previewLength = /^\d+$/.test(previewLengthText) && Number(previewLengthText) <= 86400000
+    ? Number(previewLengthText) : 0;
 var localNowPlayingPreview = previewAlbum ? Object.freeze({
     album: previewAlbum,
     track: localPreviewText("previewTrack", 300),
     artist: localPreviewText("previewArtist", 160),
+    length: previewLength,
 }) : null;
 
 function defaultOptions() {
@@ -347,6 +353,7 @@ function applyPresetOptions(options, params) {
     if (params.has("sstBackdropCover"))
         backdrops.options.cover = params.get("sstBackdropCover");
     options.sstBackdrops = OPTION_DEFS.sstBackdrops.coerce(backdrops);
+    booleanParam("sstTitleLogos", "sstTitleLogos");
     var ratings = cloneOptionValue(options.sstRatings);
     if (params.has("sstRatings")) ratings.enabled = boolOption(params.get("sstRatings"));
     if (params.has("sstRatingCountries"))
@@ -422,7 +429,7 @@ var SETTINGS_URL_KEYS = [
     "preset", "station", "layout", "transition", "fade", "remaining",
     "remainingSize", "comingNext", "volume", "milkdrop", "laser", "strobe",
     "smoke", "bpm", "analyzer", "bars", "color", "scope", "sstBackdrops",
-    "sstBackdropProviders", "sstBackdropCover", "sstRatings", "sstRatingCountries",
+    "sstBackdropProviders", "sstBackdropCover", "sstTitleLogos", "sstRatings", "sstRatingCountries",
     "blur", "radius", "posterBlur", "borderRadius"
 ];
 function writeSettingsUrl(url) {
@@ -457,6 +464,7 @@ function writeSettingsUrl(url) {
         params.set("sstBackdropProviders", opts.sstBackdrops.options.providers.join(","));
     if (opts.sstBackdrops.options.cover !== "hide")
         params.set("sstBackdropCover", opts.sstBackdrops.options.cover);
+    if (opts.sstTitleLogos) params.set("sstTitleLogos", "1");
     if (opts.sstRatings.enabled) params.set("sstRatings", "1");
     if (opts.sstRatings.options.countries.join(",") !== "DE,US")
         params.set("sstRatingCountries", opts.sstRatings.options.countries.join(","));
@@ -744,6 +752,111 @@ var audioEl = $("audio");
 var infoEl = document.querySelector(".info");
 var infoTitleEl = $("info-title"), infoAlbumEl = $("info-album"), infoTrackEl = $("info-track");
 var infoTitleSeparatorEl = $("info-title-separator");
+var infoAlbumToggleEl = $("info-album-toggle");
+var mediaLogoEl = $("media-logo"), mediaLogoUrl = "", mediaLogoGeneration = 0;
+var mediaLogoClearTimer = null;
+var mediaLogoBackdropGeneration = 0;
+var mediaLogoArt = null;
+var titleLogoImages = new Map();
+function prepareTitleLogo(logo) {
+    var url = logo && trustedResolvedBackdrop(logo.url, logo.source);
+    if (!url) return Promise.resolve(null);
+    if (titleLogoImages.has(url)) return titleLogoImages.get(url);
+    var ready = new Promise(function (resolve, reject) {
+        var img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = function () { resolve(img); };
+        img.onerror = reject;
+        img.src = url;
+    }).catch(function (error) {
+        if (titleLogoImages.get(url) === ready) titleLogoImages.delete(url);
+        throw error;
+    });
+    titleLogoImages.set(url, ready);
+    while (titleLogoImages.size > 64) titleLogoImages.delete(titleLogoImages.keys().next().value);
+    return ready;
+}
+
+function applyTitleLogosEnabled() {
+    setMediaLogo(mediaLogoArt, mediaLogoBackdropGeneration);
+    restartQueuedBackdropPrefetch();
+    updateBackdrop();
+}
+function syncTitleLogoToggle() {
+    infoAlbumToggleEl.disabled = !sstBackdropsEnabled()
+        || !stationSupports(CAPABILITY_SOUNDTRACK_MEDIA);
+    infoAlbumToggleEl.setAttribute("aria-pressed", opts.sstTitleLogos ? "true" : "false");
+    infoAlbumToggleEl.setAttribute("aria-label", (opts.sstTitleLogos ? "Show album title: " : "Show album logo: ")
+        + infoAlbumEl.textContent);
+    infoAlbumToggleEl.title = infoAlbumEl.textContent;
+}
+infoAlbumToggleEl.addEventListener("click", function () {
+    if (infoAlbumToggleEl.disabled) return;
+    if (opts.sstTitleLogos) delete opts.sstTitleLogos;
+    else opts.sstTitleLogos = true;
+    syncOptionControls("sstTitleLogos");
+    saveOpts();
+    applyTitleLogosEnabled();
+});
+
+// Measure the opaque artwork, not the provider's transparent padding. This also
+// lets logos extend above the glass without enlarging their reserved row.
+function setMediaLogo(art, generation) {
+    syncTitleLogoToggle();
+    mediaLogoArt = art;
+    mediaLogoBackdropGeneration = generation;
+    var logo = opts.sstTitleLogos && sstBackdropsEnabled()
+        && stationSupports(CAPABILITY_SOUNDTRACK_MEDIA) && art && art.logo;
+    var url = logo && trustedResolvedBackdrop(logo.url, logo.source) || "";
+    if (url === mediaLogoUrl) return;
+    mediaLogoUrl = url;
+    var token = ++mediaLogoGeneration;
+    var epoch = infoHandoffGeneration;
+    infoEl.classList.remove("has-media-logo");
+    sizeStage();
+    var fade = reducedMotion.matches ? 0
+        : cssTimeMs(getComputedStyle(infoEl).getPropertyValue("--backdrop-fade-duration"));
+    var retired = new Promise(function (resolve) {
+        mediaLogoClearTimer = setTimeout(function () {
+            if (token === mediaLogoGeneration) mediaLogoEl.replaceChildren();
+            resolve();
+        }, mediaLogoEl.childElementCount ? fade : 0);
+    });
+    if (!url) return;
+    prepareTitleLogo(logo).then(async function (img) {
+        await retired;
+        if (token !== mediaLogoGeneration || epoch !== infoHandoffGeneration
+                || !renderIsCurrent("backdrop", mediaLogoBackdropGeneration)) return;
+        try {
+            var scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+            var scratch = document.createElement("canvas");
+            scratch.width = Math.max(1, Math.round(img.naturalWidth * scale));
+            scratch.height = Math.max(1, Math.round(img.naturalHeight * scale));
+            var ctx = scratch.getContext("2d", { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0, scratch.width, scratch.height);
+            var pixels = ctx.getImageData(0, 0, scratch.width, scratch.height).data;
+            var left = scratch.width, top = scratch.height, right = -1, bottom = -1;
+            for (var y = 0; y < scratch.height; y++) for (var x = 0; x < scratch.width; x++) {
+                if (pixels[(y * scratch.width + x) * 4 + 3] < 16) continue;
+                left = Math.min(left, x); right = Math.max(right, x);
+                top = Math.min(top, y); bottom = Math.max(bottom, y);
+            }
+            if (right < left) return;
+            var canvas = document.createElement("canvas");
+            canvas.width = right - left + 1; canvas.height = bottom - top + 1;
+            canvas.getContext("2d").drawImage(scratch, left, top, canvas.width, canvas.height,
+                0, 0, canvas.width, canvas.height);
+            mediaLogoEl.replaceChildren(canvas);
+            infoTitleEl.title = infoAlbumEl.textContent;
+            requestAnimationFrame(function () {
+                if (token === mediaLogoGeneration) {
+                    infoEl.classList.add("has-media-logo");
+                    sizeStage();
+                }
+            });
+        } catch (error) { /* Unreadable images leave the accessible text title intact. */ }
+    }).catch(function () { if (token === mediaLogoGeneration) mediaLogoUrl = ""; });
+}
 var backchannelStatusEl = $("backchannel-status");
 var backchannelPairingEl = $("backchannel-pairing");
 var backchannelCodeEl = $("backchannel-code"), backchannelCodeLabelEl = $("backchannel-code-label");
@@ -753,6 +866,8 @@ var backchannelCancelEl = $("backchannel-cancel");
 // stage in fill, sitting below the cover in poster.
 function setInfo(album, track, artist) {
     infoAlbumEl.textContent = album;
+    infoTitleEl.title = album;
+    syncTitleLogoToggle();
     infoTitleSeparatorEl.textContent = album && track ? " - " : "";
     infoTrackEl.textContent = track;
     $("info-artist").textContent = artist;
@@ -805,6 +920,7 @@ function finishInfoExit(generation) {
 }
 
 function beginCurrentInfoResolution(fallback) {
+    setMediaLogo(null);
     currentInfoFallback = fallback || null;
     currentInfoMetadata = null;
     currentInfoPending = true;
@@ -974,7 +1090,7 @@ async function sendCurrentTitleToCodex() {
         return;
     }
     backchannelSending = true;
-    infoTitleEl.setAttribute("aria-busy", "true");
+    infoTrackEl.setAttribute("aria-busy", "true");
     try {
         showBackchannelStatus("Checking local Codex backchannel…");
         backchannelAvailable = await backchannelIsEnabled();
@@ -1027,18 +1143,18 @@ async function sendCurrentTitleToCodex() {
         showBackchannelStatus("Local Codex backchannel is unavailable.", 4500);
     } finally {
         backchannelSending = false;
-        infoTitleEl.removeAttribute("aria-busy");
+        infoTrackEl.removeAttribute("aria-busy");
     }
 }
 
 function enableLocalBackchannel() {
     if (!BACKCHANNEL_API_URL) return;
-    infoTitleEl.classList.add("local-backchannel");
-    infoTitleEl.setAttribute("role", "button");
-    infoTitleEl.setAttribute("tabindex", "0");
-    infoTitleEl.setAttribute("title", "Send this title to the current Codex task");
-    infoTitleEl.addEventListener("click", sendCurrentTitleToCodex);
-    infoTitleEl.addEventListener("keydown", function (event) {
+    infoTrackEl.classList.add("local-backchannel");
+    infoTrackEl.setAttribute("role", "button");
+    infoTrackEl.setAttribute("tabindex", "0");
+    infoTrackEl.setAttribute("title", "Send this track to the current Codex task");
+    infoTrackEl.addEventListener("click", sendCurrentTitleToCodex);
+    infoTrackEl.addEventListener("keydown", function (event) {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         sendCurrentTitleToCodex();
@@ -1649,7 +1765,7 @@ async function poll() {
                 Artist: localNowPlayingPreview.artist,
                 CoverLink: "",
                 ThumbnailLink: "",
-                Length: 0,
+                Length: localNowPlayingPreview.length,
                 PlayStart: previewTime,
                 SystemTime: previewTime,
             };
@@ -1815,6 +1931,7 @@ function queueBackdropPrefetchKey(entry, orientation) {
         includeArt && providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
         includeArt,
         includeRatings,
+        includeArt && !!opts.sstTitleLogos,
         includeArt ? (orientation || backdropOrientationForStage()) : "landscape",
         includeArt ? backdropResolutionClass(backdropViewportForStage()) : "hd",
         entry && entry.artist || "",
@@ -1854,9 +1971,10 @@ function queuedTrackNeedsPrefetch(entry) {
         return true;
     if (!entry.metadataResolved) return true;
     var orientation = backdropOrientationForStage();
+    var prepared = queuedBackdropPrefetch(entry, orientation);
     return stationSupports(CAPABILITY_SOUNDTRACK_MEDIA)
         && (sstBackdropsEnabled() || sstRatingsEnabled())
-        && !queuedBackdropPrefetch(entry, orientation);
+        && (!prepared || (prepared.art && prepared.art.logo && !prepared.logoImage));
 }
 
 function nextQueuedPrefetch() {
@@ -1912,8 +2030,15 @@ async function prefetchQueuedTrack(entry, signal) {
                 key: configKey,
                 art: art,
                 image: image,
+                logoImage: null,
             };
         }
+        var prepared = queuedBackdropPrefetch(entry, orientation);
+        if (prepared && prepared.art && prepared.art.logo && !prepared.logoImage)
+            prepared.logoImage = prepareTitleLogo(prepared.art.logo).catch(function () {
+                prepared.logoImage = null;
+                return null;
+            });
     }
     await tintPromise;
 }
@@ -2147,6 +2272,7 @@ function movieCacheFor(providers, includeArt, includeRatings, orientation, viewp
         providers.indexOf("fanart") >= 0 ? opts.fanartKey : "",
         includeArt,
         includeRatings,
+        includeArt && !!opts.sstTitleLogos,
         orientation,
         includeArt ? backdropResolutionClass(viewport || backdropViewportForStage()) : "hd"
     ]);
@@ -2423,6 +2549,7 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
         if (artist) url.searchParams.set("artist", artist);
         url.searchParams.set("providers", providers.join(","));
         if (!includeArt) url.searchParams.set("art", "0");
+        if (includeArt && opts.sstTitleLogos) url.searchParams.set("logos", "1");
         if (includeArt) {
             viewport = viewport || backdropViewportForStage();
             url.searchParams.set("width", String(viewport.width));
@@ -2456,13 +2583,16 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
     var metadata = trustedNormalizedMetadata(body.metadata);
     var certifications = trustedCertifications(body.certifications);
     var resolved = body.backdrop ? trustedResolvedBackdrop(body.backdrop, body.source) : "";
+    var logo = body.logo && trustedResolvedBackdrop(body.logo.url, body.logo.source)
+        ? { url: body.logo.url, source: body.logo.source } : null;
     if (body.backdrop && !resolved) throw SERVER_ART_UNAVAILABLE;
-    return resolved || certifications.length || metadata ? {
+    return resolved || logo || certifications.length || metadata ? {
         url: resolved,
         tint: resolved ? validTint(body.tint) : null,
         source: resolved ? body.source : null,
         certifications: certifications,
         metadata: metadata,
+        logo: includeArt ? logo : null,
     } : null;
 }
 
@@ -2501,6 +2631,7 @@ function mergeMovieArt(authoritative, fallback) {
         certifications: authoritative.certifications && authoritative.certifications.length
             ? authoritative.certifications : fallback.certifications || [],
         metadata: authoritative.metadata || fallback.metadata || null,
+        logo: authoritative.logo || fallback.logo || null,
     };
 }
 
@@ -2516,6 +2647,7 @@ function cancelBackdropResolverRetry() {
 
 function setMovieBackdrop(art, generation, retryFailures) {
     if (!renderIsCurrent("backdrop", generation)) return;
+    setMediaLogo(art, generation);
     const isAutomaticRetry = typeof retryFailures === "number";
     if (!isAutomaticRetry) cancelBackdropImageRetry();
     if (!art || !art.url) {
@@ -2603,7 +2735,7 @@ function requestBackdrop(cacheMode, prefetchedArt, resolverRetryFailures) {
         };
         backdropRequest = request;
         serverMovieArt(currentAlbum, currentTrack, currentArtist, ["tmdb"], false, false,
-            "landscape", ctl.signal, cacheMode).then(function (result) {
+            ctl.signal, cacheMode).then(function (result) {
                 if (renderIsCurrent("backdrop", generation))
                     applyResolvedMetadata(result && result.metadata);
         }).catch(function () {
@@ -2791,6 +2923,27 @@ function applyLayout() {
     else coverBox.appendChild(cdEl);
     sizeStage();
 }
+var infoTextMeasure;
+function sizeInfoWidth(stageWidth) {
+    if (!infoTextMeasure) infoTextMeasure = document.createElement("canvas").getContext("2d");
+    if (!infoTextMeasure) return;
+    function width(element, text) {
+        var style = getComputedStyle(element);
+        infoTextMeasure.font = style.font || (style.fontWeight + " " + style.fontSize + " " + style.fontFamily);
+        return infoTextMeasure.measureText(text === undefined ? element.textContent : text).width;
+    }
+    var contentWidth = Math.max(width(infoTrackEl), width($("info-artist")));
+    if (!infoEl.classList.contains("has-media-logo")) contentWidth = Math.max(contentWidth, width(infoAlbumEl));
+    if (remainingTimeMode() && currentRemaining() >= 0)
+        contentWidth = Math.max(contentWidth, width(cdEl, fmt(currentRemaining())));
+    if (backchannelPairingEl && backchannelPairingEl.classList.contains("show"))
+        contentWidth = Math.max(contentWidth, 280);
+    var style = getComputedStyle(infoEl);
+    var padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+        + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+    var panelWidth = Math.ceil(Math.min(stageWidth * .86, Math.max(40, contentWidth) + padding + 2));
+    infoEl.style.setProperty("--info-panel-width", panelWidth + "px");
+}
 function sizeStage() {
     var r = stage.getBoundingClientRect();
     if (!r.width || !r.height) return;
@@ -2818,6 +2971,7 @@ function sizeStage() {
     var cdFrac = { small: 0.048, medium: 0.062, large: 0.08 }[
         opts.remainingTime.options.size];
     stage.style.setProperty("--cd-size", Math.max(12, baseSide * cdFrac) + "px");
+    sizeInfoWidth(r.width);
     var side = baseSide;
     if (opts.layout === 1 && portraitStage) {
         var infoHeightForFit = infoEl.getBoundingClientRect().height;

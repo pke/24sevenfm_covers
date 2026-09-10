@@ -137,7 +137,10 @@
                  aria-label="Audio visualization settings" hidden></div>
             <div class="info metadata-pending" aria-hidden="true" inert>
                 <div class="t" id="info-title">
-                    <span class="info-album" id="info-album">Loading…</span>
+                    <button type="button" class="info-album-toggle" id="info-album-toggle" aria-pressed="false" disabled>
+                        <span class="media-logo" id="media-logo" aria-hidden="true"></span>
+                        <span class="info-album-slot"><span class="info-album" id="info-album">Loading…</span></span>
+                    </button>
                     <span class="info-title-separator" id="info-title-separator"></span>
                     <span class="info-track" id="info-track"></span>
                 </div>
@@ -277,6 +280,9 @@
                 <p id="provider-status" class="visually-hidden" role="status"></p>
                 <label class="setting-row"><input type="checkbox" id="hide-cover" checked>
                     <span>Hide cover while backdrop is shown</span></label>
+                <label class="setting-row"><input type="checkbox" id="title-logos-enabled"
+                       data-option="sstTitleLogos">
+                    <span>Replace album title with logo</span></label>
                 <div class="backdrop-error" id="backdrop-error" aria-hidden="true">
                     <span id="backdrop-error-text">Backdrop artwork couldn’t be loaded.</span>
                     <button type="button" id="backdrop-retry">Retry</button>
