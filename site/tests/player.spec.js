@@ -2024,6 +2024,7 @@ test.describe("the deployed player page", () => {
                 creditRequests++;
                 const url = new URL(route.request().url());
                 expect(url.searchParams.get("album")).toBe("JFK (2013)");
+                expect(url.searchParams.get("track")).toBe("Campaigning In The South");
                 expect(url.searchParams.get("url")).toBe(
                     "https://streamingsoundtracks.com/modules.php?name=Album&asin=B00GHJ08XC");
                 return route.fulfill({ json: { artist: "Joel Goodman" } });

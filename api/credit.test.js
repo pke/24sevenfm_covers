@@ -41,6 +41,20 @@ test("extracts the album credit from stable Open Graph metadata", () => {
         "Rock & Roll"), "Hall & Oates");
 });
 
+test("extracts the exact track credit instead of the album credit", () => {
+    const html = `<!doctype html><html><head>
+        <meta property="og:title" content="Station - Evita - Andrew Lloyd Webber">
+        </head><body><table>
+        <tr><td>01</td><td>Oh What A Circus<br><i><a href="?artist=Evita+Film+Cast">
+            Evita Film Cast Feat. Antonio Banderas</a></i></td><td>5:44</td></tr>
+        <tr><td>02</td><td>Another Track<br><i>Andrew Lloyd Webber</i></td></tr>
+        </table></body></html>`;
+
+    assert.equal(artistFromAlbumHtml(html, "Evita", "Oh What A Circus"),
+        "Evita Film Cast Feat. Antonio Banderas");
+    assert.equal(artistFromAlbumHtml(html, "Evita", "Missing Track"), "");
+});
+
 test("does not guess a credit when the exact album is absent", () => {
     assert.equal(artistFromAlbumHtml(
         '<meta property="og:title" content="Station - Another Album - Someone">',
@@ -93,6 +107,28 @@ test("returns a cacheable composer from the station album page", async () => {
     assert.equal(res.headers.get("access-control-allow-origin"), "https://player.test");
     assert.equal(res.headers.get("cache-control"), "public, max-age=" + CREDIT_CACHE_SECONDS
         + ", s-maxage=" + CREDIT_CACHE_SECONDS + ", stale-while-revalidate=86400");
+});
+
+test("returns the exact requested track credit from the station album page", async () => {
+    const handler = createCreditHandler({
+        env: { ALBUM_CREDIT_ALLOWED_HOSTS: "streamingsoundtracks.com" },
+        fetchImpl: async () => new Response(`
+            <meta property="og:title" content="Station - Evita - Andrew Lloyd Webber">
+            <table><tr><td>01</td><td>Oh What A Circus<br>
+            <i>Evita Film Cast Feat. Antonio Banderas</i></td></tr></table>`,
+        { headers: { "content-type": "text/html; charset=utf-8" } }),
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Evita",
+        track: "Oh What A Circus",
+        url: "https://streamingsoundtracks.com/modules.php?name=Album&asin=B000000000",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        artist: "Evita Film Cast Feat. Antonio Banderas",
+    });
 });
 
 test("returns a short-cache miss when the album page has no usable credit", async () => {

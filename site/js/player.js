@@ -1609,6 +1609,7 @@ function resolveQueuedArtist(tracked) {
     nextCreditRequest = request;
     var url = new URL(CREDIT_API_URL, location.href);
     url.searchParams.set("album", tracked.album);
+    if (tracked.track) url.searchParams.set("track", tracked.track);
     url.searchParams.set("url", tracked.albumUrl);
     var creditPromise;
     creditPromise = fetch(url, { signal: ctl.signal }).then(function (response) {

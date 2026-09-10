@@ -117,7 +117,41 @@ function tagAttribute(tag, name) {
     return match ? decodeHtmlText(match[2]).replace(/\s+/g, " ").trim() : "";
 }
 
-function artistFromAlbumHtml(html, album) {
+function normalizedCreditText(value) {
+    return String(value || "").normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function textFromHtml(value) {
+    return decodeHtmlText(String(value || "").replace(/<[^>]*>/g, " "))
+        .replace(/\s+/g, " ").trim();
+}
+
+function artistFromTrackRows(html, track) {
+    const wantedTrack = normalizedCreditText(track);
+    if (!wantedTrack) return "";
+    const artists = new Set();
+    const rows = String(html || "").match(/<tr\b[^>]*>[\s\S]*?<\/tr\s*>/gi) || [];
+    for (const row of rows) {
+        const cells = Array.from(row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td\s*>/gi),
+            (match) => match[1]);
+        for (const cell of cells) {
+            const separator = /<br\s*\/?\s*>/i.exec(cell);
+            if (!separator) continue;
+            const candidateTrack = textFromHtml(cell.slice(0, separator.index));
+            if (normalizedCreditText(candidateTrack) !== wantedTrack) continue;
+            const artist = textFromHtml(cell.slice(separator.index + separator[0].length));
+            if (artist && artist.length <= 180 && !/[\u0000-\u001F\u007F]/.test(artist))
+                artists.add(artist);
+        }
+    }
+    return artists.size === 1 ? artists.values().next().value : "";
+}
+
+function artistFromAlbumHtml(html, album, track) {
+    // The album page lists a credit beneath every track. When the caller supplies
+    // a track, only that exact row is authoritative: the Open Graph value describes
+    // the release as a whole and can name a different composer or principal artist.
+    if (String(track || "").trim()) return artistFromTrackRows(html, track);
     const wantedAlbum = String(album || "").replace(/\s+/g, " ").trim();
     if (!wantedAlbum) return "";
     const tags = String(html || "").match(/<meta\b[^>]*>/gi) || [];
@@ -180,7 +214,7 @@ async function albumPageBytes(response) {
     return Buffer.concat(chunks, total);
 }
 
-async function fetchAlbumArtist(fetchImpl, url, album) {
+async function fetchAlbumArtist(fetchImpl, url, album, track) {
     const startedAt = Date.now();
     debugLog("info", "upstream.request", { url });
     let response;
@@ -233,7 +267,7 @@ async function fetchAlbumArtist(fetchImpl, url, album) {
     const charset = /charset\s*=\s*([^;\s]+)/i.exec(contentType);
     const requestedEncoding = charset && charset[1].replace(/["']/g, "").toLowerCase();
     const encoding = requestedEncoding === "iso-8859-1" ? "windows-1252" : "utf-8";
-    return artistFromAlbumHtml(new TextDecoder(encoding).decode(bytes), album);
+    return artistFromAlbumHtml(new TextDecoder(encoding).decode(bytes), album, track);
 }
 
 async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
@@ -315,10 +349,13 @@ async function fetchMusicBrainzArtist(fetchImpl, albumUrl, waitImpl) {
     return artist;
 }
 
-async function fetchAlbumArtistWithFallback(fetchImpl, url, album, waitImpl) {
+async function fetchAlbumArtistWithFallback(fetchImpl, url, album, track, waitImpl) {
     try {
-        return await fetchAlbumArtist(fetchImpl, url, album);
+        return await fetchAlbumArtist(fetchImpl, url, album, track);
     } catch (stationError) {
+        // MusicBrainz's release-level artist is not a safe substitute for a requested
+        // track credit. Retry the station page later instead of returning a wrong name.
+        if (String(track || "").trim()) throw stationError;
         const canFallback = !(stationError instanceof CreditError)
             || stationError.code === "album_page_unavailable";
         if (!canFallback) throw stationError;
@@ -352,6 +389,7 @@ function createCreditHandler(options = {}) {
         debugLog("info", "request.start", {
             method: req && req.method,
             album: req && req.query && req.query.album,
+            track: req && req.query && req.query.track,
             url: req && req.query && req.query.url,
         });
         res.setHeader("Vary", "Origin");
@@ -376,13 +414,18 @@ function createCreditHandler(options = {}) {
         try {
             const query = req.query || {};
             const album = query.album;
+            const track = query.track;
             const url = trustedAlbumUrl(query.url, env);
             if (typeof album !== "string" || !album.trim() || album.length > 180
                     || /[\u0000-\u001F\u007F]/.test(album))
                 throw new CreditError("invalid_album", 400);
+            if (track !== undefined && (typeof track !== "string" || track.length > 300
+                    || /[\u0000-\u001F\u007F]/.test(track)))
+                throw new CreditError("invalid_track", 400);
             if (!url) throw new CreditError("invalid_album_url", 400);
             const artist = await fetchAlbumArtistWithFallback(
-                fetchImpl, url, album.trim(), waitImpl);
+                fetchImpl, url, album.trim(), typeof track === "string" ? track.trim() : "",
+                waitImpl);
             res.setHeader("Cache-Control", artist
                 ? cacheControl(CREDIT_CACHE_SECONDS, 86400)
                 : cacheControl(CREDIT_MISS_CACHE_SECONDS, 60));
