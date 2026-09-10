@@ -1,5 +1,9 @@
 # ADR 0007: Local Codex title backchannel
 
+Interaction update (2026-09-10): ADR 0009 assigns album/logo activation to the
+title-logo setting. The diagnostic click and keyboard action now belong to the
+track heading; its reporting and pairing contract below is unchanged.
+
 Date: 2026-09-03
 Status: Accepted
 

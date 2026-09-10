@@ -102,6 +102,31 @@ for those paths.
 
 ## Local preview
 
+With SST backdrops enabled, **Replace album title with logo** in the SST settings
+can replace the album text with a title logo returned by the media resolver. This
+setting is off by default, is saved locally, and uses `sstTitleLogos=1` in settings
+links when enabled. Turning it off fades back to the album text; disabled players
+do not load title-logo images. The first implementation reuses fanart.tv's
+HD/legacy movie and TV logos and TVmaze's typography assets from existing artwork
+responses. Logo and backdrop sources may differ when an earlier provider has only
+a logo; providers after the selected backdrop are not queried just for logos yet.
+TMDB and SteamGridDB logo endpoints are not integrated yet. Clicking the album
+heading or protruding logo toggles the same preference; keyboard activation works
+through the album button. Local Codex diagnostics now use the track heading.
+
+Transparent padding is trimmed before display. Logos of every aspect ratio may
+extend above the glass panel while keeping a small title row. With a visible logo,
+the panel narrows to fit the remaining visible text. The album text stays in the
+title tooltip, and remains visible if a logo is missing or cannot be loaded/read.
+Logo and text transitions retain outgoing content and respect reduced motion.
+
+The API sends optional logo URLs only with `logos=1`; current and queue response
+caches distinguish that option. A common server metadata cache reuses provider
+results across both response variants. Queue preparation downloads only returned
+logo URLs and retains successful image loads for reuse. The Windows viewer,
+Winamp and foobar2000 implement the same behavior through shared native code.
+See [ADR 0009](../docs/adr/0009-optional-title-logos.md) for the cache and UI contract.
+
 For the interactive web player, start the static site and a persistent local Node API
 together. The site stays on port 8099; the API runs separately on port 3000 and
 allows only that local site origin. Production still deploys the same handlers as
@@ -140,7 +165,8 @@ page and API origin must be loopback addresses, and the API continues to listen 
 Deployed players never attach the title action and have no backchannel endpoint.
 
 For deterministic metadata and rating previews, `previewAlbum` replaces the local
-player's now-playing item; `previewTrack` and `previewArtist` are optional. These
+player's now-playing item; `previewTrack`, `previewArtist`, and `previewLength`
+(duration in milliseconds) are optional. These
 parameters are inert outside `localhost`, `127.0.0.1`, and `::1`. The fixture does
 not poll the station's now-playing or queue endpoints, while audio continues to use
 the selected station's real stream. For example:
@@ -181,6 +207,7 @@ the URL.
 | `sstBackdrops` | `0`, `1` | Disable or enable SST screen artwork. |
 | `sstBackdropProviders` | comma-separated `fanart`, `tmdb`, `tvmaze`, `steamgriddb` | Select and order artwork providers. |
 | `sstBackdropCover` | `show`, `hide` | Keep or hide the soundtrack cover when screen artwork is visible. |
+| `sstTitleLogos` | `0`, `1` | Replace the album title with a logo while SST backdrops are enabled; off by default. |
 | `sstRatings` | `0`, `1` | Disable or enable SST age ratings. |
 | `sstRatingCountries` | comma-separated `DE`, `US` | Select rating countries. |
 | `blur` | `0`–`200` | Set poster-background blur. Preset form of `posterBlur`. |
@@ -197,6 +224,7 @@ These visual-QA parameters work only on `localhost`, `127.0.0.1`, and `::1`:
 | `previewAlbum` | text, max. 160 characters | Activate local now-playing preview and set its album or screen title. |
 | `previewTrack` | text, max. 300 characters | Optionally set the preview track title. |
 | `previewArtist` | text, max. 160 characters | Optionally set the preview artist/composer. |
+| `previewLength` | integer, `0`–`86400000` milliseconds | Preserve the track duration in a local preview; omitted or invalid values mean unknown duration. |
 | `simulateStationFailure` | presence flag | Force the station retry/outage state, regardless of its value. |
 
 The local site server watches `site\` recursively. After a short debounce, every
