@@ -107,6 +107,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "tv",
     }),
     Object.freeze({
+        album: "Herman Wouk's War And Remembrance",
+        artist: "Bob Corbert",
+        title: "War and Remembrance (1988)",
+        hint: "tv",
+    }),
+    Object.freeze({
         album: "Crash: Original Score From The Series, Vol. 1",
         artist: "Mark Isham & Cindy O'Connor",
         title: "Crash (2008)",
@@ -335,6 +341,12 @@ const TRACK_METADATA_CORRECTIONS = Object.freeze([
         track: "At Jurassic World's End Credits\\Suite",
         artist: "Michael Giacchino",
         canonicalTrack: "At Jurassic World's End Credits / Suite",
+    }),
+    Object.freeze({
+        album: "Herman Wouk's War And Remembrance",
+        track: "Remembrance",
+        artist: "Bob Corbert",
+        canonicalArtist: "Bob Cobert",
     }),
 ]);
 const DEFAULT_TINT_HOSTS = Object.freeze([
@@ -747,8 +759,8 @@ function normalizedTrackMetadata(album, track, artist) {
             && normalizedTitle(entry.artist) === normalizedTitle(decodedArtist));
     return {
         album: unrotateTitleArticle(decodedAlbum),
-        track: correction ? correction.canonicalTrack : decodedTrack,
-        artist: decodedArtist,
+        track: correction && correction.canonicalTrack || decodedTrack,
+        artist: correction && correction.canonicalArtist || decodedArtist,
     };
 }
 

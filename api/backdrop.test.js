@@ -74,6 +74,15 @@ test("corrects the malformed Jurassic World end-credits track separator", () => 
     });
 });
 
+test("corrects Bob Cobert's misspelled War and Remembrance credit", () => {
+    assert.deepEqual(normalizedTrackMetadata(
+        "Herman Wouk's War And Remembrance", "Remembrance", "Bob Corbert"), {
+        album: "Herman Wouk's War And Remembrance",
+        track: "Remembrance",
+        artist: "Bob Cobert",
+    });
+});
+
 test("metadata-only media endpoint returns separate canonical fields without providers", async () => {
     let providerCalled = false;
     const handler = createHandler({
@@ -566,6 +575,52 @@ test("resolves the second Stranger Things score album to the TV series", async (
         backdrop: "https://image.tmdb.org/t/p/w1280/stranger-things.jpg",
         source: "tmdb",
         tint: [120, 80, 100],
+    });
+});
+
+test("resolves Herman Wouk's War and Remembrance score to the 1988 miniseries", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            searches.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 889947, title: "War and Remembrance",
+                release_date: "2022-01-01", backdrop_path: "/wrong-movie.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [{
+                id: 32675, name: "War and Remembrance",
+                first_air_date: "1988-11-13", backdrop_path: "/war-remembrance.jpg",
+            }] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 246, 216],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Herman Wouk's War And Remembrance",
+        track: "Remembrance",
+        artist: "Bob Corbert",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(searches.length, 2);
+    for (const search of searches) assert.equal(search.searchParams.get("query"), "War and Remembrance");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/movie"))
+        .searchParams.get("primary_release_year"), "1988");
+    assert.equal(searches.find((search) => search.pathname.endsWith("/tv"))
+        .searchParams.get("first_air_date_year"), "1988");
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 32675, title: "War and Remembrance", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/war-remembrance.jpg",
+        source: "tmdb",
+        tint: [255, 246, 216],
+        metadata: {
+            album: "Herman Wouk's War And Remembrance",
+            track: "Remembrance",
+            artist: "Bob Cobert",
+        },
     });
 });
 
