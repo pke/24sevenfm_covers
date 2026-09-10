@@ -229,6 +229,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         suppress: true,
     }),
     Object.freeze({
+        album: "Unearthed",
+        artist: "E.S. Posthumus",
+        suppress: true,
+    }),
+    Object.freeze({
         album: "Stellaris: Utopia",
         title: "Stellaris",
         hint: "game",
