@@ -471,7 +471,7 @@ function cleanMovieTitle(album) {
         .replace(/\[\s*[^\]\r\n]{0,64}\bedition\s*\]/gi, " ")
         .replace(/\s*:\s*vol(?:ume)?\.?\s+(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*\(\s*chapters?\s+\d{1,3}(?:\s*[-–—]\s*\d{1,3})?\s*\)\s*$/gi, " ")
         .replace(/\(\s*vol(?:ume)?\.?\s+(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*\)/gi, " ")
-        .replace(/\((original|music|motion|complete|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
+        .replace(/\((?:(?:the\s+)?complete|original|music|motion|soundtrack|score|ost|deluxe|expanded|remaster)[^)]*\)/gi, " ")
         .replace(/\b(original motion picture soundtrack|music from the motion picture|original motion picture score|motion picture soundtrack|original soundtracks?|original scores?|the original scores?|soundtrack|ost)\b/gi, " ")
         .replace(/\s*[:\-–]\s*(?:the\s+)?symphonic\s+suite\s*$/i, " ")
         .replace(/[:\-–]\s*$/, "")

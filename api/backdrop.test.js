@@ -2292,6 +2292,74 @@ test("cleans soundtrack noise and rotated articles", () => {
     assert.equal(cleanMovieTitle("Paris, Texas"), "Paris, Texas");
     assert.equal(cleanMovieTitle("The Magic Of Inspector Morse"), "Inspector Morse");
     assert.equal(cleanMovieTitle("Defiance (Video Game)"), "Defiance");
+    assert.equal(cleanMovieTitle("Assassin's Creed IV: Black Flag (The Complete Edition)"),
+        "Assassin's Creed IV: Black Flag");
+});
+
+test("resolves a parenthesized complete game edition through its base title", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.hostname === "api.themoviedb.org") {
+                if (parsed.pathname === "/3/search/multi") {
+                    assert.equal(parsed.searchParams.get("query"),
+                        "Assassin's Creed IV: Black Flag");
+                    return response(200, { results: [] });
+                }
+                if (parsed.pathname === "/3/search/person") {
+                    return response(200, { results: [] });
+                }
+            }
+            if (decodeURIComponent(parsed.pathname).endsWith(
+                "/search/autocomplete/Assassin's Creed IV: Black Flag")) {
+                return response(200, { success: true, data: [{
+                    id: 2778,
+                    name: "Assassin's Creed IV: Black Flag",
+                    verified: true,
+                }] });
+            }
+            if (parsed.pathname.endsWith("/grids/game/2778")) return response(200, {
+                success: true,
+                data: [{
+                    score: 9,
+                    width: 600,
+                    height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/black-flag.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/black-flag.jpg",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [235, 245, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Assassin's Creed IV: Black Flag (The Complete Edition)",
+        track: "Saba Island",
+        artist: "Joe Henson & Alexis Smith",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+        width: "1080",
+        height: "1920",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 2778, title: "Assassin's Creed IV: Black Flag", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/grid/black-flag.png",
+        source: "steamgriddb",
+        tint: [235, 245, 255],
+        certifications: [],
+        metadata: {
+            album: "Assassin's Creed IV: Black Flag (The Complete Edition)",
+            track: "Saba Island",
+            artist: "Joe Henson & Alexis Smith",
+        },
+    });
+    assert.equal(requests.length, 4);
 });
 
 test("removes a bracketed soundtrack edition before resolving the movie", async () => {
