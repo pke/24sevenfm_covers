@@ -1083,21 +1083,36 @@ test("resolves Armand Amar's Home score to the 2009 documentary", async () => {
         fetchImpl: async (url) => {
             const parsed = new URL(url);
             requests.push(parsed);
-            if (parsed.pathname === "/3/search/movie") {
+            if (parsed.pathname === "/3/search/multi") {
                 assert.equal(parsed.searchParams.get("query"), "Home");
-                assert.equal(parsed.searchParams.get("primary_release_year"), "2009");
                 return response(200, { results: [{
                     id: 62320,
+                    media_type: "movie",
                     title: "Home",
                     release_date: "2009-06-05",
                     backdrop_path: "/home-2009.jpg",
                     poster_path: "/home-2009-poster.jpg",
+                }, {
+                    id: 111,
+                    media_type: "movie",
+                    title: "Home",
+                    release_date: "2015-03-18",
+                    backdrop_path: "/wrong-home.jpg",
                 }] });
             }
-            if (parsed.pathname === "/3/search/tv") {
-                assert.equal(parsed.searchParams.get("query"), "Home");
-                assert.equal(parsed.searchParams.get("first_air_date_year"), "2009");
-                return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/person") {
+                assert.equal(parsed.searchParams.get("query"), "Armand Amar");
+                return response(200, { results: [{
+                    id: 1234, name: "Armand Amar", known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/person/1234/combined_credits") {
+                return response(200, { crew: [{
+                    id: 62320,
+                    media_type: "movie",
+                    title: "Home",
+                    job: "Original Music Composer",
+                }] });
             }
             if (parsed.pathname === "/3/movie/62320/release_dates") {
                 return response(200, { results: [] });
@@ -1503,11 +1518,23 @@ test("resolves John Williams' Superman: The Movie album to the 1978 film", async
         fetchImpl: async (url) => {
             const parsed = new URL(url);
             requests.push(parsed);
-            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
-                id: 1924, title: "Superman", release_date: "1978-12-14",
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 1924, media_type: "movie", title: "Superman", release_date: "1978-12-14",
                 backdrop_path: "/superman.jpg", poster_path: "/superman-poster.jpg",
             }] });
-            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 1893, name: "John Williams", known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/person/1893/combined_credits") {
+                return response(200, { crew: [{
+                    id: 1924,
+                    media_type: "movie",
+                    title: "Superman",
+                    job: "Original Music Composer",
+                    backdrop_path: "/superman.jpg",
+                    poster_path: "/superman-poster.jpg",
+                }] });
+            }
             if (parsed.pathname === "/v3/movies/1924") return response(200, {
                 moviebackground: [{
                     url: "https://assets.fanart.tv/fanart/superman.jpg",
@@ -1550,11 +1577,10 @@ test("resolves John Williams' Superman: The Movie album to the 1978 film", async
         });
     }
 
-    const movieSearches = requests.filter(({ pathname }) => pathname === "/3/search/movie");
-    assert.equal(movieSearches.length, 2);
-    for (const request of movieSearches) {
-        assert.equal(request.searchParams.get("query"), "Superman");
-        assert.equal(request.searchParams.get("primary_release_year"), "1978");
+    const mediaSearches = requests.filter(({ pathname }) => pathname === "/3/search/multi");
+    assert.equal(mediaSearches.length, 2);
+    for (const request of mediaSearches) {
+        assert.equal(request.searchParams.get("query"), "Superman: The Movie");
     }
 });
 
@@ -4336,19 +4362,29 @@ test("resolves Friday The 13th Part 1 to the 1980 film", async () => {
         fetchImpl: async (url) => {
             const parsed = new URL(url);
             requests.push(parsed.href);
-            if (parsed.pathname === "/3/search/movie") {
-                assert.equal(parsed.searchParams.get("query"), "Friday the 13th");
-                assert.equal(parsed.searchParams.get("primary_release_year"), "1980");
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "Friday The 13th Part 1");
                 return response(200, { results: [{
-                    id: 4488,
-                    title: "Friday the 13th",
-                    backdrop_path: "/friday-the-13th.jpg",
+                    id: 10285,
+                    media_type: "movie",
+                    title: "Friday the 13th Part VIII: Jason Takes Manhattan",
+                    backdrop_path: "/wrong-friday.jpg",
                 }] });
             }
-            if (parsed.pathname === "/3/search/tv") {
-                assert.equal(parsed.searchParams.get("query"), "Friday the 13th");
-                assert.equal(parsed.searchParams.get("first_air_date_year"), "1980");
-                return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/person") {
+                assert.equal(parsed.searchParams.get("query"), "Harry Manfredini");
+                return response(200, { results: [{
+                    id: 1235, name: "Harry Manfredini", known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/person/1235/combined_credits") {
+                return response(200, { crew: [{
+                    id: 4488,
+                    media_type: "movie",
+                    title: "Friday the 13th",
+                    job: "Original Music Composer",
+                    backdrop_path: "/friday-the-13th.jpg",
+                }] });
             }
             if (parsed.pathname === "/3/movie/4488/release_dates") {
                 return response(200, { results: [] });
@@ -4381,7 +4417,7 @@ test("resolves Friday The 13th Part 1 to the 1980 film", async () => {
         tint: [249, 252, 255],
         certifications: [],
     });
-    assert.equal(requests.length, 4);
+    assert.equal(requests.length, 5);
 });
 
 test("resolves M83's Oblivion album to the 2013 film", async () => {

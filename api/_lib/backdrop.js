@@ -157,18 +157,6 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
-        album: "Superman: The Movie",
-        artist: "John Williams",
-        title: "Superman (1978)",
-        hint: "movie",
-    }),
-    Object.freeze({
-        album: "Home",
-        artist: "Armand Amar",
-        title: "Home (2009)",
-        hint: "movie",
-    }),
-    Object.freeze({
         album: "Riverdance",
         artist: "Bill Whelan",
         title: "Riverdance: The Show (1995)",
@@ -285,12 +273,6 @@ const METADATA_RESOLUTIONS = Object.freeze([
     Object.freeze({
         album: "Rambo: First Blood",
         title: "First Blood",
-        hint: "movie",
-    }),
-    Object.freeze({
-        album: "Friday The 13th Part 1",
-        artist: "Harry Manfredini",
-        title: "Friday the 13th (1980)",
         hint: "movie",
     }),
     Object.freeze({
