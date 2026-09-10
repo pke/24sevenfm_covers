@@ -1,6 +1,8 @@
 "use strict";
 
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { createHash } = require("node:crypto");
+const { createMetadataCache } = require("./metadata_cache");
 const he = require("he");
 
 const CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
@@ -1375,6 +1377,21 @@ async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId, pref
         landscape: (prefer4k ? best(type === "tv" ? "show4kbackground" : "movie4kbackground") : "")
             || best(type === "tv" ? "showbackground" : "moviebackground"),
         portrait: best(type === "tv" ? "tvposter" : "movieposter"),
+        logo: (() => {
+            const keys = type === "tv" ? ["hdtvlogo", "clearlogo"] : ["hdmovielogo", "movielogo"];
+            for (const key of keys) {
+                const candidates = Array.isArray(body && body[key])
+                    ? body[key].filter((item) => item && typeof item === "object") : [];
+                const rank = (item) => item.lang === "en" ? 0 : !item.lang || item.lang === "00" ? 1 : 2;
+                candidates.sort((a, b) => rank(a) - rank(b)
+                    || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0));
+                for (const candidate of candidates) {
+                    const url = trustedFanartUrl(candidate && candidate.url);
+                    if (url) return url;
+                }
+            }
+            return "";
+        })(),
     };
 }
 
@@ -1429,7 +1446,7 @@ async function tvmazeArtwork(fetchImpl, media, tvdbId) {
         }
         return "";
     };
-    return { landscape: best("background"), portrait: best("poster") };
+    return { landscape: best("background"), portrait: best("poster"), logo: best("typography") };
 }
 
 function tmdbImageUrl(path, size) {
@@ -1610,6 +1627,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
     orientation = "landscape", prefer4k = false) {
     let tvdbIdPromise = null;
     let landscapeFallback = null;
+    let logo = null;
     const tvdbId = () => {
         if (!tvdbIdPromise) {
             tvdbIdPromise = tvdbIdForTmdbSeries(fetchImpl, media.id, env)
@@ -1631,6 +1649,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
             artwork = await tvmazeArtwork(fetchImpl, media, await tvdbId());
         }
         if (!artwork) continue;
+        if (!logo && artwork.logo) logo = { url: artwork.logo, source: provider };
         const tmdbPath = orientation === "portrait" ? media.poster_path : media.backdrop_path;
         const url = orientation === "portrait" ? artwork.portrait : artwork.landscape;
         if (url) {
@@ -1638,6 +1657,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
                 url,
                 source: provider,
                 preview: tintPreviewUrl(provider, url, tmdbPath),
+                logo,
             };
         }
         // Portrait assets are less complete than landscape catalogs. Preserve the
@@ -1648,6 +1668,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
                 url: artwork.landscape,
                 source: provider,
                 preview: tintPreviewUrl(provider, artwork.landscape, media.backdrop_path),
+                logo,
             };
         }
     }
@@ -1748,7 +1769,8 @@ async function resolvedArtResponse(media, art, dependencies,
         dependencies.tintForImage(art.preview, dependencies.fetchImpl),
         certificationsPromise,
     ]);
-    return withCertifications({ media, backdrop: art.url, source: art.source, tint },
+    return withCertifications({ media, backdrop: art.url, source: art.source, tint,
+        ...(art.logo ? { logo: art.logo } : {}) },
         certifications, ratingCountries);
 }
 
@@ -2004,6 +2026,7 @@ function createHandler(options = {}) {
     const fetchImpl = options.fetchImpl || globalThis.fetch;
     const tintForImage = options.tintForImage
         || ((url) => defaultTintForImage(fetchImpl, url));
+    const cachedMetadata = createMetadataCache();
 
     async function handleBackdropRequest(req, res) {
         const startedAt = Date.now();
@@ -2092,6 +2115,10 @@ function createHandler(options = {}) {
             const providers = requestedProviders(requestQueryValue(req, "providers"));
             const ratingCountries = requestedRatings(requestQueryValue(req, "ratings"));
             const includeArt = requestedArt(requestQueryValue(req, "art"));
+            const logoOption = requestQueryValue(req, "logos");
+            if (logoOption !== undefined && logoOption !== "0" && logoOption !== "1")
+                throw new ResolverError("invalid_logos", 400, "logos must be 0 or 1");
+            const includeLogos = includeArt && logoOption === "1";
             const viewport = requestedViewport(requestQueryValue(req, "width"),
                 requestQueryValue(req, "height"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
@@ -2125,10 +2152,8 @@ function createHandler(options = {}) {
                 res.setHeader("Cache-Control", cacheControl(CACHE_SECONDS));
                 return sendJson(res, 200, result);
             }
-            const result = await resolveBackdrop(title, providers, clientKey, {
-                env, fetchImpl, tintForImage,
-            }, mediaHint, metadataResolution && metadataResolution.title
-                ? "" : decodedArtist, {
+            const resolverArtist = metadataResolution && metadataResolution.title ? "" : decodedArtist;
+            const resolverOptions = {
                 ratingCountries,
                 includeArt,
                 viewport,
@@ -2146,8 +2171,30 @@ function createHandler(options = {}) {
                 validateExactComposer: requestedHint === "auto" && !quotedFromTitle
                     && !quotedAlbumTitle
                     && !metadataResolution && mediaHint === "auto",
-            });
-            result.metadata = metadata;
+            };
+            // The display option is deliberately absent: both HTTP response
+            // variants reuse the same provider work and optional logo metadata.
+            // Hash credentials so the cache key cannot expose them in diagnostics.
+            const key = createHash("sha256").update(JSON.stringify([
+                title, providers, providers.includes("fanart") ? clientKey : "", mediaHint,
+                resolverArtist, { ...resolverOptions, viewport: includeArt ? {
+                    portrait: !!(viewport && viewport.height > viewport.width),
+                    uhd: !!(viewport && (viewport.width > 1920 || viewport.height > 1080)),
+                } : null },
+                env.TMDB_API_KEY, env.TMDB_READ_TOKEN, env.TMDB_API_TOKEN, env.FANART_API_KEY,
+                env.STEAMGRIDDB_API_KEY, env.BACKDROP_MEDIA_OVERRIDES,
+            ])).digest("hex");
+            const ttl = value => !value.media || (includeArt && !value.backdrop)
+                ? MISS_CACHE_SECONDS : CACHE_SECONDS;
+            const reload = /(?:no-cache|no-store|max-age=0)/i.test(
+                req.headers && req.headers["cache-control"] || "");
+            const resolved = await cachedMetadata(key, () => resolveBackdrop(title,
+                providers, clientKey, { env, fetchImpl, tintForImage }, mediaHint,
+                resolverArtist, resolverOptions), ttl, reload);
+            // Project into a fresh object: stripping a logo must never mutate the
+            // common cache or another in-flight client's response.
+            const result = { ...resolved, metadata };
+            if (!includeLogos) delete result.logo;
             const shortCache = !result.media || (includeArt && !result.backdrop);
             debugLog("info", "request.resolved", {
                 duration_ms: Date.now() - startedAt,

@@ -876,10 +876,10 @@ test("resolves verified soundtrack tracks to the 1996 Kansas City film", async (
         });
     }
 
-    assert.equal(searches.length, 4);
+    assert.equal(searches.length, 2); // both cues share the resolved film metadata
     for (const search of searches) assert.equal(search.searchParams.get("query"), "Kansas City");
     const movieSearches = searches.filter((search) => search.pathname.endsWith("/movie"));
-    assert.equal(movieSearches.length, 2);
+    assert.equal(movieSearches.length, 1);
     for (const search of movieSearches) {
         assert.equal(search.searchParams.get("primary_release_year"), "1996");
     }
@@ -1115,12 +1115,8 @@ test("resolves Goblin's Phenomena soundtrack tracks to the 1985 film", async () 
     }
     assert.deepEqual(requests.sort(), [
         "/3/movie/29161/release_dates",
-        "/3/movie/29161/release_dates",
-        "/3/search/movie",
         "/3/search/movie",
         "/3/search/tv",
-        "/3/search/tv",
-        "/v3/movies/29161",
         "/v3/movies/29161",
     ]);
 });
@@ -4814,6 +4810,50 @@ test("resolves fanart first and returns a precomputed tint", async () => {
     assert.equal(res.headers.get("access-control-allow-origin"), "https://example.test");
     assert.equal(res.headers.get("cache-control"), "public, max-age=" + CACHE_SECONDS
         + ", s-maxage=" + CACHE_SECONDS + ", stale-while-revalidate=86400");
+});
+
+test("reuses fanart title logos with a TMDB backdrop and skips unsafe logo URLs", async () => {
+    let fanartRequests = 0;
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 1891, media_type: "movie", title: "The Empire Strikes Back",
+                backdrop_path: "/empire.jpg",
+            }] });
+            if (parsed.hostname === "webservice.fanart.tv") {
+                fanartRequests++;
+                return response(200, { hdmovielogo: [
+                    null,
+                    { url: "https://evil.test/logo.png", lang: "en", likes: "1000" },
+                    { url: "https://assets.fanart.tv/fanart/german.png", lang: "de", likes: "100" },
+                    { url: "https://assets.fanart.tv/fanart/empire.png", lang: "en", likes: "2" },
+                ] });
+            }
+            throw new Error("Unexpected provider request");
+        },
+        tintForImage: async () => [255, 255, 255],
+    });
+    const res = mockResponse();
+    const query = { album: "The Empire Strikes Back", providers: "fanart,tmdb" };
+    const without = mockResponse();
+    await handler(mockRequest(query), without);
+    assert.equal(Object.hasOwn(JSON.parse(without.body), "logo"), false);
+    await handler(mockRequest({ ...query, logos: "1" }), res);
+    assert.equal(res.statusCode, 200);
+    const result = JSON.parse(res.body);
+    assert.equal(result.source, "tmdb");
+    assert.deepEqual(result.logo, { url: "https://assets.fanart.tv/fanart/empire.png", source: "fanart" });
+    assert.equal(fanartRequests, 1);
+    const offAgain = mockResponse(), onAgain = mockResponse();
+    await Promise.all([
+        handler(mockRequest({ ...query, logos: "0" }), offAgain),
+        handler(mockRequest({ ...query, logos: "1" }), onAgain),
+    ]);
+    assert.equal(Object.hasOwn(JSON.parse(offAgain.body), "logo"), false);
+    assert.deepEqual(JSON.parse(onAgain.body).logo, result.logo);
+    assert.equal(fanartRequests, 1); // toggling never repeats provider work
 });
 
 test("uses a fanart poster for a tall viewport", async () => {
