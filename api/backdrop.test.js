@@ -3770,6 +3770,61 @@ test("resolves Mark Kilian's Dolores album to the 2017 documentary", async () =>
     assert.equal(requests.length, 4);
 });
 
+test("resolves Nicholas Dodd's Treasured Island score to the 2007 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/3/search/movie") {
+                assert.equal(parsed.searchParams.get("query"), "Treasure Island");
+                assert.equal(parsed.searchParams.get("primary_release_year"), "2007");
+                return response(200, { results: [{
+                    id: 49885,
+                    title: "Treasure Island",
+                    backdrop_path: "/treasure-island.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/tv") {
+                assert.equal(parsed.searchParams.get("query"), "Treasure Island");
+                assert.equal(parsed.searchParams.get("first_air_date_year"), "2007");
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/movie/49885/release_dates") {
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/v3/movies/49885") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/treasure-island.jpg",
+                    lang: "en",
+                    likes: "3",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [238, 219, 174],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Treasured Island",
+        track: "Finale: Treasured Island",
+        artist: "Nicholas Dodd",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 49885, title: "Treasure Island", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/treasure-island.jpg",
+        source: "fanart",
+        tint: [238, 219, 174],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("steamgriddb.com")), false);
+});
+
 test("does not force different Medal Of Honor track metadata to the game", async () => {
     const requests = [];
     const handler = createHandler({

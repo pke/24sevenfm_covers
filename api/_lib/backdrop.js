@@ -257,6 +257,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Treasured Island",
+        artist: "Nicholas Dodd",
+        title: "Treasure Island (2007)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Summoning Of Spirits",
         track: "Crisis Healing Salve (Mint)",
         artist: "Hemophiliac, Christian Pacaud",
