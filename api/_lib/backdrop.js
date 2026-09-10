@@ -201,6 +201,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Pirates Of The Burning Sea, Vol. 1",
+        artist: "Adam Gubman",
+        title: "Pirates of the Burning Sea",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Outlaws",
         artist: "Clint Bajakian",
         title: "Outlaws + A Handful of Missions",

@@ -3177,6 +3177,49 @@ test("resolves Yoann Laulan's Dead Cells soundtrack as the game", async () => {
     assert.equal(requests.some((url) => url.includes("api.tvmaze.com")), false);
 });
 
+test("resolves Adam Gubman's Pirates of the Burning Sea volume as the game", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const value = String(url);
+            requests.push(value);
+            if (value.includes("/search/autocomplete/Pirates%20of%20the%20Burning%20Sea")) {
+                return response(200, { success: true, data: [{
+                    id: 2761,
+                    name: "Pirates of the Burning Sea",
+                    verified: true,
+                }] });
+            }
+            if (value.includes("/heroes/game/2761")) return response(200, {
+                success: true, data: [{ score: 7,
+                    url: "https://cdn2.steamgriddb.com/hero/pirates-burning-sea.jpg",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/pirates-burning-sea.jpg" }],
+            });
+            throw new Error("unexpected request " + value);
+        },
+        tintForImage: async () => [255, 238, 209],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Pirates Of The Burning Sea, Vol. 1",
+        track: "Mission Cult 1",
+        artist: "Adam Gubman",
+        providers: "fanart,tmdb,tvmaze,steamgriddb",
+        ratings: "DE,US",
+    }), res);
+
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 2761, title: "Pirates of the Burning Sea", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/pirates-burning-sea.jpg",
+        source: "steamgriddb",
+        tint: [255, 238, 209],
+        certifications: [],
+    });
+    assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
+    assert.equal(requests.some((url) => url.includes("api.tvmaze.com")), false);
+});
+
 test("resolves Clint Bajakian's Outlaws soundtrack to the original game", async () => {
     const requests = [];
     const handler = createHandler({
