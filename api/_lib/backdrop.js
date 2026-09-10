@@ -799,9 +799,9 @@ function mediaTitle(media) {
         : (media && (media.title || media.original_title));
 }
 
-function pickExactPerson(results, artist) {
+function exactPersonMatches(results, artist) {
     const wanted = normalizedTitle(artist);
-    if (!wanted) return null;
+    if (!wanted) return [];
     const matches = new Map();
     for (const person of Array.isArray(results) ? results : []) {
         const id = Number(person && person.id);
@@ -809,7 +809,15 @@ function pickExactPerson(results, artist) {
                 || normalizedTitle(person && person.name) !== wanted) continue;
         if (!matches.has(id)) matches.set(id, person);
     }
-    return matches.size === 1 ? matches.values().next().value : null;
+    return Array.from(matches.values());
+}
+
+function pickExactPerson(results, artist) {
+    const matches = exactPersonMatches(results, artist);
+    if (matches.length === 1) return matches[0];
+    const soundMatches = matches.filter((person) =>
+        person && person.known_for_department === "Sound");
+    return soundMatches.length === 1 ? soundMatches[0] : null;
 }
 
 function titleWords(value) {
@@ -1107,12 +1115,27 @@ async function searchTmdb(fetchImpl, query, env, wantedType) {
     return pickMediaMatch(results, searchTitle, wantedType);
 }
 
-async function searchTmdbPerson(fetchImpl, artist, env) {
+async function searchTmdbPerson(fetchImpl, artist, album, env) {
     const url = new URL("https://api.themoviedb.org/3/search/person");
     url.searchParams.set("include_adult", "false");
     url.searchParams.set("query", artist);
     const body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
-    return pickExactPerson(body && body.results, artist);
+    const person = pickExactPerson(body && body.results, artist);
+    if (person) return { person, credit: null };
+
+    // Names are not identities. If several exact-name composers exist, resolve the
+    // person and work together by checking each Sound person's credits against the
+    // album-derived screen title. Every lookup must complete and exactly one may
+    // match; otherwise the result remains deliberately ambiguous.
+    const soundMatches = exactPersonMatches(body && body.results, artist).filter((candidate) =>
+        candidate && candidate.known_for_department === "Sound");
+    if (soundMatches.length < 2) return { person: null, credit: null };
+    const credits = await Promise.all(soundMatches.map(async (candidate) => ({
+        person: candidate,
+        credit: await composerCreditForAlbum(fetchImpl, candidate, album, env),
+    })));
+    const credited = credits.filter((candidate) => candidate.credit);
+    return credited.length === 1 ? credited[0] : { person: null, credit: null };
 }
 
 async function composerCreditForAlbum(fetchImpl, person, album, env) {
@@ -1980,19 +2003,20 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     let matchedCertifications = [];
     for (const category of categories) {
         if (category === "screen") {
-            // Start the exact person lookup beside the normal title lookup so the
-            // conservative fallback does not add another full provider timeout. Its
-            // result is consumed when multiple movie/TV works have the same exact
-            // title. A non-exact credit fallback remains disabled for compilation
+            // Start the exact composer lookup beside the title lookup. A uniquely
+            // identified Sound person validates every exact screen-title match before
+            // it is accepted and can also select the right work among same-title
+            // releases. A non-exact credit fallback remains disabled for compilation
             // prefixes that explicitly require an exact provider title.
             const personLookup = artist
-                ? searchTmdbPerson(dependencies.fetchImpl, artist,
-                dependencies.env).then((person) => ({ person }), (error) => ({ error })) : null;
+                ? searchTmdbPerson(dependencies.fetchImpl, artist, query,
+                dependencies.env).then((result) => result, (error) => ({ error })) : null;
             let match = null;
             let fallbackMatch = null;
             let matchedQuery = query;
             let successfulTitleLookup = false;
             let rejectedComposerMismatch = false;
+            let composerValidatedMatch = false;
             const titleErrors = [];
             const titleLookups = await Promise.all(screenQueries.map(async (candidate) => {
                 try {
@@ -2025,29 +2049,40 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     errors.push(personResult.error);
                 } else if (personResult.person) {
                     try {
-                        const credit = await composerCreditForAlbum(dependencies.fetchImpl,
-                            personResult.person, query, dependencies.env);
+                        const credit = personResult.credit || await composerCreditForAlbum(
+                            dependencies.fetchImpl, personResult.person, query, dependencies.env);
                         const creditedMatch = credit && match.exactMatches.find((candidate) =>
                             Number(candidate.id) === Number(credit.id)
                             && mediaType(candidate) === mediaType(credit));
-                        if (creditedMatch) match = { ...match, media: creditedMatch };
+                        if (creditedMatch) {
+                            match = { ...match, media: creditedMatch };
+                            composerValidatedMatch = true;
+                        }
                     } catch (error) {
                         errors.push(error);
                     }
                 }
             }
-            if (match && match.exact && personLookup && options.validateExactComposer === true) {
+            if (match && match.exact && personLookup && !composerValidatedMatch) {
                 const personResult = await personLookup;
                 if (personResult.error) {
                     errors.push(personResult.error);
                 } else if (personResult.person
                         && personResult.person.known_for_department === "Sound") {
                     try {
-                        const composerIds = await screenComposerIds(dependencies.fetchImpl,
-                            match.media, dependencies.env);
-                        if (composerIds.size && !composerIds.has(Number(personResult.person.id))) {
+                        const creditedMedia = personResult.credit;
+                        const creditedMatch = creditedMedia
+                            && Number(creditedMedia.id) === Number(match.media.id)
+                            && mediaType(creditedMedia) === mediaType(match.media);
+                        const composerIds = creditedMedia ? null : await screenComposerIds(
+                            dependencies.fetchImpl, match.media, dependencies.env);
+                        if ((creditedMedia && !creditedMatch)
+                                || (composerIds && composerIds.size
+                                    && !composerIds.has(Number(personResult.person.id)))) {
                             match = null;
                             rejectedComposerMismatch = true;
+                        } else if (creditedMatch) {
+                            composerValidatedMatch = true;
                         }
                     } catch (error) {
                         // Missing credits are not negative evidence. Keep the exact
@@ -2056,15 +2091,19 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     }
                 }
             }
-            if ((!match || !match.exact) && personLookup && !requireExactScreenMatch
-                    && !rejectedComposerMismatch) {
+            // A rejected exact title is precisely where the artist's unique composer
+            // credit can recover another release with the same title. This is still
+            // an exact lookup: the credit matcher requires one exact Sound person,
+            // one whole title sequence, and an Original Music Composer job.
+            if ((!match || !match.exact) && personLookup
+                    && (!requireExactScreenMatch || rejectedComposerMismatch)) {
                 const personResult = await personLookup;
                 if (personResult.error) {
                     errors.push(personResult.error);
                 } else if (personResult.person) {
                     try {
-                        const credit = await composerCreditForAlbum(dependencies.fetchImpl,
-                            personResult.person, query, dependencies.env);
+                        const credit = personResult.credit || await composerCreditForAlbum(
+                            dependencies.fetchImpl, personResult.person, query, dependencies.env);
                         if (credit) match = { media: credit, exact: true };
                     } catch (error) {
                         errors.push(error);
@@ -2316,9 +2355,6 @@ function createHandler(options = {}) {
                     || !!(metadataResolution && metadataResolution.title),
                 allowGameTitleExtension:
                     isTrackTitledGameCompilation(cleanMovieTitle(decodedTitle)),
-                validateExactComposer: requestedHint === "auto" && !quotedFromTitle
-                    && !quotedAlbumTitle
-                    && !metadataResolution && mediaHint === "auto",
             };
             // The display option is deliberately absent: both HTTP response
             // variants reuse matching/artwork work and any piggybacked logo metadata.

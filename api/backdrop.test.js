@@ -2194,6 +2194,74 @@ test("uses the composer to disambiguate exact movie and TV titles", async () => 
     assert.equal(requests.includes("/3/tv/95543/content_ratings"), false);
 });
 
+test("matches the album against exact-name composers before accepting a title", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 6620,
+                media_type: "movie",
+                title: "Sabrina",
+                release_date: "1954-09-10",
+                backdrop_path: "/sabrina-1954.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 491,
+                name: "John Williams",
+                known_for_department: "Sound",
+            }, {
+                id: 3218086,
+                name: "John Williams",
+                known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/person/491/combined_credits") {
+                return response(200, { crew: [{
+                    id: 11860,
+                    media_type: "movie",
+                    title: "Sabrina",
+                    release_date: "1995-12-15",
+                    job: "Original Music Composer",
+                    backdrop_path: "/sabrina-1995.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/person/3218086/combined_credits") {
+                return response(200, { crew: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [244, 222, 203],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Sabrina",
+        track: "Theme From Sabrina",
+        artist: "John Williams",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi",
+        "/3/search/person",
+        "/3/person/491/combined_credits",
+        "/3/person/3218086/combined_credits",
+    ]));
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 11860, title: "Sabrina", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/sabrina-1995.jpg",
+        source: "tmdb",
+        tint: [244, 222, 203],
+        metadata: {
+            album: "Sabrina",
+            track: "Theme From Sabrina",
+            artist: "John Williams",
+        },
+    });
+});
+
 test("validates the requested rating countries", () => {
     assert.deepEqual(requestedRatings(undefined), []);
     assert.deepEqual(requestedRatings("de,US,DE"), ["DE", "US"]);
@@ -2935,7 +3003,15 @@ test("selects one exact composer person and rejects ambiguous or partial names",
     const hans = { id: 947, name: "Hans Zimmer", known_for_department: "Sound" };
     assert.equal(pickExactPerson([hans], "Hans Zimmer"), hans);
     assert.equal(pickExactPerson([hans], "Hans Zimmer Live"), null);
-    assert.equal(pickExactPerson([hans, { id: 2, name: "Hans Zimmer" }], "Hans Zimmer"), null);
+    assert.equal(pickExactPerson([hans, {
+        id: 2, name: "Hans Zimmer", known_for_department: "Acting",
+    }], "Hans Zimmer"), hans);
+    assert.equal(pickExactPerson([hans, {
+        id: 3, name: "Hans Zimmer", known_for_department: "Sound",
+    }], "Hans Zimmer"), null);
+    assert.equal(pickExactPerson([
+        { id: 4, name: "Hans Zimmer" }, { id: 5, name: "Hans Zimmer" },
+    ], "Hans Zimmer"), null);
     assert.equal(pickExactPerson([{ id: 0, name: "Hans Zimmer" }], "Hans Zimmer"), null);
 });
 
@@ -4522,6 +4598,9 @@ test("does not resolve Thomas Bergersen's standalone Illusions album as a movie"
                 crew: [{ id: 34734, name: "Robert J. Walsh",
                     department: "Sound", job: "Original Music Composer" }],
             });
+            if (parsed.pathname === "/3/person/2458162/combined_credits") {
+                return response(200, { crew: [] });
+            }
             if (parsed.hostname === "www.steamgriddb.com") {
                 return response(200, { success: true, data: [] });
             }

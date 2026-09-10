@@ -72,7 +72,7 @@ struct MediaResolverConfig {
     std::string apiHost = "24covers-api.vercel.app";
     // First 12 SHA-256 hex chars of api/_lib/backdrop.js, matching the web
     // renderer's RESOLVER_V cache buster at the time this native build ships.
-    std::string resolverVersion = "3b8d7e5cd8eb";
+    std::string resolverVersion = "f57f344925c8";
     unsigned short apiPort = 443;
     int timeoutSeconds = 20;
     using Transport = std::function<HttpResponse(
