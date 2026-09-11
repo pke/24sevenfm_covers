@@ -345,6 +345,85 @@ test.describe("the deployed player page", () => {
         await expect(page.locator(".info")).not.toHaveClass(/has-media-logo/);
     });
 
+    test("keeps a title logo visible while provider priority resolves its replacement", async ({ page }) => {
+        const cover = "https://streamingsoundtracks.com/images/cover/logo-provider-swap.svg";
+        const logoA = "https://assets.fanart.tv/fanart/provider-logo-a.svg";
+        const logoB = "https://assets.fanart.tv/fanart/provider-logo-b.svg";
+        let delayedLogoRoute;
+        await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+            JSON.stringify({
+                sstBackdrops: { enabled: true,
+                    options: { providers: ["fanart", "tmdb"], cover: "show" } },
+                sstTitleLogos: true,
+            })));
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", route => {
+            if (new URL(route.request().url()).searchParams.get("action") === "GetQueue")
+                return route.fulfill({ json: [] });
+            return route.fulfill({ json: {
+                Album: "Provider Logo", Track: "Main Theme", Artist: "Test Composer",
+                CoverLink: cover, Length: 0,
+                PlayStart: "2026-08-21T12:00:00Z", SystemTime: "2026-08-21T12:00:00Z",
+            } });
+        });
+        await page.route(/streamingsoundtracks\.com\/images\/cover\/.*logo-provider-swap\.svg/,
+            route => route.fulfill({ contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+        await page.route(logoA, route => route.fulfill({
+            contentType: "image/svg+xml", headers: { "access-control-allow-origin": "*" },
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200"><rect width="600" height="200" fill="white"/></svg>',
+        }));
+        await page.route(logoB, route => { delayedLogoRoute = route; });
+        await page.route(/\/api\/media\?/, route => {
+            const providers = new URL(route.request().url()).searchParams.get("providers");
+            const logo = providers === "tmdb,fanart" ? logoB
+                : providers === "tmdb" ? null : logoA;
+            return route.fulfill({ json: {
+                media: { id: 24, title: "Provider Logo", type: "movie" },
+                backdrop: null, source: null,
+                logo: logo ? { url: logo, source: "fanart" } : null,
+                metadata: { album: "Provider Logo", track: "Main Theme",
+                    artist: "Test Composer" },
+            } });
+        });
+
+        await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+        const info = page.locator(".info");
+        const renderedLogoUrl = () => page.locator("#media-logo canvas:not(.media-logo-outgoing)")
+            .last().getAttribute("data-logo-url");
+        await expect(info).toHaveClass(/has-media-logo/);
+        await expect.poll(renderedLogoUrl).toBe(logoA);
+        await page.evaluate(() => {
+            window.__logoVisibilityChanges = [];
+            new MutationObserver(() => window.__logoVisibilityChanges.push(
+                document.querySelector(".info").classList.contains("has-media-logo")))
+                .observe(document.querySelector(".info"), { attributes: true,
+                    attributeFilter: ["class"] });
+        });
+
+        await openBackdropSettings(page);
+        await page.locator('.provider[data-provider="fanart"] .grip').press("ArrowDown");
+        await expect.poll(() => !!delayedLogoRoute).toBe(true);
+        await expect(info).toHaveClass(/has-media-logo/);
+        await expect.poll(renderedLogoUrl).toBe(logoA);
+        await delayedLogoRoute.fulfill({
+            contentType: "image/svg+xml", headers: { "access-control-allow-origin": "*" },
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="180"><rect width="500" height="180" fill="white"/></svg>',
+        });
+        await expect.poll(renderedLogoUrl).toBe(logoB);
+        expect(await page.evaluate(() => window.__logoVisibilityChanges)).not.toContain(false);
+
+        // Both logos are cached now. Returning to A must remain a logo-to-logo
+        // transition rather than exposing the album title for one frame.
+        await page.locator('.provider[data-provider="fanart"] .grip').press("ArrowUp");
+        await expect.poll(renderedLogoUrl).toBe(logoA);
+        expect(await page.evaluate(() => window.__logoVisibilityChanges)).not.toContain(false);
+
+        // A confirmed result without a logo deliberately restores the text title.
+        await page.locator("#fanart-on").uncheck();
+        await expect(info).not.toHaveClass(/has-media-logo/);
+        await expect(page.locator("#info-album")).toBeVisible();
+    });
+
     test("enforces a restrictive player resource policy", async ({ page }) => {
         await mockProviderTestFeed(page);
         let escaped = false;

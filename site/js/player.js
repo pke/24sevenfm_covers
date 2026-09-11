@@ -801,6 +801,86 @@ infoAlbumToggleEl.addEventListener("click", function () {
 
 // Measure the opaque artwork, not the provider's transparent padding. This also
 // lets logos extend above the glass without enlarging their reserved row.
+function titleLogoCanvas(img, url) {
+    var scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    var scratch = document.createElement("canvas");
+    scratch.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    scratch.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    var ctx = scratch.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, scratch.width, scratch.height);
+    var pixels = ctx.getImageData(0, 0, scratch.width, scratch.height).data;
+    var left = scratch.width, top = scratch.height, right = -1, bottom = -1;
+    for (var y = 0; y < scratch.height; y++) for (var x = 0; x < scratch.width; x++) {
+        if (pixels[(y * scratch.width + x) * 4 + 3] < 16) continue;
+        left = Math.min(left, x); right = Math.max(right, x);
+        top = Math.min(top, y); bottom = Math.max(bottom, y);
+    }
+    if (right < left) return null;
+    var canvas = document.createElement("canvas");
+    canvas.width = right - left + 1; canvas.height = bottom - top + 1;
+    canvas.getContext("2d").drawImage(scratch, left, top, canvas.width, canvas.height,
+        0, 0, canvas.width, canvas.height);
+    canvas.dataset.logoUrl = url;
+    return canvas;
+}
+
+function retireMediaLogo(token) {
+    clearTimeout(mediaLogoClearTimer);
+    infoEl.classList.remove("has-media-logo");
+    sizeStage();
+    var fade = reducedMotion.matches ? 0
+        : cssTimeMs(getComputedStyle(infoEl).getPropertyValue("--backdrop-fade-duration"));
+    mediaLogoClearTimer = setTimeout(function () {
+        if (token === mediaLogoGeneration) mediaLogoEl.replaceChildren();
+        mediaLogoClearTimer = null;
+    }, mediaLogoEl.childElementCount ? fade : 0);
+}
+
+function showPreparedMediaLogo(canvas, token, epoch) {
+    if (!canvas || token !== mediaLogoGeneration || epoch !== infoHandoffGeneration
+            || !renderIsCurrent("backdrop", mediaLogoBackdropGeneration)) return;
+    clearTimeout(mediaLogoClearTimer);
+    mediaLogoClearTimer = null;
+    var outgoing = Array.prototype.slice.call(mediaLogoEl.querySelectorAll("canvas"));
+    var replacingVisibleLogo = outgoing.length > 0
+        && infoEl.classList.contains("has-media-logo");
+    if (!replacingVisibleLogo || reducedMotion.matches) {
+        mediaLogoEl.replaceChildren(canvas);
+        infoTitleEl.title = infoAlbumEl.textContent;
+        requestAnimationFrame(function () {
+            if (token === mediaLogoGeneration) {
+                infoEl.classList.add("has-media-logo");
+                sizeStage();
+            }
+        });
+        return;
+    }
+
+    // Provider changes may resolve to a different logo for the same title. Keep
+    // the old logo (and therefore the album text hidden) until the new image is
+    // ready, then crossfade the two logo canvases in place.
+    canvas.classList.add("media-logo-entering");
+    mediaLogoEl.appendChild(canvas);
+    requestAnimationFrame(function () {
+        if (token !== mediaLogoGeneration || epoch !== infoHandoffGeneration
+                || !renderIsCurrent("backdrop", mediaLogoBackdropGeneration)) {
+            canvas.remove();
+            return;
+        }
+        outgoing.forEach(function (old) { old.classList.add("media-logo-outgoing"); });
+        canvas.classList.remove("media-logo-entering");
+        infoTitleEl.title = infoAlbumEl.textContent;
+        sizeStage();
+        var fade = cssTimeMs(getComputedStyle(infoEl)
+            .getPropertyValue("--backdrop-fade-duration"));
+        mediaLogoClearTimer = setTimeout(function () {
+            if (token === mediaLogoGeneration)
+                outgoing.forEach(function (old) { old.remove(); });
+            mediaLogoClearTimer = null;
+        }, fade);
+    });
+}
+
 function setMediaLogo(art, generation) {
     syncTitleLogoToggle();
     mediaLogoArt = art;
@@ -812,50 +892,29 @@ function setMediaLogo(art, generation) {
     mediaLogoUrl = url;
     var token = ++mediaLogoGeneration;
     var epoch = infoHandoffGeneration;
-    infoEl.classList.remove("has-media-logo");
-    sizeStage();
-    var fade = reducedMotion.matches ? 0
-        : cssTimeMs(getComputedStyle(infoEl).getPropertyValue("--backdrop-fade-duration"));
-    var retired = new Promise(function (resolve) {
-        mediaLogoClearTimer = setTimeout(function () {
-            if (token === mediaLogoGeneration) mediaLogoEl.replaceChildren();
-            resolve();
-        }, mediaLogoEl.childElementCount ? fade : 0);
-    });
-    if (!url) return;
-    prepareTitleLogo(logo).then(async function (img) {
-        await retired;
+    if (!url) {
+        retireMediaLogo(token);
+        return;
+    }
+    prepareTitleLogo(logo).then(function (img) {
         if (token !== mediaLogoGeneration || epoch !== infoHandoffGeneration
                 || !renderIsCurrent("backdrop", mediaLogoBackdropGeneration)) return;
         try {
-            var scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
-            var scratch = document.createElement("canvas");
-            scratch.width = Math.max(1, Math.round(img.naturalWidth * scale));
-            scratch.height = Math.max(1, Math.round(img.naturalHeight * scale));
-            var ctx = scratch.getContext("2d", { willReadFrequently: true });
-            ctx.drawImage(img, 0, 0, scratch.width, scratch.height);
-            var pixels = ctx.getImageData(0, 0, scratch.width, scratch.height).data;
-            var left = scratch.width, top = scratch.height, right = -1, bottom = -1;
-            for (var y = 0; y < scratch.height; y++) for (var x = 0; x < scratch.width; x++) {
-                if (pixels[(y * scratch.width + x) * 4 + 3] < 16) continue;
-                left = Math.min(left, x); right = Math.max(right, x);
-                top = Math.min(top, y); bottom = Math.max(bottom, y);
+            showPreparedMediaLogo(titleLogoCanvas(img, url), token, epoch);
+        } catch (error) {
+            // A logo that cannot be inspected is equivalent to no usable logo for
+            // this provider result; reveal the accessible album title instead.
+            if (token === mediaLogoGeneration) {
+                mediaLogoUrl = "";
+                retireMediaLogo(token);
             }
-            if (right < left) return;
-            var canvas = document.createElement("canvas");
-            canvas.width = right - left + 1; canvas.height = bottom - top + 1;
-            canvas.getContext("2d").drawImage(scratch, left, top, canvas.width, canvas.height,
-                0, 0, canvas.width, canvas.height);
-            mediaLogoEl.replaceChildren(canvas);
-            infoTitleEl.title = infoAlbumEl.textContent;
-            requestAnimationFrame(function () {
-                if (token === mediaLogoGeneration) {
-                    infoEl.classList.add("has-media-logo");
-                    sizeStage();
-                }
-            });
-        } catch (error) { /* Unreadable images leave the accessible text title intact. */ }
-    }).catch(function () { if (token === mediaLogoGeneration) mediaLogoUrl = ""; });
+        }
+    }).catch(function () {
+        if (token === mediaLogoGeneration) {
+            mediaLogoUrl = "";
+            retireMediaLogo(token);
+        }
+    });
 }
 var backchannelStatusEl = $("backchannel-status");
 var backchannelPairingEl = $("backchannel-pairing");

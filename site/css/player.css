@@ -244,9 +244,12 @@
     max-width: min(32rem, 72vw);
     max-height: min(clamp(6rem, calc(var(--title-size, 1.15rem) * 2.8), 10rem), 24vh);
     filter: drop-shadow(0 2px 3px #0009);
-    transition: max-height var(--backdrop-fade-duration) var(--backdrop-fade-easing),
+    opacity: 1;
+    transition: opacity var(--backdrop-fade-duration) var(--backdrop-fade-easing),
+                max-height var(--backdrop-fade-duration) var(--backdrop-fade-easing),
                 max-width var(--backdrop-fade-duration) var(--backdrop-fade-easing);
 }
+.media-logo canvas:is(.media-logo-entering, .media-logo-outgoing) { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
     .info-album-slot, .media-logo, .media-logo canvas, .info-album-toggle { transition: none; }
 }
