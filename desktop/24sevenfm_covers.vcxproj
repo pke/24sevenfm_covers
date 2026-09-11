@@ -107,6 +107,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="24sevenfm_covers.cpp" />
+    <ClCompile Include="windows_theme.cpp" />
     <ClCompile Include="..\shared\cover_engine.cpp" />
     <ClCompile Include="..\shared\demo.cpp" />
     <ClCompile Include="..\shared\cover_menu.cpp" />
@@ -126,6 +127,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="viewer_resource.h" />
+    <ClInclude Include="windows_theme.h" />
     <ClInclude Include="..\shared\cover_engine.h" />
     <ClInclude Include="..\shared\cover_menu.h" />
     <ClInclude Include="..\shared\fullscreen_window.h" />

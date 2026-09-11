@@ -30,7 +30,9 @@
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "config.h"         // shared option schema + INI adapter
 #include "window_rect.h"    // remember the window's position/size across runs
+#include "windows_theme.h"  // optional Windows 11 frame + system dark settings
 #include "viewer_resource.h"
+#include "about_links.h"
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "comctl32.lib")
@@ -165,6 +167,7 @@ static INT_PTR CALLBACK OptionsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp
     switch (msg) {
         case WM_INITDIALOG:
             optpanel::init(dlg, eng().settings);
+            dvtheme::install(dlg, dvtheme::Surface::settingsPage);
             return TRUE;
         case WM_HSCROLL:
             optpanel::onHScroll(dlg);
@@ -200,37 +203,23 @@ static INT_PTR CALLBACK AboutPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
     switch (msg) {
         case WM_INITDIALOG: {
             SetDlgItemTextA(dlg, IDC_ABOUT_VER, "Version " SSC_VER_STR);
-            HFONT f = (HFONT)SendMessageA(dlg, WM_GETFONT, 0, 0); // underline the link
-            LOGFONTA lf = {};
-            if (f && GetObjectA(f, sizeof(lf), &lf)) {
-                lf.lfUnderline = TRUE;
-                if (g_linkFont) DeleteObject(g_linkFont);
-                g_linkFont = CreateFontIndirectA(&lf);
-                if (g_linkFont)
-                    SendDlgItemMessageA(dlg, IDC_ABOUT_LINK, WM_SETFONT, (WPARAM)g_linkFont, TRUE);
-            }
+            ssclinks::initAboutLinks(dlg, g_linkFont);
+            dvtheme::install(dlg, dvtheme::Surface::settingsPage);
             return TRUE;
         }
-        case WM_CTLCOLORSTATIC:
-            if ((HWND)lp == GetDlgItem(dlg, IDC_ABOUT_LINK)) {
-                SetTextColor((HDC)wp, RGB(0, 0, 238)); // link blue
-                SetBkMode((HDC)wp, TRANSPARENT);
-                return (INT_PTR)GetStockObject(NULL_BRUSH);
-            }
+        case WM_CTLCOLORSTATIC: {
+            const INT_PTR brush = ssclinks::colorAboutLink(dlg, wp, lp);
+            if (brush) return brush;
             break;
+        }
         case WM_SETCURSOR:
-            if ((HWND)wp == GetDlgItem(dlg, IDC_ABOUT_LINK)) {
-                SetCursor(LoadCursor(nullptr, IDC_HAND));
+            if (ssclinks::setAboutLinkCursor(dlg, wp)) {
                 SetWindowLongPtrA(dlg, DWLP_MSGRESULT, TRUE);
                 return TRUE;
             }
             break;
         case WM_COMMAND:
-            if (LOWORD(wp) == IDC_ABOUT_LINK && HIWORD(wp) == STN_CLICKED) {
-                ShellExecuteA(dlg, "open", "https://24seven.fm/",
-                              nullptr, nullptr, SW_SHOWNORMAL);
-                return TRUE;
-            }
+            if (ssclinks::openAboutLink(dlg, wp)) return TRUE;
             break;
         case WM_DESTROY:
             if (g_linkFont) { DeleteObject(g_linkFont); g_linkFont = nullptr; }
@@ -261,6 +250,7 @@ static INT_PTR CALLBACK StationPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp
                 if (i == cur) SendMessageA(rb, BM_SETCHECK, BST_CHECKED, 0);
             }
             SetDlgItemTextA(dlg, IDC_VIEW_STATION_DESC, ssc::kStations[cur].desc);
+            dvtheme::install(dlg, dvtheme::Surface::settingsPage);
             return TRUE;
         }
         case WM_COMMAND: {
@@ -303,6 +293,7 @@ enum { kPageStation = 0, kPageOptions = 1, kPageAbout = 2 };
 
 static int CALLBACK OptionsSheetCallback(HWND sheet, UINT msg, LPARAM) {
     if (msg == PSCB_INITIALIZED) {
+        dvtheme::install(sheet, dvtheme::Surface::settingsWindow);
         // An options sheet owned by our fullscreen popup must join its topmost
         // band. Ownership keeps it above the canvas; this explicit promotion also
         // covers Windows 11 shell configurations that do not inherit the band.
@@ -378,7 +369,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (eng().onAlbumClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) saveSettings();
             return 0;
         case WM_LBUTTONDBLCLK: // double-click the canvas -> toggle fullscreen
-            if (d2d::albumHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
+            if (eng().albumToggleHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             toggleFullscreen(hwnd);
             return 0;
         case WM_KEYDOWN:
@@ -391,6 +382,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSELEAVE:
             eng().onPointerLeave(hwnd);
             return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT && eng().albumToggleAtCursor(hwnd)) {
+                SetCursor(LoadCursor(nullptr, IDC_HAND));
+                return TRUE;
+            }
+            break;
         case WM_CONTEXTMENU: { // right-click the canvas -> popup menu
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             if (pt.x == -1 && pt.y == -1) { // keyboard-invoked (Menu key): use client centre
@@ -427,6 +424,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     g_hInst = hInstance;
+    dvtheme::initialize(); // before any HWND/menu exists: avoids a light first frame
 
     // A stable AppUserModelID gives the viewer its own taskbar identity - proper
     // window grouping and a reliable "Pin to taskbar" (Windows won't offer pinning
@@ -466,6 +464,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                              wr.x, wr.y, wr.w, wr.h,
                              nullptr, nullptr, g_hInst, nullptr);
     if (!g_hwnd) return 1;
+    dvtheme::install(g_hwnd, dvtheme::Surface::mainWindow);
     // Seed the comparison so the first save doesn't rewrite what we just restored. The
     // window is created un-maximized and maximized below (if it was), so carry that flag
     // over from what we loaded rather than reading it back off a not-yet-maximized window.

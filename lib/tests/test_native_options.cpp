@@ -8,6 +8,7 @@
 #include "../../shared/child_fade.cpp"
 #include "../../shared/options_panel.cpp"
 #include "../../winamp/gen_resource.h"
+#include "../../shared/about_links.h"
 
 namespace {
 struct Dialogs {
@@ -69,6 +70,34 @@ TEST_CASE("native title-logo option defaults off and follows the backdrop depend
     CHECK(settings.titleLogos); // parent switch retains the preference
 }
 
+TEST_CASE("native About URLs are rendered as interactive links") {
+    Dialogs dialogs;
+    REQUIRE(dialogs.about != nullptr);
+
+    CHECK(std::string(ssclinks::aboutUrl(IDC_ABOUT_LINK)) == "https://24seven.fm/");
+    CHECK(std::string(ssclinks::aboutUrl(IDC_ABOUT_DUDESOFT)) == SSC_WEB);
+
+    HFONT linkFont = nullptr;
+    ssclinks::initAboutLinks(dialogs.about, linkFont);
+    REQUIRE(linkFont != nullptr);
+    HWND station = GetDlgItem(dialogs.about, IDC_ABOUT_LINK);
+    HWND developer = GetDlgItem(dialogs.about, IDC_ABOUT_DUDESOFT);
+    REQUIRE(station != nullptr);
+    REQUIRE(developer != nullptr);
+    CHECK(ssclinks::isAboutLink(dialogs.about, station));
+    CHECK(ssclinks::isAboutLink(dialogs.about, developer));
+    CHECK((GetWindowLongPtrA(station, GWL_STYLE) & SS_NOTIFY) != 0);
+    CHECK((GetWindowLongPtrA(developer, GWL_STYLE) & SS_NOTIFY) != 0);
+
+    char copyright[256] = {};
+    GetWindowTextA(developer, copyright, static_cast<int>(sizeof(copyright)));
+    CHECK(std::string(copyright) == SSC_COPYRIGHT);
+    LOGFONTA font = {};
+    REQUIRE(GetObjectA(linkFont, sizeof(font), &font));
+    CHECK(font.lfUnderline == TRUE);
+    DeleteObject(linkFont);
+}
+
 TEST_CASE("foobar WTL clicks forward provider button IDs and enforce a rating country") {
     Dialogs d;
     REQUIRE(d.options != nullptr);
@@ -105,6 +134,13 @@ TEST_CASE("native provider selections keep details and the personal key controls
     d.select(1); d.select(0);
     CoverEngine::Settings settings; optpanel::read(d.options, settings);
     CHECK(settings.fanartClientKey == "0123456789abcdef0123456789abcdef");
+
+    d.select(1);
+    CHECK(IsWindowVisible(details));
+    CHECK(GetPropW(d.options, childfade::kSurface) == nullptr);
+    char link[160] = {};
+    GetDlgItemTextA(details, IDC_OPT_PROVIDER_LINK, link, sizeof(link));
+    CHECK(std::string(link) == optpanel::kProviderLinks[1]);
 }
 
 TEST_CASE("native child pages crossfade with repaint clipping and clean up on rapid switches") {

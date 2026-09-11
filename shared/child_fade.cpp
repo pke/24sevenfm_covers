@@ -34,7 +34,11 @@ struct Bitmap {
         if (!previous || previous == HGDI_ERROR) { previous = nullptr; return false; }
         width = w; height = h;
         RECT bounds = {0, 0, w, h};
-        FillRect(dc, &bounds, GetSysColorBrush(COLOR_3DFACE));
+        // Ask the host to erase the snapshot with its actual page colour. A
+        // hard-coded COLOR_3DFACE flashes white when the desktop viewer uses
+        // its dark client theme.
+        if (!SendMessageW(window, WM_ERASEBKGND, reinterpret_cast<WPARAM>(dc), 0))
+            FillRect(dc, &bounds, GetSysColorBrush(COLOR_3DFACE));
         return true;
     }
     void capture(HWND window) {
@@ -47,6 +51,7 @@ struct Bitmap {
 struct Fade {
     Bitmap from, to, frame;
     HWND parent = nullptr;
+    HWND incoming = nullptr;
     DWORD start = 0;
     bool ready = false;
     bool paint(HDC target) {
@@ -93,9 +98,21 @@ LRESULT CALLBACK surfaceProc(HWND window, UINT msg, WPARAM wp, LPARAM lp,
     case WM_NCDESTROY:
         KillTimer(window, kTimer);
         if (GetPropW(fade->parent, kSurface) == window) RemovePropW(fade->parent, kSurface);
-        RemoveWindowSubclass(window, surfaceProc, id);
-        delete fade;
-        break;
+        {
+            const HWND incoming = fade->incoming;
+            RemoveWindowSubclass(window, surfaceProc, id);
+            delete fade;
+            const LRESULT result = DefSubclassProc(window, msg, wp, lp);
+            // Some hosts repaint the shared page while the snapshot surface is
+            // on top. Reassert and repaint the real destination when the surface
+            // goes away so provider details cannot vanish with the fade.
+            if (incoming && IsWindow(incoming)) {
+                ShowWindow(incoming, SW_SHOWNA);
+                RedrawWindow(incoming, nullptr, nullptr,
+                    RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            }
+            return result;
+        }
     }
     return DefSubclassProc(window, msg, wp, lp);
 }
@@ -116,6 +133,7 @@ bool replace(HWND outgoing, HWND incoming, bool animate, const std::function<voi
             && (!outgoing || GetParent(outgoing) == parent) && sameBounds) {
         std::unique_ptr<Fade> fade(new Fade());
         fade->parent = parent;
+        fade->incoming = incoming;
         if (fade->from.init(parent, width, height) && fade->to.init(parent, width, height)
                 && fade->frame.init(parent, width, height)) {
             // Rapid selections start at the currently blended pixels. Capturing
@@ -147,6 +165,8 @@ bool replace(HWND outgoing, HWND incoming, bool animate, const std::function<voi
     if (update) update();
     if (incoming) ShowWindow(incoming, SW_SHOWNA); // unconditional functional fallback
     if (!surface) return false;
+    RedrawWindow(incoming, nullptr, nullptr,
+        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
     state->to.capture(incoming);
     state->start = GetTickCount();
     state->ready = true;

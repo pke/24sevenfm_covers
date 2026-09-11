@@ -9,6 +9,7 @@
 #define IDC_TAB          1010
 #define IDC_ABOUT_VER    1011
 #define IDC_ABOUT_LINK   1012
+#define IDC_ABOUT_DUDESOFT 1013
 // Options are hosted in Winamp's Preferences treeview via the shared dialog
 // IDD_OPTIONS_PAGE (shared/options_ids.h, shared/options_page.rc).
 

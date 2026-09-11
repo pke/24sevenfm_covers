@@ -1,5 +1,18 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!-- Opt in to the themed Win32 controls used by the property sheet. Without
+       Common Controls v6, tabs, buttons and list views stay in the classic
+       light renderer even when the window itself uses the dark DWM frame. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32"
+                        name="Microsoft.Windows.Common-Controls"
+                        version="6.0.0.0"
+                        processorArchitecture="*"
+                        publicKeyToken="6595b64144ccf1df"
+                        language="*" />
+    </dependentAssembly>
+  </dependency>
   <!-- Per-monitor DPI awareness: render crisply on high-DPI displays and avoid the
        system-DPI bitmap-stretch (and its 1px fullscreen seam) when the viewer sits on
        a monitor whose scale differs from the primary. PerMonitorV2 on Windows 10 1703+,

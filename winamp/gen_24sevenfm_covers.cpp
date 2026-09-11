@@ -30,6 +30,7 @@
 
 #include "gen.h"
 #include "gen_resource.h"
+#include "about_links.h"
 #include "d2d_renderer.h"   // d2d::init/shutdown (rendering itself lives in the engine)
 #include "cover_engine.h"   // shared cover/preload/animation engine
 #include "cover_menu.h"        // shared right-click context menu (Poster / Options)
@@ -307,7 +308,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (eng().onAlbumClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) saveSettings();
             return 0;
         case WM_LBUTTONDBLCLK: // double-click the cover -> enter fullscreen (Esc/dbl-click there exits)
-            if (d2d::albumHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
+            if (eng().albumToggleHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             setFullscreen(!g_fsWin.active());
             return 0;
         case WM_MOUSEMOVE:
@@ -316,6 +317,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSELEAVE:
             eng().onPointerLeave(hwnd);
             return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT && eng().albumToggleAtCursor(hwnd)) {
+                SetCursor(LoadCursor(nullptr, IDC_HAND));
+                return TRUE;
+            }
+            break;
         case WM_KEYDOWN:
             if (wp == 'N') { eng().demoNext(); return 0; } // demo mode: next cover (no-op otherwise)
             break;
@@ -432,36 +439,22 @@ static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_INITDIALOG: {
             SetDlgItemTextA(dlg, IDC_ABOUT_VER, "Version " SSC_VER_STR);
-            HFONT f = (HFONT)SendMessageA(dlg, WM_GETFONT, 0, 0); // underline the link
-            LOGFONTA lf = {};
-            if (f && GetObjectA(f, sizeof(lf), &lf)) {
-                lf.lfUnderline = TRUE;
-                if (g_linkFont) DeleteObject(g_linkFont);
-                g_linkFont = CreateFontIndirectA(&lf);
-                if (g_linkFont)
-                    SendDlgItemMessageA(dlg, IDC_ABOUT_LINK, WM_SETFONT, (WPARAM)g_linkFont, TRUE);
-            }
+            ssclinks::initAboutLinks(dlg, g_linkFont);
             return TRUE;
         }
-        case WM_CTLCOLORSTATIC:
-            if ((HWND)lp == GetDlgItem(dlg, IDC_ABOUT_LINK)) {
-                SetTextColor((HDC)wp, RGB(0, 0, 238)); // link blue
-                SetBkMode((HDC)wp, TRANSPARENT);
-                return (INT_PTR)GetStockObject(NULL_BRUSH);
-            }
+        case WM_CTLCOLORSTATIC: {
+            const INT_PTR brush = ssclinks::colorAboutLink(dlg, wp, lp);
+            if (brush) return brush;
             break;
+        }
         case WM_SETCURSOR:
-            if ((HWND)wp == GetDlgItem(dlg, IDC_ABOUT_LINK)) {
-                SetCursor(LoadCursor(nullptr, IDC_HAND));
+            if (ssclinks::setAboutLinkCursor(dlg, wp)) {
                 SetWindowLongPtr(dlg, DWLP_MSGRESULT, TRUE);
                 return TRUE;
             }
             break;
         case WM_COMMAND:
-            if (LOWORD(wp) == IDC_ABOUT_LINK && HIWORD(wp) == STN_CLICKED) {
-                ShellExecuteA(dlg, "open", "https://24seven.fm/", nullptr, nullptr, SW_SHOWNORMAL);
-                return TRUE;
-            }
+            if (ssclinks::openAboutLink(dlg, wp)) return TRUE;
             break;
         case WM_DESTROY:
             if (g_linkFont) { DeleteObject(g_linkFont); g_linkFont = nullptr; }

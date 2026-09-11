@@ -8,6 +8,7 @@
 #define IDD_TAB_ABOUT   103  // the "About" property-sheet page
 #define IDC_ABOUT_VER   1011 // version line on the About page
 #define IDC_ABOUT_LINK  1012 // clickable 24seven.fm link
+#define IDC_ABOUT_DUDESOFT 1013 // clickable developer homepage
 
 #define IDD_TAB_STATION       105  // the "Station" property-sheet page (viewer only)
 #define IDC_VIEW_STATION_DESC  1022 // one-line genre blurb for the selected station
