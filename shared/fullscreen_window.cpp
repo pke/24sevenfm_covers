@@ -101,7 +101,8 @@ LRESULT CALLBACK FullscreenWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
                     && self->menu_.persist) self->menu_.persist();
             return 0;
         case WM_LBUTTONDBLCLK:
-            if (d2d::albumHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
+            if (CoverEngine::instance().albumToggleHitTest(
+                    hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             if (self) self->exit();
             return 0;
         case WM_KEYDOWN:
@@ -138,7 +139,9 @@ LRESULT CALLBACK FullscreenWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         }
         case WM_SETCURSOR:
             if (self && LOWORD(lp) == HTCLIENT) {
-                SetCursor(self->cursorHidden_ ? nullptr : LoadCursor(nullptr, IDC_ARROW));
+                const LPCTSTR cursor = CoverEngine::instance().albumToggleAtCursor(hwnd)
+                    ? IDC_HAND : IDC_ARROW;
+                SetCursor(self->cursorHidden_ ? nullptr : LoadCursor(nullptr, cursor));
                 return TRUE;
             }
             break; // let DefWindowProc handle menu/non-client cursors; never fall into WM_CLOSE

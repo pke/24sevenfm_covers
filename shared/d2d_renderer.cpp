@@ -595,10 +595,10 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     float boxY = ch - bottomGap, coverY = (ch - coverS) * 0.5f;
     if (showInfo && portrait) {
         boxY = ch - bottomGap - boxH;
-        const float available = boxY - gap;
-        if (coverS > available) coverS = available > 1.0f ? available : 1.0f;
-        coverY = (available - coverS) * 0.5f;
-        if (coverY < 0.0f) coverY = 0.0f;
+        const ssc::PosterCoverFit fit = ssc::fitPortraitPosterCover(
+            coverS, boxY, gap, bottomGap);
+        coverS = fit.side;
+        coverY = fit.top;
     } else if (showInfo) {
         // CSS grid row centres are 36% and 86%; the small cover shift is the
         // same balancing term used by sizeStage().

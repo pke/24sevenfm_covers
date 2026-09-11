@@ -102,6 +102,8 @@ public:
     // window; fullscreen becomes idle two seconds after the last movement.
     void onPointerMove(HWND h, bool fullscreenAutoHide);
     void onPointerLeave(HWND h);
+    bool albumToggleHitTest(HWND h, int x, int y) const;
+    bool albumToggleAtCursor(HWND h) const;
     bool onAlbumClick(HWND h, int x, int y); // true when toggled; host persists settings
     void resetTitle();       // playback stopped -> next tune-in reloads
     void repaint();          // request a redraw (e.g. after a settings change)
@@ -147,13 +149,15 @@ private:
                              const std::vector<ssc::TrackInfo>& queue, bool forceReload);
     void publishMedia(unsigned long long epoch, const std::string& backdropBytes,
                       const std::vector<d2d::RatingBadge>& ratings, bool imageFailed,
-                      const ssc::MediaResult* mediaResult = nullptr);
+                      const ssc::MediaResult* mediaResult = nullptr,
+                      bool animateBackdrop = true);
     void publishRatings(unsigned long long epoch,
                         const std::vector<d2d::RatingBadge>& ratings);
     void publishMetadata(unsigned long long epoch, const ssc::MediaResult& result,
                          int lengthSeconds);
     void clearMedia(unsigned long long epoch);
-    void publishTitleLogo(unsigned long long epoch, const std::string& bytes, const std::string& album);
+    void publishTitleLogo(unsigned long long epoch, const std::string& bytes,
+                          const std::string& album, bool immediate = false);
     void decodePendingMedia(HWND h);
     float ratingVisibilityAlpha(DWORD now);
     void setRatingVisibility(bool visible, DWORD now);
@@ -182,11 +186,11 @@ private:
     int infoFadeMs_ = 0;                 // coherent settings snapshot for publishers
     std::string pendingBackdropBytes_;
     std::string pendingTitleLogoBytes_, pendingTitleLogoAlbum_;
-    bool titleLogoDirty_ = false;
+    bool titleLogoDirty_ = false, pendingTitleLogoImmediate_ = false;
     unsigned long long pendingTitleLogoEpoch_ = 0;
     std::vector<d2d::RatingBadge> pendingRatings_;
     bool mediaDirty_ = false, pendingMediaClear_ = false;
-    bool pendingBackdropChange_ = false;
+    bool pendingBackdropChange_ = false, pendingBackdropAnimate_ = true;
     bool mediaImageFailed_ = false;
     int pendingMediaTint_[3] = {255, 255, 255};
     bool pendingMediaHasTint_ = false;

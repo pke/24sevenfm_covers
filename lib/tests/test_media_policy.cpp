@@ -184,3 +184,16 @@ TEST_CASE("poster info box retains a bottom margin after wrapped titles grow") {
     CHECK(ssc::clampPosterInfoTop(100.0f, 700.0f, 680.0f, 12.0f)
           == doctest::Approx(0.0f));
 }
+
+TEST_CASE("portrait poster cover preserves a top margin while fitting above info") {
+    const ssc::PosterCoverFit constrained =
+        ssc::fitPortraitPosterCover(430.0f, 400.0f, 8.0f, 40.0f);
+    CHECK(constrained.side == doctest::Approx(352.0f));
+    CHECK(constrained.top == doctest::Approx(40.0f));
+    CHECK(constrained.top + constrained.side + 8.0f == doctest::Approx(400.0f));
+
+    const ssc::PosterCoverFit centered =
+        ssc::fitPortraitPosterCover(280.0f, 500.0f, 8.0f, 40.0f);
+    CHECK(centered.side == doctest::Approx(280.0f));
+    CHECK(centered.top == doctest::Approx(126.0f));
+}

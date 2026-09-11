@@ -180,6 +180,22 @@ struct CoverEngineTestAccess {
         engine.settings.titleLogos = true; engine.repaint();
         REQUIRE(waitFor(4, 2));
         CHECK(downloads == 2); CHECK(resolutions == 4);
+        engine.decodePendingMedia(nullptr);
+
+        // Reordering providers is a real artwork selection change, but a logo
+        // already downloaded for that resulting resolver hit must be swapped
+        // directly instead of exposing plain album text between two logos.
+        engine.settings.mediaProviders = "tmdb,fanart,tvmaze,steamgriddb";
+        engine.repaint();
+        REQUIRE(waitFor(6, 2));
+        {
+            std::lock_guard<std::mutex> lock(engine.mutex_);
+            CHECK(engine.pendingTitleLogoAlbum_ == "Current");
+            CHECK(engine.pendingTitleLogoImmediate_);
+        }
+        CHECK(downloads == 2); CHECK(resolutions == 6);
+        engine.settings.mediaProviders = "fanart,tmdb,tvmaze,steamgriddb";
+        engine.repaint(); // exact metadata + logo bytes are cached for this order
         engine.settings.titleLogos = false; engine.repaint();
         engine.settings.titleLogos = true; engine.repaint();
         engine.scheduleMedia(queued, {}); // promote the prepared queue item
@@ -193,7 +209,36 @@ struct CoverEngineTestAccess {
         { std::lock_guard<std::mutex> lock(engine.mutex_);
           CHECK(engine.pendingTitleLogoAlbum_ == "Queued"); }
         engine.stopMediaWorker(); // join before captured fixtures leave scope
-        CHECK(downloads == 2); CHECK(resolutions == 4);
+        CHECK(downloads == 2); CHECK(resolutions == 6);
+    }
+    void mediaTransitionPolicy() {
+        engine.settings.station = 0;
+        engine.settings.backdrops = true;
+        engine.settings.titleLogos = true;
+        state().settingsSnapshot = engine.settings;
+        ssc::TrackInfo current; current.album = "Current"; current.track = "Cue";
+        engine.scheduleMedia(current, {});
+        REQUIRE(state().work.size() == 1);
+        CHECK(state().work[0].animateBackdrop); // initial track presentation
+        CHECK_FALSE(state().work[0].immediateCachedTitleLogo);
+
+        engine.settings.titleLogos = false;
+        engine.repaint();
+        REQUIRE(state().work.size() == 1);
+        CHECK_FALSE(state().work[0].animateBackdrop);
+        CHECK_FALSE(state().work[0].immediateCachedTitleLogo);
+
+        engine.settings.titleLogos = true;
+        engine.repaint();
+        REQUIRE(state().work.size() == 1);
+        CHECK_FALSE(state().work[0].animateBackdrop);
+        CHECK_FALSE(state().work[0].immediateCachedTitleLogo);
+
+        engine.settings.mediaProviders = "tmdb,fanart,tvmaze,steamgriddb";
+        engine.repaint();
+        REQUIRE(state().work.size() == 1);
+        CHECK(state().work[0].animateBackdrop);
+        CHECK(state().work[0].immediateCachedTitleLogo);
     }
     void artworkResize() {
         struct HiddenWindow {
@@ -222,7 +267,10 @@ struct CoverEngineTestAccess {
         CHECK(state().request.width == 3840);
         CHECK(state().request.height == 2160);
         CHECK(state().work.size() == 2); // current and queue use the new variant
-        for (const auto& work : state().work) CHECK(ssc::wants4kArtwork(work.request));
+        for (const auto& work : state().work) {
+            CHECK(ssc::wants4kArtwork(work.request));
+            if (work.current) CHECK_FALSE(work.animateBackdrop);
+        }
         CHECK(engine.info_.title() == L"The Crown (1:00)");
         ssc::MediaResult fallback; fallback.album = "Crown, The";
         engine.publishMetadata(uhdEpoch, fallback, 60);
@@ -236,6 +284,8 @@ struct CoverEngineTestAccess {
         CHECK(state().epoch > uhdEpoch);
         CHECK(ssc::wantsPortraitArtwork(state().request));
         CHECK(ssc::wants4kArtwork(state().request));
+        for (const auto& work : state().work)
+            if (work.current) CHECK_FALSE(work.animateBackdrop);
         CHECK(engine.info_.title() == L"The Crown (1:00)");
         engine.hwnd_.store(nullptr);
     }
@@ -246,6 +296,9 @@ TEST_CASE("native resize updates current and queue resolution without downgradin
 }
 TEST_CASE("native title logos prepare queued images and reuse metadata across toggles and promotion") {
     CoverEngineTestAccess test; test.queuedTitleLogos();
+}
+TEST_CASE("native same-track UI refinements do not fade the backdrop") {
+    CoverEngineTestAccess test; test.mediaTransitionPolicy();
 }
 TEST_CASE("native canonical metadata survives retries and resets only for a different track") {
     CoverEngineTestAccess test; test.canonicalRetry();

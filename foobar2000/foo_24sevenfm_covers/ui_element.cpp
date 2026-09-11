@@ -39,6 +39,7 @@ public:
         MSG_WM_LBUTTONDOWN(OnLButtonDown)
         MSG_WM_KEYDOWN(OnKeyDown)
         MSG_WM_MOUSEMOVE(OnMouseMove)
+        MESSAGE_HANDLER(WM_SETCURSOR, OnSetCursor)
         MESSAGE_HANDLER(WM_MOUSELEAVE, OnMouseLeave)
         MESSAGE_HANDLER(SSC_WM_NEWCOVER, OnNewCover)
         MESSAGE_HANDLER(SSC_WM_NEWMEDIA, OnNewMedia)
@@ -117,7 +118,7 @@ private:
         if (CoverEngine::instance().onAlbumClick(m_hWnd, point.x, point.y)) ssccfg::saveFromEngine();
     }
     void OnLButtonDblClk(UINT, CPoint point) { // double-click the cover -> enter fullscreen (Esc there exits)
-        if (d2d::albumHitTest(m_hWnd, point.x, point.y)) return;
+        if (CoverEngine::instance().albumToggleHitTest(m_hWnd, point.x, point.y)) return;
         if (!m_callback->is_edit_mode_enabled()) toggleFullscreen();
     }
     void OnKeyDown(TCHAR vk, UINT, UINT) { // demo mode: next cover (no-op otherwise)
@@ -125,6 +126,15 @@ private:
     }
     void OnMouseMove(UINT, CPoint) {
         CoverEngine::instance().onPointerMove(m_hWnd, /*fullscreenAutoHide=*/false);
+    }
+    LRESULT OnSetCursor(UINT, WPARAM, LPARAM lp, BOOL& handled) {
+        if (LOWORD(lp) == HTCLIENT
+                && CoverEngine::instance().albumToggleAtCursor(m_hWnd)) {
+            SetCursor(LoadCursor(nullptr, IDC_HAND));
+            return TRUE;
+        }
+        handled = FALSE;
+        return FALSE;
     }
     LRESULT OnMouseLeave(UINT, WPARAM, LPARAM, BOOL&) {
         CoverEngine::instance().onPointerLeave(m_hWnd);

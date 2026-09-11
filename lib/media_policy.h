@@ -30,6 +30,17 @@ struct RatingLogoSize {
     float height;
 };
 
+struct PosterCoverFit {
+    float side;
+    float top;
+};
+
+// Fits a square cover into the portrait space above the info box. The normal
+// case preserves both the stage's top margin and the cover/info gap; when the
+// available space is impossibly small, overlap avoidance takes precedence.
+PosterCoverFit fitPortraitPosterCover(float proposedSide, float infoTop,
+                                      float coverInfoGap, float minimumTopGap);
+
 // Mirrors the web rating slot's `object-fit: contain`: preserve the bitmap's
 // pixel aspect ratio inside one square slot instead of forcing every logo to the
 // slot height (which made wide US MPA marks appear oversized beside FSK).

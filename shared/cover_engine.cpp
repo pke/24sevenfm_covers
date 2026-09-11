@@ -160,6 +160,8 @@ struct CoverEngine::MediaWorkerState {
         ssc::MediaRequest request;
         ssc::MediaResult result;
         std::string key;
+        bool animateBackdrop = true;
+        bool immediateCachedTitleLogo = false;
         std::shared_ptr<std::atomic<bool> > cancel;
     };
 
@@ -279,11 +281,15 @@ void CoverEngine::startMediaWorker() {
             const auto prepareTitleLogo = [&](const ssc::MediaResult& result) {
                 if (!item.request.includeArt) return;
                 std::string bytes;
+                bool cacheHit = false;
                 if (!result.titleLogoUrl.empty()) {
                     {
                         std::lock_guard<std::mutex> lock(state->mutex);
                         const auto found = state->titleLogoCache.find(result.titleLogoUrl);
-                        if (found != state->titleLogoCache.end()) bytes = found->second;
+                        if (found != state->titleLogoCache.end()) {
+                            bytes = found->second;
+                            cacheHit = !bytes.empty();
+                        }
                     }
                     if (bytes.empty() && state->resolver.downloadTitleLogo(result, bytes, item.cancel.get())
                             && ssc::decodableImage(bytes) && !item.cancel->load()) {
@@ -294,7 +300,9 @@ void CoverEngine::startMediaWorker() {
                     } else if (bytes.empty() || !ssc::decodableImage(bytes)) bytes.clear();
                 }
                 if (item.current && !item.cancel->load())
-                    publishTitleLogo(item.epoch, bytes, result.album);
+                    publishTitleLogo(item.epoch, bytes, result.album,
+                                     item.immediateCachedTitleLogo
+                                         && cacheHit && !bytes.empty());
             };
 
             if (item.kind == MediaWorkerState::Work::Resolve) {
@@ -349,10 +357,10 @@ void CoverEngine::startMediaWorker() {
                             if (!cached.result.certifications.empty())
                                 merged.certifications = cached.result.certifications;
                             publishMedia(item.epoch, cachedFallback.bytes, ratingBadges(merged), false,
-                                         &cachedFallback.result);
+                                         &cachedFallback.result, item.animateBackdrop);
                         } else {
                             publishMedia(item.epoch, cached.bytes, ratingBadges(cached.result), false,
-                                         &cached.result);
+                                         &cached.result, item.animateBackdrop);
                         }
                     }
                     continue;
@@ -385,7 +393,7 @@ void CoverEngine::startMediaWorker() {
                         if (haveFallback) {
                             prepareTitleLogo(fallback.result);
                             publishMedia(item.epoch, fallback.bytes, ratingBadges(fallback.result), false,
-                                         &fallback.result);
+                                         &fallback.result, item.animateBackdrop);
                         }
                     }
                     const unsigned failure = item.attempt + 1;
@@ -431,9 +439,10 @@ void CoverEngine::startMediaWorker() {
                             ssc::MediaResult merged = fallback.result;
                             if (!resolved.certifications.empty()) merged.certifications = resolved.certifications;
                             publishMedia(item.epoch, fallback.bytes, ratingBadges(merged), false,
-                                         &fallback.result);
+                                         &fallback.result, item.animateBackdrop);
                         } else {
-                            publishMedia(item.epoch, std::string(), ratingBadges(resolved), false);
+                            publishMedia(item.epoch, std::string(), ratingBadges(resolved), false,
+                                         nullptr, item.animateBackdrop);
                         }
                     }
                     continue;
@@ -480,7 +489,8 @@ void CoverEngine::startMediaWorker() {
                         state->cv.notify_all();
                     }
                 } else if (item.current) {
-                    publishMedia(item.epoch, std::string(), ratingBadges(item.result), true);
+                    publishMedia(item.epoch, std::string(), ratingBadges(item.result), true,
+                                 nullptr, item.animateBackdrop);
                 }
                 continue;
             }
@@ -490,7 +500,8 @@ void CoverEngine::startMediaWorker() {
                 cacheMedia(state, item.key, item.track, item.request, item.result, bytes);
             }
             if (item.current)
-                publishMedia(item.epoch, bytes, ratingBadges(item.result), false, &item.result);
+                publishMedia(item.epoch, bytes, ratingBadges(item.result), false,
+                             &item.result, item.animateBackdrop);
         }
     });
 }
@@ -548,6 +559,20 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
     mediaPortrait_.store(ssc::wantsPortraitArtwork(request) ? 1 : 0);
     mediaResolutionClass_.store(ssc::wants4kArtwork(request) ? 1 : 0);
 
+    const bool sameTrackIdentity = state->epoch != 0
+        && state->current.album == current.album && state->current.track == current.track
+        && state->current.artist == current.artist && state->current.coverUrl == current.coverUrl;
+    const bool artworkSelectionChanged = state->request.providers != request.providers
+        || effectiveFanartKey(state->request) != effectiveFanartKey(request)
+        || state->request.includeArt != request.includeArt;
+    const bool immediateCachedTitleLogo = sameTrackIdentity
+        && state->request.includeTitleLogo && request.includeTitleLogo
+        && state->request.providers != request.providers;
+    // Re-resolving the same track for a logo/rating toggle or a new viewport
+    // may replace bytes, but it is not a new visual item. Keep its backdrop
+    // stable; provider selection and explicit retries remain real transitions.
+    const bool animateBackdrop = !sameTrackIdentity || artworkSelectionChanged || forceReload;
+
     // A queue snapshot normally arrives just after current-playing. Attach it to
     // the existing epoch instead of aborting/restarting the current resolver call.
     if (!forceReload) {
@@ -595,7 +620,8 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
                     || state->current.track != current.track || state->current.artist != current.artist
                     || current.stationIdent) {
                 pendingTitleLogoBytes_.clear(); pendingTitleLogoAlbum_.clear();
-                pendingTitleLogoEpoch_ = epoch; titleLogoDirty_ = true;
+                pendingTitleLogoEpoch_ = epoch; pendingTitleLogoImmediate_ = false;
+                titleLogoDirty_ = true;
                 if (window) PostMessageA(window, SSC_WM_NEWMEDIA, 0, 0);
             }
             infoFadeMs_ = snapshot.transition != 0 && clientAnimationsEnabled()
@@ -625,6 +651,8 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
     now.due = MediaWorkerState::Clock::now(); now.order = ++state->order;
     now.epoch = epoch; now.current = true; now.reload = forceReload;
     now.track = current; now.request = request; now.cancel = cancel;
+    now.animateBackdrop = animateBackdrop;
+    now.immediateCachedTitleLogo = immediateCachedTitleLogo;
     state->work.push_back(now);
     for (size_t i = 0; i < state->queue.size(); ++i) {
         if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
@@ -639,7 +667,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
 
 void CoverEngine::publishMedia(unsigned long long epoch, const std::string& backdropBytes,
                                const std::vector<d2d::RatingBadge>& ratings, bool imageFailed,
-                               const ssc::MediaResult* mediaResult) {
+                               const ssc::MediaResult* mediaResult, bool animateBackdrop) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!epoch || activeMediaEpoch_ != epoch) return;
@@ -647,6 +675,7 @@ void CoverEngine::publishMedia(unsigned long long epoch, const std::string& back
         pendingRatings_ = ratings;
         pendingMediaClear_ = backdropBytes.empty();
         pendingBackdropChange_ = true;
+        pendingBackdropAnimate_ = animateBackdrop;
         mediaImageFailed_ = imageFailed;
         pendingMediaHasTint_ = !backdropBytes.empty() && mediaResult && mediaResult->hasTint;
         pendingMediaEpoch_ = epoch;
@@ -699,12 +728,13 @@ void CoverEngine::clearMedia(unsigned long long epoch) {
 }
 
 void CoverEngine::publishTitleLogo(unsigned long long epoch, const std::string& bytes,
-                                   const std::string& album) {
+                                   const std::string& album, bool immediate) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!epoch || epoch != activeMediaEpoch_) return;
         pendingTitleLogoBytes_ = bytes; pendingTitleLogoAlbum_ = album;
-        pendingTitleLogoEpoch_ = epoch; titleLogoDirty_ = true;
+        pendingTitleLogoEpoch_ = epoch; pendingTitleLogoImmediate_ = immediate;
+        titleLogoDirty_ = true;
     }
     if (HWND w = hwnd_.load()) PostMessageA(w, SSC_WM_NEWMEDIA, 0, 0);
 }
@@ -1080,9 +1110,20 @@ void CoverEngine::repaint() {
     invalidate();
 }
 
-bool CoverEngine::onAlbumClick(HWND h, int x, int y) {
+bool CoverEngine::albumToggleHitTest(HWND h, int x, int y) const {
     if (h != hwnd_.load() || settings.station != 0 || !settings.backdrops
-            || settings.layout != 1 || !d2d::albumHitTest(h, x, y)) return false;
+            || settings.layout != 1) return false;
+    return d2d::albumHitTest(h, x, y);
+}
+
+bool CoverEngine::albumToggleAtCursor(HWND h) const {
+    POINT point = {};
+    return GetCursorPos(&point) && ScreenToClient(h, &point)
+        && albumToggleHitTest(h, point.x, point.y);
+}
+
+bool CoverEngine::onAlbumClick(HWND h, int x, int y) {
+    if (!albumToggleHitTest(h, x, y)) return false;
     settings.titleLogos = !settings.titleLogos;
     repaint();
     return true;
@@ -1133,7 +1174,8 @@ void CoverEngine::decodePendingMedia(HWND h) {
         if (pendingTitleLogoEpoch_ == activeMediaEpoch_)
             d2d::setTitleLogo(settings.titleLogos && settings.backdrops
                     ? pendingTitleLogoBytes_ : std::string(), toWide(pendingTitleLogoAlbum_),
-                transitionAnimates() && h && clientAnimationsEnabled() ? settings.fadeMs : 0);
+                !pendingTitleLogoImmediate_ && transitionAnimates() && h
+                    && clientAnimationsEnabled() ? settings.fadeMs : 0);
         if (h) InvalidateRect(h, nullptr, FALSE);
     }
     if (!mediaDirty_) return;
@@ -1141,7 +1183,8 @@ void CoverEngine::decodePendingMedia(HWND h) {
     if (pendingMediaEpoch_ != activeMediaEpoch_) return;
     std::string bytes;
     std::vector<d2d::RatingBadge> ratings;
-    bool clear = false, failed = false, backdropChange = false, hasTint = false;
+    bool clear = false, failed = false, backdropChange = false, animateBackdrop = true,
+         hasTint = false;
     unsigned long long epoch = 0;
     int tint[3] = {255, 255, 255};
     {
@@ -1149,19 +1192,21 @@ void CoverEngine::decodePendingMedia(HWND h) {
         ratings.swap(pendingRatings_);
         clear = pendingMediaClear_;
         backdropChange = pendingBackdropChange_;
+        animateBackdrop = pendingBackdropAnimate_;
         failed = mediaImageFailed_;
         hasTint = pendingMediaHasTint_;
         epoch = pendingMediaEpoch_;
         for (int i = 0; i < 3; ++i) tint[i] = pendingMediaTint_[i];
     }
-    const bool fade = transitionAnimates() && h && clientAnimationsEnabled();
+    const bool animate = transitionAnimates() && h && clientAnimationsEnabled();
+    const bool backdropFade = animate && animateBackdrop;
     if (backdropChange) {
-        if (clear) d2d::clearBackdrop(fade);
-        else d2d::setBackdrop(bytes.data(), bytes.size(), fade, hasTint ? tint : nullptr);
+        if (clear) d2d::clearBackdrop(backdropFade);
+        else d2d::setBackdrop(bytes.data(), bytes.size(), backdropFade, hasTint ? tint : nullptr);
     }
     const DWORD now = GetTickCount();
     const bool ratingsWereHidden = ratingVisibilityAlpha(now) <= 0.001f;
-    const bool ratingContentFade = fade && !ratingsWereHidden;
+    const bool ratingContentFade = animate && !ratingsWereHidden;
     d2d::setRatings(ratings, ratingContentFade);
     if (!ratings.empty()) {
         ratingHasContent_ = true;
@@ -1177,14 +1222,14 @@ void CoverEngine::decodePendingMedia(HWND h) {
         ratingIntroUntil_ = 0;
     }
     if (backdropChange) haveBackdrop_ = !clear;
-    if (fade) {
-        if (backdropChange) { mediaFadeStart_ = GetTickCount(); mediaFading_ = true; }
-        ratingFadeStart_ = now; ratingFading_ = ratingContentFade;
-    } else {
-        if (backdropChange) mediaFading_ = false;
-        ratingFading_ = false;
-        d2d::endMediaFade();
+    if (backdropChange) {
+        mediaFading_ = backdropFade;
+        if (backdropFade) mediaFadeStart_ = now;
     }
+    ratingFadeStart_ = now;
+    ratingFading_ = ratingContentFade;
+    if (!mediaFading_ && !ratingFading_)
+        d2d::endMediaFade();
     if (failed) logLine("backdrop image failed after web-parity retries; manual retry remains available");
     if (h) InvalidateRect(h, nullptr, FALSE);
 }
