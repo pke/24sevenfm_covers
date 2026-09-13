@@ -491,6 +491,13 @@ function tvBookSoundtrackIdentity(album) {
     return { title, book: match[2] };
 }
 
+function rotatedArticleCatalogVolumeTitle(album) {
+    const match = String(album || "").trim().match(
+        /^(.+),\s*(The|A|An)\s*:\s*vol(?:ume)?\.?\s+(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\s*$/i);
+    if (!match) return "";
+    return cleanMovieTitle(match[2] + " " + match[1]);
+}
+
 function starTrekSeriesAlias(album) {
     const match = cleanMovieTitle(album).match(
         /^star trek\s*[,\-–—:]\s*(tos|tng|ds9|voy|ent|pic|snw|dis|dsc)\b/i);
@@ -711,6 +718,16 @@ function backdropTitleCandidatesFor(album, track) {
     if (usesExactTrackPrefix(normalizedAlbum)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates;
+    }
+    // SST catalogues multi-disc soundtrack releases as, for example,
+    // "X-Files, The: Volume One". Preserve the complete title as the first
+    // exact candidate, then let the provider validate the underlying work. The
+    // rotated-article requirement keeps genuine screen titles ending in
+    // "Volume One" intact.
+    const catalogVolumeTitle = rotatedArticleCatalogVolumeTitle(album);
+    if (catalogVolumeTitle
+            && normalizedTitle(catalogVolumeTitle) !== normalizedTitle(normalizedAlbum)) {
+        return [normalizedAlbum, catalogVolumeTitle];
     }
     return [backdropTitleFor(album, track)];
 }

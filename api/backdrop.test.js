@@ -2856,6 +2856,55 @@ test("uses a main-title theme description as the screen work", () => {
         "Star Trek: Deep Space Nine Theme (Main Title)"), "Star Trek: Deep Space Nine");
 });
 
+test("uses the underlying work as a fallback for rotated soundtrack volumes", async () => {
+    const queries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [{
+                    id: 121, name: "Mark Snow", known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/tv/4087/aggregate_credits") {
+                return response(200, { crew: [{
+                    id: 121, jobs: [{ job: "Original Music Composer" }],
+                }] });
+            }
+            assert.equal(parsed.pathname, "/3/search/multi");
+            const query = parsed.searchParams.get("query");
+            queries.push(query);
+            return response(200, { results: query === "The X-Files" ? [{
+                id: 4087, media_type: "tv", name: "The X-Files",
+                backdrop_path: "/the-x-files.jpg",
+            }] : [] });
+        },
+        tintForImage: async () => [169, 228, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "X-Files, The: Volume One",
+        track: "Hide & Seek",
+        artist: "Mark Snow",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(queries.sort(), ["The X-Files", "The X-Files: Volume One"]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 4087, title: "The X-Files", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/the-x-files.jpg",
+        source: "tmdb",
+        tint: [169, 228, 255],
+        metadata: {
+            album: "The X-Files: Volume One",
+            track: "Hide & Seek",
+            artist: "Mark Snow",
+        },
+    });
+});
+
 test("resolves a quoted From credit as an exact screen title", async () => {
     const requests = [];
     const handler = createHandler({
