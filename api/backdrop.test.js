@@ -2312,13 +2312,11 @@ test("matches a composer credit when the station album omits a leading article",
                     known_for_department: "Sound",
                 }] });
             }
-            if (parsed.pathname === "/3/person/1532/combined_credits") {
+            if (parsed.pathname === "/3/movie/1813/credits") {
                 return response(200, { crew: [{
-                    id: 1813,
-                    media_type: "movie",
-                    title: "The Devil's Advocate",
+                    id: 1532,
+                    name: "James Newton Howard",
                     job: "Original Music Composer",
-                    backdrop_path: "/devils-advocate.jpg",
                 }] });
             }
             throw new Error("unexpected request " + parsed.href);
@@ -2346,7 +2344,67 @@ test("matches a composer credit when the station album omits a leading article",
         },
     });
     assert.deepEqual(new Set(requests), new Set([
-        "/3/search/multi", "/3/search/person", "/3/person/1532/combined_credits",
+        "/3/search/multi", "/3/search/person", "/3/movie/1813/credits",
+    ]));
+});
+
+test("treats a leading article as the same title for an ambiguous compilation track", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "Time Tunnel");
+                return response(200, { results: [{
+                    id: 103,
+                    media_type: "tv",
+                    name: "The Time Tunnel",
+                    backdrop_path: "/time-tunnel-series.jpg",
+                }, {
+                    id: 490699,
+                    media_type: "movie",
+                    title: "Time Tunnel",
+                    poster_path: "/time-tunnel-short.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 491, name: "John Williams", known_for_department: "Sound",
+            }, {
+                id: 3218086, name: "John Williams", known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/person/491/combined_credits"
+                    || parsed.pathname === "/3/person/3218086/combined_credits") {
+                return response(200, { crew: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [90, 100, 110],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Sci-Fi's Greatest Hits, Vol. 1 - Final Frontiers",
+        track: "Time Tunnel",
+        artist: "John Williams",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 103, title: "The Time Tunnel", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/time-tunnel-series.jpg",
+        source: "tmdb",
+        tint: [90, 100, 110],
+        metadata: {
+            album: "Sci-Fi's Greatest Hits, Vol. 1 - Final Frontiers",
+            track: "Time Tunnel",
+            artist: "John Williams",
+        },
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi", "/3/search/person",
+        "/3/person/491/combined_credits", "/3/person/3218086/combined_credits",
     ]));
 });
 

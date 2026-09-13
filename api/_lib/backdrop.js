@@ -807,6 +807,13 @@ function titleWords(value) {
         .toLowerCase().match(/[a-z0-9]+/g) || [];
 }
 
+function normalizedTitleIdentity(value) {
+    const words = titleWords(value);
+    const identity = /^(?:a|an|the)$/.test(words[0] || "") && words.length > 1
+        ? words.slice(1) : words;
+    return identity.join("");
+}
+
 function containsWordSequence(words, sequence) {
     if (!sequence.length || sequence.length > words.length) return false;
     for (let start = 0; start <= words.length - sequence.length; start++) {
@@ -846,6 +853,7 @@ function pickComposerCredit(combinedCredits, album) {
 
 function pickMediaMatch(results, query, wantedType) {
     const wanted = normalizedTitle(query);
+    const wantedIdentity = normalizedTitleIdentity(query);
     let exact = null;
     const exactMatches = [];
     let withBackdrop = null;
@@ -858,7 +866,8 @@ function pickMediaMatch(results, query, wantedType) {
         if (!first) first = media;
         const titles = mediaType(media) === "tv"
             ? [media.name, media.original_name] : [media.title, media.original_title];
-        if (titles.some((title) => normalizedTitle(title) === wanted)) {
+        if (titles.some((title) => normalizedTitle(title) === wanted
+                || normalizedTitleIdentity(title) === wantedIdentity)) {
             if (!exact) exact = media;
             if (!exactMatches.some((candidate) => candidate.id === media.id
                     && mediaType(candidate) === mediaType(media))) exactMatches.push(media);
