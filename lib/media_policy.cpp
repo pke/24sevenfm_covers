@@ -39,6 +39,19 @@ RatingLogoSize containRatingLogo(float pixelWidth, float pixelHeight, float slot
     return {pixelWidth * scale, pixelHeight * scale};
 }
 
+float posterInfoWidth(float stageWidth, float contentWidth,
+                      float horizontalPadding, float dpiScale) {
+    if (stageWidth < 1.0f) stageWidth = 1.0f;
+    if (contentWidth < 0.0f) contentWidth = 0.0f;
+    if (horizontalPadding < 0.0f) horizontalPadding = 0.0f;
+    if (dpiScale <= 0.0f) dpiScale = 1.0f;
+    const float minimumContentWidth = 40.0f * dpiScale;
+    if (contentWidth < minimumContentWidth) contentWidth = minimumContentWidth;
+    const float measuredWidth = contentWidth + 2.0f * horizontalPadding + 2.0f;
+    const float maximumWidth = stageWidth * 0.86f;
+    return measuredWidth < maximumWidth ? measuredWidth : maximumWidth;
+}
+
 PosterCoverFit fitPortraitPosterCover(float proposedSide, float infoTop,
                                       float coverInfoGap, float minimumTopGap) {
     if (proposedSide < 1.0f) proposedSide = 1.0f;

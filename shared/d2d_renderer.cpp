@@ -532,7 +532,7 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     if (baseSide > cw * 0.86f) baseSide = cw * 0.86f;
     if (baseSide < 1.0f) baseSide = 1.0f;
     float coverS = baseSide;
-    float boxW = baseSide;
+    float boxW = cw * 0.86f;
     float boxX = (cw - boxW) * 0.5f;
     const bool showInfo = title && *title;
     if (infoOpacity < 0.0f) infoOpacity = 0.0f;
@@ -542,7 +542,7 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     float padX = baseSide * 0.052f, padY = baseSide * 0.035f;
     if (padX < 12.0f) padX = 12.0f;
     if (padY < 8.0f) padY = 8.0f;
-    const float textW = boxW - 2 * padX;
+    const float textW = boxW > 2 * padX ? boxW - 2 * padX : 1.0f;
     float titleSize = baseSide * 0.072f, artistSize = baseSide * 0.058f;
     if (titleSize < 16.0f) titleSize = 16.0f;
     if (artistSize < 13.0f) artistSize = 13.0f;
@@ -577,14 +577,14 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     const float statusH = showInfo && remainingSeconds >= 0 ? cdFont * 1.2f + 6.4f : 0.0f;
     float contentW = trackW > artistW ? trackW : artistW;
     if (statusH > 0 && contentW < cdFont * 3.6f) contentW = cdFont * 3.6f;
-    if (contentW < 40 * dpiScale) contentW = 40 * dpiScale;
     const float fullW = albumW > contentW ? albumW : contentW;
-    const float measuredW = fullW + (contentW - fullW) * logoMix + 2 * padX + 2;
-    if (measuredW < boxW) boxW = measuredW;
+    const float measuredContentW = fullW + (contentW - fullW) * logoMix;
+    boxW = ssc::posterInfoWidth(cw, measuredContentW, padX, dpiScale);
     boxX = (cw - boxW) * .5f;
-    if (tl) tl->SetMaxWidth(boxW - 2 * padX);
-    if (cl) cl->SetMaxWidth(boxW - 2 * padX);
-    if (al) al->SetMaxWidth(boxW - 2 * padX);
+    const float fittedTextW = boxW > 2 * padX ? boxW - 2 * padX : 1.0f;
+    if (tl) tl->SetMaxWidth(fittedTextW);
+    if (cl) cl->SetMaxWidth(fittedTextW);
+    if (al) al->SetMaxWidth(fittedTextW);
     const float albumRowH = titleH + (logoSize.rowHeight - titleH) * logoMix;
     const float boxH = showInfo ? padY + albumRowH + trackH + (artistH > 0 ? lineGap + artistH : 0)
                      + (statusH > 0 ? 6.4f + statusH : 0) + padY : 0.0f;

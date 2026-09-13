@@ -35,6 +35,12 @@ struct PosterCoverFit {
     float top;
 };
 
+// Mirrors the web player's content-sized poster panel: the text determines the
+// width, but the panel may use up to 86% of the complete stage independently of
+// the square cover. Padding is the inset on one side.
+float posterInfoWidth(float stageWidth, float contentWidth,
+                      float horizontalPadding, float dpiScale);
+
 // Fits a square cover into the portrait space above the info box. The normal
 // case preserves both the stage's top margin and the cover/info gap; when the
 // available space is impossibly small, overlap avoidance takes precedence.

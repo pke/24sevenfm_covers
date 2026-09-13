@@ -185,6 +185,17 @@ TEST_CASE("poster info box retains a bottom margin after wrapped titles grow") {
           == doctest::Approx(0.0f));
 }
 
+TEST_CASE("poster info box follows content width independently of the cover") {
+    // A 1374 x 808 window has a roughly 469 px cover. Long metadata may use more
+    // horizontal room just like the web player instead of wrapping at that cover edge.
+    CHECK(ssc::posterInfoWidth(1374.0f, 720.0f, 24.0f, 1.0f)
+          == doctest::Approx(770.0f));
+    CHECK(ssc::posterInfoWidth(1374.0f, 1400.0f, 24.0f, 1.0f)
+          == doctest::Approx(1181.64f));
+    CHECK(ssc::posterInfoWidth(1374.0f, 20.0f, 24.0f, 1.0f)
+          == doctest::Approx(90.0f));
+}
+
 TEST_CASE("portrait poster cover preserves a top margin while fitting above info") {
     const ssc::PosterCoverFit constrained =
         ssc::fitPortraitPosterCover(430.0f, 400.0f, 8.0f, 40.0f);
