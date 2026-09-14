@@ -26,6 +26,7 @@
 #include "cover_engine.h"   // shared cover/preload/animation engine
 #include "cover_menu.h"        // shared right-click context menu (Fullscreen / Poster / Options)
 #include "fullscreen_window.h" // shared dedicated per-monitor fullscreen window
+#include "taskbar_preview.h"   // taskbar preview follows the active fullscreen surface
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "config.h"         // shared option schema + INI adapter
@@ -52,6 +53,7 @@ static bool      g_firstRun = false; // no INI yet -> prompt for a station on fi
 
 // Borderless-fullscreen state (double-click / context menu / Esc toggle it).
 static ssc::FullscreenWindow g_fsWin; // dedicated per-monitor fullscreen window
+static dv::TaskbarPreview g_taskbarPreview;
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
@@ -333,10 +335,12 @@ static void toggleFullscreen(HWND hwnd) {
     act.openOptions = [] { openOptions(kPageOptions, g_fsWin.hwnd()); };
     act.persist     = [] { saveSettings(); };
     g_fsWin.toggle(hwnd, act, [] {}, /*includeStations*/ true); // viewer keeps its station picker
+    g_taskbarPreview.setFullscreen(g_fsWin.hwnd());
 }
 
 // --- window -----------------------------------------------------------------
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (g_taskbarPreview.onMessage(msg)) return 0;
     switch (msg) {
         case SSC_WM_NEWCOVER:
             eng().onNewCover(hwnd);
@@ -415,6 +419,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if ((wp & 0xFFF0) == SC_OPTIONS) { openOptions(); return 0; }
             break;
         case WM_DESTROY:
+            g_taskbarPreview.detach();
             saveWindowPosIfMoved(hwnd); // last chance, while the window still exists
             PostQuitMessage(0);
             return 0;
@@ -464,6 +469,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                              wr.x, wr.y, wr.w, wr.h,
                              nullptr, nullptr, g_hInst, nullptr);
     if (!g_hwnd) return 1;
+    g_taskbarPreview.attach(g_hwnd); // before ShowWindow creates the taskbar button
     dvtheme::install(g_hwnd, dvtheme::Surface::mainWindow);
     // Seed the comparison so the first save doesn't rewrite what we just restored. The
     // window is created un-maximized and maximized below (if it was), so carry that flag
@@ -502,6 +508,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         DispatchMessage(&m);
     }
 
+    g_taskbarPreview.detach(); // release shell COM state before d2d::shutdown uninitializes COM
     eng().stop();
     eng().setWindow(nullptr); // also kills the engine's repaint heartbeat
     d2d::shutdown();

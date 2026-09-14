@@ -21,6 +21,9 @@
     <ClCompile Include="24sevenfm_covers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="taskbar_preview.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\shared\cover_engine.cpp">
       <Filter>Shared</Filter>
     </ClCompile>
@@ -45,6 +48,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="viewer_resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="taskbar_preview.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\shared\cover_engine.h">

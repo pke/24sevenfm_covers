@@ -240,6 +240,16 @@ The native renderer follows the web player's visible media contract as well:
 - The dedicated fullscreen HWND is activated, kept topmost and registered with
   Explorer through `ITaskbarList2::MarkFullscreenWindow`; this covers the primary
   taskbar as reliably as secondary-monitor taskbars.
+- The desktop viewer registers its rendered fullscreen HWND as the main window's
+  taskbar preview using `ITaskbarList3::RegisterTab`, `SetTabOrder` and `SetTabActive`.
+  The shell then composites the current fullscreen surface, rather than the last
+  frame of the covered normal window. The viewer's title/icon and existing taskbar
+  group are retained. No second renderer, GPU readback, polling timer or extra media
+  request is introduced. Registration waits for `TaskbarButtonCreated`, is renewed
+  after Explorer recreates the button, and is removed during `WM_DESTROY` while the
+  fullscreen handle is still valid. Failure leaves the normal preview available.
+  This host integration is DV-only; the plugins do not replace their player's
+  taskbar previews. See Microsoft's [tab-preview contract](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist3-registertab).
 - Poster mode keeps the cover in the upper artwork row and the information panel
   below it for landscape and portrait windows; it no longer switches to the former
   native side-by-side layout on wide windows.
