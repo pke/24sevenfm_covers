@@ -5510,6 +5510,54 @@ test("resolves a Summoning of Spirits remix to its exact source game", async () 
     assert.equal(requests.length, 2);
 });
 
+test("resolves the Summoning of Spirits Martel remix to Tales of Phantasia", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.href);
+            if (parsed.pathname === "/api/v2/search/autocomplete/Tales%20of%20Phantasia") {
+                return response(200, { success: true, data: [
+                    { id: 37692, name: "Tales of Phantasia", verified: true },
+                ] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/37692") return response(200, {
+                success: true,
+                data: [{
+                    score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/tales-of-phantasia.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/tales-of-phantasia.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 217, 174],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Summoning Of Spirits",
+        track: "Deity (Martel)",
+        artist: "Sir NutS",
+        providers: "fanart,tmdb,steamgriddb,tvmaze",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 37692, title: "Tales of Phantasia", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/hero/tales-of-phantasia.png",
+        source: "steamgriddb",
+        tint: [255, 217, 174],
+        metadata: {
+            album: "Summoning Of Spirits",
+            track: "Deity (Martel)",
+            artist: "Sir NutS",
+        },
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests.some((request) => request.includes("api.themoviedb.org")), false);
+});
+
 test("resolves the Summoning of Spirits Final Destination remix to Tales of Symphonia", async () => {
     const requests = [];
     const handler = createHandler({

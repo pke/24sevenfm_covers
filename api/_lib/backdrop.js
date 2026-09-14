@@ -344,6 +344,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
     }),
     Object.freeze({
         album: "Summoning Of Spirits",
+        track: "Deity (Martel)",
+        artist: "Sir NutS",
+        title: "Tales of Phantasia",
+        hint: "game",
+    }),
+    Object.freeze({
+        album: "Summoning Of Spirits",
         track: "Holy Judgement (Final Destination)",
         title: "Tales of Symphonia",
         hint: "game",
