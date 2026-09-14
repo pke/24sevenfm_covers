@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "node vercel-ignore-build.cjs",
   "functions": {
     "api/credit.js": {
       "regions": ["fra1"]

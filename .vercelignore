@@ -6,3 +6,7 @@
 !package.json
 !package-lock.json
 !vercel.json
+!vercel-ignore-build.cjs
+
+# Files under api/ become function entry points, including unit tests.
+api/**/*.test.js
