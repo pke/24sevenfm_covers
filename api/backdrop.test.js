@@ -1141,6 +1141,52 @@ test("resolves Ira Newborn's rotated Naked Gun 2 1/2 album to the 1991 film", as
     }
 });
 
+test("resolves Joe Harnell's one-letter V album to the 1983 TV miniseries", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [] });
+            if (parsed.pathname === "/3/search/tv") {
+                assert.equal(parsed.searchParams.get("query"), "V");
+                assert.equal(parsed.searchParams.get("first_air_date_year"), "1983");
+                return response(200, { results: [{
+                    id: 14141,
+                    name: "V",
+                    first_air_date: "1983-05-01",
+                    backdrop_path: "/v-1983.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [74, 82, 91],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "V",
+        track: "Opening Titles - Donovan Looks Up",
+        artist: "Joe Harnell",
+        providers: "fanart,tmdb,steamgriddb,tvmaze",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 14141, title: "V", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/v-1983.jpg",
+        source: "tmdb",
+        tint: [74, 82, 91],
+        metadata: {
+            album: "V",
+            track: "Opening Titles - Donovan Looks Up",
+            artist: "Joe Harnell",
+        },
+    });
+    assert.equal(requests.some(({ hostname }) => hostname === "www.steamgriddb.com"), false);
+    assert.equal(requests.some(({ pathname }) => pathname === "/3/search/person"), false);
+});
+
 test("resolves Kitaro's Heaven & Earth score to the 1993 film", async () => {
     const requests = [];
     const handler = createHandler({

@@ -24,6 +24,12 @@ const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
 // catalog title. Only the fields present on an entry participate in its match.
 const METADATA_RESOLUTIONS = Object.freeze([
     Object.freeze({
+        album: "V",
+        artist: "Joe Harnell",
+        title: "V (1983)",
+        hint: "tv",
+    }),
+    Object.freeze({
         album: "Escape From Television",
         track: "Tubbs And Valerie",
         artist: "Jan Hammer",
