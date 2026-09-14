@@ -326,3 +326,8 @@ rating-country selection, details/key persistence, opacity interpolation, rapid
 page changes, timer and parent-destruction cleanup, repaint clipping and no-animation
 fallbacks. These UI tests use the bundled WTL headers and Visual Studio ATL; they
 do not drive or restart a user's installed player.
+
+`desktop_taskbar_tests` uses hidden native windows and a simulated shell interface
+to verify the fullscreen preview's source, deferred registration, automatic
+unregistration before HWND destruction, rapid replacement, Explorer recreation,
+failure rollback/retry and COM resource cleanup.

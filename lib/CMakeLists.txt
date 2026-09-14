@@ -86,6 +86,12 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         target_link_libraries(native_renderer_tests PRIVATE coverfetch d2d1 dwrite)
         doctest_discover_tests(native_renderer_tests)
 
+        add_executable(desktop_taskbar_tests tests/test_desktop_taskbar.cpp
+            ../desktop/taskbar_preview.cpp)
+        target_include_directories(desktop_taskbar_tests PRIVATE . ../desktop)
+        target_link_libraries(desktop_taskbar_tests PRIVATE comctl32 ole32 uuid)
+        doctest_discover_tests(desktop_taskbar_tests)
+
         enable_language(RC)
         add_executable(native_options_tests tests/test_native_options.cpp tests/native_options.rc)
         target_include_directories(native_options_tests PRIVATE . ../shared ../foobar2000/wtl)
