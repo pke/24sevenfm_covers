@@ -4287,6 +4287,54 @@ test("resolves the Hyrule Symphony album to Ocarina of Time portrait art", async
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves Voices of the Lifestream to Final Fantasy VII portrait art", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/api/v2/search/autocomplete/Final%20Fantasy%20VII") {
+                return response(200, { success: true, data: [{
+                    id: 8631, name: "Final Fantasy VII", verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/grids/game/8631") return response(200, {
+                success: true,
+                data: [{
+                    score: 10, width: 600, height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/final-fantasy-vii.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/final-fantasy-vii.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [251, 255, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Final Fantasy VII: Voices Of The Lifestream",
+        track: "No Such Thing As The Promised Land (Mako Reactor)",
+        artist: "sephfire, sgx",
+        providers: "fanart,tmdb,steamgriddb,tvmaze",
+        ratings: "DE,US",
+        ...viewportQuery("portrait"),
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 8631, title: "Final Fantasy VII", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/grid/final-fantasy-vii.png",
+        source: "steamgriddb",
+        tint: [251, 255, 255],
+        certifications: [],
+    });
+    assert.deepEqual(requests, [
+        "/api/v2/search/autocomplete/Final%20Fantasy%20VII",
+        "/api/v2/grids/game/8631",
+    ]);
+});
+
 test("resolves the second Symphony Ys movement to Ys I", async () => {
     const requests = [];
     const handler = createHandler({

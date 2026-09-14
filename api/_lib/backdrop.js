@@ -188,6 +188,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "tv",
     }),
     Object.freeze({
+        album: "Final Fantasy VII: Voices Of The Lifestream",
+        title: "Final Fantasy VII",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Enderal",
         title: "Enderal: Forgotten Stories",
         hint: "game",
