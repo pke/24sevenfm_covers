@@ -1929,8 +1929,10 @@ test.describe("the deployed player page", () => {
         // pointer wake during that wait may not reveal the stale front/back faces.
         secondTrack = true;
         await expect.poll(() => secondResolverRequested).toBe(true);
-        await expect(page.locator("#stage .info")).toBeVisible();
-        await expect(page.locator("#info-title")).toContainText("Next Rating Movie - Second Cue");
+        await expect(page.locator("#stage .info")).toHaveClass(/metadata-pending/);
+        await expect(page.locator("#stage .info")).toBeHidden();
+        await expect(page.locator("#info-title"))
+            .not.toContainText("Next Rating Movie - Second Cue");
         await expect(badges).toHaveClass(/track-handoff/);
         await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
         await page.mouse.move(fullscreenBox.x + fullscreenBox.width / 4,
@@ -4710,7 +4712,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /cdn2\.steamgriddb\.com\/hero\/hades\.jpg/);
     });
-    test("shows station metadata while the media request is pending and keeps it after failure", async ({ page }) => {
+    test("hides raw station metadata while media resolution is pending and reveals it after failure", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/info-fallback.svg";
         const sizedCover =
             "https://streamingsoundtracks.com/images/cover/500/info-fallback.svg";
@@ -4732,11 +4734,10 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => mediaRoute !== null).toBe(true);
         const info = page.locator("#stage .info");
-        await expect(info).not.toHaveClass(/metadata-pending/);
-        await expect(info).toHaveAttribute("aria-hidden", "false");
-        await expect(info).toBeVisible();
-        await expect(page.locator("#info-title"))
-            .toHaveText("Fallback, The - Main Title (2:12)");
+        await expect(info).toHaveClass(/metadata-pending/);
+        await expect(info).toHaveAttribute("aria-hidden", "true");
+        await expect(info).toBeHidden();
+        await expect(page.locator("#info-title")).not.toContainText("Fallback, The");
         expect(await info.evaluate((element) =>
             getComputedStyle(element).transitionProperty.split(", ")))
             .toContain("opacity");
@@ -4749,10 +4750,51 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#info-title"))
             .toHaveText("Fallback, The - Main Title (2:12)");
     });
+    test("never paints a rotated Naked Gun title before a metadata-only resolver miss settles",
+        async ({ page }) => {
+            await page.setViewportSize({ width: 390, height: 844 });
+            const cover = "https://streamingsoundtracks.com/images/cover/naked-gun-2.svg";
+            const sizedCover =
+                "https://streamingsoundtracks.com/images/cover/500/naked-gun-2.svg";
+            let mediaRoute = null;
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", route => {
+                const action = new URL(route.request().url()).searchParams.get("action");
+                if (action === "GetQueue") return route.fulfill({ json: [] });
+                return route.fulfill({ json: {
+                    Album: "Naked Gun 2 1/2, The", Track: "Drebin - Hero!",
+                    Artist: "Ira Newborn", CoverLink: cover, Length: 63000,
+                    PlayStart: "2026-09-14T12:00:00Z",
+                    SystemTime: "2026-09-14T12:00:00Z",
+                } });
+            });
+            await page.route(sizedCover, route => route.fulfill({ status: 200,
+                contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/media\?/, route => { mediaRoute = route; });
+
+            await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1",
+                { waitUntil: "domcontentloaded" });
+            await expect.poll(() => mediaRoute !== null).toBe(true);
+            await expect(page.locator(".info")).toHaveClass(/metadata-pending/);
+            await expect(page.locator("#info-album")).not.toHaveText("Naked Gun 2 1/2, The");
+
+            await mediaRoute.fulfill({ json: {
+                media: null, backdrop: null, source: null,
+                metadata: {
+                    album: "The Naked Gun 2 1/2", track: "Drebin - Hero!",
+                    artist: "Ira Newborn",
+                },
+            } });
+            await expect(page.locator("#info-title"))
+                .toHaveText("The Naked Gun 2 1/2 - Drebin - Hero! (1:03)");
+            await expect(page.locator(".info")).not.toHaveClass(/metadata-pending/);
+            await expect(page.locator(".info")).toBeVisible();
+        });
     for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
-        test(`retains the info panel and inserts text before resizing at ${viewport.width}px`, async ({ page }, testInfo) => {
+        test(`gates raw metadata and inserts canonical text before resizing at ${viewport.width}px`, async ({ page }, testInfo) => {
             await page.setViewportSize(viewport);
             let album = "A Long Soundtrack Title With Enough Words To Fill The Information Panel";
+            const initialAlbum = album;
             let polls = 0;
             const routes = [];
             await page.addInitScript(() => {
@@ -4789,6 +4831,10 @@ test.describe("the deployed player page", () => {
             await page.route(/\/api\/media\?/, route => { routes.push(route); });
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
             await expect.poll(() => routes.length).toBe(1);
+            await expect(page.locator(".info")).toHaveClass(/metadata-pending/);
+            await routes[0].fulfill({ json: {
+                metadata: { album, track: "Main Theme", artist: "Composer" },
+            } });
             await expect(page.locator("#info-album")).toHaveText(album);
             await expect(page.locator(".info")).toHaveCSS("opacity", "1");
             const initial = await stableElementRects(page, { panel: ".info" });
@@ -4802,29 +4848,26 @@ test.describe("the deployed player page", () => {
             await page.evaluate(() => window.dispatchEvent(new Event("focus")));
             await expect.poll(() => polls).toBe(2);
             await expect.poll(() => routes.length).toBe(2);
-            await expect(page.locator("#info-album")).toHaveText(album);
-            await expect(page.locator("#info-title")).toHaveCSS("opacity", "1");
-            const short = await stableElementRects(page, { panel: ".info" });
-            const frames = await page.evaluate(() => window.__infoFrames);
-            expect(frames.every(frame => frame.opacity === 1 && frame.album.length > 0)).toBe(true);
-            expect(Math.min(...frames.map(frame => frame.width))).toBeGreaterThanOrEqual(short.panel.width - 1);
-            expect(frames.some(frame => frame.textOpacity > 0 && frame.textOpacity < 1)).toBe(true);
-            expect(frames.filter(frame => frame.width < initial.panel.width - 1)
-                .every(frame => frame.album === "Short Title")).toBe(true);
+            await expect(page.locator(".info")).toHaveClass(/metadata-pending/);
+            await expect(page.locator(".info")).toHaveAttribute("aria-hidden", "true");
+            await expect(page.locator("#info-album")).not.toHaveText("Short Title");
 
-            await page.evaluate(() => { window.__infoFrames = []; });
             const canonical = "The Final Canonical Soundtrack Title Has More Words Than The Station Title";
             await routes[1].fulfill({ json: { metadata: { album: canonical, track: "Main Theme", artist: "Composer" } } });
             await expect(page.locator("#info-album")).toHaveText(canonical);
+            await expect(page.locator(".info")).not.toHaveClass(/metadata-pending/);
             await expect(page.locator("#info-title")).toHaveCSS("opacity", "1");
-            await stableElementRects(page, { panel: ".info" });
+            const settled = await stableElementRects(page, { panel: ".info" });
             const canonicalFrames = await page.evaluate(() => window.__infoFrames);
-            expect(canonicalFrames.every(frame => frame.opacity === 1 && frame.album.length > 0)).toBe(true);
-            expect(canonicalFrames.filter(frame => frame.width > short.panel.width + 1)
-                .every(frame => frame.album === canonical)).toBe(true);
-            // A superseded resolver response cannot restore the old title.
-            await routes[0].fulfill({ json: { metadata: { album: "Obsolete", track: "Old", artist: "Old" } } });
-            await expect(page.locator("#info-album")).toHaveText(canonical);
+            expect(canonicalFrames.length).toBeGreaterThan(0);
+            expect(canonicalFrames.every(frame => frame.opacity >= 0 && frame.opacity <= 1
+                && frame.album.length > 0)).toBe(true);
+            expect(canonicalFrames.some(frame => frame.opacity > 0 && frame.opacity < 1)).toBe(true);
+            expect(canonicalFrames.every(frame => frame.album === initialAlbum
+                || frame.album === canonical)).toBe(true);
+            expect(canonicalFrames.some(frame => frame.album === "Short Title")).toBe(false);
+            expect(Math.abs(canonicalFrames.at(-1).target - settled.panel.width))
+                .toBeLessThanOrEqual(1);
             await page.locator("#stage").screenshot({ path: testInfo.outputPath("settled-info.png") });
         });
     }
@@ -4852,8 +4895,9 @@ test.describe("the deployed player page", () => {
             await page.waitForTimeout(2100);
             await page.evaluate(() => window.dispatchEvent(new Event("focus")));
             await expect.poll(() => polls).toBe(2);
-            await expect(page.locator("#info-album")).toHaveText("Queued Album");
-            await expect(page.locator(".info")).toBeVisible();
+            await expect(page.locator(".info")).toHaveClass(/metadata-pending/);
+            await expect(page.locator(".info")).toBeHidden();
+            await expect(page.locator("#info-album")).not.toHaveText("Queued Album");
             expect(mediaRequests).toBe(1);
             await held.fulfill({ json: { metadata: { album: "Canonical Queued Album", track: "Queued Cue", artist: "Composer" } } });
             await expect(page.locator("#info-album")).toHaveText("Canonical Queued Album");

@@ -1012,9 +1012,15 @@ function revealCurrentInfo() {
 function finishInfoExit(generation) {
     if (generation !== infoHandoffGeneration) return;
     infoExitTimer = null;
+    // A pending request without prepared canonical metadata keeps the panel hidden.
+    // The outgoing content remains mounted until this exit transition has finished,
+    // but the raw replacement must never flash while /api/media is still deciding.
+    if (currentInfoPending && !currentInfoMetadata) {
+        setInfo("", "", "");
+        infoEl.classList.remove("info-exiting");
+        return;
+    }
     if (!currentInfoFallback && !currentInfoMetadata) return; // still waiting for the station feed
-    // Keep the glass and outgoing dimensions throughout the text fade. The feed
-    // already supplies usable text even when canonical metadata is still loading.
     revealCurrentInfo();
 }
 
@@ -1024,6 +1030,10 @@ function transitionCurrentInfo() {
     infoExitTimer = null;
     var alreadyHidden = infoEl.classList.contains("metadata-pending");
     infoEl.classList.add("info-exiting");
+    if (currentInfoPending && !currentInfoMetadata) {
+        infoEl.classList.add("metadata-pending");
+        infoEl.setAttribute("aria-hidden", "true");
+    }
     infoEl.setAttribute("inert", "");
     var duration = alreadyHidden || reducedMotion.matches ? 0
         : cssTimeMs(getComputedStyle(infoEl).getPropertyValue("--backdrop-fade-duration"));
@@ -1045,7 +1055,7 @@ function beginCurrentInfoResolution(fallback, preparedMetadata) {
 
 function updateCurrentInfoFallback(fallback) {
     currentInfoFallback = fallback || null;
-    if (!infoExitTimer && !currentInfoMetadata) renderCurrentInfo();
+    if (!currentInfoPending && !infoExitTimer && !currentInfoMetadata) renderCurrentInfo();
 }
 
 function settleCurrentInfo(metadata) {

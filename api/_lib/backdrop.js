@@ -59,6 +59,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Naked Gun 2 1/2, The",
+        artist: "Ira Newborn",
+        title: "The Naked Gun 2½: The Smell of Fear (1991)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Heaven & Earth",
         artist: "Kitaro",
         title: "Heaven & Earth (1993)",

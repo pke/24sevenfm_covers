@@ -1072,6 +1072,75 @@ test("resolves Thomas Newman's Up Close & Personal score to the 1996 film", asyn
     }
 });
 
+test("resolves Ira Newborn's rotated Naked Gun 2 1/2 album to the 1991 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 37137, title: "The Naked Gun 2½: The Smell of Fear",
+                release_date: "1991-06-28", backdrop_path: "/naked-gun-2.jpg",
+                poster_path: "/naked-gun-2-poster.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            if (parsed.pathname === "/v3/movies/37137") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/naked-gun-2.jpg",
+                    lang: "", likes: "12",
+                }],
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/naked-gun-2-poster.jpg",
+                    lang: "", likes: "8",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [242, 224, 196],
+    });
+    const artwork = {
+        landscape: "https://assets.fanart.tv/fanart/naked-gun-2.jpg",
+        portrait: "https://assets.fanart.tv/fanart/naked-gun-2-poster.jpg",
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Naked Gun 2 1/2, The",
+            track: "Drebin - Hero!",
+            artist: "Ira Newborn",
+            providers: "fanart,tmdb,steamgriddb,tvmaze",
+            ...viewportQuery(orientation),
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: {
+                id: 37137,
+                title: "The Naked Gun 2½: The Smell of Fear",
+                type: "movie",
+            },
+            backdrop: artwork[orientation],
+            source: "fanart",
+            tint: [242, 224, 196],
+            metadata: {
+                album: "The Naked Gun 2 1/2",
+                track: "Drebin - Hero!",
+                artist: "Ira Newborn",
+            },
+        });
+    }
+
+    assert.equal(requests.length, 6);
+    const movieSearches = requests.filter(({ pathname }) => pathname === "/3/search/movie");
+    assert.equal(movieSearches.length, 2);
+    for (const request of movieSearches) {
+        assert.equal(request.searchParams.get("query"),
+            "The Naked Gun 2½: The Smell of Fear");
+        assert.equal(request.searchParams.get("primary_release_year"), "1991");
+    }
+});
+
 test("resolves Kitaro's Heaven & Earth score to the 1993 film", async () => {
     const requests = [];
     const handler = createHandler({

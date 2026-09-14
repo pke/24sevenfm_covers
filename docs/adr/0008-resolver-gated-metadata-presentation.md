@@ -84,18 +84,16 @@ the extra display latency outweighs centralizing this small, deterministic rule.
 
 ### Web presentation amendment (2026-09-14)
 
-The web player now displays validated station fields while the resolver is pending,
-or canonical queue metadata immediately when available. This supersedes the web
-panel's resolver gate above; the native `InfoPresentation` gate remains unchanged.
-Waiting for the API left the entire panel absent, and clearing outgoing text made
-the width calculation collapse it to an empty placeholder before the final title.
-
-The web panel therefore keeps its glass and outgoing dimensions during a text-only
-exit fade. It inserts the replacement text before measuring and animating width and
-height, without an empty intermediate frame. The initial title is measured before
-the panel's first reveal. Later canonical metadata replaces the provisional text
-through the same fade; accepted canonical fields are never downgraded by a retry.
-Logo opacity and compact layout still settle independently as specified in ADR 0009.
+The web panel keeps its outgoing text and dimensions mounted throughout the exit
+fade, then remains hidden while an uncached resolver request is pending. It does not
+insert the new raw station fields during that interval. Once canonical metadata or
+the fallback result is settled, it inserts the replacement text before measuring
+and revealing the panel, so an empty intermediate frame cannot collapse its width.
+The initial title is likewise measured before the panel's first reveal. Canonical
+metadata from a matching queue prefetch or cache may skip the hidden wait because it
+is already an accepted resolver result. Accepted canonical fields are never
+downgraded by a retry. Logo opacity and compact layout still settle independently as
+specified in ADR 0009.
 
 Current and queued requests share both completed results and in-flight lookups under
 the full existing cache identity. A consumer's cancellation only aborts the network
