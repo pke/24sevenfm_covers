@@ -78,6 +78,14 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         target_link_libraries(native_engine_tests PRIVATE coverfetch d2d1 dwrite)
         doctest_discover_tests(native_engine_tests)
 
+        add_executable(native_renderer_tests tests/test_native_renderer.cpp
+            ../shared/d2d_renderer.cpp ../shared/d2d_transitions.cpp
+            ../shared/d2d_rolldigits.cpp ../shared/rating_assets.cpp)
+        target_compile_definitions(native_renderer_tests PRIVATE SSC_RENDERER_DIAGNOSTICS)
+        target_include_directories(native_renderer_tests PRIVATE . ../shared)
+        target_link_libraries(native_renderer_tests PRIVATE coverfetch d2d1 dwrite)
+        doctest_discover_tests(native_renderer_tests)
+
         enable_language(RC)
         add_executable(native_options_tests tests/test_native_options.cpp tests/native_options.rc)
         target_include_directories(native_options_tests PRIVATE . ../shared ../foobar2000/wtl)

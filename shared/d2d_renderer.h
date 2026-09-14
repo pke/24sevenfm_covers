@@ -14,6 +14,17 @@
 
 namespace d2d {
 
+#ifdef SSC_RENDERER_DIAGNOSTICS
+// Test-only measurements; no counters or timing work in shipped clients.
+struct RendererDiagnostics {
+    size_t decodes = 0, blurGenerations = 0, frames = 0, failedFrames = 0;
+    size_t cacheHits = 0, cacheEvictions = 0, cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
+    double targetMs = 0, imageMs = 0, blurMs = 0, frameMs = 0;
+};
+RendererDiagnostics rendererDiagnostics();
+void resetRendererDiagnostics();
+#endif
+
 struct RatingBadge {
     std::wstring country;
     std::wstring system;
@@ -27,8 +38,9 @@ struct RatingBadge {
 bool init();
 void shutdown();
 
-// Discards the cached render target (but keeps the decoded cover bytes) so the
-// next render() rebuilds it. Call when the target HWND changes - e.g. the host
+// Discards the GPU render target (but keeps the bounded decoded-pixel cache and
+// finished poster blur). The next render() uploads them to the new target. Call
+// when the target HWND changes - e.g. the host
 // destroyed and recreated its window (foobar can recreate a UI element).
 void resetTarget();
 

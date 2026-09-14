@@ -114,6 +114,23 @@ The handoff also paints the destination synchronously before fullscreen uncovers
 the host window. An invalidation alone lets Windows briefly expose the host's old
 retained portrait frame before the first fullscreen-to-portrait crossfade frame.
 
+The shared Direct2D renderer retains decoded, premultiplied BGRA pixels across
+target recreation and device loss. Its LRU holds at most 16 images and 128 MiB of
+encoded keys plus decoded pixels; only rendered artwork enters it, not the entire
+queue. Identity includes the exact encoded bytes and whether alpha padding was
+trimmed, so square covers and cropped title logos cannot alias. Dimension checks
+still precede pixel allocation. Invalid images are not cached, and shutdown frees
+the cache. The metadata/viewport cache remains authoritative about which image is
+eligible; a decoded cache hit never substitutes an unavailable orientation.
+
+The current cover's 240-by-240 blurred background is retained separately as CPU
+pixels. Window changes and releasing the offscreen blur device preserve it;
+changed cover bytes or blur strength invalidate it. A new HWND still gets its own
+GPU bitmaps because these belong to the render target's resource domain, but a
+warm handoff only uploads retained pixels instead of repeating WIC decoding,
+logo alpha scanning, cover tint extraction and Gaussian-blur readback. The first
+destination frame and outgoing/incoming fade ordering remain unchanged.
+
 A same-track viewport refinement keeps the displayed backdrop while the new variant
 loads. A confirmed fresh/cached miss fades to the default cover presentation unless
 prepared artwork for the same viewport is available. Portrait-only artwork must not
@@ -272,6 +289,21 @@ cadence, queue staggering and every bundled rating PNG. The existing API tests r
 authoritative for provider fallback/matching/certifications, while Playwright remains
 authoritative for the web rendering behavior from which these native contracts are
 derived. Release builds compile the same shared implementation into all three hosts.
+
+`native_renderer_tests` additionally exercises real WIC and Direct2D on hidden
+portrait and landscape windows. Repeated warm handoffs with deterministic 4K
+JPEGs assert zero new decodes or blur computations; other cases check blur input
+invalidation, hide/show and shutdown, cropped-logo identity, LRU/byte limits and
+rejection of malformed or oversized images. Set `SSC_RENDER_BENCHMARK=1` to report
+first-frame timings for the eight measured handoffs, excluding fixture encoding,
+networking and warm-up. Timing/counter instrumentation is compiled only into that
+test target, and no machine-dependent timing threshold determines test success.
+On the development machine (Release, 2026-09-14), the same local fixture averaged
+477 ms per handoff before the change and 224 ms afterwards without a concurrent
+build. Across eight warm handoffs, decodes fell from 48 to zero and blur computations
+from eight to zero, with about 70 MiB of decoded-cache payload. These timings cover
+renderer target reset through the first frame, not Windows shell/fullscreen animation
+or an API cache miss; image-preparation and blur sub-timings can overlap.
 
 Windows CTest additionally runs the production engine scheduler/publication path
 against concurrent settings edits, blocked stale publishers, pending UI results,

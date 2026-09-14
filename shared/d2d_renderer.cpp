@@ -17,6 +17,12 @@
 #include <dwrite.h>
 #include <string>
 #include <vector>
+#include <list>
+#include <memory>
+#include <cstring>
+#ifdef SSC_RENDERER_DIAGNOSTICS
+#include <chrono>
+#endif
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "d3d11.lib")
@@ -27,6 +33,24 @@
 
 namespace d2d {
 namespace {
+
+#ifdef SSC_RENDERER_DIAGNOSTICS
+RendererDiagnostics g_diagnostics;
+struct DiagnosticTimer {
+    double& total;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    explicit DiagnosticTimer(double& value) : total(value) {}
+    ~DiagnosticTimer() {
+        total += std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+    }
+};
+#define SSC_TIME(name, field) DiagnosticTimer name(g_diagnostics.field)
+#define SSC_COUNT(field) (++g_diagnostics.field)
+#else
+#define SSC_TIME(name, field) ((void)0)
+#define SSC_COUNT(field) ((void)0)
+#endif
 
 template <class T> void SafeRelease(T*& p) { if (p) { p->Release(); p = nullptr; } }
 
@@ -61,12 +85,30 @@ ID2D1SolidColorBrush*  g_boxBrush = nullptr;   // translucent poster info-box ba
 ID2D1SolidColorBrush*  g_scrimBrush = nullptr; // subtle darken over the blurred poster background
 ID2D1Layer*            g_layer = nullptr;      // reused for the poster cover's rounded-corner clip
 
-// Cover state: raw JPEG bytes (device-independent) + their decoded D2D bitmaps
-// (device-dependent; recreated lazily from the bytes after device loss).
+// Cover state: encoded bytes plus target-dependent D2D bitmaps. Decoded CPU
+// pixels below survive target recreation; D2D bitmaps cannot cross HWND targets.
 std::string     g_curBytes, g_prevBytes;
 ID2D1Bitmap*    g_curBmp = nullptr;
 ID2D1Bitmap*    g_prevBmp = nullptr;
 ID2D1Bitmap*    g_blurBmp = nullptr; // tiny downscaled current cover, upscaled as the poster background
+
+struct DecodedImage {
+    std::string bytes;
+    bool trimAlpha = false;
+    UINT width = 0, height = 0;
+    std::vector<BYTE> pixels; // tightly packed, premultiplied BGRA
+    bool hasTint = false;
+    D2D1_COLOR_F tint = D2D1::ColorF(1, 1, 1, 1);
+    size_t cost() const { return bytes.size() + pixels.size(); }
+};
+// Only images actually rendered are decoded here, never the entire queue. Two
+// 4K orientations plus covers/logos fit without retaining unbounded track history.
+const size_t kDecodedCacheBudget = 128 * 1024 * 1024;
+const size_t kDecodedCacheEntries = 16;
+std::list<std::shared_ptr<DecodedImage>> g_decodedImages; // MRU first
+size_t g_decodedBytes = 0;
+const UINT kBlurSize = 240;
+std::vector<BYTE> g_blurPixels; // current cover/strength only; independent of HWND
 
 // Media artwork never replaces the square cover state: foobar's album-art
 // fallback must continue to receive g_curBytes, and a failed hero can fade away
@@ -153,17 +195,21 @@ D2D1_COLOR_F playerTint(float mediaProgress) {
                         from.b + (to.b - from.b) * mediaProgress, 1.0f);
 }
 
-// Decodes JPEG bytes into a D2D bitmap tied to `rt`. If tintOut is non-null, also
-// writes the cover's average-colour tint there.
-ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_COLOR_F* tintOut,
-                         bool trimAlpha = false) {
-    if (!rt || !g_wic || bytes.empty())
-        return nullptr;
+std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, bool trimAlpha) {
+    for (auto it = g_decodedImages.begin(); it != g_decodedImages.end(); ++it) {
+        if ((*it)->trimAlpha == trimAlpha && (*it)->bytes == bytes) {
+            auto image = *it;
+            g_decodedImages.splice(g_decodedImages.begin(), g_decodedImages, it);
+            SSC_COUNT(cacheHits);
+            return image;
+        }
+    }
+    SSC_COUNT(decodes);
     IWICStream* stream = nullptr;
     IWICBitmapDecoder* decoder = nullptr;
     IWICBitmapFrameDecode* frame = nullptr;
     IWICFormatConverter* conv = nullptr;
-    ID2D1Bitmap* bmp = nullptr;
+    auto image = std::make_shared<DecodedImage>();
 
     // GetSize reports the frame's declared dimensions from the header WITHOUT
     // decoding pixels, so gating on it here rejects a decompression-bomb cover
@@ -178,44 +224,92 @@ ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_
         SUCCEEDED(g_wic->CreateFormatConverter(&conv)) &&
         SUCCEEDED(conv->Initialize(frame, GUID_WICPixelFormat32bppPBGRA,
                                    WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeMedianCut))) {
-        // Only tint once the bitmap actually decoded - a failed CreateBitmap must
-        // not leave the full-res image being dragged through overlayTintFrom.
-        if (trimAlpha) {
-            // Match the web's bounded alpha scan; provider padding does not count as artwork.
-            IWICBitmapScaler* scaler = nullptr;
-            IWICBitmapSource* source = conv;
-            const float scale = 1600.0f / (fw > fh ? fw : fh);
-            bool ready = true;
-            if (scale < 1) {
-                fw = static_cast<UINT>(fw * scale); fh = static_cast<UINT>(fh * scale);
-                if (!fw) fw = 1; if (!fh) fh = 1;
-                ready = SUCCEEDED(g_wic->CreateBitmapScaler(&scaler))
-                    && SUCCEEDED(scaler->Initialize(conv, fw, fh, WICBitmapInterpolationModeFant));
-                if (ready) source = scaler;
-            }
-            std::vector<BYTE> pixels(static_cast<size_t>(fw) * fh * 4);
-            if (ready && SUCCEEDED(source->CopyPixels(nullptr, fw * 4,
-                    static_cast<UINT>(pixels.size()), pixels.data()))) {
+        IWICBitmapScaler* scaler = nullptr;
+        IWICBitmapSource* source = conv;
+        const float scale = 1600.0f / (fw > fh ? fw : fh);
+        bool ready = true;
+        // Match the web's bounded alpha scan; provider padding is not artwork.
+        if (trimAlpha && scale < 1) {
+            fw = static_cast<UINT>(fw * scale); fh = static_cast<UINT>(fh * scale);
+            if (!fw) fw = 1; if (!fh) fh = 1;
+            ready = SUCCEEDED(g_wic->CreateBitmapScaler(&scaler))
+                && SUCCEEDED(scaler->Initialize(conv, fw, fh, WICBitmapInterpolationModeFant));
+            if (ready) source = scaler;
+        }
+        if (ready) {
+            image->pixels.resize(static_cast<size_t>(fw) * fh * 4);
+            ready = SUCCEEDED(source->CopyPixels(nullptr, fw * 4,
+                static_cast<UINT>(image->pixels.size()), image->pixels.data()));
+        }
+        if (ready) {
+            image->width = fw; image->height = fh;
+            if (trimAlpha) {
                 UINT left = fw, top = fh, right = 0, bottom = 0;
                 for (UINT y = 0; y < fh; ++y) for (UINT x = 0; x < fw; ++x) {
-                    if (pixels[(static_cast<size_t>(y) * fw + x) * 4 + 3] < 16) continue;
+                    if (image->pixels[(static_cast<size_t>(y) * fw + x) * 4 + 3] < 16) continue;
                     if (x < left) left = x; if (x + 1 > right) right = x + 1;
                     if (y < top) top = y; if (y + 1 > bottom) bottom = y + 1;
                 }
-                if (right > left && bottom > top)
-                    rt->CreateBitmap(D2D1::SizeU(right - left, bottom - top),
-                        pixels.data() + (static_cast<size_t>(top) * fw + left) * 4, fw * 4,
-                        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
-                            D2D1_ALPHA_MODE_PREMULTIPLIED)), &bmp);
+                if (right > left && bottom > top) {
+                    image->width = right - left; image->height = bottom - top;
+                    const UINT stride = image->width * 4;
+                    std::vector<BYTE> cropped(static_cast<size_t>(stride) * image->height);
+                    for (UINT y = 0; y < image->height; ++y)
+                        std::memcpy(cropped.data() + static_cast<size_t>(y) * stride,
+                            image->pixels.data() + (static_cast<size_t>(top + y) * fw + left) * 4,
+                            stride);
+                    image->pixels.swap(cropped);
+                } else image->width = image->height = 0;
             }
-            SafeRelease(scaler);
-        } else if (SUCCEEDED(rt->CreateBitmapFromWicBitmap(conv, nullptr, &bmp)) && bmp && tintOut)
-            *tintOut = overlayTintFrom(conv);
+        }
+        SafeRelease(scaler);
     }
     SafeRelease(conv);
     SafeRelease(frame);
     SafeRelease(decoder);
     SafeRelease(stream);
+    if (!image->width || !image->height) return nullptr;
+    image->bytes = bytes;
+    image->trimAlpha = trimAlpha;
+    const size_t cost = image->cost();
+    if (cost <= kDecodedCacheBudget) {
+        while (!g_decodedImages.empty() && (g_decodedImages.size() >= kDecodedCacheEntries
+                || g_decodedBytes > kDecodedCacheBudget - cost)) {
+            g_decodedBytes -= g_decodedImages.back()->cost();
+            g_decodedImages.pop_back();
+            SSC_COUNT(cacheEvictions);
+        }
+        g_decodedBytes += cost;
+        g_decodedImages.push_front(image);
+    }
+    return image;
+}
+
+// Upload to this target's resource domain, reusing CPU pixels and cover tint
+// across window changes/device loss. Cropped logos have a distinct cache key.
+ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_COLOR_F* tintOut,
+                         bool trimAlpha = false) {
+    if (!rt || !g_wic || bytes.empty()) return nullptr;
+    SSC_TIME(imageTimer, imageMs);
+    const auto image = decodedImage(bytes, trimAlpha);
+    if (!image) return nullptr;
+    ID2D1Bitmap* bmp = nullptr;
+    if (SUCCEEDED(rt->CreateBitmap(D2D1::SizeU(image->width, image->height),
+            image->pixels.data(), image->width * 4,
+            D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                D2D1_ALPHA_MODE_PREMULTIPLIED)), &bmp)) && tintOut) {
+        if (!image->hasTint) {
+            IWICBitmap* source = nullptr;
+            if (SUCCEEDED(g_wic->CreateBitmapFromMemory(image->width, image->height,
+                    GUID_WICPixelFormat32bppPBGRA, image->width * 4,
+                    static_cast<UINT>(image->pixels.size()), image->pixels.data(), &source))) {
+                image->tint = overlayTintFrom(source);
+                image->hasTint = true;
+            }
+            SafeRelease(source);
+        }
+        *tintOut = image->tint;
+    }
     return bmp;
 }
 
@@ -294,11 +388,21 @@ bool createBlurGen() {
 // resolution, reads it back, and uploads it to the main render target as g_blurBmp
 // (cached until the cover changes).
 void generateBlur() {
-    if (g_blurBmp || g_curBytes.empty() || !g_rt || !createBlurGen()) return;
+    if (g_blurBmp || g_curBytes.empty() || !g_rt) return;
+    SSC_TIME(blurTimer, blurMs);
+    const D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    if (!g_blurPixels.empty()) {
+        g_rt->CreateBitmap(D2D1::SizeU(kBlurSize, kBlurSize), g_blurPixels.data(),
+            kBlurSize * 4, bp, &g_blurBmp);
+        return;
+    }
+    if (!createBlurGen()) return;
+    SSC_COUNT(blurGenerations);
     ID2D1Bitmap* src = decodeBitmap(g_blurCtx, g_curBytes, nullptr);
     if (!src) return;
     const D2D1_SIZE_F ss = src->GetSize();
-    const UINT S = 240; // blur working resolution (square)
+    const UINT S = kBlurSize;
 
     ID2D1Bitmap1* target = nullptr;
     D2D1_BITMAP_PROPERTIES1 tp = D2D1::BitmapProperties1(
@@ -317,24 +421,27 @@ void generateBlur() {
             g_blurCtx->SetTransform(D2D1::Matrix3x2F::Scale(S / ss.width, S / ss.height));
         g_blurCtx->DrawImage(g_blurEffect, D2D1_INTERPOLATION_MODE_LINEAR);
         g_blurCtx->SetTransform(D2D1::Matrix3x2F::Identity());
-        g_blurCtx->EndDraw();
+        const HRESULT drawn = g_blurCtx->EndDraw();
         g_blurCtx->SetTarget(nullptr);
+        g_blurEffect->SetInput(0, nullptr); // do not retain another full-resolution cover
 
         // Read the blurred result back to CPU, then upload it to the HwndRenderTarget.
         ID2D1Bitmap1* cpu = nullptr;
         D2D1_BITMAP_PROPERTIES1 cprops = D2D1::BitmapProperties1(
             D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        if (SUCCEEDED(g_blurCtx->CreateBitmap(D2D1::SizeU(S, S), nullptr, 0, cprops, &cpu))) {
+        if (SUCCEEDED(drawn) && SUCCEEDED(g_blurCtx->CreateBitmap(D2D1::SizeU(S, S), nullptr, 0, cprops, &cpu))) {
             D2D1_POINT_2U dst = {0, 0};
             D2D1_RECT_U srcRect = {0, 0, S, S};
             if (SUCCEEDED(cpu->CopyFromBitmap(&dst, target, &srcRect))) {
                 D2D1_MAPPED_RECT mapped = {};
                 if (SUCCEEDED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped))) {
-                    D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(
-                        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-                    g_rt->CreateBitmap(D2D1::SizeU(S, S), mapped.bits, mapped.pitch, bp, &g_blurBmp);
+                    g_blurPixels.resize(static_cast<size_t>(S) * S * 4);
+                    for (UINT y = 0; y < S; ++y)
+                        std::memcpy(g_blurPixels.data() + static_cast<size_t>(y) * S * 4,
+                            mapped.bits + static_cast<size_t>(y) * mapped.pitch, S * 4);
                     cpu->Unmap();
+                    g_rt->CreateBitmap(D2D1::SizeU(S, S), g_blurPixels.data(), S * 4, bp, &g_blurBmp);
                 }
             }
             SafeRelease(cpu);
@@ -751,6 +858,17 @@ bool renderCover(float cw, float ch, Transition transition, float progress,
 
 } // namespace
 
+#ifdef SSC_RENDERER_DIAGNOSTICS
+RendererDiagnostics rendererDiagnostics() {
+    auto stats = g_diagnostics;
+    stats.cacheBytes = g_decodedBytes;
+    stats.cacheEntries = g_decodedImages.size();
+    stats.blurBytes = g_blurPixels.size();
+    return stats;
+}
+void resetRendererDiagnostics() { g_diagnostics = RendererDiagnostics(); }
+#endif
+
 bool init() {
     if (g_factory)
         return true; // already initialised
@@ -773,8 +891,8 @@ bool init() {
 }
 
 void resetTarget() {
-    // Keep g_curBytes/g_prevBytes (device-independent); drop only the target +
-    // bitmaps so render() rebuilds them for the current HWND and re-decodes.
+    // Only GPU resources belong to the old target. Keep encoded and decoded
+    // pixels, including the finished blur, for upload to the destination HWND.
     discardDeviceResources();
 }
 
@@ -793,6 +911,9 @@ void shutdown() {
     shutdownRollingTime();
     discardDeviceResources();
     releaseBlur();
+    g_decodedImages.clear();
+    g_decodedBytes = 0;
+    std::vector<BYTE>().swap(g_blurPixels);
     g_curBytes.clear();
     g_prevBytes.clear();
     g_backdropCurBytes.clear();
@@ -809,6 +930,8 @@ void shutdown() {
 }
 
 void setCover(const void* data, size_t len, bool fadeFromCurrent) {
+    if (g_curBytes.size() != len || (len && std::memcmp(g_curBytes.data(), data, len) != 0))
+        g_blurPixels.clear();
     if (fadeFromCurrent && !g_curBytes.empty()) {
         g_prevBytes = g_curBytes;
         SafeRelease(g_prevBmp);
@@ -880,6 +1003,7 @@ void endMediaFade() {
 void setPosterBlur(int standardDeviation) {
     if (standardDeviation != g_posterBlur) {
         g_posterBlur = standardDeviation;
+        g_blurPixels.clear();
         SafeRelease(g_blurBmp); // regenerate the cached blur at the new strength
     }
 }
@@ -908,6 +1032,8 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             float mediaProgress, bool hideCoverWithBackdrop, float ratingProgress,
             float ratingOpacity, float infoOpacity, const wchar_t* album,
             const wchar_t* track, int logoFadeMs) {
+    SSC_TIME(frameTimer, frameMs);
+    SSC_COUNT(frames);
     g_albumHitWindow = hwnd;
     g_albumHitVisible = false;
     if (!g_factory)
@@ -919,6 +1045,7 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     const UINT ch = rc.bottom > 0 ? (UINT)rc.bottom : 1;
 
     if (!g_rt) {
+        SSC_TIME(targetTimer, targetMs);
         if (FAILED(g_factory->CreateHwndRenderTarget(
                 D2D1::RenderTargetProperties(),
                 D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(cw, ch)), &g_rt)))
@@ -977,8 +1104,10 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     // non-recreate error state (e.g. after a bad resize) would otherwise render
     // black forever, since EndDraw keeps returning that stuck code and we'd never
     // rebuild. Discarding here self-heals on the next render.
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        SSC_COUNT(failedFrames);
         discardDeviceResources();
+    }
     return overlayAnimating;
 }
 
