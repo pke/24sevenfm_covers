@@ -4341,6 +4341,66 @@ test("resolves the second Symphony Ys movement to Ys I", async () => {
     ]);
 });
 
+test("resolves the fourth Symphony Ys movement to Ys II", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname.endsWith(
+                "/search/autocomplete/Ys%20II%3A%20Ancient%20Ys%20Vanished%20%E2%80%93%20The%20Final%20Chapter")) {
+                return response(200, { success: true, data: [{
+                    id: 2356,
+                    name: "Ys II: Ancient Ys Vanished – The Final Chapter",
+                    verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/grids/game/2356") return response(200, {
+                success: true,
+                data: [{
+                    score: 10, width: 600, height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/ys-ii.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/ys-ii.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [239, 255, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Symphony Ys",
+        track: "Chapter 4: To Make The End Of Battle, Subterranean Canal, Lilia, Ice Ridge Of Noltia",
+        artist: "Sound Team JDK",
+        providers: "fanart,tmdb,steamgriddb,tvmaze",
+        ratings: "DE,US",
+        ...viewportQuery("portrait"),
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: {
+            id: 2356,
+            title: "Ys II: Ancient Ys Vanished – The Final Chapter",
+            type: "game",
+        },
+        backdrop: "https://cdn2.steamgriddb.com/grid/ys-ii.png",
+        source: "steamgriddb",
+        tint: [239, 255, 255],
+        certifications: [],
+        metadata: {
+            album: "Symphony Ys",
+            track: "Chapter 4: To Make The End Of Battle, Subterranean Canal, Lilia, Ice Ridge Of Noltia",
+            artist: "Sound Team JDK",
+        },
+    });
+    assert.deepEqual(requests, [
+        "/api/v2/search/autocomplete/Ys%20II%3A%20Ancient%20Ys%20Vanished%20%E2%80%93%20The%20Final%20Chapter",
+        "/api/v2/grids/game/2356",
+    ]);
+});
+
 test("does not resolve George Christopoulos' Alpha Centauri album as screen media or a game",
     async () => {
         let requests = 0;

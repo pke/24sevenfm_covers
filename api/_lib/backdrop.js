@@ -257,6 +257,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Symphony Ys",
+        track: "Chapter 4: To Make The End Of Battle, Subterranean Canal, Lilia, Ice Ridge Of Noltia",
+        artist: "Sound Team JDK",
+        title: "Ys II: Ancient Ys Vanished – The Final Chapter",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Alpha Centauri",
         artist: "George Christopoulos",
         suppress: true,
