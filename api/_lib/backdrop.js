@@ -83,6 +83,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Dralion",
+        artist: "Cirque Du Soleil",
+        title: "Cirque du Soleil: Dralion (2001)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Medal Of Honor",
         track: "Attack On Fort Schmerzen",
         hint: "game",

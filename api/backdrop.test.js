@@ -1448,6 +1448,75 @@ test("resolves Mark Suozzo's Love & Friendship soundtrack to the 2016 film", asy
     }
 });
 
+test("resolves the Cirque du Soleil Dralion album to the filmed production", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 15548,
+                title: "Cirque du Soleil: Dralion",
+                release_date: "2001-08-04",
+                backdrop_path: "/dralion.jpg",
+                poster_path: "/dralion-poster.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [] });
+            if (parsed.pathname === "/v3/movies/15548") return response(200, {
+                movieposter: [{
+                    url: "https://assets.fanart.tv/fanart/dralion-poster.jpg",
+                    lang: "", likes: "3",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async (url) => String(url).includes("poster")
+            ? [255, 156, 158] : [255, 234, 178],
+    });
+    const artwork = {
+        landscape: {
+            backdrop: "https://image.tmdb.org/t/p/w1280/dralion.jpg",
+            source: "tmdb",
+            tint: [255, 234, 178],
+        },
+        portrait: {
+            backdrop: "https://assets.fanart.tv/fanart/dralion-poster.jpg",
+            source: "fanart",
+            tint: [255, 156, 158],
+        },
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Dralion",
+            track: "Miracula Eternitatis",
+            artist: "Cirque Du Soleil",
+            providers: "fanart,tmdb,steamgriddb,tvmaze",
+            ...viewportQuery(orientation),
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 15548, title: "Cirque du Soleil: Dralion", type: "movie" },
+            ...artwork[orientation],
+            metadata: {
+                album: "Dralion",
+                track: "Miracula Eternitatis",
+                artist: "Cirque Du Soleil",
+            },
+        });
+    }
+
+    const movieSearches = requests.filter(({ pathname }) => pathname === "/3/search/movie");
+    assert.equal(movieSearches.length, 2);
+    for (const request of movieSearches) {
+        assert.equal(request.searchParams.get("query"), "Cirque du Soleil: Dralion");
+        assert.equal(request.searchParams.get("primary_release_year"), "2001");
+    }
+    assert.equal(requests.some(({ hostname }) => hostname === "www.steamgriddb.com"), false);
+});
+
 test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", async () => {
     const searches = [];
     const handler = createHandler({
