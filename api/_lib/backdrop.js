@@ -59,6 +59,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Heaven & Earth",
+        artist: "Kitaro",
+        title: "Heaven & Earth (1993)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Love & Friendship",
         artist: "Mark Suozzo",
         title: "Love & Friendship (2016)",

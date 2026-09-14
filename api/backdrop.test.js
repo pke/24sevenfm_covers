@@ -1072,6 +1072,68 @@ test("resolves Thomas Newman's Up Close & Personal score to the 1996 film", asyn
     }
 });
 
+test("resolves Kitaro's Heaven & Earth score to the 1993 film", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/3/search/movie") return response(200, { results: [{
+                id: 31642,
+                title: "Heaven & Earth",
+                release_date: "1993-12-24",
+                backdrop_path: "/heaven-earth.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/tv") return response(200, { results: [{
+                id: 118025,
+                name: "Heaven and Earth",
+                first_air_date: "2021-02-01",
+                backdrop_path: "/wrong-tv-series.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname === "/v3/movies/31642") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/heaven-earth-1993.jpg",
+                    lang: "", likes: "5",
+                }],
+            });
+            if (parsed.pathname === "/3/movie/31642/release_dates") {
+                return response(200, { results: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 162, 150],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Heaven & Earth",
+        track: "V.C Bonfire",
+        artist: "Kitaro",
+        providers: "fanart,tmdb,steamgriddb,tvmaze",
+        ratings: "DE,US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 31642, title: "Heaven & Earth", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/heaven-earth-1993.jpg",
+        source: "fanart",
+        tint: [255, 162, 150],
+        certifications: [],
+        metadata: {
+            album: "Heaven & Earth",
+            track: "V.C Bonfire",
+            artist: "Kitaro",
+        },
+    });
+    const movieSearch = requests.find(({ pathname }) => pathname === "/3/search/movie");
+    assert.equal(movieSearch.searchParams.get("query"), "Heaven & Earth");
+    assert.equal(movieSearch.searchParams.get("primary_release_year"), "1993");
+    assert.equal(requests.some(({ pathname }) => pathname === "/v3/movies/31642"), true);
+    assert.equal(requests.some(({ pathname }) => pathname === "/v3/tv/118025"), false);
+});
+
 test("resolves Armand Amar's Home score to the 2009 documentary", async () => {
     const requests = [];
     const handler = createHandler({
