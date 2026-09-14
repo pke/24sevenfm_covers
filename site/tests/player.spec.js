@@ -252,6 +252,53 @@ test.describe("the deployed player page", () => {
         await expect(info).not.toHaveClass(/has-media-logo/);
     });
 
+    test("restores a cached title logo while the text-only response is still pending", async ({ page }) => {
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await mockTitleLogoFeed(page);
+        const logo = "https://assets.fanart.tv/fanart/pending-toggle-logo.svg";
+        const backdrop = "https://assets.fanart.tv/fanart/pending-toggle-backdrop.svg";
+        const textRequests = [];
+        let logoDownloads = 0, logoResponses = 0;
+        await page.route(logo, route => {
+            ++logoDownloads;
+            return route.fulfill({ contentType: "image/svg+xml",
+                headers: { "access-control-allow-origin": "*" },
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="250"><rect width="600" height="250" fill="white"/></svg>' });
+        });
+        await page.route(backdrop, route => route.fulfill({ contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="navy"/></svg>' }));
+        await page.route(/\/api\/media\?/, route => {
+            if (new URL(route.request().url()).searchParams.get("logos") !== "1") {
+                textRequests.push(route); // cached logo remains available while this request waits
+                return;
+            }
+            ++logoResponses;
+            return route.fulfill({ json: {
+                backdrop, source: "fanart", logo: { url: logo, source: "fanart" },
+                metadata: { album: "The Empire Strikes Back", track: "The Battle of Hoth", artist: "John Williams" },
+            } });
+        });
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1&sstTitleLogos=1");
+        await page.addStyleTag({ content: "#stage { --backdrop-fade-duration: 200ms !important; }" });
+        const info = page.locator(".info"), toggle = page.locator("#info-album-toggle");
+        const canvas = page.locator("#media-logo canvas");
+        await expect(info).toHaveClass(/media-logo-settled/);
+        for (let i = 0; i < 2; ++i) {
+            await toggle.click();
+            await expect(toggle).toHaveAttribute("aria-pressed", "false");
+            await expect.poll(() => textRequests.length).toBe(i + 1);
+            await expect(canvas).toHaveCount(0); // text is fully visible before switching back
+            await toggle.click();
+            await expect(toggle).toHaveAttribute("aria-pressed", "true");
+            await expect(info).toHaveClass(/media-logo-settled/);
+            await expect(canvas).toHaveAttribute("data-logo-url", logo);
+            await expect(page.locator("#media-logo")).toHaveCSS("opacity", "1");
+            await expect(page.locator("#movieA.show, #movieB.show")).toHaveAttribute("src", backdrop);
+        }
+        expect(logoDownloads).toBe(1);
+        expect(logoResponses).toBe(1);
+    });
+
     test("caches queue logo response variants and narrows the panel on album and keyboard toggles", async ({ page }) => {
         const album = "Pirates Of The Caribbean: Dead Man's Chest";
         const images = [], requests = [];

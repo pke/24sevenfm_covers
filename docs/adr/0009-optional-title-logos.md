@@ -68,6 +68,9 @@ these variants; toggling refreshes current and queued response preparation. Imag
 preparation follows validated URLs in the API response. No URL means no download.
 Prepared image bytes are bounded to 64 entries and reused after toggling back on.
 Failed image loads are not successful image-cache entries.
+The web toggle retires the logo immediately when disabled. Re-enabling publishes
+the logo through the new response generation, including cached responses, instead
+of preparing a stale previous-generation logo before the request is superseded.
 Native backdrop fallback may reuse a prepared image across the logo variants of
 the same track and artwork configuration. Identical image URLs reuse prepared bytes.
 A missing or failed backdrop in the other variant must not remove the displayed

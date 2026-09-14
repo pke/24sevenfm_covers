@@ -779,7 +779,10 @@ function prepareTitleLogo(logo) {
 }
 
 function applyTitleLogosEnabled() {
-    setMediaLogo(mediaLogoArt, mediaLogoBackdropGeneration);
+    // Retire immediately when disabled. Enabling must use the new response
+    // generation below (including cache hits): preparing the old logo first can
+    // discard its callback as stale while its URL suppresses the valid result.
+    if (!opts.sstTitleLogos) setMediaLogo(mediaLogoArt, mediaLogoBackdropGeneration);
     restartQueuedBackdropPrefetch();
     updateBackdrop();
 }
