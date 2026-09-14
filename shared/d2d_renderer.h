@@ -50,6 +50,8 @@ void endFade();
 void setBackdrop(const void* data, size_t len, bool fadeFromCurrent,
                  const int* tintRgb = nullptr);
 void clearBackdrop(bool fadeFromCurrent);
+// The replacement is uploaded to this target, or an intentional clear needs no upload.
+bool backdropReady();
 void setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent);
 void endMediaFade();
 void setTitleLogo(const std::string& bytes, const std::wstring& album, int fadeMs);

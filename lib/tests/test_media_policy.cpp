@@ -52,6 +52,38 @@ TEST_CASE("native image limits accept UHD and DCI 4K backdrops") {
     CHECK_FALSE(ssc::coverDimsOk(3840, 8192));
 }
 
+TEST_CASE("title logo layout waits for the fade then animates independently") {
+    ssc::TitleLogoPresentation logo;
+    ssc::TitleLogoLayout layout;
+    logo.set("logo", L"Long album title", 100, 1000);
+    const auto frame = [&](std::uint32_t now, int fadeMs = 1000) {
+        return layout.advance(logo.advance(now, fadeMs) == 1, now, fadeMs);
+    };
+    CHECK(frame(100) == 0);
+    CHECK(frame(600) == 0); // still-visible text keeps its original width and height
+    CHECK_FALSE(layout.animating());
+    CHECK(frame(1100) == 0); // fully opaque logo starts a separate geometry transition
+    CHECK_FALSE(logo.animating());
+    CHECK(layout.animating()); // the renderer must keep repainting after the fade
+    CHECK(frame(1600) == doctest::Approx(.5));
+    CHECK(frame(2100) == 1);
+    CHECK_FALSE(layout.animating());
+
+    logo.set("", L"", 2100, 1000);
+    CHECK(frame(2200) == 1); // expand continuously when toggled back to text
+    CHECK(frame(2700) == doctest::Approx(.5));
+    logo.set("logo", L"Long album title", 2700, 1000);
+    CHECK(frame(2700) == doctest::Approx(.5)); // no jump on a rapid reversal
+    CHECK(frame(3200) == 0);
+    CHECK(frame(3700) == 0);
+    CHECK(frame(4200) == doctest::Approx(.5));
+    CHECK(frame(4200, 0) == 1); // reduced motion also settles the geometry
+    CHECK_FALSE(layout.animating());
+    logo.set("", L"", 4300, 0);
+    CHECK(frame(4300, 0) == 0);
+    CHECK_FALSE(layout.animating());
+}
+
 TEST_CASE("native retry cadence is identical to the web player") {
     CHECK(ssc::coverRetryDelayMs(1) == 5000);
     CHECK(ssc::coverRetryDelayMs(2) == 10000);

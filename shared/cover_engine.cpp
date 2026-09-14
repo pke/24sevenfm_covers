@@ -161,6 +161,7 @@ struct CoverEngine::MediaWorkerState {
         ssc::MediaResult result;
         std::string key;
         bool animateBackdrop = true;
+        bool backdropPublished = false;
         bool immediateCachedTitleLogo = false;
         std::shared_ptr<std::atomic<bool> > cancel;
     };
@@ -206,13 +207,39 @@ std::string effectiveFanartKey(const ssc::MediaRequest& request) {
         ? std::string() : request.fanartClientKey;
 }
 
-bool sameResolverConfig(const ssc::MediaRequest& a, const ssc::MediaRequest& b) {
+bool sameBackdropConfig(const ssc::MediaRequest& a, const ssc::MediaRequest& b) {
+    // Logo projection changes the response cache key, not backdrop selection.
+    // Keep prepared artwork available when the other response variant has no art.
     return a.providers == b.providers && a.ratingCountries == b.ratingCountries
         && effectiveFanartKey(a) == effectiveFanartKey(b)
         && a.includeArt == b.includeArt && a.includeRatings == b.includeRatings
-        && a.includeTitleLogo == b.includeTitleLogo
         && ssc::wantsPortraitArtwork(a) == ssc::wantsPortraitArtwork(b)
         && ssc::wants4kArtwork(a) == ssc::wants4kArtwork(b);
+}
+
+bool sameResolverConfig(const ssc::MediaRequest& a, const ssc::MediaRequest& b) {
+    return sameBackdropConfig(a, b) && a.includeTitleLogo == b.includeTitleLogo;
+}
+
+// Caller holds the worker mutex. Only decoded-safe image hits can replace art;
+// metadata/rating/logo-only hits must not hide a usable backdrop in another entry.
+bool cachedBackdrop(CoverEngine::MediaWorkerState* state, const ssc::TrackInfo& track,
+                    const ssc::MediaRequest& request,
+                    CoverEngine::MediaWorkerState::CacheEntry& result,
+                    const std::string* url = nullptr) {
+    CoverEngine::MediaWorkerState::CacheEntry* newest = nullptr;
+    for (auto& entry : state->cache) {
+        auto& candidate = entry.second;
+        if (candidate.track.album == track.album && candidate.track.track == track.track
+                && sameBackdropConfig(candidate.request, request)
+                && candidate.result.hasBackdrop() && !candidate.bytes.empty()
+                && (!url || candidate.result.backdropUrl == *url)
+                && (!newest || candidate.used > newest->used)) newest = &candidate;
+    }
+    if (!newest) return false;
+    newest->used = ++state->lru;
+    result = *newest;
+    return true;
 }
 
 } // namespace
@@ -333,25 +360,15 @@ void CoverEngine::startMediaWorker() {
                         cached = it->second;
                         haveCached = true;
                     }
-                    if (item.current && haveCached && cached.bytes.empty()) {
-                        for (std::map<std::string, MediaWorkerState::CacheEntry>::const_iterator candidate = state->cache.begin();
-                             candidate != state->cache.end(); ++candidate) {
-                            if (candidate->first != item.key
-                                    && candidate->second.track.album == item.track.album
-                                    && candidate->second.track.track == item.track.track
-                                    && sameResolverConfig(candidate->second.request, item.request)
-                                    && candidate->second.result.status == ssc::MediaResult::Hit
-                                    && !candidate->second.bytes.empty()) {
-                                cachedFallback = candidate->second;
-                                haveCachedFallback = true; break;
-                            }
-                        }
-                    }
+                    if (item.current && haveCached && cached.bytes.empty())
+                        haveCachedFallback = cachedBackdrop(state, item.track, item.request, cachedFallback);
                 }
                 if (haveCached) {
                     if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
-                    prepareTitleLogo(haveCachedFallback ? cachedFallback.result : cached.result);
-                    if (item.current) {
+                    prepareTitleLogo(haveCachedFallback
+                        && sameResolverConfig(cachedFallback.request, item.request)
+                        ? cachedFallback.result : cached.result);
+                    if (item.current && !item.backdropPublished) {
                         if (haveCachedFallback) {
                             ssc::MediaResult merged = cachedFallback.result;
                             if (!cached.result.certifications.empty())
@@ -380,18 +397,11 @@ void CoverEngine::startMediaWorker() {
                         bool haveFallback = false;
                         {
                             std::lock_guard<std::mutex> lock(state->mutex);
-                            for (std::map<std::string, MediaWorkerState::CacheEntry>::const_iterator it = state->cache.begin();
-                                 it != state->cache.end(); ++it) {
-                                if (it->second.track.album == item.track.album
-                                        && it->second.track.track == item.track.track
-                                        && sameResolverConfig(it->second.request, item.request)
-                                        && it->second.result.status == ssc::MediaResult::Hit) {
-                                    fallback = it->second; haveFallback = true; break;
-                                }
-                            }
+                            haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
                         }
                         if (haveFallback) {
-                            prepareTitleLogo(fallback.result);
+                            if (sameResolverConfig(fallback.request, item.request))
+                                prepareTitleLogo(fallback.result);
                             publishMedia(item.epoch, fallback.bytes, ratingBadges(fallback.result), false,
                                          &fallback.result, item.animateBackdrop);
                         }
@@ -419,15 +429,7 @@ void CoverEngine::startMediaWorker() {
                     bool haveFallback = false;
                     if (item.current) {
                         std::lock_guard<std::mutex> lock(state->mutex);
-                        for (std::map<std::string, MediaWorkerState::CacheEntry>::const_iterator it = state->cache.begin();
-                             it != state->cache.end(); ++it) {
-                            if (it->second.track.album == item.track.album
-                                    && it->second.track.track == item.track.track
-                                    && sameResolverConfig(it->second.request, item.request)
-                                    && it->second.result.status == ssc::MediaResult::Hit) {
-                                fallback = it->second; haveFallback = true; break;
-                            }
-                        }
+                        haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
                     }
                     {
                         std::lock_guard<std::mutex> lock(state->mutex);
@@ -435,7 +437,9 @@ void CoverEngine::startMediaWorker() {
                     }
                     if (item.current) {
                         if (haveFallback) {
-                            if (resolved.titleLogoUrl.empty()) prepareTitleLogo(fallback.result);
+                            if (resolved.titleLogoUrl.empty()
+                                    && sameResolverConfig(fallback.request, item.request))
+                                prepareTitleLogo(fallback.result);
                             ssc::MediaResult merged = fallback.result;
                             if (!resolved.certifications.empty()) merged.certifications = resolved.certifications;
                             publishMedia(item.epoch, fallback.bytes, ratingBadges(merged), false,
@@ -473,8 +477,15 @@ void CoverEngine::startMediaWorker() {
             }
 
             std::string bytes;
-            const bool downloaded = state->resolver.downloadBackdrop(item.result, bytes, item.cancel.get())
-                && ssc::decodableImage(bytes);
+            if (!item.reload) {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                MediaWorkerState::CacheEntry prepared;
+                if (cachedBackdrop(state, item.track, item.request, prepared, &item.result.backdropUrl))
+                    bytes = prepared.bytes;
+            }
+            const bool downloaded = !bytes.empty()
+                || (state->resolver.downloadBackdrop(item.result, bytes, item.cancel.get())
+                    && ssc::decodableImage(bytes));
             if (item.cancel->load()) continue;
             if (!downloaded) {
                 const unsigned failure = item.attempt + 1;
@@ -489,8 +500,15 @@ void CoverEngine::startMediaWorker() {
                         state->cv.notify_all();
                     }
                 } else if (item.current) {
-                    publishMedia(item.epoch, std::string(), ratingBadges(item.result), true,
-                                 nullptr, item.animateBackdrop);
+                    MediaWorkerState::CacheEntry fallback;
+                    bool haveFallback;
+                    {
+                        std::lock_guard<std::mutex> lock(state->mutex);
+                        haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
+                    }
+                    publishMedia(item.epoch, haveFallback ? fallback.bytes : std::string(),
+                                 ratingBadges(item.result), true,
+                                 haveFallback ? &fallback.result : nullptr, item.animateBackdrop);
                 }
                 continue;
             }
@@ -568,10 +586,11 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
     const bool immediateCachedTitleLogo = sameTrackIdentity
         && state->request.includeTitleLogo && request.includeTitleLogo
         && state->request.providers != request.providers;
-    // Re-resolving the same track for a logo/rating toggle or a new viewport
-    // may replace bytes, but it is not a new visual item. Keep its backdrop
-    // stable; provider selection and explicit retries remain real transitions.
-    const bool animateBackdrop = !sameTrackIdentity || artworkSelectionChanged || forceReload;
+    const bool viewportChanged = ssc::wantsPortraitArtwork(state->request) != ssc::wantsPortraitArtwork(request)
+        || ssc::wants4kArtwork(state->request) != ssc::wants4kArtwork(request);
+    // Logo/rating refinements keep the image stable. A different artwork format
+    // crossfades once ready, or fades to the default when that variant misses.
+    const bool animateBackdrop = !sameTrackIdentity || artworkSelectionChanged || viewportChanged || forceReload;
 
     // A queue snapshot normally arrives just after current-playing. Attach it to
     // the existing epoch instead of aborting/restarting the current resolver call.
@@ -653,11 +672,40 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
     now.track = current; now.request = request; now.cancel = cancel;
     now.animateBackdrop = animateBackdrop;
     now.immediateCachedTitleLogo = immediateCachedTitleLogo;
-    state->work.push_back(now);
+    bool logoPrepared = false;
+    if (!forceReload) {
+        // A cached current item must not queue behind a slow (even cancelled)
+        // HTTP request. This includes confirmed misses: artwork for the previous
+        // viewport must fade to the default when the new viewport has no backdrop.
+        // Publish under the new epoch directly from the scheduler.
+        const auto cached = state->cache.find(ssc::mediaCacheKey(current, request));
+        if (cached != state->cache.end()) {
+            auto& entry = cached->second;
+            entry.used = ++state->lru;
+            MediaWorkerState::CacheEntry fallback;
+            const bool haveFallback = entry.bytes.empty() && cachedBackdrop(state, current, request, fallback);
+            const auto& artwork = haveFallback ? fallback : entry;
+            ssc::MediaResult merged = artwork.result;
+            if (!entry.result.certifications.empty()) merged.certifications = entry.result.certifications;
+            publishMetadata(epoch, entry.result, current.lengthSeconds);
+            publishMedia(epoch, artwork.bytes, ratingBadges(merged), false,
+                         &artwork.result, animateBackdrop);
+            now.backdropPublished = true;
+            const auto& logoResult = haveFallback && sameResolverConfig(fallback.request, request)
+                ? fallback.result : entry.result;
+            const auto logo = state->titleLogoCache.find(logoResult.titleLogoUrl);
+            logoPrepared = logoResult.titleLogoUrl.empty() || logo != state->titleLogoCache.end();
+            if (logoPrepared)
+                publishTitleLogo(epoch, logo == state->titleLogoCache.end() ? std::string() : logo->second,
+                                 logoResult.album, immediateCachedTitleLogo);
+        }
+    }
+    if (!now.backdropPublished || !logoPrepared) state->work.push_back(now);
     for (size_t i = 0; i < state->queue.size(); ++i) {
         if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
         MediaWorkerState::Work queued = now;
         queued.current = false; queued.reload = false; queued.track = state->queue[i];
+        queued.backdropPublished = false;
         queued.due += std::chrono::milliseconds(ssc::queuePrefetchDelayMs(i));
         queued.order = ++state->order;
         state->work.push_back(queued);
@@ -912,6 +960,12 @@ void CoverEngine::setWindow(HWND h) {
     if (havePending) PostMessageA(h, SSC_WM_NEWCOVER, 0, 0);
     else if (monitor_) monitor_->refresh();
     if (haveMediaPending) PostMessageA(h, SSC_WM_NEWMEDIA, 0, 0);
+    repaint(); // select and publish a cached viewport variant before the first paint
+    decodePendingMedia(h);
+    // Replace this HWND's retained pixels before fullscreen uncovers it. Merely
+    // invalidating leaves its old portrait surface visible until the next WM_PAINT,
+    // followed by the outgoing fullscreen image and then the intended crossfade.
+    onPaint(h);
     InvalidateRect(h, nullptr, FALSE);
 }
 
@@ -1163,7 +1217,7 @@ void CoverEngine::decodePending(HWND h) {
     if (h) InvalidateRect(h, nullptr, FALSE);
 }
 
-void CoverEngine::onNewCover(HWND h) { decodePending(h); }
+void CoverEngine::onNewCover(HWND h) { if (h == hwnd_.load()) decodePending(h); }
 
 void CoverEngine::decodePendingMedia(HWND h) {
     // Validate AND commit under the publication lock. Epoch advancement cannot
@@ -1224,7 +1278,7 @@ void CoverEngine::decodePendingMedia(HWND h) {
     if (backdropChange) haveBackdrop_ = !clear;
     if (backdropChange) {
         mediaFading_ = backdropFade;
-        if (backdropFade) mediaFadeStart_ = now;
+        mediaFadePending_ = backdropFade;
     }
     ratingFadeStart_ = now;
     ratingFading_ = ratingContentFade;
@@ -1234,9 +1288,10 @@ void CoverEngine::decodePendingMedia(HWND h) {
     if (h) InvalidateRect(h, nullptr, FALSE);
 }
 
-void CoverEngine::onNewMedia(HWND h) { decodePendingMedia(h); }
+void CoverEngine::onNewMedia(HWND h) { if (h == hwnd_.load()) decodePendingMedia(h); }
 
 void CoverEngine::onPaint(HWND h) {
+    if (h != hwnd_.load()) return; // late paints from the covered host cannot steal the target
     float alpha = 1.0f;
     if (fading_) {
         const DWORD el = GetTickCount() - fadeStart_;
@@ -1248,7 +1303,8 @@ void CoverEngine::onPaint(HWND h) {
         }
     }
     float mediaAlpha = 1.0f;
-    if (mediaFading_) {
+    if (mediaFading_ && mediaFadePending_) mediaAlpha = 0.0f;
+    else if (mediaFading_) {
         const DWORD el = GetTickCount() - mediaFadeStart_;
         if (settings.fadeMs <= 0 || el >= (DWORD)settings.fadeMs) {
             mediaFading_ = false;
@@ -1295,6 +1351,10 @@ void CoverEngine::onPaint(HWND h) {
                 settings.layout, title.c_str(), artist.c_str(), mediaAlpha,
                 settings.hideCoverWithBackdrop, ratingAlpha, ratingOpacity, infoAlpha,
                 album.c_str(), track.c_str(), transitionAnimates() && clientAnimationsEnabled() ? settings.fadeMs : 0);
+    if (mediaFading_ && mediaFadePending_ && d2d::backdropReady()) {
+        mediaFadePending_ = false;
+        mediaFadeStart_ = GetTickCount();
+    }
 }
 
 // The engine's repaint heartbeat: redraw only while something is actually changing -
@@ -1302,7 +1362,7 @@ void CoverEngine::onPaint(HWND h) {
 // layout-independent: the poster's countdown is the same showRemaining case, and its
 // transition is the same fading_ case, so a settled poster frame stays idle too.
 void CoverEngine::onTimer(HWND h, UINT_PTR id) {
-    if (id != kHeartbeat) return;
+    if (id != kHeartbeat || h != hwnd_.load()) return;
     updateRatingVisibility(GetTickCount());
     // Demo auto-advance: when a demo frame's countdown expires, roll to the next cover
     // (which crossfades). Frames with seconds==0 have no countdown, so they stay put.

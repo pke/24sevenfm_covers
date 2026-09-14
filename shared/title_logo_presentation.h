@@ -4,6 +4,28 @@
 #include <string>
 
 namespace ssc {
+// Geometry has its own transition: leave room for the outgoing album text until
+// the logo is fully visible, then animate toward the compact logo row and width.
+class TitleLogoLayout {
+public:
+    bool animating() const { return mix_ != target_; }
+    float advance(bool logoSettled, std::uint32_t now, int fadeMs) {
+        const auto elapsed = now - started_;
+        const float progress = fadeMs > 0 && elapsed < static_cast<std::uint32_t>(fadeMs)
+            ? static_cast<float>(elapsed) / fadeMs : 1.0f;
+        mix_ = from_ + (target_ - from_) * progress;
+        const float target = logoSettled ? 1.0f : 0.0f;
+        if (target != target_) {
+            from_ = mix_; target_ = target; started_ = now;
+        }
+        if (fadeMs <= 0) mix_ = target_;
+        return mix_;
+    }
+private:
+    std::uint32_t started_ = 0;
+    float from_ = 0, target_ = 0, mix_ = 0;
+};
+
 class TitleLogoPresentation {
 public:
     const std::string& bytes() const { return bytes_; }

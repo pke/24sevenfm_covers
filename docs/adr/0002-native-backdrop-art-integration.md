@@ -104,6 +104,24 @@ keys use that same rule. The shared timer observes orientation
 and HD/4K threshold changes, including fullscreen and monitor moves; sizes inside one
 class reuse the same current and queue entries. Metadata-only requests omit the hint.
 
+Window/fullscreen handoff selects the new viewport immediately. Ready current-item
+cache hits and cached misses publish directly under the new epoch, without waiting
+for the network worker or an unrelated queue request to finish. Portrait/landscape and HD/4K
+variants remain separate entries and survive repeated handoffs. Missing logo image
+bytes may still be prepared in the worker without delaying an already cached backdrop.
+Only the active drawing window may consume publications or drive rendering/timers.
+The handoff also paints the destination synchronously before fullscreen uncovers
+the host window. An invalidation alone lets Windows briefly expose the host's old
+retained portrait frame before the first fullscreen-to-portrait crossfade frame.
+
+A same-track viewport refinement keeps the displayed backdrop while the new variant
+loads. A confirmed fresh/cached miss fades to the default cover presentation unless
+prepared artwork for the same viewport is available. Portrait-only artwork must not
+remain as a landscape fallback, nor vice versa; missing variants never borrow or
+cache artwork from another orientation. Replacement fades start after the target
+bitmap is ready; the outgoing layer stays opaque below the incoming layer throughout
+an image-to-image crossfade, so the square cover cannot show through between them.
+
 The public settings object belongs exclusively to the host UI thread. Startup,
 `repaint()` and manual retry copy it into the worker's mutex-protected snapshot;
 monitor callbacks never read mutable UI strings. Updating configuration, selecting
@@ -134,8 +152,10 @@ art or ratings.
 ### Web robustness parity
 
 - Current-cover failures retry after 5, 10 and 20 seconds, then every five minutes.
-- Backdrop image failures retry after 1 and 2 seconds. After that the normal cover
-  remains visible and the shared context menu offers an explicit retry.
+- Backdrop image failures retry after 1 and 2 seconds. Prepared compatible artwork
+  remains visible when available. Once retries are exhausted, an unavailable variant
+  fades to the normal cover rather than retaining artwork from another viewport.
+  The context menu offers an explicit retry.
 - Station-feed and current resolver failures use 8, 16, 32 and 60-second delays,
   then restart at 8 seconds like the web player.
 - Queue provider failures remain uncached and eligible on the minute-spaced worker.

@@ -206,6 +206,7 @@ private:
     bool  haveCover_ = false;
     DWORD fadeStart_ = 0;
     bool  mediaFading_ = false;
+    bool  mediaFadePending_ = false; // wait for target recreation/decode before starting the clock
     bool  ratingFading_ = false;
     bool  haveBackdrop_ = false;
     DWORD mediaFadeStart_ = 0;

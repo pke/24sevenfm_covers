@@ -50,8 +50,11 @@ renderer established by ADR 0002. Metadata handoffs follow ADR 0008.
   This is the permanent placement for Spectrum and Oscilloscope, regardless of
   logo availability or setting. Fill keeps its corner.
 - Fade album text and logos, retain outgoing pixels until the exit completes, and
-  interpolate panel dimensions. Rapid toggles continue from the current visible
-  state. Respect browser reduced motion and Windows client-animation preferences.
+  interpolate panel dimensions. On text-to-logo transitions, retain the text's full
+  panel width and row height until the logo fade has settled, then animate the
+  compact layout separately. Rapid toggles continue from the current visible state
+  and cancel obsolete layout handoffs. Respect browser reduced motion and Windows
+  client-animation preferences.
 - Queue preparation includes logo images in the existing bounded, minute-staggered
   scheduler. The next queued item is urgent. No URL means no image request; failures
   must not erase valid metadata, backdrop or rating state. Current and queued logo
@@ -65,6 +68,12 @@ these variants; toggling refreshes current and queued response preparation. Imag
 preparation follows validated URLs in the API response. No URL means no download.
 Prepared image bytes are bounded to 64 entries and reused after toggling back on.
 Failed image loads are not successful image-cache entries.
+Native backdrop fallback may reuse a prepared image across the logo variants of
+the same track and artwork configuration. Identical image URLs reuse prepared bytes.
+A missing or failed backdrop in the other variant must not remove the displayed
+image when switching between logo and text. This does not reuse logo fields across
+response variants or cross track, provider, artwork-enabled, orientation or
+resolution boundaries.
 
 Before projecting those response variants, the server keeps a common cache of
 resolved provider metadata, artwork, ratings, tint and logos already present in

@@ -211,6 +211,93 @@ struct CoverEngineTestAccess {
         engine.stopMediaWorker(); // join before captured fixtures leave scope
         CHECK(downloads == 2); CHECK(resolutions == 6);
     }
+    enum class TextArtwork { Missing, ResolverFailure, CachedImage, ImageFailure };
+    void titleLogoBackdrop(bool cachedMiss, TextArtwork textArtwork) {
+        engine.stopMediaWorker();
+        engine.settings.backdrops = true;
+        engine.settings.titleLogos = !cachedMiss;
+        engine.startMediaWorker();
+        const void* png = nullptr; size_t length = 0;
+        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
+        const std::string image(static_cast<const char*>(png), length);
+        std::atomic<unsigned> backdropDownloads{0};
+        ssc::MediaResolverConfig config;
+        config.transport = [&](const std::string& host, unsigned short, const std::string& path,
+                const std::string&, const std::string&, const std::string&, int) {
+            ssc::HttpResponse response; response.status = 200;
+            if (host == "assets.fanart.tv") {
+                if (path.find("logo.png") == std::string::npos) ++backdropDownloads;
+                if (path.find("unavailable.png") != std::string::npos) response.status = 503;
+                else response.body = image;
+            }
+            else if (path.find("&logos=1") != std::string::npos)
+                response.body = R"({"backdrop":"https://assets.fanart.tv/fanart/backdrop.png","source":"fanart","logo":{"url":"https://assets.fanart.tv/fanart/logo.png","source":"fanart"}})";
+            else if (path.find("&art=0") != std::string::npos) response.body = "{}";
+            else if (textArtwork == TextArtwork::ResolverFailure)
+                response.status = 503;
+            else if (textArtwork == TextArtwork::CachedImage)
+                response.body = R"({"backdrop":"https://assets.fanart.tv/fanart/backdrop.png","source":"fanart"})";
+            else if (textArtwork == TextArtwork::ImageFailure)
+                response.body = R"({"backdrop":"https://assets.fanart.tv/fanart/unavailable.png","source":"fanart"})";
+            else response.body = "{}";
+            return response;
+        };
+        { std::lock_guard<std::mutex> lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
+        struct JoinWorker { std::function<void()> stop; ~JoinWorker() { stop(); } };
+        JoinWorker join{[&] { engine.stopMediaWorker(); }};
+        const auto settleBackdrop = [&] {
+            for (unsigned i = 0; i < 1000; ++i) {
+                bool ready;
+                { std::lock_guard<std::mutex> lock(engine.mutex_);
+                  ready = engine.mediaDirty_ && engine.pendingBackdropChange_
+                      && engine.pendingMediaEpoch_ == engine.activeMediaEpoch_; }
+                if (ready) { engine.decodePendingMedia(nullptr); return true; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return false;
+        };
+        schedule("Current");
+        REQUIRE(settleBackdrop());
+        if (cachedMiss) {
+            CHECK_FALSE(engine.haveBackdrop_);
+            engine.settings.titleLogos = true; engine.repaint();
+            REQUIRE(settleBackdrop());
+        }
+        REQUIRE(engine.haveBackdrop_);
+        for (unsigned i = 0; i < 2; ++i) {
+            engine.settings.titleLogos = false; engine.repaint();
+            REQUIRE(settleBackdrop());
+            CHECK(engine.settings.backdrops);
+            CHECK(engine.haveBackdrop_);
+            { std::lock_guard<std::mutex> lock(engine.mutex_);
+              CHECK(engine.pendingTitleLogoBytes_.empty()); }
+            engine.settings.titleLogos = true; engine.repaint();
+            REQUIRE(settleBackdrop());
+            CHECK(engine.haveBackdrop_);
+        }
+        CHECK(backdropDownloads == (textArtwork == TextArtwork::ImageFailure ? 7u : 1u));
+        // The title option must not interfere with explicitly disabling art.
+        engine.settings.backdrops = false; engine.repaint();
+        REQUIRE(settleBackdrop());
+        CHECK_FALSE(engine.haveBackdrop_);
+        engine.settings.backdrops = true; engine.repaint();
+        REQUIRE(settleBackdrop());
+        CHECK(engine.haveBackdrop_);
+        // A backdrop fallback cannot cross track or provider identities.
+        if (textArtwork == TextArtwork::Missing) {
+            engine.settings.titleLogos = false; engine.repaint();
+            REQUIRE(settleBackdrop());
+            schedule("Different album");
+            REQUIRE(settleBackdrop());
+            CHECK_FALSE(engine.haveBackdrop_);
+            schedule("Current");
+            REQUIRE(settleBackdrop());
+            CHECK(engine.haveBackdrop_);
+            engine.settings.mediaProviders = "tmdb"; engine.repaint();
+            REQUIRE(settleBackdrop());
+            CHECK_FALSE(engine.haveBackdrop_);
+        }
+    }
     void mediaTransitionPolicy() {
         engine.settings.station = 0;
         engine.settings.backdrops = true;
@@ -239,6 +326,195 @@ struct CoverEngineTestAccess {
         REQUIRE(state().work.size() == 1);
         CHECK(state().work[0].animateBackdrop);
         CHECK(state().work[0].immediateCachedTitleLogo);
+    }
+    void viewportCacheHandoff(bool portraitArt, bool landscapeArt) {
+        struct Windows {
+            HWND portrait = CreateWindowExW(0, L"STATIC", L"Portrait test", WS_POPUP,
+                0, 0, 600, 900, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            HWND landscape = CreateWindowExW(0, L"STATIC", L"Fullscreen test", WS_POPUP,
+                0, 0, 3840, 2160, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            ~Windows() { DestroyWindow(portrait); DestroyWindow(landscape); }
+        } windows;
+        REQUIRE(windows.portrait); REQUIRE(windows.landscape);
+        const HWND initial = portraitArt ? windows.portrait : windows.landscape;
+        const HWND alternate = portraitArt ? windows.landscape : windows.portrait;
+        engine.stopMediaWorker();
+        engine.settings.backdrops = true; engine.settings.titleLogos = true;
+        engine.settings.transition = 1;
+        engine.hwnd_.store(initial);
+        engine.startMediaWorker();
+        const void* png = nullptr; size_t length = 0;
+        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
+        const std::string image(static_cast<const char*>(png), length);
+        std::promise<void> entered, release;
+        auto enteredFuture = entered.get_future();
+        auto releaseFuture = release.get_future().share();
+        std::atomic<unsigned> requests{0};
+        struct JoinWorker { std::function<void()> stop; ~JoinWorker() { stop(); } };
+        JoinWorker join{[&] {
+            release.set_value(); engine.stopMediaWorker(); engine.setWindow(nullptr); d2d::shutdown();
+        }};
+        REQUIRE(d2d::init());
+        d2d::setCover(image.data(), image.size(), false);
+        engine.haveCover_ = true;
+        ssc::MediaResolverConfig config;
+        config.transport = [&](const std::string&, unsigned short, const std::string&,
+                const std::string&, const std::string&, const std::string&, int) {
+            if (++requests == 1) { entered.set_value(); releaseFuture.wait(); }
+            ssc::HttpResponse response; response.status = 200; response.body = "{}"; return response;
+        };
+        ssc::TrackInfo current, queued;
+        current.album = "Cached movie"; current.track = "Cue";
+        queued.album = "Blocked queue request";
+        {
+            std::lock_guard<std::mutex> lock(state().mutex);
+            state().resolver = ssc::MediaResolver(config);
+            for (bool portrait : {true, false}) {
+                ssc::MediaRequest request;
+                request.includeTitleLogo = true; request.includeRatings = engine.settings.ratings;
+                request.width = portrait ? 600 : 3840; request.height = portrait ? 900 : 2160;
+                ssc::MediaResult result; result.status = ssc::MediaResult::Hit;
+                result.album = current.album; result.hasTint = true; result.tint[0] = portrait ? 1 : 2;
+                const bool haveArtwork = portrait ? portraitArt : landscapeArt;
+                if (haveArtwork) result.backdropUrl = portrait ? "portrait" : "landscape";
+                else result.status = ssc::MediaResult::Miss;
+                result.titleLogoUrl = "cached logo";
+                cacheMedia(&state(), ssc::mediaCacheKey(current, request), current, request,
+                           result, haveArtwork ? image : std::string());
+            }
+            state().titleLogoCache["cached logo"] = image;
+        }
+        engine.scheduleMedia(current, {queued});
+        REQUIRE(enteredFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        engine.decodePendingMedia(nullptr);
+        REQUIRE(engine.haveBackdrop_);
+        for (HWND target : {alternate, initial, alternate, initial}) {
+            // A stale clock must not consume the new fade during target recreation.
+            engine.mediaFadeStart_ = GetTickCount() - engine.settings.fadeMs - 1000;
+            const DWORD handoffStarted = GetTickCount();
+            engine.setWindow(target); // cached images must commit even while HTTP is blocked
+            const bool expectBackdrop = target == windows.portrait ? portraitArt : landscapeArt;
+            CHECK(engine.haveBackdrop_ == expectBackdrop);
+            CHECK_FALSE(engine.mediaDirty_);
+            CHECK(engine.pendingMediaHasTint_ == expectBackdrop);
+            if (expectBackdrop)
+                CHECK(engine.pendingMediaTint_[0] == (target == windows.portrait ? 1 : 2));
+            CHECK(engine.mediaFading_ == clientAnimationsEnabled());
+            // The host's retained portrait pixels must already be replaced when
+            // setWindow returns, before the covering fullscreen window is removed.
+            CHECK_FALSE(engine.mediaFadePending_);
+            CHECK(d2d::backdropReady());
+            if (clientAnimationsEnabled()) CHECK((LONG)(engine.mediaFadeStart_ - handoffStarted) >= 0);
+            engine.onPaint(target);
+            CHECK(d2d::backdropReady());
+            CHECK_FALSE(engine.mediaFadePending_);
+            CHECK(engine.mediaFading_ == clientAnimationsEnabled()); // upload time did not consume the fade
+            const auto epoch = state().epoch;
+            const HWND old = target == windows.portrait ? windows.landscape : windows.portrait;
+            engine.onTimer(old, CoverEngine::kHeartbeat);
+            CHECK(state().epoch == epoch); // queued host timers cannot reselect its old viewport
+            engine.publishRatings(epoch, {});
+            engine.onNewMedia(old);
+            CHECK(engine.mediaDirty_); // stale host messages cannot consume the new window's mailbox
+            engine.onNewMedia(target);
+            CHECK_FALSE(engine.mediaDirty_);
+            CHECK(engine.haveBackdrop_ == expectBackdrop);
+            CHECK(requests == 1);
+        }
+        { std::lock_guard<std::mutex> lock(state().mutex); CHECK(state().cache.size() == 2); }
+    }
+    void viewportMissUsesDefault(bool portraitArt) {
+        struct Window {
+            HWND value = CreateWindowExW(0, L"STATIC", L"Viewport miss test", WS_POPUP,
+                0, 0, 600, 900, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            ~Window() { DestroyWindow(value); }
+        } window;
+        REQUIRE(window.value);
+        const auto resize = [&](bool portrait) {
+            REQUIRE(SetWindowPos(window.value, nullptr, 0, 0, portrait ? 600 : 1280,
+                portrait ? 900 : 720, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE));
+        };
+        resize(portraitArt);
+        engine.stopMediaWorker();
+        engine.settings.backdrops = true;
+        engine.hwnd_.store(window.value);
+        engine.startMediaWorker();
+        const void* png = nullptr; size_t length = 0;
+        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
+        const std::string image(static_cast<const char*>(png), length);
+        std::promise<void> entered, release;
+        auto enteredFuture = entered.get_future();
+        auto releaseFuture = release.get_future().share();
+        std::atomic<unsigned> missingVariantRequests{0};
+        bool released = false;
+        struct JoinWorker { std::function<void()> stop; ~JoinWorker() { stop(); } };
+        JoinWorker join{[&] {
+            if (!released) release.set_value();
+            engine.stopMediaWorker(); engine.setWindow(nullptr);
+        }};
+        ssc::MediaResolverConfig config;
+        config.transport = [&](const std::string& host, unsigned short, const std::string& path,
+                const std::string&, const std::string&, const std::string&, int) {
+            ssc::HttpResponse response; response.status = 200;
+            if (host == "assets.fanart.tv") response.body = image;
+            else if (path.find(portraitArt ? "&width=600" : "&width=1280") != std::string::npos)
+                response.body = portraitArt
+                    ? R"({"backdrop":"https://assets.fanart.tv/fanart/portrait.png","source":"fanart"})"
+                    : R"({"backdrop":"https://assets.fanart.tv/fanart/landscape.png","source":"fanart"})";
+            else {
+                if (path.find(portraitArt ? "&width=1280" : "&width=600") != std::string::npos
+                        && ++missingVariantRequests == 1) {
+                    entered.set_value(); releaseFuture.wait();
+                }
+                response.body = "{}";
+            }
+            return response;
+        };
+        { std::lock_guard<std::mutex> lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
+        const auto settled = [&] {
+            for (unsigned i = 0; i < 1000; ++i) {
+                bool ready;
+                { std::lock_guard<std::mutex> lock(engine.mutex_);
+                  ready = engine.mediaDirty_ && engine.pendingMediaEpoch_ == engine.activeMediaEpoch_
+                      && engine.pendingBackdropChange_; }
+                if (ready) { engine.decodePendingMedia(nullptr); return true; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return false;
+        };
+        schedule("Current");
+        REQUIRE(settled());
+        REQUIRE(engine.haveBackdrop_);
+        for (unsigned i = 0; i < 2; ++i) {
+            resize(!portraitArt);
+            engine.repaint();
+            if (i == 0) {
+                REQUIRE(enteredFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+                engine.decodePendingMedia(nullptr);
+                CHECK(engine.haveBackdrop_); // keep outgoing art only while the variant is unresolved
+                release.set_value(); released = true;
+            } else {
+                std::lock_guard<std::mutex> lock(engine.mutex_);
+                CHECK(engine.mediaDirty_); // a cached miss is published synchronously too
+                CHECK(engine.pendingMediaClear_);
+            }
+            REQUIRE(settled()); // first a fresh miss, then the same cached miss
+            CHECK_FALSE(engine.haveBackdrop_);
+            CHECK(engine.pendingMediaClear_);
+            for (bool logos : {true, false}) {
+                engine.settings.titleLogos = logos; engine.repaint();
+                REQUIRE(settled());
+                CHECK_FALSE(engine.haveBackdrop_); // logo toggles cannot borrow the other orientation
+            }
+            resize(portraitArt);
+            engine.repaint();
+            REQUIRE(settled());
+            CHECK(engine.haveBackdrop_);
+        }
+        CHECK(missingVariantRequests == 2); // one request per logo option; repeated viewport changes use cache
+        engine.settings.backdrops = false; engine.repaint();
+        REQUIRE(settled());
+        CHECK_FALSE(engine.haveBackdrop_); // explicit disabling still clears the presentation
     }
     void artworkResize() {
         struct HiddenWindow {
@@ -269,7 +545,7 @@ struct CoverEngineTestAccess {
         CHECK(state().work.size() == 2); // current and queue use the new variant
         for (const auto& work : state().work) {
             CHECK(ssc::wants4kArtwork(work.request));
-            if (work.current) CHECK_FALSE(work.animateBackdrop);
+            if (work.current) CHECK(work.animateBackdrop);
         }
         CHECK(engine.info_.title() == L"The Crown (1:00)");
         ssc::MediaResult fallback; fallback.album = "Crown, The";
@@ -285,7 +561,7 @@ struct CoverEngineTestAccess {
         CHECK(ssc::wantsPortraitArtwork(state().request));
         CHECK(ssc::wants4kArtwork(state().request));
         for (const auto& work : state().work)
-            if (work.current) CHECK_FALSE(work.animateBackdrop);
+            if (work.current) CHECK(work.animateBackdrop);
         CHECK(engine.info_.title() == L"The Crown (1:00)");
         engine.hwnd_.store(nullptr);
     }
@@ -294,11 +570,34 @@ struct CoverEngineTestAccess {
 TEST_CASE("native resize updates current and queue resolution without downgrading metadata") {
     CoverEngineTestAccess test; test.artworkResize();
 }
+TEST_CASE("native fullscreen swaps cached viewport artwork without waiting for queued HTTP") {
+    bool portraitArt = true, landscapeArt = true;
+    SUBCASE("both orientations have artwork") {}
+    SUBCASE("portrait-only artwork fades to default in landscape") { landscapeArt = false; }
+    SUBCASE("landscape-only artwork fades to default in portrait") { portraitArt = false; }
+    CoverEngineTestAccess test; test.viewportCacheHandoff(portraitArt, landscapeArt);
+}
+TEST_CASE("native viewport misses use the default without discarding the other orientation's cache") {
+    bool portraitArt = true;
+    SUBCASE("missing landscape variant") {}
+    SUBCASE("missing portrait variant") { portraitArt = false; }
+    CoverEngineTestAccess test; test.viewportMissUsesDefault(portraitArt);
+}
 TEST_CASE("native title logos prepare queued images and reuse metadata across toggles and promotion") {
     CoverEngineTestAccess test; test.queuedTitleLogos();
 }
 TEST_CASE("native same-track UI refinements do not fade the backdrop") {
     CoverEngineTestAccess test; test.mediaTransitionPolicy();
+}
+TEST_CASE("native logo toggles preserve the backdrop across separate response caches") {
+    bool cachedMiss = false;
+    auto textArtwork = CoverEngineTestAccess::TextArtwork::Missing;
+    SUBCASE("cached response without artwork") { cachedMiss = true; }
+    SUBCASE("fresh response without artwork") {}
+    SUBCASE("failed resolver request") { textArtwork = CoverEngineTestAccess::TextArtwork::ResolverFailure; }
+    SUBCASE("same image URL reuses prepared bytes") { textArtwork = CoverEngineTestAccess::TextArtwork::CachedImage; }
+    SUBCASE("failed image request") { textArtwork = CoverEngineTestAccess::TextArtwork::ImageFailure; }
+    CoverEngineTestAccess test; test.titleLogoBackdrop(cachedMiss, textArtwork);
 }
 TEST_CASE("native canonical metadata survives retries and resets only for a different track") {
     CoverEngineTestAccess test; test.canonicalRetry();

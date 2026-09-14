@@ -82,6 +82,7 @@ std::vector<RatingBadge> g_ratingsCur, g_ratingsPrev;
 struct RatingBitmap { std::wstring key; ID2D1Bitmap* bitmap = nullptr; };
 std::vector<RatingBitmap> g_ratingBitmaps;
 ssc::TitleLogoPresentation g_titleLogo;
+ssc::TitleLogoLayout g_titleLogoLayout;
 ID2D1Bitmap* g_titleLogoBmp = nullptr;
 std::string g_titleLogoDecodedBytes;
 D2D1_RECT_F g_albumHitRect = {}, g_logoHitRect = {};
@@ -379,7 +380,9 @@ void drawBackdropBitmap(ID2D1Bitmap* bmp, float cw, float ch, float opacity) {
 bool drawBackdrop(float cw, float ch, float progress) {
     if (progress < 0.0f) progress = 0.0f;
     if (progress > 1.0f) progress = 1.0f;
-    drawBackdropBitmap(g_backdropPrevBmp, cw, ch, 1.0f - progress);
+    // Keep an opaque outgoing image underneath the incoming fade. Fading both
+    // layers exposes the blurred cover at the midpoint of source-over blending.
+    drawBackdropBitmap(g_backdropPrevBmp, cw, ch, !g_backdropCurBytes.empty() ? 1.0f : 1.0f - progress);
     drawBackdropBitmap(g_backdropCurBmp, cw, ch, progress);
     return g_backdropCurBmp || g_backdropPrevBmp;
 }
@@ -516,7 +519,8 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
                   int remainingSeconds, float overlayFontFrac, bool rollDigits,
                   const wchar_t* title, const wchar_t* artist, const wchar_t* status,
                   float mediaProgress, bool hideCoverWithBackdrop, float infoOpacity,
-                  const wchar_t* album, const wchar_t* track, float logoAlpha, float dpiScale) {
+                  const wchar_t* album, const wchar_t* track, float logoAlpha,
+                  float logoLayoutMix, float dpiScale) {
     drawBlurredBackground(cw, ch); // stable fallback remains underneath the fade
     const bool mediaVisible = g_backdropCurBmp || g_backdropPrevBmp;
     if (mediaVisible) {
@@ -549,7 +553,9 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     const wchar_t* albumText = album && *album ? album : title;
     const bool showLogo = g_titleLogoBmp && album && g_titleLogo.album() == album;
     const float logoMix = showLogo ? logoAlpha : 0;
-    const D2D1_SIZE_F bitmapSize = showLogo ? g_titleLogoBmp->GetSize() : D2D1::SizeF(0, 0);
+    // Keep the reserved row metric after the image retires, while the independent
+    // layout transition finishes expanding back to text.
+    const D2D1_SIZE_F bitmapSize = showLogo ? g_titleLogoBmp->GetSize() : D2D1::SizeF(1, 1);
     const ssc::TitleLogoSize logoSize = ssc::titleLogoSize(bitmapSize.width, bitmapSize.height,
         cw, ch, titleSize, dpiScale);
     IDWriteTextFormat* tf = g_dwrite ? makeFormat(titleSize, DWRITE_FONT_WEIGHT_SEMI_BOLD, true) : nullptr;
@@ -578,14 +584,14 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     float contentW = trackW > artistW ? trackW : artistW;
     if (statusH > 0 && contentW < cdFont * 3.6f) contentW = cdFont * 3.6f;
     const float fullW = albumW > contentW ? albumW : contentW;
-    const float measuredContentW = fullW + (contentW - fullW) * logoMix;
+    const float measuredContentW = fullW + (contentW - fullW) * logoLayoutMix;
     boxW = ssc::posterInfoWidth(cw, measuredContentW, padX, dpiScale);
     boxX = (cw - boxW) * .5f;
     const float fittedTextW = boxW > 2 * padX ? boxW - 2 * padX : 1.0f;
     if (tl) tl->SetMaxWidth(fittedTextW);
     if (cl) cl->SetMaxWidth(fittedTextW);
     if (al) al->SetMaxWidth(fittedTextW);
-    const float albumRowH = titleH + (logoSize.rowHeight - titleH) * logoMix;
+    const float albumRowH = titleH + (logoSize.rowHeight - titleH) * logoLayoutMix;
     const float boxH = showInfo ? padY + albumRowH + trackH + (artistH > 0 ? lineGap + artistH : 0)
                      + (statusH > 0 ? 6.4f + statusH : 0) + padY : 0.0f;
 
@@ -792,6 +798,7 @@ void shutdown() {
     g_backdropCurBytes.clear();
     g_backdropPrevBytes.clear();
     g_titleLogo = ssc::TitleLogoPresentation();
+    g_titleLogoLayout = ssc::TitleLogoLayout();
     g_backdropCurHasTint = g_backdropPrevHasTint = false;
     g_ratingsCur.clear();
     g_ratingsPrev.clear();
@@ -825,6 +832,8 @@ void setBackdrop(const void* data, size_t len, bool fadeFromCurrent, const int* 
         g_backdropPrevTint = g_backdropCurTint;
         g_backdropPrevHasTint = g_backdropCurHasTint;
         SafeRelease(g_backdropPrevBmp);
+        g_backdropPrevBmp = g_backdropCurBmp;
+        g_backdropCurBmp = nullptr; // retain decoded outgoing pixels through the fade
     } else {
         g_backdropPrevBytes.clear();
         g_backdropPrevHasTint = false;
@@ -853,6 +862,8 @@ void clearBackdrop(bool fadeFromCurrent) {
     SafeRelease(g_backdropCurBmp);
 }
 
+bool backdropReady() { return g_backdropCurBytes.empty() || g_backdropCurBmp != nullptr; }
+
 void setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent) {
     if (fadeFromCurrent) g_ratingsPrev = g_ratingsCur;
     else g_ratingsPrev.clear();
@@ -880,7 +891,7 @@ void setTitleLogo(const std::string& bytes, const std::wstring& album, int fadeM
     g_titleLogo.set(bytes, album, GetTickCount(), fadeMs);
 }
 
-bool titleLogoAnimating() { return g_titleLogo.animating(); }
+bool titleLogoAnimating() { return g_titleLogo.animating() || g_titleLogoLayout.animating(); }
 
 bool albumHitTest(HWND hwnd, int x, int y) {
     if (!g_albumHitVisible || hwnd != g_albumHitWindow) return false;
@@ -937,12 +948,15 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     if (!g_backdropPrevBmp && !g_backdropPrevBytes.empty())
         g_backdropPrevBmp = createBitmap(g_backdropPrevBytes, false);
 
-    const float logoAlpha = g_titleLogo.advance(GetTickCount(), logoFadeMs);
+    const DWORD logoNow = GetTickCount();
+    const float logoAlpha = g_titleLogo.advance(logoNow, logoFadeMs);
     if (g_titleLogoDecodedBytes != g_titleLogo.bytes()) {
         SafeRelease(g_titleLogoBmp);
         g_titleLogoDecodedBytes = g_titleLogo.bytes();
         g_titleLogoBmp = decodeBitmap(g_rt, g_titleLogoDecodedBytes, nullptr, true);
     }
+    const float logoLayoutMix = g_titleLogoLayout.advance(layout == 1 && g_titleLogoBmp
+        && album && g_titleLogo.album() == album && logoAlpha >= 1.0f, logoNow, logoFadeMs);
     g_rt->BeginDraw();
     g_rt->Clear(D2D1::ColorF(D2D1::ColorF::Black));
     bool overlayAnimating = false;
@@ -950,7 +964,7 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
         overlayAnimating = renderPoster((float)cw, (float)ch, transition, progress,
                                         remainingSeconds, overlayFontFrac, rollDigits, title, artist,
                                         statusText, mediaProgress, hideCoverWithBackdrop, infoOpacity,
-                                        album, track, logoAlpha, windowDpiScale(hwnd));
+                                        album, track, logoAlpha, logoLayoutMix, windowDpiScale(hwnd));
     } else {
         overlayAnimating = renderCover((float)cw, (float)ch, transition, progress,
                                        remainingSeconds, overlayFontFrac, rollDigits, statusText,
