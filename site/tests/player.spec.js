@@ -33,7 +33,7 @@ async function stableElementRects(page, selectors, options = {}) {
         }));
         const geometryTransitions = new Set([
             "bottom", "height", "left", "margin-top", "max-height", "right", "top",
-            "transform", "width",
+            "transform", "width", "grid-template-rows",
         ]);
         const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
         const read = () => Object.fromEntries(Object.entries(elements).map(([name, element]) => {
@@ -49,7 +49,9 @@ async function stableElementRects(page, selectors, options = {}) {
         const geometryIsAnimating = () => document.querySelector("#stage")
             .getAnimations({ subtree: true }).some((animation) =>
                 animation.playState === "running"
-                && geometryTransitions.has(animation.transitionProperty));
+                && (geometryTransitions.has(animation.transitionProperty)
+                    || (animation.transitionProperty === "opacity"
+                        && animation.effect?.target?.closest?.("#media-logo"))));
 
         let previous = null, consecutive = 0;
         for (let frame = 0; frame < maxFrames; frame++) {
@@ -111,6 +113,80 @@ test.describe("the deployed player page", () => {
         await page.route(/streamingsoundtracks\.com\/images\/cover\/.*title-logo\.svg/, route =>
             route.fulfill({ contentType: "image/svg+xml",
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+    }
+
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+        test(`holds info geometry until the title logo fade settles at ${viewport.width}px`, async ({ page }, testInfo) => {
+            await page.setViewportSize(viewport);
+            await page.emulateMedia({ reducedMotion: "no-preference" });
+            await mockTitleLogoFeed(page);
+            const album = "Pirates Of The Caribbean: Dead Man's Chest";
+            const logo = "https://assets.fanart.tv/fanart/settled-title.svg";
+            await page.route(logo, route => route.fulfill({ contentType: "image/svg+xml",
+                headers: { "access-control-allow-origin": "*" },
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="250"><rect width="600" height="250" fill="white"/></svg>' }));
+            await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+                metadata: { album, track: "The Kraken", artist: "Hans Zimmer" },
+                logo: new URL(route.request().url()).searchParams.get("logos") === "1"
+                    ? { url: logo, source: "fanart" } : null,
+            } }));
+            await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1");
+            await page.addStyleTag({ content: "#stage { --backdrop-fade-duration: 400ms !important; }" });
+            await expect(page.locator("#info-album")).toHaveText(album);
+            await expect(page.locator(".info")).toHaveCSS("opacity", "1");
+            const before = await stableElementRects(page, { info: ".info", album: "#info-album" });
+            const samples = await page.evaluate(async () => {
+                const info = document.querySelector(".info"), logo = document.querySelector("#media-logo");
+                const frames = [];
+                document.querySelector("#info-album-toggle").click();
+                for (let i = 0; i < 180; ++i) {
+                    await new Promise(requestAnimationFrame);
+                    const box = info.getBoundingClientRect();
+                    const alpha = Number(getComputedStyle(logo).opacity);
+                    frames.push({ alpha, width: box.width, height: box.height,
+                        albumHeight: document.querySelector("#info-album").getBoundingClientRect().height });
+                    if (alpha === 1 && info.classList.contains("media-logo-settled")
+                            && !info.getAnimations({ subtree: true }).some(a => a.playState === "running")) break;
+                }
+                return frames;
+            });
+            const fading = samples.filter(frame => frame.alpha > 0 && frame.alpha < 1);
+            expect(fading.length).toBeGreaterThan(2);
+            for (const frame of fading) {
+                expect(frame.width).toBeCloseTo(before.info.width, 0);
+                expect(frame.height).toBeCloseTo(before.info.height, 0);
+                expect(frame.albumHeight).toBeCloseTo(before.album.height, 0);
+            }
+            const after = await stableElementRects(page, { info: ".info" });
+            expect(after.info.width).toBeLessThan(before.info.width * .8);
+            expect(samples.some(frame => frame.alpha === 1
+                && frame.width < before.info.width - 1 && frame.width > after.info.width + 1)).toBe(true);
+            await page.locator("#stage").screenshot({ path: testInfo.outputPath("settled-logo.png") });
+
+            // A cancelled enter transition must never trigger a late compaction.
+            await page.locator("#info-album-toggle").evaluate(element => element.click());
+            await stableElementRects(page, { info: ".info" });
+            await page.locator("#info-album-toggle").evaluate(element => element.click());
+            await page.waitForFunction(() => {
+                const opacity = Number(getComputedStyle(document.querySelector("#media-logo")).opacity);
+                return opacity > .1 && opacity < .9;
+            });
+            await page.locator("#info-album-toggle").evaluate(element => element.click());
+            await expect(page.locator("#media-logo")).toHaveCSS("opacity", "0");
+            const restored = await stableElementRects(page, { info: ".info" });
+            expect(restored.info.width).toBeCloseTo(before.info.width, 0);
+            await expect(page.locator(".info")).not.toHaveClass(/media-logo-settled/);
+
+            await page.locator("#info-album-toggle").evaluate(element => element.click());
+            await page.waitForFunction(() => {
+                const opacity = Number(getComputedStyle(document.querySelector("#media-logo")).opacity);
+                return opacity > .1 && opacity < .9;
+            });
+            await page.emulateMedia({ reducedMotion: "reduce" });
+            await expect(page.locator(".info")).toHaveClass(/media-logo-settled/);
+            const reduced = await stableElementRects(page, { info: ".info" });
+            expect(reduced.info.width).toBeCloseTo(after.info.width, 0);
+        });
     }
 
     test("keeps title logos off by default and persists their switch with a smooth exit", async ({ page }) => {
@@ -1805,10 +1881,9 @@ test.describe("the deployed player page", () => {
         // the outgoing badge concealed until the destination logo is ready. Even a
         // pointer wake during that wait may not reveal the stale front/back faces.
         secondTrack = true;
-        await expect(page.locator("#stage .info"))
-            .toHaveClass(/metadata-pending/, { timeout: 10000 });
         await expect.poll(() => secondResolverRequested).toBe(true);
-        await expect(page.locator("#stage .info")).not.toBeVisible();
+        await expect(page.locator("#stage .info")).toBeVisible();
+        await expect(page.locator("#info-title")).toContainText("Next Rating Movie - Second Cue");
         await expect(badges).toHaveClass(/track-handoff/);
         await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
         await page.mouse.move(fullscreenBox.x + fullscreenBox.width / 4,
@@ -4588,7 +4663,7 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /cdn2\.steamgriddb\.com\/hero\/hades\.jpg/);
     });
-    test("reveals raw station metadata only after the media request fails", async ({ page }) => {
+    test("shows station metadata while the media request is pending and keeps it after failure", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/info-fallback.svg";
         const sizedCover =
             "https://streamingsoundtracks.com/images/cover/500/info-fallback.svg";
@@ -4610,9 +4685,11 @@ test.describe("the deployed player page", () => {
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
         await expect.poll(() => mediaRoute !== null).toBe(true);
         const info = page.locator("#stage .info");
-        await expect(info).toHaveClass(/metadata-pending/);
-        await expect(info).toHaveAttribute("aria-hidden", "true");
-        await expect(info).not.toBeVisible();
+        await expect(info).not.toHaveClass(/metadata-pending/);
+        await expect(info).toHaveAttribute("aria-hidden", "false");
+        await expect(info).toBeVisible();
+        await expect(page.locator("#info-title"))
+            .toHaveText("Fallback, The - Main Title (2:12)");
         expect(await info.evaluate((element) =>
             getComputedStyle(element).transitionProperty.split(", ")))
             .toContain("opacity");
@@ -4625,6 +4702,168 @@ test.describe("the deployed player page", () => {
         await expect(page.locator("#info-title"))
             .toHaveText("Fallback, The - Main Title (2:12)");
     });
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+        test(`retains the info panel and inserts text before resizing at ${viewport.width}px`, async ({ page }, testInfo) => {
+            await page.setViewportSize(viewport);
+            let album = "A Long Soundtrack Title With Enough Words To Fill The Information Panel";
+            let polls = 0;
+            const routes = [];
+            await page.addInitScript(() => {
+                localStorage.setItem("24sevenfm-covers.player.v2", JSON.stringify({
+                    layout: 1, transition: { enabled: true, options: { style: 1, durationMs: 400 } },
+                }));
+                window.__infoFrames = [];
+                function sample() {
+                    const panel = document.querySelector(".info");
+                    const title = document.querySelector("#info-album");
+                    if (panel && title && !panel.classList.contains("metadata-pending")) {
+                        window.__infoFrames.push({ album: title.textContent,
+                            width: panel.getBoundingClientRect().width,
+                            target: parseFloat(panel.style.getPropertyValue("--info-panel-width")),
+                            opacity: Number(getComputedStyle(panel).opacity),
+                            textOpacity: Number(getComputedStyle(document.querySelector("#info-title")).opacity),
+                        });
+                    }
+                    requestAnimationFrame(sample);
+                }
+                requestAnimationFrame(sample);
+            });
+            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", route => {
+                if (new URL(route.request().url()).searchParams.get("action") === "GetQueue")
+                    return route.fulfill({ json: [] });
+                polls++;
+                return route.fulfill({ json: { Album: album, Track: "Main Theme", Artist: "Composer",
+                    CoverLink: "https://streamingsoundtracks.com/images/cover/panel.svg", Length: 180000,
+                    PlayStart: "2026-09-14T12:00:00Z", SystemTime: "2026-09-14T12:00:00Z" } });
+            });
+            await page.route(/streamingsoundtracks\.com\/images\/cover\/.*panel.svg/, route =>
+                route.fulfill({ contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route(/\/api\/media\?/, route => { routes.push(route); });
+            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+            await expect.poll(() => routes.length).toBe(1);
+            await expect(page.locator("#info-album")).toHaveText(album);
+            await expect(page.locator(".info")).toHaveCSS("opacity", "1");
+            const initial = await stableElementRects(page, { panel: ".info" });
+            const first = await page.evaluate(() => window.__infoFrames[0]);
+            expect(first.width).toBeCloseTo(initial.panel.width, 0);
+            expect(Math.abs(first.target - initial.panel.width)).toBeLessThanOrEqual(1);
+
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => { window.__infoFrames = []; });
+            album = "Short Title";
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+            await expect.poll(() => polls).toBe(2);
+            await expect.poll(() => routes.length).toBe(2);
+            await expect(page.locator("#info-album")).toHaveText(album);
+            await expect(page.locator("#info-title")).toHaveCSS("opacity", "1");
+            const short = await stableElementRects(page, { panel: ".info" });
+            const frames = await page.evaluate(() => window.__infoFrames);
+            expect(frames.every(frame => frame.opacity === 1 && frame.album.length > 0)).toBe(true);
+            expect(Math.min(...frames.map(frame => frame.width))).toBeGreaterThanOrEqual(short.panel.width - 1);
+            expect(frames.some(frame => frame.textOpacity > 0 && frame.textOpacity < 1)).toBe(true);
+            expect(frames.filter(frame => frame.width < initial.panel.width - 1)
+                .every(frame => frame.album === "Short Title")).toBe(true);
+
+            await page.evaluate(() => { window.__infoFrames = []; });
+            const canonical = "The Final Canonical Soundtrack Title Has More Words Than The Station Title";
+            await routes[1].fulfill({ json: { metadata: { album: canonical, track: "Main Theme", artist: "Composer" } } });
+            await expect(page.locator("#info-album")).toHaveText(canonical);
+            await expect(page.locator("#info-title")).toHaveCSS("opacity", "1");
+            await stableElementRects(page, { panel: ".info" });
+            const canonicalFrames = await page.evaluate(() => window.__infoFrames);
+            expect(canonicalFrames.every(frame => frame.opacity === 1 && frame.album.length > 0)).toBe(true);
+            expect(canonicalFrames.filter(frame => frame.width > short.panel.width + 1)
+                .every(frame => frame.album === canonical)).toBe(true);
+            // A superseded resolver response cannot restore the old title.
+            await routes[0].fulfill({ json: { metadata: { album: "Obsolete", track: "Old", artist: "Old" } } });
+            await expect(page.locator("#info-album")).toHaveText(canonical);
+            await page.locator("#stage").screenshot({ path: testInfo.outputPath("settled-info.png") });
+        });
+    }
+
+    for (const station of [{ id: "sst", host: "streamingsoundtracks.com" }, { id: "1980s", host: "1980s.fm" }]) {
+        test(`shares pending and completed queue metadata with now-playing on ${station.id}`, async ({ page }) => {
+            let playing = false, polls = 0, mediaRequests = 0, held;
+            const cover = `https://${station.host}/images/cover/shared-queue.svg`;
+            const queued = { Album: "Queued Album", Track: "Queued Cue", Artist: "Composer", CoverLink: cover };
+            await page.route(`https://${station.host}/soap/FM24sevenJSON.php?*`, route => {
+                if (new URL(route.request().url()).searchParams.get("action") === "GetQueue")
+                    return route.fulfill({ json: playing ? [] : [queued] });
+                polls++;
+                return route.fulfill({ json: { ...(playing ? { ...queued, Album: " Queued Album ", Artist: " Composer " }
+                    : { Album: "Station ID", Track: "", Artist: "Station", CoverLink: "" }), Length: 3600000,
+                    PlayStart: "2026-09-14T12:00:00Z", SystemTime: "2026-09-14T12:00:00Z" } });
+            });
+            await page.route(`https://${station.host}/images/**`, route => route.fulfill({ contentType: "image/svg+xml",
+                body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+            await page.route(/\/api\/tint\?/, route => route.fulfill({ json: { tint: [40, 50, 60] } }));
+            await page.route(/\/api\/media\?/, route => { mediaRequests++; held = route; });
+            await page.goto(`/player.html?preset=1&station=${station.id}&sstBackdrops=1`, { waitUntil: "domcontentloaded" });
+            await expect.poll(() => mediaRequests).toBe(1);
+            playing = true;
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+            await expect.poll(() => polls).toBe(2);
+            await expect(page.locator("#info-album")).toHaveText("Queued Album");
+            await expect(page.locator(".info")).toBeVisible();
+            expect(mediaRequests).toBe(1);
+            await held.fulfill({ json: { metadata: { album: "Canonical Queued Album", track: "Queued Cue", artist: "Composer" } } });
+            await expect(page.locator("#info-album")).toHaveText("Canonical Queued Album");
+            // Switching away and back promotes the completed cache as well.
+            playing = false;
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+            await expect.poll(() => polls).toBe(3);
+            playing = true;
+            await page.waitForTimeout(2100);
+            await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+            await expect.poll(() => polls).toBe(4);
+            await expect(page.locator("#info-album")).toHaveText("Canonical Queued Album");
+            expect(mediaRequests).toBe(1);
+        });
+    }
+
+    test("promotes a prepared title after the station skips a queue entry while artist revalidation waits", async ({ page }) => {
+        let playing = false, pending;
+        const calls = [];
+        const queued = ["Skipped Album", "Promoted Album"].map(Album => ({ Album, Track: "Cue", Artist: "Queue Composer",
+            CoverLink: `https://streamingsoundtracks.com/images/cover/${Album.replaceAll(" ", "-")}.svg` }));
+        await page.addInitScript(() => {
+            const original = window.setTimeout.bind(window);
+            window.setTimeout = (callback, delay, ...args) => original(callback,
+                delay >= 50000 && delay <= 60000 ? 20 : delay, ...args);
+        });
+        await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", route => {
+            if (new URL(route.request().url()).searchParams.get("action") === "GetQueue")
+                return route.fulfill({ json: playing ? [] : queued });
+            return route.fulfill({ json: { ...(playing ? { ...queued[1], Artist: "Authoritative Composer" }
+                : { Album: "Station ID", Track: "", Artist: "Station", CoverLink: "" }), Length: 3600000,
+                PlayStart: "2026-09-14T12:00:00Z", SystemTime: "2026-09-14T12:00:00Z" } });
+        });
+        await page.route("https://streamingsoundtracks.com/images/**", route => route.fulfill({ contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"/>' }));
+        await page.route(/\/api\/tint\?/, route => route.fulfill({ json: { tint: [40, 50, 60] } }));
+        await page.route(/\/api\/media\?/, route => {
+            const query = new URL(route.request().url()).searchParams;
+            const album = query.get("album"), artist = query.get("artist");
+            calls.push({ album, artist });
+            if (artist === "Authoritative Composer") { pending = route; return; }
+            return route.fulfill({ json: { metadata: { album: "Canonical " + album, track: "Cue", artist } } });
+        });
+        await page.goto("/player.html?preset=1&sstBackdrops=1", { waitUntil: "domcontentloaded" });
+        await expect.poll(() => calls.length).toBe(2);
+        playing = true;
+        await page.waitForTimeout(2100);
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        await expect.poll(() => !!pending).toBe(true);
+        await expect(page.locator("#info-album")).toHaveText("Canonical Promoted Album");
+        await expect(page.locator(".info")).toBeVisible();
+        expect(calls.at(-1)).toEqual({ album: "Promoted Album", artist: "Authoritative Composer" });
+        await pending.fulfill({ status: 503, json: {} });
+        await expect(page.locator("#info-album")).toHaveText("Canonical Promoted Album");
+    });
+
     test("keeps the station composer when normalized metadata has no artist", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/composer-fallback.svg";
         const sizedCover =
@@ -5048,8 +5287,8 @@ test.describe("the deployed player page", () => {
             await expect(oldImage).toHaveClass(/show/);
 
             await expect.poll(() => newResolverRequested).toBe(true);
-            await expect(page.locator("#stage .info")).toHaveClass(/metadata-pending/);
-            await expect(page.locator("#stage .info")).not.toBeVisible();
+            await expect(page.locator("#stage .info")).toBeVisible();
+            await expect(page.locator("#info-title")).toContainText("New Boundary Movie");
             await expect(oldImage).not.toHaveClass(/show/);
             await expect(oldImage).toHaveAttribute("src", oldBackdrop);
             expect(queueRequests).toBe(2);

@@ -136,31 +136,33 @@
             <div class="options-overlay spectrum-options" id="spectrum-options" role="dialog"
                  aria-label="Audio visualization settings" hidden></div>
             <div class="info metadata-pending" aria-hidden="true" inert>
-                <div class="t" id="info-title">
-                    <button type="button" class="info-album-toggle" id="info-album-toggle" aria-pressed="false" disabled>
-                        <span class="media-logo" id="media-logo" aria-hidden="true"></span>
-                        <span class="info-album-slot"><span class="info-album" id="info-album">Loading…</span></span>
-                    </button>
-                    <span class="info-title-separator" id="info-title-separator"></span>
-                    <span class="info-track" id="info-track"></span>
-                </div>
-                <div class="a" id="info-artist"></div>
-                <p class="backchannel-status" id="backchannel-status" role="status"
-                   aria-live="polite" aria-hidden="true"></p>
-                <form class="backchannel-pairing" id="backchannel-pairing"
-                      aria-hidden="true" inert>
-                    <label for="backchannel-code" id="backchannel-code-label">
-                        Codex pairing code
-                    </label>
-                    <div class="backchannel-pairing-row">
-                        <input id="backchannel-code" type="text" inputmode="text"
-                               autocomplete="off" autocapitalize="characters" spellcheck="false"
-                               maxlength="14" placeholder="XXXX-XXXX-XXXX">
-                        <button type="submit">Send</button>
-                        <button type="button" id="backchannel-cancel">Cancel</button>
+                <div class="info-content" id="info-content">
+                    <div class="t" id="info-title">
+                        <button type="button" class="info-album-toggle" id="info-album-toggle" aria-pressed="false" disabled>
+                            <span class="media-logo" id="media-logo" aria-hidden="true"></span>
+                            <span class="info-album-slot"><span class="info-album" id="info-album">Loading…</span></span>
+                        </button>
+                        <span class="info-title-separator" id="info-title-separator"></span>
+                        <span class="info-track" id="info-track"></span>
                     </div>
-                </form>
-                <div class="countdown hidden" id="countdown" aria-hidden="true"></div>
+                    <div class="a" id="info-artist"></div>
+                    <p class="backchannel-status" id="backchannel-status" role="status"
+                       aria-live="polite" aria-hidden="true"></p>
+                    <form class="backchannel-pairing" id="backchannel-pairing"
+                          aria-hidden="true" inert>
+                        <label for="backchannel-code" id="backchannel-code-label">
+                            Codex pairing code
+                        </label>
+                        <div class="backchannel-pairing-row">
+                            <input id="backchannel-code" type="text" inputmode="text"
+                                   autocomplete="off" autocapitalize="characters" spellcheck="false"
+                                   maxlength="14" placeholder="XXXX-XXXX-XXXX">
+                            <button type="submit">Send</button>
+                            <button type="button" id="backchannel-cancel">Cancel</button>
+                        </div>
+                    </form>
+                    <div class="countdown hidden" id="countdown" aria-hidden="true"></div>
+                </div>
             </div>
             <button class="stage-button stage-audio" id="stage-audio" type="button" title="Play audio"
                     aria-label="Play audio" aria-pressed="false">▶</button>

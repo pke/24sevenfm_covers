@@ -82,6 +82,31 @@ the extra display latency outweighs centralizing this small, deterministic rule.
 
 ## Cache and orientation rules
 
+### Web presentation amendment (2026-09-14)
+
+The web player now displays validated station fields while the resolver is pending,
+or canonical queue metadata immediately when available. This supersedes the web
+panel's resolver gate above; the native `InfoPresentation` gate remains unchanged.
+Waiting for the API left the entire panel absent, and clearing outgoing text made
+the width calculation collapse it to an empty placeholder before the final title.
+
+The web panel therefore keeps its glass and outgoing dimensions during a text-only
+exit fade. It inserts the replacement text before measuring and animating width and
+height, without an empty intermediate frame. The initial title is measured before
+the panel's first reveal. Later canonical metadata replaces the provisional text
+through the same fade; accepted canonical fields are never downgraded by a retry.
+Logo opacity and compact layout still settle independently as specified in ADR 0009.
+
+Current and queued requests share both completed results and in-flight lookups under
+the full existing cache identity. A consumer's cancellation only aborts the network
+request when no consumer remains. This also applies to metadata-only stations.
+Prepared results may be promoted from retained queue entries after a skipped item,
+with track, cover and response-configuration checks. Surrounding station whitespace
+is trimmed consistently in current and queued identity. An absent or different
+queued artist remains provisional and requires authoritative artist revalidation.
+
+### Shared cache rules
+
 - Queue prefetch may populate canonical metadata before a track becomes current.
   A matching prefetched value may therefore be installed immediately at handoff.
 - Metadata cache identity starts with the raw Album, Track and Artist plus the

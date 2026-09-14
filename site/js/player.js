@@ -750,6 +750,7 @@ var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-err
 var backdropRetryEl = $("backdrop-retry");
 var audioEl = $("audio");
 var infoEl = document.querySelector(".info");
+var infoContentEl = $("info-content");
 var infoTitleEl = $("info-title"), infoAlbumEl = $("info-album"), infoTrackEl = $("info-track");
 var infoTitleSeparatorEl = $("info-title-separator");
 var infoAlbumToggleEl = $("info-album-toggle");
@@ -826,7 +827,7 @@ function titleLogoCanvas(img, url) {
 
 function retireMediaLogo(token) {
     clearTimeout(mediaLogoClearTimer);
-    infoEl.classList.remove("has-media-logo");
+    infoEl.classList.remove("has-media-logo", "media-logo-settled");
     sizeStage();
     var fade = reducedMotion.matches ? 0
         : cssTimeMs(getComputedStyle(infoEl).getPropertyValue("--backdrop-fade-duration"));
@@ -834,6 +835,32 @@ function retireMediaLogo(token) {
         if (token === mediaLogoGeneration) mediaLogoEl.replaceChildren();
         mediaLogoClearTimer = null;
     }, mediaLogoEl.childElementCount ? fade : 0);
+}
+
+function settleMediaLogoLayout(token, epoch) {
+    // Keep the outgoing text's full row and width through the actual opacity
+    // transition, including CSS's shortened transition after a rapid reversal.
+    // A cancelled fade or an obsolete provider/track result cannot compact it.
+    var fades = mediaLogoEl.getAnimations({ subtree: true }).filter(function (animation) {
+        return animation.transitionProperty === "opacity";
+    });
+    function finish() {
+        if (token !== mediaLogoGeneration || epoch !== infoHandoffGeneration
+                || !renderIsCurrent("backdrop", mediaLogoBackdropGeneration)
+                || !infoEl.classList.contains("has-media-logo")) return;
+        if (mediaLogoEl.getAnimations({ subtree: true }).some(function (animation) {
+            return animation.transitionProperty === "opacity" && animation.playState === "running";
+        })) {
+            settleMediaLogoLayout(token, epoch); // a changed duration replaced the fade
+            return;
+        }
+        if (Number(getComputedStyle(mediaLogoEl).opacity) < 1) return;
+        infoEl.classList.add("media-logo-settled");
+        sizeStage();
+    }
+    // Enabling reduced motion can cancel a fade while immediately revealing its
+    // final pixels. That still settles the layout; a cancelled toggle fails the guards.
+    Promise.all(fades.map(function (animation) { return animation.finished; })).then(finish, finish);
 }
 
 function showPreparedMediaLogo(canvas, token, epoch) {
@@ -851,6 +878,7 @@ function showPreparedMediaLogo(canvas, token, epoch) {
             if (token === mediaLogoGeneration) {
                 infoEl.classList.add("has-media-logo");
                 sizeStage();
+                settleMediaLogoLayout(token, epoch);
             }
         });
         return;
@@ -871,6 +899,7 @@ function showPreparedMediaLogo(canvas, token, epoch) {
         canvas.classList.remove("media-logo-entering");
         infoTitleEl.title = infoAlbumEl.textContent;
         sizeStage();
+        settleMediaLogoLayout(token, epoch);
         var fade = cssTimeMs(getComputedStyle(infoEl)
             .getPropertyValue("--backdrop-fade-duration"));
         mediaLogoClearTimer = setTimeout(function () {
@@ -964,7 +993,14 @@ function renderCurrentInfo() {
 }
 
 function revealCurrentInfo() {
+    var initial = infoEl.classList.contains("metadata-pending");
+    if (initial) infoEl.classList.add("info-initial-layout");
     renderCurrentInfo();
+    // Commit real text before measuring. Never measure an empty handoff frame or
+    // animate the first title out of the small Loading placeholder.
+    sizeStage();
+    if (initial) infoEl.getBoundingClientRect();
+    infoEl.classList.remove("info-initial-layout", "info-exiting");
     infoEl.classList.remove("metadata-pending");
     infoEl.setAttribute("aria-hidden", "false");
     infoEl.removeAttribute("inert");
@@ -973,22 +1009,18 @@ function revealCurrentInfo() {
 function finishInfoExit(generation) {
     if (generation !== infoHandoffGeneration) return;
     infoExitTimer = null;
-    // The outgoing text stays mounted until its opacity transition has completed.
-    setInfo("", "", "");
-    if (!currentInfoPending) revealCurrentInfo();
+    if (!currentInfoFallback && !currentInfoMetadata) return; // still waiting for the station feed
+    // Keep the glass and outgoing dimensions throughout the text fade. The feed
+    // already supplies usable text even when canonical metadata is still loading.
+    revealCurrentInfo();
 }
 
-function beginCurrentInfoResolution(fallback) {
-    setMediaLogo(null);
-    currentInfoFallback = fallback || null;
-    currentInfoMetadata = null;
-    currentInfoPending = true;
-    var generation = ++infoHandoffGeneration;
+function transitionCurrentInfo() {
+    var generation = infoHandoffGeneration;
     clearTimeout(infoExitTimer);
     infoExitTimer = null;
     var alreadyHidden = infoEl.classList.contains("metadata-pending");
-    infoEl.classList.add("metadata-pending");
-    infoEl.setAttribute("aria-hidden", "true");
+    infoEl.classList.add("info-exiting");
     infoEl.setAttribute("inert", "");
     var duration = alreadyHidden || reducedMotion.matches ? 0
         : cssTimeMs(getComputedStyle(infoEl).getPropertyValue("--backdrop-fade-duration"));
@@ -999,16 +1031,28 @@ function beginCurrentInfoResolution(fallback) {
     infoExitTimer = setTimeout(function () { finishInfoExit(generation); }, duration);
 }
 
+function beginCurrentInfoResolution(fallback, preparedMetadata) {
+    setMediaLogo(null);
+    currentInfoFallback = fallback || null;
+    currentInfoMetadata = preparedMetadata || null;
+    currentInfoPending = true;
+    ++infoHandoffGeneration;
+    transitionCurrentInfo();
+}
+
 function updateCurrentInfoFallback(fallback) {
     currentInfoFallback = fallback || null;
-    if (!currentInfoPending && !currentInfoMetadata) renderCurrentInfo();
+    if (!infoExitTimer && !currentInfoMetadata) renderCurrentInfo();
 }
 
 function settleCurrentInfo(metadata) {
     if (metadata) currentInfoMetadata = metadata;
     else if (!currentInfoPending) return false;
     currentInfoPending = false;
-    if (!infoExitTimer) revealCurrentInfo();
+    var lines = infoLinesFor(currentInfoMetadata || currentInfoFallback);
+    if (!infoExitTimer && (infoAlbumEl.textContent !== lines.album || infoTrackEl.textContent !== lines.track
+            || $("info-artist").textContent !== ((currentInfoMetadata || currentInfoFallback || {}).artist || "")))
+        transitionCurrentInfo();
     return !!metadata;
 }
 
@@ -1852,8 +1896,8 @@ async function poll() {
         remAnchor = lengthSec > 0 ? remaining : -1;
         remAnchorAt = Date.now();
 
-        const album = htmlDecode(j.Album);
-        const track = htmlDecode(j.Track), artist = htmlDecode(j.Artist);
+        const album = htmlDecode(j.Album).trim();
+        const track = htmlDecode(j.Track).trim(), artist = htmlDecode(j.Artist).trim();
         // ONE determination drives everything downstream: no trusted CoverLink means
         // a station ID, unregistered track, or rejected off-origin URL.
         // The same flag that swaps the cover for the station logo below also
@@ -1888,7 +1932,7 @@ async function poll() {
             currentAlbum = album; currentTrack = track; currentArtist = artist;
             stationIdActive = isStationId;
             if (metadataChanged) {
-                beginCurrentInfoResolution(rawInfo);
+                beginCurrentInfoResolution(rawInfo, prefetchedArt && prefetchedArt.metadata);
                 // Station IDs are deliberately never sent to /api/media.
                 if (isStationId) settleCurrentInfo(null);
             } else {
@@ -2006,20 +2050,23 @@ function queuedBackdropPrefetch(entry, orientation) {
     return record;
 }
 
-// A queue entry is only safe to promote when it is still the announced next track
+// A queue entry is only safe to promote when its identity matches the playing track
 // and its resolver result belongs to the current provider/rating configuration.
 // Artist deliberately is not part of the identity check: the queue credit can be
 // absent or provisional, while now-playing supplies the authoritative credit. Show
 // the prepared result immediately, then let the regular resolver revalidate it.
 function prefetchedArtForNowPlaying(album, track, coverUrl) {
-    var entry = nextTrack;
     var orientation = backdropOrientationForStage();
-    var prefetched = queuedBackdropPrefetch(entry, orientation);
-    if (!entry || entry.album !== album || entry.track !== track
-            || (entry.coverUrl && coverUrl && entry.coverUrl !== coverUrl)
-            || !prefetched)
-        return undefined;
-    return prefetched.art;
+    // The station can skip an announced entry. All retained queue results are
+    // eligible, but only with matching track, cover and current response options.
+    var entries = [nextTrack].concat(queuedTracks, Object.values(queuedTrackStore));
+    for (var entry of entries) {
+        if (!entry || entry.album !== album || entry.track !== track
+                || (entry.coverUrl && coverUrl && entry.coverUrl !== coverUrl)) continue;
+        var prefetched = queuedBackdropPrefetch(entry, orientation);
+        if (prefetched) return prefetched.art;
+    }
+    return undefined;
 }
 
 function queuedTrackNeedsPrefetch(entry) {
@@ -2289,6 +2336,7 @@ var backdropImageRetryTimer = null;
 var backdropResolverRetryTimer = null;
 function newMovieCache() { return Object.create(null); }
 var movieCaches = Object.create(null);
+var movieRequests = new WeakMap();
 var backdropRequest = null;
 
 function backdropOrientationForStage(viewport) {
@@ -2800,7 +2848,8 @@ function requestBackdrop(cacheMode, prefetchedArt, resolverRetryFailures) {
             kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT)
         };
         backdropRequest = request;
-        serverMovieArt(currentAlbum, currentTrack, currentArtist, ["tmdb"], false, false,
+        if (prefetchedArt && prefetchedArt.metadata) applyResolvedMetadata(prefetchedArt.metadata);
+        movieArtFor(currentAlbum, currentTrack, currentArtist, generation,
             ctl.signal, cacheMode).then(function (result) {
                 if (renderIsCurrent("backdrop", generation))
                     applyResolvedMetadata(result && result.metadata);
@@ -2861,11 +2910,47 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode) 
     // composer-credit match or disambiguate multiple exact TV titles, so the
     // authoritative current-playing artist always receives its own resolver lookup.
 
-    const art = await serverMovieArt(album, track, artist, requestedProviders,
-        includeArt, includeRatings, signal, cacheMode, viewport);
+    // Current and queue consumers share an in-flight request as well as completed
+    // results. Cancelling a superseded queue must not cancel its promoted consumer.
+    var pending = movieRequests.get(cache);
+    if (!pending) movieRequests.set(cache, pending = new Map());
+    var request = cacheMode !== "reload" && pending.get(cacheKey);
+    if (!request || request.ctl.signal.aborted) {
+        request = { ctl: new AbortController(), consumers: new Set(), settled: false };
+        const owned = request;
+        request.promise = serverMovieArt(album, track, artist, requestedProviders,
+            includeArt, includeRatings, request.ctl.signal, cacheMode, viewport).then(function (art) {
+                if (!owned.ctl.signal.aborted && pending.get(cacheKey) === owned) cache[cacheKey] = art;
+                return art;
+            }).finally(function () {
+                owned.settled = true;
+                if (pending.get(cacheKey) === owned) pending.delete(cacheKey);
+            });
+        pending.set(cacheKey, request);
+    }
+    const art = await consumeMovieRequest(request, signal);
     if (generation !== null && !renderIsCurrent("backdrop", generation)) return null;
-    cache[cacheKey] = art;
     return art;
+}
+
+function consumeMovieRequest(request, signal) {
+    return new Promise(function (resolve, reject) {
+        var consumer = {};
+        request.consumers.add(consumer);
+        function finish(callback, value) {
+            if (!request.consumers.delete(consumer)) return;
+            if (signal) signal.removeEventListener("abort", abort);
+            callback(value);
+            if (!request.settled && !request.consumers.size) request.ctl.abort();
+        }
+        function abort() { finish(reject, new DOMException("Request cancelled", "AbortError")); }
+        request.promise.then(function (art) { finish(resolve, art); },
+            function (error) { finish(reject, error); });
+        if (signal) {
+            signal.addEventListener("abort", abort, { once: true });
+            if (signal.aborted) abort();
+        }
+    });
 }
 
 async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt,
@@ -2985,7 +3070,7 @@ function applyLayout() {
     stage.classList.toggle("layout-fill", opts.layout !== 1);
     // The countdown lives where each layout wants it - appendChild MOVES the node:
     // the info box's last row in poster, a corner overlay on the cover in fill.
-    if (opts.layout === 1) document.querySelector(".info").appendChild(cdEl);
+    if (opts.layout === 1) infoContentEl.appendChild(cdEl);
     else coverBox.appendChild(cdEl);
     sizeStage();
 }
@@ -2999,7 +3084,7 @@ function sizeInfoWidth(stageWidth) {
         return infoTextMeasure.measureText(text === undefined ? element.textContent : text).width;
     }
     var contentWidth = Math.max(width(infoTrackEl), width($("info-artist")));
-    if (!infoEl.classList.contains("has-media-logo")) contentWidth = Math.max(contentWidth, width(infoAlbumEl));
+    if (!infoEl.classList.contains("media-logo-settled")) contentWidth = Math.max(contentWidth, width(infoAlbumEl));
     if (remainingTimeMode() && currentRemaining() >= 0)
         contentWidth = Math.max(contentWidth, width(cdEl, fmt(currentRemaining())));
     if (backchannelPairingEl && backchannelPairingEl.classList.contains("show"))
@@ -3007,8 +3092,24 @@ function sizeInfoWidth(stageWidth) {
     var style = getComputedStyle(infoEl);
     var padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
         + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
-    var panelWidth = Math.ceil(Math.min(stageWidth * .86, Math.max(40, contentWidth) + padding + 2));
+    var panelWidth = Math.min(stageWidth * .86, Math.ceil(Math.max(40, contentWidth) + padding + 2));
+    // Measure the inserted content at its destination width before changing the
+    // glass. The temporary child width is restored in this task, never painted.
+    var previousWidth = infoContentEl.style.width;
+    infoContentEl.style.width = Math.max(0, panelWidth - padding) + "px";
+    var panelHeight = infoContentEl.getBoundingClientRect().height
+        + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+        + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    infoContentEl.style.width = previousWidth;
     infoEl.style.setProperty("--info-panel-width", panelWidth + "px");
+    // Countdown and logo rows already animate their intrinsic height. Follow that
+    // motion directly instead of adding a second, delayed height animation to it.
+    var rowSizeAnimating = infoContentEl.getAnimations({ subtree: true }).some(function (animation) {
+        return ["height", "max-height", "grid-template-rows", "margin-top"].includes(animation.transitionProperty)
+            && (animation.playState === "running" || animation.playState === "paused");
+    });
+    if (rowSizeAnimating) infoEl.style.removeProperty("--info-panel-height");
+    else infoEl.style.setProperty("--info-panel-height", panelHeight + "px");
 }
 function sizeStage() {
     var r = stage.getBoundingClientRect();
@@ -3037,7 +3138,7 @@ function sizeStage() {
     var cdFrac = { small: 0.048, medium: 0.062, large: 0.08 }[
         opts.remainingTime.options.size];
     stage.style.setProperty("--cd-size", Math.max(12, baseSide * cdFrac) + "px");
-    sizeInfoWidth(r.width);
+    sizeInfoWidth(stage.clientWidth);
     var side = baseSide;
     if (opts.layout === 1 && portraitStage) {
         var infoHeightForFit = infoEl.getBoundingClientRect().height;
@@ -3077,6 +3178,7 @@ if (window.ResizeObserver) {
     var layoutObserver = new ResizeObserver(sizeStage);
     layoutObserver.observe(stage);
     layoutObserver.observe(document.querySelector(".info"));
+    layoutObserver.observe(infoContentEl);
 }
 // A monitor/DPI change can alter physical pixels without changing CSS geometry.
 var backdropPixelRatioQuery;
