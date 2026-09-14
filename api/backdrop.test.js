@@ -5609,6 +5609,64 @@ test("uses provider order to break an otherwise ambiguous exact title", async ()
     assert.equal(tmdbRequests, 0);
 });
 
+test("continues past an exact screen title without art to an exact game with art", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 329779, media_type: "movie", title: "Chrome",
+                backdrop_path: null, poster_path: null,
+            }] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [] });
+            if (parsed.pathname.endsWith("/search/autocomplete/Chrome")) {
+                return response(200, { success: true, data: [{
+                    id: 11644, name: "Chrome", verified: true,
+                }] });
+            }
+            if (parsed.pathname.endsWith("/grids/game/11644")) return response(200, {
+                success: true,
+                data: [{
+                    score: 10, upvotes: 20, width: 600, height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/chrome.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/chrome.jpg",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [240, 255, 255],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Chrome",
+        track: "Source Of Power",
+        artist: "Pawel Blaszczak",
+        providers: "tmdb,steamgriddb",
+        ...viewportQuery("portrait"),
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 11644, title: "Chrome", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/grid/chrome.png",
+        source: "steamgriddb",
+        tint: [240, 255, 255],
+        metadata: {
+            album: "Chrome",
+            track: "Source Of Power",
+            artist: "Pawel Blaszczak",
+        },
+    });
+    assert.deepEqual(requests, [
+        "/3/search/person",
+        "/3/search/multi",
+        "/api/v2/search/autocomplete/Chrome",
+        "/api/v2/grids/game/11644",
+    ]);
+});
+
 test("prefers an exact game match over a partial screen-catalog result", async () => {
     const handler = createHandler({
         env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },

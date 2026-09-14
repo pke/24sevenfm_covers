@@ -2145,9 +2145,11 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 clientKey, dependencies.env, artOrientation, prefer4k) : null;
             if (art) return resolvedArtResponse(media, art, dependencies,
                 certifications, ratingCountries);
-            matchedWithoutArt = matchedWithoutArt || media;
-            matchedCertifications = await certifications;
-            break;
+            if (!matchedWithoutArt) {
+                matchedWithoutArt = media;
+                matchedCertifications = await certifications;
+            }
+            continue;
         } else {
             let match;
             try {
@@ -2191,8 +2193,11 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     url: gameArt.url, preview: gameArt.preview, source: "steamgriddb",
                 }, dependencies, Promise.resolve([]), ratingCountries);
             }
-            matchedWithoutArt = matchedWithoutArt || media;
-            break;
+            if (!matchedWithoutArt) {
+                matchedWithoutArt = media;
+                matchedCertifications = [];
+            }
+            continue;
         }
     }
 
