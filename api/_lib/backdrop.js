@@ -250,6 +250,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Symphony Ys",
+        track: "Chapter 2: Palace Of Destruction, Beat Of Terror, The Morning",
+        artist: "Sound Team JDK",
+        title: "Ys I: Ancient Ys Vanished",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Alpha Centauri",
         artist: "George Christopoulos",
         suppress: true,
@@ -2016,7 +2023,6 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
     }
 
     const errors = [];
-    let screenFallback = null;
     let matchedWithoutArt = null;
     let matchedCertifications = [];
     for (const category of categories) {
@@ -2132,10 +2138,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                 if (!successfulTitleLookup) errors.push(...titleErrors);
                 continue;
             }
-            if (!match.exact) {
-                screenFallback = match.media;
-                continue;
-            }
+            if (!match.exact) continue;
             const media = screenMediaResponse(match.media, matchedQuery);
             const certifications = ratingCountries.length
                 ? screenCertifications(dependencies.fetchImpl, match.media, ratingCountries,
@@ -2201,19 +2204,6 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
         }
     }
 
-    if (screenFallback) {
-        const media = screenMediaResponse(screenFallback, query);
-        const certifications = ratingCountries.length
-            ? screenCertifications(dependencies.fetchImpl, screenFallback, ratingCountries,
-                dependencies.env).catch(() => [])
-            : Promise.resolve([]);
-        const art = includeArt ? await screenArt(dependencies.fetchImpl, screenFallback, providers,
-            clientKey, dependencies.env, artOrientation, prefer4k) : null;
-        if (art) return resolvedArtResponse(media, art, dependencies,
-            certifications, ratingCountries);
-        matchedWithoutArt = matchedWithoutArt || media;
-        matchedCertifications = await certifications;
-    }
     if (!matchedWithoutArt && errors.length) throw errors[0];
     return withCertifications({
         media: matchedWithoutArt,

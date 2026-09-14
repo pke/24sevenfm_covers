@@ -4287,6 +4287,60 @@ test("resolves the Hyrule Symphony album to Ocarina of Time portrait art", async
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves the second Symphony Ys movement to Ys I", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname.endsWith(
+                "/search/autocomplete/Ys%20I%3A%20Ancient%20Ys%20Vanished")) {
+                return response(200, { success: true, data: [{
+                    id: 2353, name: "Ys I: Ancient Ys Vanished", verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/grids/game/2353") return response(200, {
+                success: true,
+                data: [{
+                    score: 10, width: 600, height: 900,
+                    url: "https://cdn2.steamgriddb.com/grid/ys-i.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/ys-i.png",
+                }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [255, 216, 182],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Symphony Ys",
+        track: "Chapter 2: Palace Of Destruction, Beat Of Terror, The Morning",
+        artist: "Sound Team JDK",
+        providers: "fanart,tmdb,steamgriddb,tvmaze",
+        ratings: "DE,US",
+        ...viewportQuery("portrait"),
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 2353, title: "Ys I: Ancient Ys Vanished", type: "game" },
+        backdrop: "https://cdn2.steamgriddb.com/grid/ys-i.png",
+        source: "steamgriddb",
+        tint: [255, 216, 182],
+        certifications: [],
+        metadata: {
+            album: "Symphony Ys",
+            track: "Chapter 2: Palace Of Destruction, Beat Of Terror, The Morning",
+            artist: "Sound Team JDK",
+        },
+    });
+    assert.deepEqual(requests, [
+        "/api/v2/search/autocomplete/Ys%20I%3A%20Ancient%20Ys%20Vanished",
+        "/api/v2/grids/game/2353",
+    ]);
+});
+
 test("does not resolve George Christopoulos' Alpha Centauri album as screen media or a game",
     async () => {
         let requests = 0;
@@ -5696,6 +5750,32 @@ test("prefers an exact game match over a partial screen-catalog result", async (
         backdrop: "https://cdn2.steamgriddb.com/hero/hades.jpg",
         source: "steamgriddb",
         tint: [4, 5, 6],
+    });
+});
+
+test("rejects an unverified fuzzy screen result for an unmarked title", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            assert.equal(parsed.pathname, "/3/search/multi");
+            return response(200, { results: [{
+                id: 760126, media_type: "movie",
+                title: "Beethoven’s Ninth: Symphony for the World",
+                backdrop_path: "/beethoven.jpg",
+            }] });
+        },
+        tintForImage: async () => { throw new Error("must not resolve tint"); },
+    });
+    const res = mockResponse();
+    await handler(mockRequest({ title: "Symphony Ys", providers: "tmdb" }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: null,
+        backdrop: null,
+        source: null,
+        tint: [255, 255, 255],
     });
 });
 
