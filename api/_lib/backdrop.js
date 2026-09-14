@@ -285,6 +285,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         suppress: true,
     }),
     Object.freeze({
+        album: "Middle Earth",
+        artist: "David Arkenstone",
+        suppress: true,
+    }),
+    Object.freeze({
         album: "Stellaris: Utopia",
         title: "Stellaris",
         hint: "game",

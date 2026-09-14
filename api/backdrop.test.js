@@ -4573,6 +4573,37 @@ test("does not resolve E.S. Posthumus' Unearthed album as the unrelated TV serie
         assert.equal(requests, 0);
     });
 
+test("does not resolve David Arkenstone's Middle Earth album as screen media or a game",
+    async () => {
+        let requests = 0;
+        const handler = createHandler({
+            env: {},
+            fetchImpl: async () => {
+                requests++;
+                throw new Error("must not query a media provider");
+            },
+            tintForImage: async () => { throw new Error("must not resolve tint"); },
+        });
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Middle Earth",
+            track: "The Quest",
+            artist: "David Arkenstone",
+            providers: "fanart,tmdb,tvmaze,steamgriddb",
+            ratings: "DE,US",
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: null,
+            backdrop: null,
+            source: null,
+            tint: [255, 255, 255],
+            certifications: [],
+        });
+        assert.equal(requests, 0);
+    });
+
 test("resolves the Enderal soundtrack to Enderal: Forgotten Stories", async () => {
     const requests = [];
     const handler = createHandler({
