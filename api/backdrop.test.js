@@ -2830,6 +2830,60 @@ test("uses exact track titles for Film Music anthology suffixes", () => {
     assert.deepEqual(backdropTitleCandidatesFor(album, track), [track]);
 });
 
+test("resolves a Film Music Collection cue through its exact work prefix", async () => {
+    const queries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [{
+                    id: 122, name: "Annette Focks", known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/tv/35945/aggregate_credits") {
+                return response(200, { crew: [{
+                    id: 122, jobs: [{ job: "Original Music Composer" }],
+                }] });
+            }
+            assert.equal(parsed.pathname, "/3/search/multi");
+            const query = parsed.searchParams.get("query");
+            queries.push(query);
+            return response(200, { results: [{
+                id: 35945, media_type: "tv", name: "Die Kirschenkönigin",
+                backdrop_path: "/die-kirschenkoenigin.jpg",
+            }] });
+        },
+        tintForImage: async () => [255, 249, 240],
+    });
+    const album = "Film Music Collection Vol. 1";
+    const track = "Die Kirschenkonigin - Die Befreiung";
+    assert.equal(mediaHintForAlbum(album), "screen");
+    assert.deepEqual(backdropTitleCandidatesFor(album, track), ["Die Kirschenkonigin"]);
+
+    const res = mockResponse();
+    await handler(mockRequest({
+        album,
+        track,
+        artist: "Annette Focks",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(queries, ["Die Kirschenkonigin"]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 35945, title: "Die Kirschenkönigin", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/die-kirschenkoenigin.jpg",
+        source: "tmdb",
+        tint: [255, 249, 240],
+        metadata: {
+            album,
+            track,
+            artist: "Annette Focks",
+        },
+    });
+});
+
 test("uses a quoted From credit as the track's screen work", () => {
     const album = "Imitation Games";
     const track = 'Redeeming Love Theme (From "Redeeming Love")';

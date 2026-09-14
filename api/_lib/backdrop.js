@@ -550,6 +550,7 @@ function isTrackTitledScreenCompilation(title) {
     // work title and use the same strict provider match.
     return /\bthemes?\s+from\b/i.test(title)
         || /\bmusic\s+for\s+films?\s*$/i.test(title)
+        || /^film music collection(?:\s*,?\s*vol(?:ume)?\.?\s*(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten))?$/i.test(title)
         || isExactTrackTitledScreenCompilation(title);
 }
 
