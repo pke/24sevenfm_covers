@@ -196,6 +196,23 @@ fallback. Source and provider notices live in `THIRD_PARTY_NOTICES.md`.
 
 ### Settings and UI
 
+The shared `comingNext` option defaults off and is independent of the remaining-time
+overlay, layout and artwork settings. In the last ten seconds of known playback
+time, all three hosts show a top-right “Coming next” card with the first valid
+queued album and artist, matching the web player. Fill mode keeps it below the
+countdown badge when that badge is enabled. Long lines are ellipsized.
+
+The card uses the existing queue snapshot and prefetched canonical metadata; it
+does not introduce an endpoint or change API/cache identity when toggled. Raw feed
+text remains a fallback while enrichment is pending. Queue reordering, authoritative
+empty responses, playback boundaries and stale epochs cannot announce an old item.
+An omitted queue snapshot during current-track refresh preserves the existing queue.
+The card slides in from beyond the right stage edge and slides back out while
+fading, using the web player's 250 ms CSS `ease` curve for both motion and opacity.
+Content replacements and hiding retain outgoing text until its exit completes;
+Windows' reduced-motion preference bypasses both animations. INI and foobar GUID storage
+persist the same boolean through the shared settings schema.
+
 The shared options page owns backdrop, age-rating country, hide-cover and ordered
 provider controls. Selecting a provider fades a detail surface in below the native
 checkbox list view with its clickable site link and applicable attribution. fanart.tv's
