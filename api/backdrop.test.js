@@ -4821,30 +4821,38 @@ test("does not resolve George Christopoulos' Alpha Centauri album as screen medi
     async () => {
         let requests = 0;
         const handler = createHandler({
-            env: {},
+            env: {
+                TMDB_API_KEY: "tmdb-key",
+                FANART_API_KEY: "fanart-key",
+                STEAMGRIDDB_API_KEY: "steamgriddb-key",
+            },
             fetchImpl: async () => {
                 requests++;
                 throw new Error("must not query a media provider");
             },
             tintForImage: async () => { throw new Error("must not resolve tint"); },
         });
-        const res = mockResponse();
-        await handler(mockRequest({
-            album: "Alpha Centauri",
-            track: "Alpha Centauri",
-            artist: "George Christopoulos",
-            providers: "fanart,tmdb,tvmaze,steamgriddb",
-            ratings: "US",
-        }), res);
+        for (const metadata of [
+            { track: "Alpha Centauri", artist: "George Christopoulos" },
+            { track: "Quantum State", artist: "" },
+        ]) {
+            const res = mockResponse();
+            await handler(mockRequest({
+                album: "Alpha Centauri",
+                ...metadata,
+                providers: "tmdb,fanart,steamgriddb,tvmaze",
+                ratings: "US",
+            }), res);
 
-        assert.equal(res.statusCode, 200);
-        assert.deepEqual(JSON.parse(res.body), {
-            media: null,
-            backdrop: null,
-            source: null,
-            tint: [255, 255, 255],
-            certifications: [],
-        });
+            assert.equal(res.statusCode, 200);
+            assert.deepEqual(JSON.parse(res.body), {
+                media: null,
+                backdrop: null,
+                source: null,
+                tint: [255, 255, 255],
+                certifications: [],
+            });
+        }
         assert.equal(requests, 0);
     });
 

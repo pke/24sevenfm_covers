@@ -680,8 +680,13 @@ function mainTitleThemeCandidates(album, track) {
 function metadataResolutionFor(album, track, artist) {
     const values = { album, track, artist };
     return METADATA_RESOLUTIONS.find((entry) =>
-        ["album", "track", "artist"].every((field) => !entry[field]
-            || normalizedTitle(entry[field]) === normalizedTitle(values[field]))) || null;
+        ["album", "track", "artist"].every((field) => {
+            if (!entry[field]) return true;
+            // A missing composer cannot safely disprove a known false positive.
+            // Keep a different supplied composer eligible for normal resolution.
+            if (field === "artist" && entry.suppress && !normalizedTitle(values.artist)) return true;
+            return normalizedTitle(entry[field]) === normalizedTitle(values[field]);
+        })) || null;
 }
 
 function trackPrefixCandidates(track) {
