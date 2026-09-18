@@ -3205,6 +3205,60 @@ test("uses the underlying work as a fallback for rotated soundtrack volumes", as
     });
 });
 
+test("resolves a soundtrack volume with its article after the volume suffix", async () => {
+    const queries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/person") {
+                return response(200, { results: [{
+                    id: 122, name: "Joel McNeely", known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/tv/661/aggregate_credits") {
+                return response(200, { crew: [{
+                    id: 122, jobs: [{ job: "Original Music Composer" }],
+                }] });
+            }
+            assert.equal(parsed.pathname, "/3/search/multi");
+            const query = parsed.searchParams.get("query");
+            queries.push(query);
+            return response(200, { results: query === "The Young Indiana Jones Chronicles" ? [{
+                id: 661,
+                media_type: "tv",
+                name: "The Young Indiana Jones Chronicles",
+                backdrop_path: "/young-indiana-jones.jpg",
+            }] : [] });
+        },
+        tintForImage: async () => [255, 222, 177],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Young Indiana Jones Chronicles, Vol. 1, The",
+        track: "Nocturnal Mission",
+        artist: "Joel McNeely",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(queries.sort(), [
+        "The Young Indiana Jones Chronicles",
+        "The Young Indiana Jones Chronicles, Vol. 1",
+    ]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 661, title: "The Young Indiana Jones Chronicles", type: "tv" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/young-indiana-jones.jpg",
+        source: "tmdb",
+        tint: [255, 222, 177],
+        metadata: {
+            album: "The Young Indiana Jones Chronicles, Vol. 1",
+            track: "Nocturnal Mission",
+            artist: "Joel McNeely",
+        },
+    });
+});
+
 test("resolves a quoted From credit as an exact screen title", async () => {
     const requests = [];
     const handler = createHandler({
