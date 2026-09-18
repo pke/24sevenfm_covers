@@ -6,6 +6,8 @@
 namespace ssc {
 class InfoPresentation {
 public:
+    using TimingFunction = float (*)(float);
+    explicit InfoPresentation(TimingFunction timing = nullptr) : timing_(timing) {}
     const std::wstring& title() const { return title_; }
     const std::wstring& artist() const { return artist_; }
     const std::wstring& album() const { return album_; }
@@ -40,20 +42,22 @@ public:
         if (phase_ == Exiting) {
             const auto elapsed = now - started_;
             if (fadeMs > 0 && elapsed < static_cast<std::uint32_t>(fadeMs))
-                return exitFrom_ * (1.0f - static_cast<float>(elapsed) / fadeMs);
+                return exitFrom_ * (1.0f - interpolate(static_cast<float>(elapsed) / fadeMs));
             title_.clear(); artist_.clear(); album_.clear(); track_.clear(); phase_ = Waiting;
             if (settled_) reveal(now, fadeMs);
         }
         if (phase_ == Entering) {
             const auto elapsed = now - started_;
             if (fadeMs > 0 && elapsed < static_cast<std::uint32_t>(fadeMs))
-                return static_cast<float>(elapsed) / fadeMs;
+                return interpolate(static_cast<float>(elapsed) / fadeMs);
             phase_ = Visible;
         }
         return phase_ == Visible ? 1.0f : 0.0f;
     }
 
 private:
+    float interpolate(float progress) const { return timing_ ? timing_(progress) : progress; }
+    TimingFunction timing_;
     enum Phase { Waiting, Exiting, Entering, Visible } phase_ = Waiting;
     void exit(float alpha, std::uint32_t now, int fadeMs) {
         if (!title_.empty() && alpha > 0.0f && fadeMs > 0) {

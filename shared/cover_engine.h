@@ -28,6 +28,7 @@
 #include "d2d_renderer.h" // d2d::Transition + render/setCover/...
 #include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
 #include "info_presentation.h"
+#include "coming_next.h"
 
 namespace ssc { class CoverMonitor; }
 namespace ssc { struct TrackInfo; }
@@ -45,6 +46,7 @@ public:
     // monitor/media threads use a mutex-protected copy, never this mutable object.
     struct Settings {
         bool showRemaining = false; // show the remaining-time countdown
+        bool comingNext = false;    // show the next queued album in the last ten seconds
         int  remainingSize = 0;     // 0 small, 1 medium, 2 large
         int  transition  = 1;     // 0 none, 1 crossfade, 2 flip-h, 3 flip-v
         bool rollDigits  = false; // animate the countdown (rolling)
@@ -143,10 +145,16 @@ private:
     void startMediaWorker();
     void stopMediaWorker();
     void scheduleMedia(const ssc::TrackInfo& current,
-                       const std::vector<ssc::TrackInfo>& queue, bool forceReload = false);
+                       const std::vector<ssc::TrackInfo>& queue, bool forceReload = false,
+                       bool queueSnapshot = false);
     // Caller holds media_->mutex. Lock order: worker state, then mutex_.
     void scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackInfo& current,
-                             const std::vector<ssc::TrackInfo>& queue, bool forceReload);
+                             const std::vector<ssc::TrackInfo>& queue, bool forceReload,
+                             bool queueSnapshot = false);
+    void setComingNextQueueLocked(MediaWorkerState* state);
+    void publishQueuedMetadata(unsigned long long epoch, const ssc::TrackInfo& track,
+                               const ssc::MediaResult& result);
+    bool updateComingNext(DWORD now);
     void publishMedia(unsigned long long epoch, const std::string& backdropBytes,
                       const std::vector<d2d::RatingBadge>& ratings, bool imageFailed,
                       const ssc::MediaResult* mediaResult = nullptr,
@@ -183,6 +191,8 @@ private:
     int shownStation_ = -1;              // identity belongs to these bytes, not UI settings
     int         nextLen_ = -1;
     ssc::InfoPresentation info_;         // guarded, including animation state
+    ssc::ComingNextPresentation comingNext_; // guarded queue + retained presentation
+    ssc::ComingNextFrame comingNextFrame_;   // UI thread only
     int infoFadeMs_ = 0;                 // coherent settings snapshot for publishers
     std::string pendingBackdropBytes_;
     std::string pendingTitleLogoBytes_, pendingTitleLogoAlbum_;

@@ -71,6 +71,7 @@ private:
         CoverEngine::Settings d; optpanel::read(*this, d);
         const CoverEngine::Settings& s = CoverEngine::instance().settings;
         return d.showRemaining != s.showRemaining || d.remainingSize != s.remainingSize ||
+               d.comingNext != s.comingNext ||
                d.rollDigits != s.rollDigits || d.transition != s.transition ||
                d.fadeMs != s.fadeMs || d.layout != s.layout ||
                d.backdrops != s.backdrops || d.ratings != s.ratings ||

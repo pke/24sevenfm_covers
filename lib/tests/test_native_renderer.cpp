@@ -81,6 +81,36 @@ std::string artwork(UINT width, UINT height, unsigned seed = 0, bool alpha = fal
 }
 }
 
+TEST_CASE("coming next renders in both layouts with ellipsis and optional artist/countdown") {
+    RendererFixture fixture;
+    const std::string cover = artwork(300, 300);
+    d2d::setCover(cover.data(), cover.size(), false);
+    ssc::ComingNextFrame next;
+    next.album = std::wstring(200, L'W') + L" \u00c4\u00d6\u00dc";
+    for (HWND window : {fixture.portrait, fixture.landscape}) {
+        RECT client{};
+        REQUIRE(GetClientRect(window, &client));
+        d2d::resetTarget();
+        for (int layout : {0, 1}) for (int seconds : {-1, 9}) for (float opacity : {0.0f, .5f, 1.0f}) {
+            next.opacity = opacity;
+            next.artist = seconds < 0 ? L"" : L"Composer";
+            d2d::render(window, 1, d2d::Transition::Crossfade, seconds, .08f, false,
+                nullptr, layout, L"Current album", L"Current artist", 1, true, 1, 1, 1,
+                L"Current album", L"Cue", 0, &next);
+            CHECK(d2d::rendererDiagnostics().failedFrames == 0);
+            if (opacity == .5f) {
+                // A half-entered card extends beyond the stage, rather than
+                // fading in at its resting position. Both edges move together.
+                CHECK(d2d::rendererDiagnostics().comingNextRight > client.right);
+                CHECK(d2d::rendererDiagnostics().comingNextLeft < client.right);
+            } else if (opacity == 1.0f) {
+                CHECK(d2d::rendererDiagnostics().comingNextRight < client.right);
+                CHECK(d2d::rendererDiagnostics().comingNextLeft >= 0);
+            }
+        }
+    }
+}
+
 TEST_CASE("native renderer prepares cached artwork across repeated window handoffs") {
     RendererFixture fixture;
     const std::string cover = artwork(1200, 1200);

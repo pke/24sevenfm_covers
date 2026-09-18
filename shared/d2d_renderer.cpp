@@ -356,6 +356,74 @@ IDWriteTextFormat* makeFormat(float size, DWRITE_FONT_WEIGHT weight, bool center
     return fmt;
 }
 
+void drawComingNext(float cw, float ch, float dpi, float top,
+                    const ssc::ComingNextFrame* frame) {
+    if (!frame || frame->opacity <= 0.0f || frame->album.empty()
+            || !g_dwrite || !g_bgBrush || !g_fgBrush) return;
+    const float margin = 11.2f * dpi, padX = 13.6f * dpi, padY = 10.4f * dpi;
+    const float maxWidth = (std::max)(1.0f, cw * .5f - padX * 2);
+    const float albumSize = (std::max)(13.6f * dpi, (std::min)(cw * .02f, 16.8f * dpi));
+    const float sizes[] = {albumSize * .76f, albumSize, albumSize * .9f};
+    const std::wstring lines[] = {L"COMING NEXT", frame->album, frame->artist};
+    IDWriteTextLayout* layouts[3] = {};
+    float width = 0.0f, heights[3] = {};
+    float height = padY * 2;
+    for (int i = 0; i < 3; ++i) {
+        if (lines[i].empty()) continue;
+        IDWriteTextFormat* format = makeFormat(sizes[i],
+            i == 0 ? DWRITE_FONT_WEIGHT_BOLD : i == 1 ? DWRITE_FONT_WEIGHT_SEMI_BOLD
+                                                   : DWRITE_FONT_WEIGHT_NORMAL, false);
+        if (!format) continue;
+        format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        IDWriteInlineObject* ellipsis = nullptr;
+        if (SUCCEEDED(g_dwrite->CreateEllipsisTrimmingSign(format, &ellipsis))) {
+            const DWRITE_TRIMMING trim = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+            format->SetTrimming(&trim, ellipsis);
+            SafeRelease(ellipsis);
+        }
+        if (SUCCEEDED(g_dwrite->CreateTextLayout(lines[i].c_str(), (UINT32)lines[i].size(),
+                format, maxWidth, sizes[i] * 1.5f, &layouts[i]))) {
+            DWRITE_TEXT_METRICS metrics = {};
+            layouts[i]->GetMetrics(&metrics);
+            width = (std::max)(width, (std::min)(maxWidth, metrics.width));
+            heights[i] = metrics.height + (i == 0 ? 3.0f * dpi : 1.3f * dpi);
+            height += heights[i];
+        }
+        SafeRelease(format);
+    }
+    const float restingLeft = (std::max)(0.0f, cw - margin - width - padX * 2);
+    // Match .coming-next: translateX(calc(100% + .7rem)) -> translateX(0).
+    // The render target clips the outgoing card at the right stage edge.
+    const float offset = (1.0f - frame->opacity) * (cw - restingLeft);
+    const float left = restingLeft + offset, right = cw - margin + offset;
+    const float y = (std::max)(0.0f, (std::min)(top, ch - margin - height));
+    const auto bounds = D2D1::RoundedRect(D2D1::RectF(left, y, right, y + height),
+                                         10.4f * dpi, 10.4f * dpi);
+#ifdef SSC_RENDERER_DIAGNOSTICS
+    g_diagnostics.comingNextLeft = left;
+    g_diagnostics.comingNextRight = right;
+#endif
+    const auto bgColor = g_bgBrush->GetColor(), fgColor = g_fgBrush->GetColor();
+    const float bgOpacity = g_bgBrush->GetOpacity(), fgOpacity = g_fgBrush->GetOpacity();
+    g_bgBrush->SetColor(D2D1::ColorF(0, 0, 0, .62f));
+    g_bgBrush->SetOpacity(frame->opacity);
+    g_rt->FillRoundedRectangle(bounds, g_bgBrush);
+    g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, .16f));
+    g_fgBrush->SetOpacity(frame->opacity);
+    g_rt->DrawRoundedRectangle(bounds, g_fgBrush, dpi);
+    float lineY = y + padY;
+    for (int i = 0; i < 3; ++i) {
+        if (!layouts[i]) continue;
+        g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, i == 0 ? .72f : i == 1 ? 1.0f : .82f));
+        g_rt->DrawTextLayout(D2D1::Point2F(left + padX, lineY), layouts[i], g_fgBrush,
+                             D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        lineY += heights[i];
+        SafeRelease(layouts[i]);
+    }
+    g_bgBrush->SetColor(bgColor); g_bgBrush->SetOpacity(bgOpacity);
+    g_fgBrush->SetColor(fgColor); g_fgBrush->SetOpacity(fgOpacity);
+}
+
 // Lazily create the offscreen D2D 1.1 device + Gaussian-blur effect (hardware, WARP
 // fallback). Independent of the main HwndRenderTarget's device.
 bool createBlurGen() {
@@ -1031,7 +1099,7 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             int layout, const wchar_t* title, const wchar_t* artist,
             float mediaProgress, bool hideCoverWithBackdrop, float ratingProgress,
             float ratingOpacity, float infoOpacity, const wchar_t* album,
-            const wchar_t* track, int logoFadeMs) {
+            const wchar_t* track, int logoFadeMs, const ssc::ComingNextFrame* comingNext) {
     SSC_TIME(frameTimer, frameMs);
     SSC_COUNT(frames);
     g_albumHitWindow = hwnd;
@@ -1099,6 +1167,11 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     }
     drawRatings((float)cw, (float)ch, ratingProgress, ratingOpacity,
                 windowDpiScale(hwnd));
+    const float dpi = windowDpiScale(hwnd);
+    // Fill mode owns a top-right countdown badge; keep the queue card below it.
+    const float comingNextTop = layout == 0 && remainingSeconds >= 0
+        ? ch * overlayFontFrac * 2.5f + 11.2f * dpi : 11.2f * dpi;
+    drawComingNext((float)cw, (float)ch, dpi, comingNextTop, comingNext);
     const HRESULT hr = g_rt->EndDraw();
     // Recreate on ANY failure, not just D2DERR_RECREATE_TARGET: a target left in a
     // non-recreate error state (e.g. after a bad resize) would otherwise render

@@ -4,6 +4,39 @@
 #include "../../shared/cover_engine.cpp"
 #include "../../shared/rating_assets.h"
 
+TEST_CASE("coming next retains outgoing content, handles rapid queue changes and reduced motion") {
+    ssc::ComingNextPresentation next;
+    next.setQueue("a", L"Album A", L"Artist A");
+    CHECK(next.advance(false, 10, 0, 250).album.empty());
+    CHECK(next.advance(true, -1, 0, 250).album.empty());
+    CHECK(next.advance(true, 11, 0, 250).album.empty());
+    CHECK(next.advance(true, 10, 100, 250).opacity == 0);
+    auto frame = next.advance(true, 9, 225, 250);
+    CHECK(frame.opacity == doctest::Approx(.802403).epsilon(.0001)); // CSS ease halfway in
+    CHECK(frame.album == L"Album A");
+    CHECK(next.advance(true, 0, 350, 250).opacity == 1);
+    frame = next.advance(false, 0, 400, 250);
+    CHECK(frame.opacity == 1);
+    CHECK(frame.album == L"Album A");
+    frame = next.advance(false, 0, 525, 250);
+    CHECK(frame.opacity == doctest::Approx(.197597).epsilon(.0001)); // CSS ease halfway out
+    CHECK(frame.artist == L"Artist A");
+    next.setQueue("b", L"Album B", L"");
+    next.advance(true, 5, 550, 250);
+    next.setQueue("c", L"Album C", L"Artist C");
+    CHECK(next.advance(true, 5, 600, 250).album == L"Album A");
+    frame = next.advance(true, 5, 850, 250);
+    CHECK(frame.album == L"Album C");
+    CHECK(frame.opacity == 0);
+    CHECK(next.advance(true, 4, 1100, 250).opacity == 1);
+    next.setQueue("", L"", L"");
+    CHECK(next.advance(true, 3, 1200, 250).album == L"Album C");
+    CHECK(next.advance(true, 3, 1450, 250).album.empty());
+    next.setQueue("d", L"Album D", L"");
+    CHECK(next.advance(true, 10, 1500, 0).opacity == 1);
+    CHECK(next.advance(false, 10, 1500, 0).album.empty());
+}
+
 // Exercise the production scheduler/publication path without starting network or
 // a GPU window. The real renderer's byte/ratings setters do not require a device.
 struct CoverEngineTestAccess {
@@ -15,6 +48,55 @@ struct CoverEngineTestAccess {
     }
     ~CoverEngineTestAccess() { engine.stopMediaWorker(); }
     CoverEngine::MediaWorkerState& state() { return *engine.media_; }
+    void comingNextQueue() {
+        ssc::TrackInfo current, first, second;
+        current.album = "Current"; first.album = "Crown, The"; second.album = "Next album";
+        first.track = "First cue"; second.track = "Second cue";
+        engine.scheduleMedia(current, {first, second});
+        const auto epoch = state().epoch;
+        const auto frame = [&] { return engine.comingNext_.advance(true, 10, 100, 0); };
+        CHECK(frame().album == L"Crown, The"); // feed fallback does not wait for API/art
+        ssc::MediaResult result; result.album = "The Crown"; result.artist = "Composer";
+        result.hasMetadata = true;
+        engine.publishQueuedMetadata(epoch, first, result);
+        CHECK(frame().album == L"The Crown");
+        CHECK(frame().artist == L"Composer");
+        engine.scheduleMedia(current, {}); // current-only refresh is not an empty queue
+        CHECK(frame().album == L"The Crown");
+        engine.settings.comingNext = true; engine.repaint();
+        CHECK(state().epoch == epoch); // the display switch does not change API/cache identity
+        CHECK(frame().album == L"The Crown");
+        CHECK_FALSE(engine.settings.showRemaining);
+        CHECK_FALSE(engine.haveCover_);
+        engine.setRemaining(5); // native playback clock includes the station's five-second gap
+        engine.updateComingNext(GetTickCount());
+        engine.updateComingNext(GetTickCount() + 250);
+        CHECK(engine.comingNextFrame_.album == L"The Crown");
+        CHECK(engine.comingNextFrame_.opacity == 1);
+
+        // A later row can be cached before a fresh queue moves it to the front.
+        result.album = "Normalized next";
+        cacheMedia(&state(), "prepared", second, state().request, result, "unused pixels");
+        engine.scheduleMedia(current, {second});
+        CHECK(frame().album == L"Normalized next");
+        engine.publishQueuedMetadata(epoch, first, result); // late reordered row
+        CHECK(frame().album == L"Normalized next");
+        engine.scheduleMedia(current, {}, false, true); // authoritative empty response
+        CHECK(frame().album.empty());
+        CHECK(state().queue.empty());
+        engine.publishQueuedMetadata(epoch, second, result);
+        CHECK(frame().album.empty());
+
+        engine.scheduleMedia(current, {first});
+        REQUIRE_FALSE(frame().album.empty());
+        engine.scheduleMedia(second, {}); // playback boundary drops the old announcement
+        engine.publishQueuedMetadata(epoch, first, result);
+        CHECK(frame().album.empty());
+        engine.scheduleMedia(second, {first});
+        engine.stopMediaWorker();
+        engine.publishQueuedMetadata(epoch, first, result);
+        CHECK(frame().album.empty());
+    }
     unsigned long long schedule(const char* album, bool reload = false) {
         ssc::TrackInfo info; info.album = album; info.track = "Cue";
         engine.scheduleMedia(info, std::vector<ssc::TrackInfo>(), reload);
@@ -177,6 +259,12 @@ struct CoverEngineTestAccess {
         };
         REQUIRE(waitFor(2, 0));
         CHECK(downloads == 0); CHECK(resolutions == 2);
+        engine.settings.comingNext = true; engine.repaint();
+        {
+            std::lock_guard<std::mutex> lock(engine.mutex_);
+            const auto frame = engine.comingNext_.advance(true, 10, 100, 0);
+            CHECK(frame.album == L"Queued");
+        }
         engine.settings.titleLogos = true; engine.repaint();
         REQUIRE(waitFor(4, 2));
         CHECK(downloads == 2); CHECK(resolutions == 4);
@@ -567,6 +655,9 @@ struct CoverEngineTestAccess {
     }
 };
 
+TEST_CASE("native coming next consumes queue metadata and rejects empty or stale snapshots") {
+    CoverEngineTestAccess test; test.comingNextQueue();
+}
 TEST_CASE("native resize updates current and queue resolution without downgrading metadata") {
     CoverEngineTestAccess test; test.artworkResize();
 }

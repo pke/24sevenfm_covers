@@ -31,6 +31,8 @@ static const GUID g_guid_fanartkey={0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0x
 static const GUID g_guid_fanartverified={0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x10 } };
 
 static cfg_int cfg_overlay(g_guid_overlay, 0);
+static const GUID g_guid_comingnext = { 0x3a1b2c3d, 0x4e5f, 0x6789, { 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x12 } };
+static cfg_int cfg_comingnext(g_guid_comingnext, 0);
 static cfg_int cfg_size(g_guid_size, 0);
 static cfg_int cfg_roll(g_guid_roll, 0);
 static cfg_int cfg_trans(g_guid_trans, 1);
@@ -75,6 +77,7 @@ struct FoobarStore : ssccfg::ConfigStore {
 private:
     static cfg_int* var(const char* key) {
         if (!std::strcmp(key, "showRemaining")) return &cfg_overlay;
+        if (!std::strcmp(key, "comingNext"))    return &cfg_comingnext;
         if (!std::strcmp(key, "remainingSize")) return &cfg_size;
         if (!std::strcmp(key, "roll"))          return &cfg_roll;
         if (!std::strcmp(key, "transition"))    return &cfg_trans;

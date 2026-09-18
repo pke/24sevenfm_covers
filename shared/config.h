@@ -54,6 +54,7 @@ inline unsigned long long cleanVerificationTime(const std::string& value) {
 // was stored (false = first run, so the viewer can prompt for one).
 inline bool load(CoverEngine::Settings& s, ConfigStore& store) {
     s.showRemaining = store.readInt("showRemaining", 0) != 0;
+    s.comingNext    = store.readInt("comingNext", 0) != 0;
     s.remainingSize = clampInt(store.readInt("remainingSize", 0), 0, 2);
     s.rollDigits    = store.readInt("roll", 0) != 0;
     s.transition    = clampInt(store.readInt("transition", 1), 0, 3);
@@ -85,6 +86,7 @@ inline bool load(CoverEngine::Settings& s, ConfigStore& store) {
 
 inline void save(const CoverEngine::Settings& s, ConfigStore& store) {
     store.writeInt("showRemaining", s.showRemaining ? 1 : 0);
+    store.writeInt("comingNext",    s.comingNext ? 1 : 0);
     store.writeInt("remainingSize", s.remainingSize);
     store.writeInt("roll",          s.rollDigits ? 1 : 0);
     store.writeInt("transition",    s.transition);

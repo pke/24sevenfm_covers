@@ -439,6 +439,7 @@ void init(HWND dlg, const CoverEngine::Settings& s) {
 void setValues(HWND dlg, const CoverEngine::Settings& s) {
     setRadio(dlg, IDC_OPT_LAYOUT, 2, s.layout);
     CheckDlgButton(dlg, IDC_OPT_OVERLAY, s.showRemaining ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(dlg, IDC_OPT_COMINGNEXT, s.comingNext ? BST_CHECKED : BST_UNCHECKED);
     setRadio(dlg, IDC_OPT_SIZE, 3, s.remainingSize);
     CheckDlgButton(dlg, IDC_OPT_ROLL, s.rollDigits ? BST_CHECKED : BST_UNCHECKED);
     setRadio(dlg, IDC_OPT_TRANS, 4, s.transition);
@@ -467,6 +468,7 @@ void setValues(HWND dlg, const CoverEngine::Settings& s) {
 void read(HWND dlg, CoverEngine::Settings& s) {
     s.layout      = getRadio(dlg, IDC_OPT_LAYOUT, 2);
     s.showRemaining = IsDlgButtonChecked(dlg, IDC_OPT_OVERLAY) == BST_CHECKED;
+    s.comingNext = IsDlgButtonChecked(dlg, IDC_OPT_COMINGNEXT) == BST_CHECKED;
     s.remainingSize = getRadio(dlg, IDC_OPT_SIZE, 3);
     s.rollDigits  = IsDlgButtonChecked(dlg, IDC_OPT_ROLL) == BST_CHECKED;
     s.transition  = getRadio(dlg, IDC_OPT_TRANS, 4);

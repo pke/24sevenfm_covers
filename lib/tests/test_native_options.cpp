@@ -9,6 +9,8 @@
 #include "../../shared/options_panel.cpp"
 #include "../../winamp/gen_resource.h"
 #include "../../shared/about_links.h"
+#include "../../shared/config.h"
+#include <map>
 
 namespace {
 struct Dialogs {
@@ -52,6 +54,45 @@ struct Dialogs {
         CoverEngine::Settings values; optpanel::read(options, values); return values.mediaProviders;
     }
 };
+}
+
+TEST_CASE("coming next is independent of the countdown and persists through the shared schema") {
+    Dialogs dialogs;
+    CoverEngine::Settings settings;
+    REQUIRE_FALSE(settings.comingNext);
+    optpanel::setValues(dialogs.options, settings);
+    CHECK(IsWindowEnabled(GetDlgItem(dialogs.options, IDC_OPT_COMINGNEXT)));
+    CHECK(IsDlgButtonChecked(dialogs.options, IDC_OPT_COMINGNEXT) == BST_UNCHECKED);
+    const unsigned clicks = dialogs.clicks;
+    SendDlgItemMessageW(dialogs.options, IDC_OPT_COMINGNEXT, BM_CLICK, 0, 0);
+    CHECK(dialogs.clicks == clicks + 1); // real foobar WTL routing
+    optpanel::read(dialogs.options, settings);
+    CHECK(settings.comingNext);
+    CHECK_FALSE(settings.showRemaining);
+    CHECK_FALSE(settings.backdrops);
+
+    struct Store : ssccfg::ConfigStore {
+        std::map<std::string, int> values;
+        int readInt(const char* key, int fallback) override {
+            auto item = values.find(key); return item == values.end() ? fallback : item->second;
+        }
+        void writeInt(const char* key, int value) override { values[key] = value; }
+        std::string readStr(const char*, const char* fallback) override { return fallback; }
+        void writeStr(const char*, const char*) override {}
+    } store;
+    CoverEngine::Settings loaded;
+    ssccfg::load(loaded, store);
+    CHECK_FALSE(loaded.comingNext); // existing INIs have no key
+    ssccfg::save(settings, store);
+    ssccfg::load(loaded, store);
+    CHECK(loaded.comingNext);
+    optpanel::setValues(dialogs.options, loaded);
+    CHECK(IsDlgButtonChecked(dialogs.options, IDC_OPT_COMINGNEXT) == BST_CHECKED);
+    SendDlgItemMessageW(dialogs.options, IDC_OPT_COMINGNEXT, BM_CLICK, 0, 0);
+    optpanel::read(dialogs.options, loaded);
+    ssccfg::save(loaded, store);
+    ssccfg::load(settings, store);
+    CHECK_FALSE(settings.comingNext);
 }
 
 TEST_CASE("native title-logo option defaults off and follows the backdrop dependency") {

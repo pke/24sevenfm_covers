@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "d2d_transitions.h" // Transition enum
+#include "coming_next.h"
 
 namespace d2d {
 
@@ -20,6 +21,7 @@ struct RendererDiagnostics {
     size_t decodes = 0, blurGenerations = 0, frames = 0, failedFrames = 0;
     size_t cacheHits = 0, cacheEvictions = 0, cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
     double targetMs = 0, imageMs = 0, blurMs = 0, frameMs = 0;
+    float comingNextLeft = 0, comingNextRight = 0;
 };
 RendererDiagnostics rendererDiagnostics();
 void resetRendererDiagnostics();
@@ -104,7 +106,8 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             float mediaProgress = 1.0f, bool hideCoverWithBackdrop = true,
             float ratingProgress = 1.0f, float ratingOpacity = 1.0f,
             float infoOpacity = 1.0f, const wchar_t* album = nullptr,
-            const wchar_t* track = nullptr, int logoFadeMs = 0);
+            const wchar_t* track = nullptr, int logoFadeMs = 0,
+            const ssc::ComingNextFrame* comingNext = nullptr);
 
 } // namespace d2d
 

@@ -9,6 +9,7 @@
 #define IDC_OPT_ROLL     2002
 #define IDC_OPT_FADE     2003
 #define IDC_OPT_FADEVAL  2004
+#define IDC_OPT_COMINGNEXT 2005
 // Radio-button groups: the base id is the first radio, +i for the rest.
 #define IDC_OPT_LAYOUT   2010 // 2 radios: Fill screen, Poster
 #define IDC_OPT_SIZE     2020 // 3 radios: Small, Medium, Large

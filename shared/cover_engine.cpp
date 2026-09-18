@@ -159,7 +159,7 @@ struct CoverEngine::MediaWorkerState {
         ssc::TrackInfo track;
         ssc::MediaRequest request;
         ssc::MediaResult result;
-        std::string key;
+        std::string key, creditHost;
         bool animateBackdrop = true;
         bool backdropPublished = false;
         bool immediateCachedTitleLogo = false;
@@ -339,7 +339,7 @@ void CoverEngine::startMediaWorker() {
                     bool creditOk = false;
                     const std::string artist = state->resolver.resolveCredit(
                         item.track.album, item.track.albumUrl,
-                        ssc::station(0).host, &creditOk, item.cancel.get());
+                        item.creditHost, &creditOk, item.cancel.get());
                     if (item.cancel->load()) continue;
                     if (creditOk && !artist.empty()) item.track.artist = artist;
                 }
@@ -365,6 +365,7 @@ void CoverEngine::startMediaWorker() {
                 }
                 if (haveCached) {
                     if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
+                    else publishQueuedMetadata(item.epoch, item.track, cached.result);
                     prepareTitleLogo(haveCachedFallback
                         && sameResolverConfig(cachedFallback.request, item.request)
                         ? cachedFallback.result : cached.result);
@@ -385,6 +386,7 @@ void CoverEngine::startMediaWorker() {
 
                 const ssc::MediaResult resolved = state->resolver.resolve(item.request, item.cancel.get());
                 if (item.cancel->load()) continue;
+                if (!item.current) publishQueuedMetadata(item.epoch, item.track, resolved);
                 if (resolved.status == ssc::MediaResult::Failure) {
                     // A current-track refinement must not erase an already prepared
                     // queue hit. Failures remain uncached and retry on the feed cadence.
@@ -534,6 +536,7 @@ void CoverEngine::stopMediaWorker() {
             std::lock_guard<std::mutex> publication(mutex_);
             ++activeMediaEpoch_;
             mediaDirty_ = false;
+            comingNext_.setQueue("", L"", L"");
         }
         if (state->cancel) state->cancel->store(true);
         state->work.clear();
@@ -545,15 +548,17 @@ void CoverEngine::stopMediaWorker() {
 }
 
 void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
-                                const std::vector<ssc::TrackInfo>& queue, bool forceReload) {
+                                const std::vector<ssc::TrackInfo>& queue, bool forceReload,
+                                bool queueSnapshot) {
     MediaWorkerState* state = media_;
     if (!state) return;
     std::lock_guard<std::mutex> lock(state->mutex);
-    scheduleMediaLocked(state, current, queue, forceReload);
+    scheduleMediaLocked(state, current, queue, forceReload, queueSnapshot);
 }
 
 void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackInfo& current,
-                                      const std::vector<ssc::TrackInfo>& queue, bool forceReload) {
+                                      const std::vector<ssc::TrackInfo>& queue, bool forceReload,
+                                      bool queueSnapshot) {
     if (state->stopping) return;
     const Settings& snapshot = state->settingsSnapshot;
     ssc::MediaRequest request;
@@ -601,13 +606,14 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             && state->request.includeTitleLogo == request.includeTitleLogo
             && sameResolverConfig(state->request, request);
         if (sameCurrent) {
-            if (queue.empty()) return; // current refresh: keep the existing staggered queue
+            if (queue.empty() && !queueSnapshot) return; // not an authoritative queue response
             state->work.erase(std::remove_if(state->work.begin(), state->work.end(),
                 [](const MediaWorkerState::Work& item) { return !item.current; }), state->work.end());
             // repaint/retry can pass the stored queue itself.
             if (&queue != &state->queue)
                 state->queue.assign(queue.begin(), queue.begin()
                     + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
+            setComingNextQueueLocked(state);
             for (size_t i = 0; i < state->queue.size(); ++i) {
                 if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
                 MediaWorkerState::Work queued;
@@ -615,6 +621,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
                     + std::chrono::milliseconds(ssc::queuePrefetchDelayMs(i));
                 queued.order = ++state->order; queued.epoch = state->epoch;
                 queued.current = false; queued.track = state->queue[i];
+                queued.creditHost = ssc::station(snapshot.station).host;
                 queued.request = request; queued.cancel = state->cancel;
                 state->work.push_back(queued);
             }
@@ -633,6 +640,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             // publisher can finish before this boundary, but never after it.
             std::lock_guard<std::mutex> publication(mutex_);
             epoch = state->epoch = ++activeMediaEpoch_;
+            if (!sameTrackIdentity) comingNext_.setQueue("", L"", L"");
             mediaDirty_ = false; // discard an old result waiting in the UI mailbox
             titleLogoDirty_ = false;
             if (!request.includeTitleLogo || state->current.album != current.album
@@ -656,6 +664,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
                 + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
         state->request = request;
     }
+    setComingNextQueueLocked(state);
 
     // Even with visual media disabled, /api/media canonicalizes Album/Track/Artist
     // without contacting third-party providers. This is the single native source
@@ -670,6 +679,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
     now.due = MediaWorkerState::Clock::now(); now.order = ++state->order;
     now.epoch = epoch; now.current = true; now.reload = forceReload;
     now.track = current; now.request = request; now.cancel = cancel;
+    now.creditHost = ssc::station(snapshot.station).host;
     now.animateBackdrop = animateBackdrop;
     now.immediateCachedTitleLogo = immediateCachedTitleLogo;
     bool logoPrepared = false;
@@ -746,6 +756,56 @@ void CoverEngine::publishRatings(unsigned long long epoch,
         mediaDirty_ = true;
     }
     if (HWND w = hwnd_.load()) PostMessageA(w, SSC_WM_NEWMEDIA, 0, 0);
+}
+
+namespace {
+std::string queuedTrackIdentity(const ssc::TrackInfo& track) {
+    // Credit enrichment can fill artist later; it must not change queue identity.
+    return track.album + "\n" + track.track + "\n" + track.coverUrl + "\n" + track.albumUrl;
+}
+}
+
+void CoverEngine::setComingNextQueueLocked(MediaWorkerState* state) {
+    const ssc::TrackInfo* next = nullptr;
+    for (const auto& track : state->queue) {
+        if (!track.album.empty() && !track.stationIdent) { next = &track; break; }
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!next) { comingNext_.setQueue("", L"", L""); return; }
+    const std::string identity = queuedTrackIdentity(*next);
+    comingNext_.setQueue(identity, toWide(next->album), toWide(next->artist));
+    // A previously prefetched row may have just become first. Text is independent
+    // of artwork orientation/provider settings; reuse it without copying images.
+    const MediaWorkerState::CacheEntry* best = nullptr;
+    for (const auto& item : state->cache) {
+        const auto& entry = item.second;
+        if (queuedTrackIdentity(entry.track) == identity
+                && (next->artist.empty() || next->artist == entry.track.artist)
+                && (!best || entry.used > best->used)) best = &entry;
+    }
+    if (best) comingNext_.resolve(identity, toWide(best->result.album),
+        toWide(best->result.artist), best->result.hasMetadata);
+}
+
+void CoverEngine::publishQueuedMetadata(unsigned long long epoch, const ssc::TrackInfo& track,
+                                        const ssc::MediaResult& result) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!epoch || epoch != activeMediaEpoch_) return;
+        comingNext_.resolve(queuedTrackIdentity(track),
+            toWide(result.album.empty() ? track.album : result.album),
+            toWide(result.artist.empty() ? track.artist : result.artist), result.hasMetadata);
+    }
+    invalidate();
+}
+
+bool CoverEngine::updateComingNext(DWORD now) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto frame = comingNext_.advance(settings.comingNext, currentRemaining(), now,
+        clientAnimationsEnabled() ? 250 : 0);
+    const bool changed = frame != comingNextFrame_;
+    comingNextFrame_ = frame;
+    return changed;
 }
 
 void CoverEngine::publishMetadata(unsigned long long epoch, const ssc::MediaResult& result,
@@ -1031,7 +1091,7 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
     // prefetch metadata, so the clients cannot drift on Album/Track/Artist data.
     std::vector<ssc::TrackInfo> queue;
     if (monitor_ && monitor_->queue(queue)) {
-        scheduleMedia(info, queue);
+        scheduleMedia(info, queue, false, true);
     }
     if (!queue.empty() && !queue[0].coverUrl.empty()) {
         const std::string nextUrl = queue[0].coverUrl;
@@ -1073,6 +1133,7 @@ void CoverEngine::onTitleChanged(const std::string& title) {
         int  swapLen = -1;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            comingNext_.setQueue("", L"", L""); // the announced track is now playing
             if (!nextBytes_.empty()) {
                 coverBytes_.swap(nextBytes_);
                 dirty_ = true;
@@ -1327,6 +1388,7 @@ void CoverEngine::onPaint(HWND h) {
     float infoAlpha = 0.0f;
     const DWORD now = GetTickCount();
     updateRatingVisibility(now);
+    updateComingNext(now);
     const float ratingOpacity = ratingVisibilityAlpha(now);
     const bool poster = settings.layout == 1;
     // The remaining-time overlay is one feature (size + rolling settings) shown in both
@@ -1350,7 +1412,8 @@ void CoverEngine::onPaint(HWND h) {
                 settings.rollDigits && clientAnimationsEnabled(), status,
                 settings.layout, title.c_str(), artist.c_str(), mediaAlpha,
                 settings.hideCoverWithBackdrop, ratingAlpha, ratingOpacity, infoAlpha,
-                album.c_str(), track.c_str(), transitionAnimates() && clientAnimationsEnabled() ? settings.fadeMs : 0);
+                album.c_str(), track.c_str(), transitionAnimates() && clientAnimationsEnabled() ? settings.fadeMs : 0,
+                &comingNextFrame_);
     if (mediaFading_ && mediaFadePending_ && d2d::backdropReady()) {
         mediaFadePending_ = false;
         mediaFadeStart_ = GetTickCount();
@@ -1364,6 +1427,7 @@ void CoverEngine::onPaint(HWND h) {
 void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     if (id != kHeartbeat || h != hwnd_.load()) return;
     updateRatingVisibility(GetTickCount());
+    const bool comingNextChanged = updateComingNext(GetTickCount());
     // Demo auto-advance: when a demo frame's countdown expires, roll to the next cover
     // (which crossfades). Frames with seconds==0 have no countdown, so they stay put.
     if (demoOn_ && demo_.current().seconds > 0 && currentRemaining() == 0) { demoNext(); return; }
@@ -1387,7 +1451,7 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     bool infoAnimating;
     { std::lock_guard<std::mutex> lock(mutex_); infoAnimating = info_.animating(); }
     if (fading_ || mediaFading_ || infoAnimating || ratingFading_ || d2d::titleLogoAnimating()
-            || ratingVisibilityAnimating_ || loading_.load()
+            || ratingVisibilityAnimating_ || comingNextChanged || loading_.load()
             || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);
 }
