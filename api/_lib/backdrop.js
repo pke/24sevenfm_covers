@@ -238,6 +238,12 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "game",
     }),
     Object.freeze({
+        album: "Hand Of Fate II",
+        artist: "Jeff Van Dyck",
+        title: "Hand of Fate 2",
+        hint: "game",
+    }),
+    Object.freeze({
         album: "Fable",
         track: "Fable Theme",
         artist: "Danny Elfman",

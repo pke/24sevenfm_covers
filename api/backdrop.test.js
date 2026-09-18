@@ -4183,6 +4183,74 @@ test("resolves Inon Zur's Crysis soundtrack as the game", async () => {
     assert.equal(requests.some((url) => url.includes("api.themoviedb.org")), false);
 });
 
+test("resolves the Hand of Fate II soundtrack through the provider's numeric title", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", STEAMGRIDDB_API_KEY: "sgdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed);
+            if (parsed.pathname === "/api/v2/search/autocomplete/Hand%20of%20Fate%202") {
+                return response(200, { success: true, data: [{
+                    id: 11291, name: "Hand of Fate 2", verified: true,
+                }] });
+            }
+            if (parsed.pathname === "/api/v2/heroes/game/11291") return response(200, {
+                success: true,
+                data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/hero/hand-of-fate-2.png",
+                    thumb: "https://cdn2.steamgriddb.com/hero_thumb/hand-of-fate-2.png" }],
+            });
+            if (parsed.pathname === "/api/v2/grids/game/11291") return response(200, {
+                success: true,
+                data: [{ score: 10,
+                    url: "https://cdn2.steamgriddb.com/grid/hand-of-fate-2.png",
+                    thumb: "https://cdn2.steamgriddb.com/thumb/hand-of-fate-2.png" }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async (url) => String(url).includes("/thumb/")
+            ? [45, 52, 60] : [65, 56, 48],
+    });
+    const artwork = {
+        landscape: {
+            backdrop: "https://cdn2.steamgriddb.com/hero/hand-of-fate-2.png",
+            tint: [65, 56, 48],
+        },
+        portrait: {
+            backdrop: "https://cdn2.steamgriddb.com/grid/hand-of-fate-2.png",
+            tint: [45, 52, 60],
+        },
+    };
+    for (const orientation of Object.keys(artwork)) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Hand Of Fate II",
+            track: "Kneel And Fray",
+            artist: "Jeff Van Dyck",
+            providers: "fanart,tmdb,steamgriddb,tvmaze",
+            ratings: "DE,US",
+            ...viewportQuery(orientation),
+        }), res);
+
+        assert.equal(res.statusCode, 200);
+        assert.deepEqual(JSON.parse(res.body), {
+            media: { id: 11291, title: "Hand of Fate 2", type: "game" },
+            ...artwork[orientation],
+            source: "steamgriddb",
+            certifications: [],
+            metadata: {
+                album: "Hand Of Fate II",
+                track: "Kneel And Fray",
+                artist: "Jeff Van Dyck",
+            },
+        });
+    }
+    assert.equal(requests.some(({ hostname }) => hostname === "api.themoviedb.org"), false);
+    assert.equal(requests.filter(({ pathname }) =>
+        pathname === "/api/v2/search/autocomplete/Hand%20of%20Fate%202").length, 2);
+});
+
 test("resolves Danny Elfman's Fable theme only through the game provider", async () => {
     const requests = [];
     const handler = createHandler({
