@@ -57,7 +57,7 @@ test("missing 4K art falls back to HD, while portrait still prefers a real poste
     const res = await resolve(portraitDimensions,
         {moviebackground:[artwork(hd)],movie4kbackground:[artwork(uhd)]});
     // A later provider's actual poster still wins over fanart's landscape fallback.
-    assert.equal(res.body.backdrop,"https://image.tmdb.org/t/p/w780/poster.jpg");
+    assert.equal(res.body.backdrop,"https://image.tmdb.org/t/p/original/poster.jpg");
     assert.equal((await resolve({...portraitDimensions,providers:"fanart"},
         {movie4kbackground:[artwork(uhd)]})).body.backdrop,uhd);
 });

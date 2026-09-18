@@ -733,7 +733,7 @@ test("resolves the Inspector Clouseau theme to The Pink Panther Strikes Again", 
         },
         {
             orientation: "portrait",
-            backdrop: "https://image.tmdb.org/t/p/w780/pink-panther-strikes-again-poster.jpg",
+            backdrop: "https://image.tmdb.org/t/p/original/pink-panther-strikes-again-poster.jpg",
         },
     ]) {
         const res = mockResponse();
@@ -1536,7 +1536,7 @@ test("resolves Cinemagic's Fratelli Chase to The Goonies in both orientations", 
     });
     const artwork = {
         landscape: "https://image.tmdb.org/t/p/w1280/the-goonies-backdrop.jpg",
-        portrait: "https://image.tmdb.org/t/p/w780/the-goonies-poster.jpg",
+        portrait: "https://image.tmdb.org/t/p/original/the-goonies-poster.jpg",
     };
     for (const orientation of Object.keys(artwork)) {
         const res = mockResponse();
@@ -2097,7 +2097,7 @@ test("removes a TV volume and chapter range before rotating its title article", 
     ]));
     assert.deepEqual(JSON.parse(res.body), {
         media: { id: 115036, title: "The Book of Boba Fett", type: "tv" },
-        backdrop: "https://image.tmdb.org/t/p/w780/book-of-boba-fett-poster.jpg",
+        backdrop: "https://image.tmdb.org/t/p/original/book-of-boba-fett-poster.jpg",
         source: "tmdb",
         tint: [255, 220, 149],
         certifications: [{
@@ -3405,7 +3405,7 @@ test("resolves a dated Film Music anthology track with an alternate title", asyn
     assert.deepEqual(providerQueries, [track, "The Good, The Bad, And The Ugly"]);
     assert.deepEqual(JSON.parse(res.body), {
         media: { id: 429, title: "The Good, the Bad and the Ugly", type: "movie" },
-        backdrop: "https://image.tmdb.org/t/p/w780/good-bad-ugly-poster.jpg",
+        backdrop: "https://image.tmdb.org/t/p/original/good-bad-ugly-poster.jpg",
         source: "tmdb",
         tint: [255, 234, 154],
         certifications: [{
@@ -6504,7 +6504,7 @@ test("uses TMDB poster_path for a tall viewport", async () => {
 
     assert.deepEqual(JSON.parse(res.body), {
         media: { id: 7, title: "Arrival", type: "movie" },
-        backdrop: "https://image.tmdb.org/t/p/w780/arrival-poster.jpg",
+        backdrop: "https://image.tmdb.org/t/p/original/arrival-poster.jpg",
         source: "tmdb",
         tint: [100, 110, 120],
     });

@@ -1851,9 +1851,13 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
             artwork = await fanartArtwork(fetchImpl, media, clientKey, env,
                 mediaType(media) === "tv" && env.FANART_API_KEY ? await tvdbId() : undefined, prefer4k);
         } else if (provider === "tmdb") {
+            // TMDB's largest resized variants are w1280 (backdrop) and w780
+            // (poster). Above the shared HD threshold, use the uploaded original.
+            // Keep this tied to prefer4k: clients and the metadata cache bucket
+            // artwork by that same resolution class, not every viewport size.
             artwork = {
-                landscape: tmdbImageUrl(media.backdrop_path, "w1280"),
-                portrait: tmdbImageUrl(media.poster_path, "w780"),
+                landscape: tmdbImageUrl(media.backdrop_path, prefer4k ? "original" : "w1280"),
+                portrait: tmdbImageUrl(media.poster_path, prefer4k ? "original" : "w780"),
             };
         } else if (provider === "tvmaze" && mediaType(media) === "tv") {
             artwork = await tvmazeArtwork(fetchImpl, media, await tvdbId());

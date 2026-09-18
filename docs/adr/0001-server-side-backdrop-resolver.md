@@ -124,7 +124,7 @@ Key points:
   mitigation remains the outer layer, and a WAF rate-limit rule covers `/api/*`.
   CORS is not treated as authentication or rate limiting.
 
-### Resolution-aware fanart.tv artwork (2026-09-10)
+### Resolution-aware artwork (2026-09-10; TMDB extended 2026-09-19)
 
 Artwork requests may include `width` and `height`, the current rendering surface's
 dimensions in physical pixels. Both must be integers from 1 through 8192; omitting
@@ -154,6 +154,14 @@ and queue caches separate these variants but do not split entries for every pixe
 of window size. Actual dimensions still travel in the request, so edge cache URLs
 can differ across sizes. Metadata-only requests omit the dimensions, and accepted
 canonical metadata remains independent of artwork resolution (ADR 0008).
+
+TMDB uses the same HD/UHD threshold and existing cache classes. Above that
+threshold, both backdrops and posters use the `original` image URL instead of
+the fixed `w1280` / `w780` variants. Smaller or unspecified viewports keep those
+resized variants. Original means the uploaded source, so it can provide 4K when
+available but does not guarantee that resolution. Provider order and orientation
+selection remain unchanged, and tint extraction still uses the small preview.
+This requires no additional TMDB request. See TMDB's [image URL documentation](https://developer.themoviedb.org/docs/image-basics).
 
 ## Consequences
 
