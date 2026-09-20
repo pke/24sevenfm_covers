@@ -228,16 +228,23 @@ shared options page and provider details stay reachable. Configure and the fulls
 context menu open Winamp's own Options/About dialog; a fullscreen-owned dialog joins
 the topmost band and does not close the presentation or redirect into host settings.
 
-Provider details and Winamp Options/About are child windows. They use the shared
-`child_fade` snapshot surface rather than `AnimateWindow(AW_BLEND)`, which supports
-only top-level windows. The old and new rendered pixels crossfade for 150 ms in an
-ordinary child overlay, with sibling clipping on the real pages as well. Rapid
-selections reuse the current blended pixels; no deferred callback can outlive the
-dialog. Bitmap/DC/timer resources follow the overlay's window lifetime. Reduced
-motion bypasses the fade, and allocation/painting/timer failure still reveals the
-requested page. No layered-child support or manifest changes in the plugin host
-are required. The foobar click map forwards WTL's second argument (control ID), not
-its first (notification code), into the same shared options behavior.
+Provider details are native child windows. Winamp Options/About use a standard
+Windows property sheet: the system owns the tabs, page borders, placement,
+keyboard navigation and immediate page switching. There is no manually positioned
+tab container, snapshot overlay or forced erase/redraw on tab changes. Nested
+dialog pages use the system tab texture through
+`EnableThemeDialogTexture(ETDT_ENABLETAB)`; provider links preserve that background
+instead of filling a separate gray rectangle. The settings still apply live, with
+one Close button, and fullscreen-owned sheets remain above the fullscreen window.
+The scroll host sizes its content to the current client area after Windows has
+updated scrollbar visibility. The media group and its controls preserve their
+right margins by resizing or moving relative to the original resource layout;
+the scrollbar cannot cover the group border or the provider key controls.
+Snapshot crossfades were removed at the user's request:
+they could obscure the nested scroll host and leave the Options page unusable.
+Tab switching has no animation overlay or timer; artwork and announcement
+animations remain independent. The foobar click map forwards WTL's second argument
+(control ID), not its first (notification code), into the same shared options behavior.
 
 The native renderer follows the web player's visible media contract as well:
 

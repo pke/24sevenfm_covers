@@ -41,7 +41,6 @@ add_library(gen_24sevenfm_covers SHARED
     "${SHAREDDIR}/cover_menu.cpp"
     "${SHAREDDIR}/fullscreen_window.cpp"
     "${SHAREDDIR}/options_panel.cpp"
-    "${SHAREDDIR}/child_fade.cpp"
     "${SHAREDDIR}/rating_assets.cpp"
     "${LIBDIR}/coverfetch.cpp"
     "${LIBDIR}/http_client.cpp"
@@ -57,7 +56,7 @@ target_include_directories(gen_24sevenfm_covers PRIVATE
 )
 # winhttp is also pulled in by http_client.cpp's #pragma comment(lib,...); listing it
 # here makes the dependency explicit in the build graph (robust if the pragma changes).
-target_link_libraries(gen_24sevenfm_covers PRIVATE ole32 ws2_32 winhttp d2d1 windowscodecs dwrite)
+target_link_libraries(gen_24sevenfm_covers PRIVATE ole32 ws2_32 winhttp d2d1 windowscodecs dwrite uxtheme)
 set_target_properties(gen_24sevenfm_covers PROPERTIES
     PREFIX ""
     OUTPUT_NAME "gen_24sevenfm_covers"

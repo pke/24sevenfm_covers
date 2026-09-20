@@ -293,7 +293,8 @@ INT_PTR CALLBACK ProviderDetailsProc(HWND details, UINT msg, WPARAM wp, LPARAM l
         SetBkMode((HDC)wp, TRANSPARENT);
         SetTextColor((HDC)wp, state->hoveredLink == (HWND)lp
             ? RGB(51, 51, 255) : RGB(0, 0, 238));
-        return reinterpret_cast<INT_PTR>(GetSysColorBrush(COLOR_3DFACE));
+        // Keep the dialog's own background, including the native tab texture.
+        return reinterpret_cast<INT_PTR>(GetStockObject(NULL_BRUSH));
     }
     if (msg == WM_COMMAND) {
         const int id = LOWORD(wp), code = HIWORD(wp);

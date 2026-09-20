@@ -5,29 +5,26 @@
 // The "Options" tab page is the shared dialog (also used by the foobar2000 plugin).
 #include "../shared/options_page.rc"
 
-// --- Own options dialog. It is also used from the fullscreen popup, where opening
-// Winamp's host preferences would leave fullscreen and hide the relevant settings.
-IDD_CONFIG DIALOGEX 0, 0, 250, 350
-STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTROLPARENT
-CAPTION "24seven.fm Covers"
-FONT 8, "MS Shell Dlg"
-BEGIN
-    CONTROL        "", IDC_TAB, "SysTabControl32", WS_TABSTOP, 7, 7, 236, 316
-    DEFPUSHBUTTON  "Close", IDOK, 193, 329, 50, 14
-END
-
-// Winamp's preferences pane is shorter than the shared options page. Host it in a
-// standard scrollable child instead of clipping provider details/key validation.
-IDD_PREFS_SCROLL_HOST DIALOGEX 0, 0, 230, 220
+// The system property sheet owns the tab frame and page layout. Its Options page
+// uses the same scroll host as Winamp Preferences, with more vertical space.
+IDD_TAB_OPTIONS DIALOGEX 0, 0, 230, 300
 STYLE DS_CONTROL | WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN
 EXSTYLE WS_EX_CONTROLPARENT
 FONT 8, "MS Shell Dlg"
 BEGIN
 END
 
-// Child page shown inside the "About" tab (sized by placePage to the tab's content area).
-IDD_TAB_ABOUT DIALOGEX 0, 0, 205, 112
+// Winamp's preferences pane is shorter than the shared options page. Host it in a
+// standard scrollable child instead of clipping provider details/key validation.
+IDD_PREFS_SCROLL_HOST DIALOGEX 0, 0, 230, 220
+STYLE DS_CONTROL | WS_CHILD | WS_VSCROLL | WS_CLIPCHILDREN | WS_CLIPSIBLINGS
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "MS Shell Dlg"
+BEGIN
+END
+
+// About property page; Windows supplies its surrounding frame and tab.
+IDD_TAB_ABOUT DIALOGEX 0, 0, 230, 300
 STYLE DS_CONTROL | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
 FONT 8, "MS Shell Dlg"

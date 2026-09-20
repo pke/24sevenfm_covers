@@ -2,11 +2,10 @@
 #ifndef SSC_GEN_RESOURCE_H
 #define SSC_GEN_RESOURCE_H
 
-#define IDD_CONFIG       101  // tabbed info dialog (double-click / Configure)
+#define IDD_TAB_OPTIONS  101  // scrollable Options property page
 #define IDD_TAB_ABOUT    103  // the "About" tab page
 #define IDD_PREFS_SCROLL_HOST 104 // scrollable host for the shared options page
 
-#define IDC_TAB          1010
 #define IDC_ABOUT_VER    1011
 #define IDC_ABOUT_LINK   1012
 #define IDC_ABOUT_DUDESOFT 1013

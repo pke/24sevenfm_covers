@@ -48,6 +48,8 @@ fallback — on a system without Direct2D the window stays blank (the log notes
 
 - **Show remaining time overlay** — a live `m:ss` countdown in the top-right corner.
 - **Animate the countdown digits** — roll changed digits over (odometer style); off = instant updates.
+- **Show coming next (last 10 seconds)** — show the next queued album and artist;
+  off by default and independent of the remaining-time overlay.
 - **Transition** — how one cover gives way to the next: *None* (instant cut),
   *Crossfade* (GPU alpha-blend), *Flip horizontal*, or *Flip vertical* (a card flip
   where the new cover is the "backside" of the old one).
@@ -58,6 +60,10 @@ fallback — on a system without Direct2D the window stays blank (the log notes
   direct Check action.
 
 Settings persist to `24seven.fm-covers.ini` in Winamp's settings directory.
+Options/About use a standard Windows property sheet. Windows owns the tab borders,
+page layout, keyboard navigation and painting, including the themed backgrounds of
+the nested options and provider-details dialogs. Tabs switch without a snapshot or
+crossfade overlay.
 
 ## How it works
 

@@ -36,7 +36,7 @@ BEGIN
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP,                       50, 105, 116, 18
     LTEXT           "500 ms",        IDC_OPT_FADEVAL, 170, 108, 30, 10
 
-    GROUPBOX        "StreamingSoundtracks media", -1, 6, 129, 218, 220
+    GROUPBOX        "StreamingSoundtracks media", IDC_OPT_MEDIA_GROUP, 6, 129, 218, 220
     AUTOCHECKBOX    "Show movie, TV && game &backdrops", IDC_OPT_BACKDROPS, 13, 142, 180, 12, WS_GROUP | WS_TABSTOP
     AUTOCHECKBOX    "&Hide the square cover when a backdrop is shown", IDC_OPT_HIDECOVER, 24, 156, 194, 12, WS_TABSTOP
     AUTOCHECKBOX    "Replace album title with &logo", IDC_OPT_TITLELOGOS, 24, 172, 194, 12, WS_TABSTOP

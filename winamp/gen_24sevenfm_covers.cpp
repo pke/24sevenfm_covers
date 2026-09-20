@@ -20,6 +20,8 @@
 #include <windows.h>
 #include <windowsx.h>   // GET_X_LPARAM / GET_Y_LPARAM (context-menu coords)
 #include <commctrl.h>   // trackbar (duration slider), tab control
+#include <prsht.h>      // system-owned Options/About property sheet
+#include <uxtheme.h>    // Windows paints the tab-page background
 #include <shellapi.h>   // ShellExecute (About link)
 #pragma comment(lib, "shell32.lib")
 
@@ -27,6 +29,7 @@
 #include <cctype>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "gen.h"
 #include "gen_resource.h"
@@ -36,7 +39,6 @@
 #include "cover_menu.h"        // shared right-click context menu (Poster / Options)
 #include "fullscreen_window.h" // shared dedicated per-monitor fullscreen window
 #include "options_panel.h"  // shared options page (dialog + control logic)
-#include "child_fade.h"
 #include "stations.h"       // 24seven.fm station table + stream-URL detection
 #include "config.h"         // shared option schema + INI adapter
 #include "window_rect.h"    // save/restore the frame's position (Winamp won't do it)
@@ -426,12 +428,33 @@ static int init() {
 // The latter must not switch to Winamp's host preferences or tear fullscreen down.
 static HFONT g_linkFont = nullptr;
 
-// Positions a tab page child dialog inside the tab control's display area.
-static void placePage(HWND dlg, HWND tab, HWND page) {
-    RECT rc; GetWindowRect(tab, &rc);
-    MapWindowPoints(HWND_DESKTOP, dlg, (POINT*)&rc, 2);
-    TabCtrl_AdjustRect(tab, FALSE, &rc); // window rect -> display (content) rect
-    SetWindowPos(page, HWND_TOP, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, SWP_NOZORDER);
+// A tab's nested child dialogs need the same Windows theme texture as its page.
+// Let the dialog manager paint it; no background brush or paint handler is needed.
+static BOOL CALLBACK themeTabDialog(HWND child, LPARAM) {
+    char className[32] = {};
+    GetClassNameA(child, className, sizeof(className));
+    if (lstrcmpA(className, "#32770") == 0)
+        EnableThemeDialogTexture(child, ETDT_ENABLETAB);
+    return TRUE;
+}
+
+static void themeTabPage(HWND page) {
+    if (!page) return;
+    EnableThemeDialogTexture(page, ETDT_ENABLETAB);
+    EnumChildWindows(page, themeTabDialog, 0);
+}
+
+// Settings already apply live; page validation never blocks switching or closing.
+static bool handleSheetNotification(HWND page, LPARAM lp) {
+    switch (reinterpret_cast<LPNMHDR>(lp)->code) {
+        case PSN_SETACTIVE:
+        case PSN_KILLACTIVE:
+        case PSN_APPLY:
+        case PSN_QUERYCANCEL:
+            SetWindowLongPtrA(page, DWLP_MSGRESULT, 0);
+            return true;
+    }
+    return false;
 }
 
 // "About" tab page: version (kept in sync with version.h) + a clickable link.
@@ -440,6 +463,7 @@ static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_INITDIALOG: {
             SetDlgItemTextA(dlg, IDC_ABOUT_VER, "Version " SSC_VER_STR);
             ssclinks::initAboutLinks(dlg, g_linkFont);
+            themeTabPage(dlg);
             return TRUE;
         }
         case WM_CTLCOLORSTATIC: {
@@ -456,71 +480,11 @@ static INT_PTR CALLBACK AboutTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_COMMAND:
             if (ssclinks::openAboutLink(dlg, wp)) return TRUE;
             break;
+        case WM_NOTIFY:
+            if (handleSheetNotification(dlg, lp)) return TRUE;
+            break;
         case WM_DESTROY:
             if (g_linkFont) { DeleteObject(g_linkFont); g_linkFont = nullptr; }
-            break;
-    }
-    return FALSE;
-}
-
-struct ConfigDialogState {
-    HWND options = nullptr;
-    HWND about = nullptr;
-    int selected = 0;
-};
-
-static void selectConfigPage(ConfigDialogState* state, int selected) {
-    if (!state || selected < 0 || selected > 1 || selected == state->selected) return;
-    HWND outgoing = state->selected == 0 ? state->options : state->about;
-    HWND incoming = selected == 0 ? state->options : state->about;
-    state->selected = selected;
-    childfade::replace(outgoing, incoming);
-}
-
-static INT_PTR CALLBACK ConfigDlgProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
-    ConfigDialogState* state =
-        reinterpret_cast<ConfigDialogState*>(GetWindowLongPtrA(dlg, GWLP_USERDATA));
-    switch (msg) {
-        case WM_INITDIALOG: {
-            state = new ConfigDialogState();
-            SetWindowLongPtrA(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
-            HWND tab = GetDlgItem(dlg, IDC_TAB);
-            TCITEMA ti = {}; ti.mask = TCIF_TEXT;
-            ti.pszText = (char*)"Options"; TabCtrl_InsertItem(tab, 0, &ti);
-            ti.pszText = (char*)"About";   TabCtrl_InsertItem(tab, 1, &ti);
-            state->options = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_PREFS_SCROLL_HOST),
-                                           dlg, OptionsScrollHostProc);
-            state->about = CreateDialogA(g_hInst, MAKEINTRESOURCEA(IDD_TAB_ABOUT),
-                                         dlg, AboutTabProc);
-            placePage(dlg, tab, state->options);
-            placePage(dlg, tab, state->about);
-            ShowWindow(state->options, SW_SHOWNA);
-            ShowWindow(state->about, SW_HIDE);
-
-            // Owned windows normally follow the owner's z-order, but explicitly join
-            // the topmost band when our owner is the dedicated fullscreen canvas.
-            const HWND owner = GetWindow(dlg, GW_OWNER);
-            if (owner && (GetWindowLongPtrA(owner, GWL_EXSTYLE) & WS_EX_TOPMOST))
-                SetWindowPos(dlg, HWND_TOPMOST, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            return TRUE;
-        }
-        case WM_NOTIFY:
-            if (reinterpret_cast<LPNMHDR>(lp)->idFrom == IDC_TAB &&
-                reinterpret_cast<LPNMHDR>(lp)->code == TCN_SELCHANGE) {
-                selectConfigPage(state, TabCtrl_GetCurSel(GetDlgItem(dlg, IDC_TAB)));
-                return TRUE;
-            }
-            break;
-        case WM_COMMAND:
-            if (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL) { // Close (or Esc)
-                EndDialog(dlg, LOWORD(wp));
-                return TRUE;
-            }
-            break;
-        case WM_DESTROY:
-            delete state;
-            SetWindowLongPtrA(dlg, GWLP_USERDATA, 0);
             break;
     }
     return FALSE;
@@ -565,11 +529,45 @@ static INT_PTR CALLBACK PrefsPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
 }
 
 struct OptionsScrollState {
+    struct ControlLayout {
+        HWND window;
+        RECT bounds;
+        bool moveRight;
+    };
     HWND page = nullptr;
     int contentWidth = 0;
     int contentHeight = 0;
     int position = 0;
+    int layoutWidth = 0;
+    std::vector<ControlLayout> controls;
 };
+
+static void rememberOptionsControl(OptionsScrollState* state, HWND parent, int id, bool moveRight) {
+    HWND control = GetDlgItem(parent, id);
+    if (!control) return;
+    RECT bounds = {};
+    GetWindowRect(control, &bounds);
+    MapWindowPoints(HWND_DESKTOP, parent, reinterpret_cast<POINT*>(&bounds), 2);
+    state->controls.push_back({control, bounds, moveRight});
+}
+
+static void rememberOptionsLayout(OptionsScrollState* state) {
+    // Capture the resource geometry once so scrollbar changes never accumulate offsets.
+    for (int id : {IDC_OPT_OVERLAY, IDC_OPT_ROLL, IDC_OPT_COMINGNEXT,
+                   IDC_OPT_MEDIA_GROUP, IDC_OPT_BACKDROPS, IDC_OPT_HIDECOVER,
+                   IDC_OPT_TITLELOGOS, IDC_OPT_RATINGS, IDC_OPT_PROVIDERS,
+                   IDC_OPT_PROVIDER_DETAILS})
+        rememberOptionsControl(state, state->page, id, false);
+    for (int id : {IDC_OPT_RATING_DE, IDC_OPT_RATING_US,
+                   IDC_OPT_PROVIDER_UP, IDC_OPT_PROVIDER_DOWN})
+        rememberOptionsControl(state, state->page, id, true);
+    const HWND details = GetDlgItem(state->page, IDC_OPT_PROVIDER_DETAILS);
+    if (!details) return;
+    for (int id : {IDC_OPT_PROVIDER_LINK, IDC_OPT_PROVIDER_ATTRIBUTION,
+                   IDC_OPT_FANART_KEY, IDC_OPT_FANART_KEY_STATUS})
+        rememberOptionsControl(state, details, id, false);
+    rememberOptionsControl(state, details, IDC_OPT_FANART_KEY_CHECK, true);
+}
 
 static void layoutOptionsScrollHost(HWND dlg, OptionsScrollState* state) {
     if (!state || !state->page) return;
@@ -584,9 +582,22 @@ static void layoutOptionsScrollHost(HWND dlg, OptionsScrollState* state) {
     info.fMask = SIF_POS;
     GetScrollInfo(dlg, SB_VERT, &info);
     state->position = info.nPos;
+    // SetScrollInfo can show/hide the non-client scrollbar and change the width.
+    GetClientRect(dlg, &client);
+    const int width = std::max(1L, client.right - client.left);
     SetWindowPos(state->page, nullptr, 0, -state->position,
-                 std::max(state->contentWidth, static_cast<int>(client.right - client.left)),
+                 width,
                  state->contentHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+    if (state->layoutWidth == width) return;
+    state->layoutWidth = width;
+    const int delta = width - state->contentWidth;
+    for (const auto& control : state->controls) {
+        const RECT& bounds = control.bounds;
+        SetWindowPos(control.window, nullptr,
+            bounds.left + (control.moveRight ? delta : 0), bounds.top,
+            std::max(1L, bounds.right - bounds.left + (control.moveRight ? 0 : delta)),
+            bounds.bottom - bounds.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 static void scrollOptionsHost(HWND dlg, OptionsScrollState* state, int target) {
@@ -609,8 +620,9 @@ static INT_PTR CALLBACK OptionsScrollHostProc(HWND dlg, UINT msg, WPARAM wp, LPA
                 GetWindowRect(state->page, &content);
                 state->contentWidth = content.right - content.left;
                 state->contentHeight = content.bottom - content.top;
-                ShowWindow(state->page, SW_SHOWNA);
+                rememberOptionsLayout(state);
                 layoutOptionsScrollHost(dlg, state);
+                ShowWindow(state->page, SW_SHOWNA);
             }
             return TRUE;
         }
@@ -648,13 +660,63 @@ static INT_PTR CALLBACK OptionsScrollHostProc(HWND dlg, UINT msg, WPARAM wp, LPA
     return FALSE;
 }
 
+static INT_PTR CALLBACK OptionsTabProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_NOTIFY && handleSheetNotification(dlg, lp)) return TRUE;
+    const INT_PTR result = OptionsScrollHostProc(dlg, msg, wp, lp);
+    if (msg == WM_INITDIALOG) themeTabPage(dlg);
+    return result;
+}
+
+static int CALLBACK OptionsSheetCallback(HWND sheet, UINT msg, LPARAM) {
+    if (msg != PSCB_INITIALIZED) return 0;
+    // Options apply live. Keep one Close button without CancelToClose, which
+    // disables the property sheet's standard Escape/title-bar close handling.
+    SetDlgItemTextA(sheet, IDOK, "Close");
+    const HWND cancel = GetDlgItem(sheet, IDCANCEL);
+    RECT button = {};
+    GetWindowRect(cancel, &button);
+    MapWindowPoints(HWND_DESKTOP, sheet, reinterpret_cast<POINT*>(&button), 2);
+    ShowWindow(cancel, SW_HIDE);
+    SetWindowPos(GetDlgItem(sheet, IDOK), nullptr, button.left, button.top,
+        button.right - button.left, button.bottom - button.top,
+        SWP_NOZORDER | SWP_NOACTIVATE);
+
+    // A sheet opened from fullscreen must stay above its fullscreen owner.
+    const HWND owner = GetWindow(sheet, GW_OWNER);
+    if (owner && (GetWindowLongPtrA(owner, GWL_EXSTYLE) & WS_EX_TOPMOST))
+        SetWindowPos(sheet, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    return 0;
+}
+
 static void showOwnOptions(HWND owner) {
     INITCOMMONCONTROLSEX icc = {
         sizeof(icc), ICC_TAB_CLASSES | ICC_BAR_CLASSES | ICC_LISTVIEW_CLASSES
     };
     InitCommonControlsEx(&icc);
-    DialogBoxParamA(g_hInst, MAKEINTRESOURCEA(IDD_CONFIG), owner ? owner : g_winamp,
-                    ConfigDlgProc, 0);
+    PROPSHEETPAGEA pages[2] = {};
+    for (auto& page : pages) {
+        page.dwSize = sizeof(page);
+        page.dwFlags = PSP_USETITLE;
+        page.hInstance = g_hInst;
+    }
+    pages[0].pszTemplate = MAKEINTRESOURCEA(IDD_TAB_OPTIONS);
+    pages[0].pszTitle = "Options";
+    pages[0].pfnDlgProc = OptionsTabProc;
+    pages[1].pszTemplate = MAKEINTRESOURCEA(IDD_TAB_ABOUT);
+    pages[1].pszTitle = "About";
+    pages[1].pfnDlgProc = AboutTabProc;
+
+    PROPSHEETHEADERA sheet = {};
+    sheet.dwSize = sizeof(sheet);
+    sheet.dwFlags = PSH_PROPSHEETPAGE | PSH_NOAPPLYNOW | PSH_NOCONTEXTHELP | PSH_USECALLBACK;
+    sheet.hwndParent = owner ? owner : g_winamp;
+    sheet.hInstance = g_hInst;
+    sheet.pszCaption = "24seven.fm Covers";
+    sheet.nPages = 2;
+    sheet.ppsp = pages;
+    sheet.pfnCallback = OptionsSheetCallback;
+    PropertySheetA(&sheet); // Windows owns the tab frame, page layout and switching.
 }
 
 static void config() {
