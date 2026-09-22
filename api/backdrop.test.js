@@ -1830,6 +1830,57 @@ test("resolves John Williams' Superman: The Movie album to the 1978 film", async
     }
 });
 
+test("maps the station's xXx album title to Return of Xander Cage", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/movie"
+                    || parsed.pathname === "/3/search/tv") {
+                searches.push({
+                    path: parsed.pathname,
+                    query: parsed.searchParams.get("query"),
+                    year: parsed.searchParams.get(parsed.pathname.endsWith("/movie")
+                        ? "primary_release_year" : "first_air_date_year"),
+                });
+                return response(200, { results: parsed.pathname.endsWith("/movie") ? [{
+                    id: 47971,
+                    title: "xXx: Return of Xander Cage",
+                    backdrop_path: "/xander-cage.jpg",
+                    poster_path: "/xander-cage-poster.jpg",
+                }] : [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [42, 57, 68],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "xXx: The Return Of Xander Cage",
+        track: "Not So Special Forces",
+        artist: "Brian Tyler & Robert Lydecker",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(searches, [
+        { path: "/3/search/movie", query: "xXx: Return of Xander Cage", year: "2017" },
+        { path: "/3/search/tv", query: "xXx: Return of Xander Cage", year: "2017" },
+    ]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 47971, title: "xXx: Return of Xander Cage", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/xander-cage.jpg",
+        source: "tmdb",
+        tint: [42, 57, 68],
+        metadata: {
+            album: "xXx: The Return Of Xander Cage",
+            track: "Not So Special Forces",
+            artist: "Brian Tyler & Robert Lydecker",
+        },
+    });
+});
+
 test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
     const providerQueries = [];
     const handler = createHandler({
