@@ -34,6 +34,11 @@ follow the web visibility policy: a ten-second track intro, then pointer-hover v
 (two-second idle timeout in fullscreen). See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for provider and logo attribution.
 
+The media resolver's optional `artwork_info=1` response preserves the selected
+Fanart image's language and whether it contains text. Clients can use this to
+avoid duplicating a poster title while retaining headings for textless artwork.
+See the [API contract](docs/vercel-backdrop.md).
+
 ## Repository layout
 
 ```

@@ -1553,20 +1553,33 @@ async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId, pref
         return null;
     }
     const isTextless = (candidate) => candidate && (candidate.lang === "" || candidate.lang === "00");
+    const selectedInfo = new Map();
     const best = (key) => {
         const candidates = Array.isArray(body && body[key]) ? body[key].slice() : [];
         candidates.sort((a, b) => (isTextless(a) ? 0 : 1) - (isTextless(b) ? 0 : 1)
             || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0));
         for (const candidate of candidates) {
             const trusted = trustedFanartUrl(candidate && candidate.url);
-            if (trusted) return trusted;
+            if (trusted) {
+                const language = isTextless(candidate) ? "00"
+                    : /^[a-z]{2}$/.test(candidate.lang || "") ? candidate.lang : null;
+                selectedInfo.set(trusted, {
+                    kind: key === "tvposter" || key === "movieposter" ? "poster" : "background",
+                    language,
+                    containsText: language === null ? null : language !== "00",
+                });
+                return trusted;
+            }
         }
         return "";
     };
+    const landscape = (prefer4k ? best(type === "tv" ? "show4kbackground" : "movie4kbackground") : "")
+        || best(type === "tv" ? "showbackground" : "moviebackground");
+    const portrait = best(type === "tv" ? "tvposter" : "movieposter");
     return {
-        landscape: (prefer4k ? best(type === "tv" ? "show4kbackground" : "movie4kbackground") : "")
-            || best(type === "tv" ? "showbackground" : "moviebackground"),
-        portrait: best(type === "tv" ? "tvposter" : "movieposter"),
+        landscape, portrait,
+        landscapeInfo: selectedInfo.get(landscape),
+        portraitInfo: selectedInfo.get(portrait),
         logo: (() => {
             const keys = type === "tv" ? ["hdtvlogo", "clearlogo"] : ["hdmovielogo", "movielogo"];
             for (const key of keys) {
@@ -1882,6 +1895,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
                 source: provider,
                 preview: tintPreviewUrl(provider, url, tmdbPath),
                 logo,
+                artwork: orientation === "portrait" ? artwork.portraitInfo : artwork.landscapeInfo,
             };
         }
         // Portrait assets are less complete than landscape catalogs. Preserve the
@@ -1893,6 +1907,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
                 source: provider,
                 preview: tintPreviewUrl(provider, artwork.landscape, media.backdrop_path),
                 logo,
+                artwork: artwork.landscapeInfo,
             };
         }
     }
@@ -2037,6 +2052,7 @@ async function resolvedArtResponse(media, art, dependencies,
         certificationsPromise,
     ]);
     return withCertifications({ media, backdrop: art.url, source: art.source, tint,
+        ...(art.artwork ? { artwork: art.artwork } : {}),
         ...(art.logo ? { logo: art.logo } : {}) },
         certifications, ratingCountries);
 }
@@ -2391,6 +2407,11 @@ function createHandler(options = {}) {
             if (logoOption !== undefined && logoOption !== "0" && logoOption !== "1")
                 throw new ResolverError("invalid_logos", 400, "logos must be 0 or 1");
             const includeLogos = includeArt && logoOption === "1";
+            const artworkInfoOption = requestQueryValue(req, "artwork_info");
+            if (artworkInfoOption !== undefined && artworkInfoOption !== "0" && artworkInfoOption !== "1") {
+                throw new ResolverError("invalid_artwork_info", 400, "artwork_info must be 0 or 1");
+            }
+            const includeArtworkInfo = includeArt && artworkInfoOption === "1";
             const viewport = requestedViewport(requestQueryValue(req, "width"),
                 requestQueryValue(req, "height"));
             const requestedHint = requestedMediaHint(requestQueryValue(req, "media_hint"));
@@ -2464,6 +2485,7 @@ function createHandler(options = {}) {
             // Project into a fresh object: stripping a logo must never mutate the
             // common cache or another in-flight client's response.
             const result = { ...resolved, metadata };
+            if (!includeArtworkInfo) delete result.artwork;
             if (includeLogos && !result.logo && result.media) {
                 result.logo = await cachedTitleLogo(key, () => titleLogoForResolvedMedia(
                     fetchImpl, resolved, providers, clientKey, env),
