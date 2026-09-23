@@ -1881,6 +1881,74 @@ test("maps the station's xXx album title to Return of Xander Cage", async () => 
     });
 });
 
+test("maps the Frozen 2 soundtrack title to the 2019 Frozen II film", async () => {
+    const searches = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key", FANART_API_KEY: "fanart-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/movie"
+                    || parsed.pathname === "/3/search/tv") {
+                searches.push({
+                    path: parsed.pathname,
+                    query: parsed.searchParams.get("query"),
+                    year: parsed.searchParams.get(parsed.pathname.endsWith("/movie")
+                        ? "primary_release_year" : "first_air_date_year"),
+                });
+                return response(200, { results: parsed.pathname.endsWith("/movie") ? [{
+                    id: 330457,
+                    title: "Frozen II",
+                    backdrop_path: "/frozen-ii.jpg",
+                    poster_path: "/frozen-ii-poster.jpg",
+                }] : [] });
+            }
+            if (parsed.pathname === "/v3/movies/330457") return response(200, {
+                moviebackground: [{
+                    url: "https://assets.fanart.tv/fanart/frozen-ii.jpg",
+                    lang: "00",
+                    likes: "10",
+                }],
+            });
+            if (parsed.pathname === "/3/movie/330457/release_dates") return response(200, {
+                results: [{ iso_3166_1: "US", release_dates: [{
+                    certification: "PG", type: 3,
+                }] }],
+            });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [109, 164, 211],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Frozen 2",
+        track: "Into The Unknown",
+        artist: "Panic! At The Disco",
+        providers: "fanart,tmdb,steamgriddb,tvmaze",
+        ratings: "US",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(searches, [
+        { path: "/3/search/movie", query: "Frozen II", year: "2019" },
+        { path: "/3/search/tv", query: "Frozen II", year: "2019" },
+    ]);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 330457, title: "Frozen II", type: "movie" },
+        backdrop: "https://assets.fanart.tv/fanart/frozen-ii.jpg",
+        source: "fanart",
+        tint: [109, 164, 211],
+        certifications: [{
+            country: "US", system: "MPA", rating: "PG", label: "PG",
+            logo: "https://upload.wikimedia.org/wikipedia/commons/9/9a/MPA_PG_RATING.svg",
+        }],
+        metadata: {
+            album: "Frozen 2",
+            track: "Into The Unknown",
+            artist: "Panic! At The Disco",
+        },
+    });
+});
+
 test("resolves The Caves Of Androzani to the classic Doctor Who series", async () => {
     const providerQueries = [];
     const handler = createHandler({

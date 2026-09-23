@@ -71,6 +71,11 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        album: "Frozen 2",
+        title: "Frozen II (2019)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Naked Gun 2 1/2, The",
         artist: "Ira Newborn",
         title: "The Naked Gun 2½: The Smell of Fear (1991)",
