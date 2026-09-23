@@ -39,7 +39,7 @@ endif()
 option(COVERFETCH_BUILD_TESTS "Build the unit tests" OFF)
 if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     enable_testing()
-    add_executable(coverfetch_tests tests/test_coverfetch.cpp)
+    add_executable(coverfetch_tests tests/test_coverfetch.cpp mini_json.cpp)
     target_include_directories(coverfetch_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     if(WIN32)
         target_link_libraries(coverfetch_tests PRIVATE ws2_32)
@@ -77,6 +77,11 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         target_include_directories(native_engine_tests PRIVATE . ../shared)
         target_link_libraries(native_engine_tests PRIVATE coverfetch d2d1 dwrite)
         doctest_discover_tests(native_engine_tests)
+
+        add_executable(debug_tests tests/test_debug.cpp)
+        target_link_libraries(debug_tests PRIVATE coverfetch comctl32)
+        target_include_directories(debug_tests PRIVATE . ../shared)
+        doctest_discover_tests(debug_tests)
 
         add_executable(native_renderer_tests tests/test_native_renderer.cpp
             ../shared/d2d_renderer.cpp ../shared/d2d_transitions.cpp

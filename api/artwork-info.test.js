@@ -30,7 +30,7 @@ function fixture(images) {
 }
 test("selected Fanart poster retains language and explicit text presence, including flat CDN URLs", async () => {
     for (const [lang, language, containsText] of [["en","en",true],["de","de",true],
-        ["00","00",false],["","00",false],[undefined,null,null],["invalid",null,null]]) {
+        ["00","00",false],["",null,null],[undefined,null,null],["invalid",null,null]]) {
         const f = fixture({movieposter:[{url:poster, lang}]});
         const res = await f.get();
         assert.equal(res.statusCode,200);
@@ -38,6 +38,17 @@ test("selected Fanart poster retains language and explicit text presence, includ
         assert.deepEqual(res.body.artwork,{kind:"poster",language,containsText});
         assert.equal(f.calls(),2,"Reuse existing artwork payload; no extra provider call");
     }
+});
+
+test("Fanart diagnostics explains a text-bearing poster fallback and preserves the raw language", async () => {
+    const f = fixture({ movieposter: [{ id: "42", url: poster, lang: "en", likes: "7" }] });
+    const res = await f.get({ diagnostics: "1" });
+    const selected = res.body.diagnostics.resolution.selections.find(item => item.kind === "movieposter");
+    assert.equal(selected.policy, "prefer-textless");
+    assert.equal(selected.reason, "no-textless-candidate");
+    assert.equal(selected.selected.id, "42");
+    assert.equal(selected.selected.language, "en");
+    assert.equal(selected.textlessCandidates, 0);
 });
 test("selection still prefers textless art; metadata comes from the selected candidate", async () => {
     const f=fixture({movieposter:[{url:poster,lang:"en",likes:"90"},

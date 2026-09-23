@@ -1,4 +1,5 @@
 #include "http_client.h"
+#include "diagnostics.h"
 
 #include <cctype>
 #include <cstdio>
@@ -186,7 +187,7 @@ std::string readAll(socket_t s, const std::atomic<bool>* cancel) {
 
 #if defined(_WIN32)
 
-HttpResponse httpRequest(const std::string& host,
+static HttpResponse httpRequestImpl(const std::string& host,
                          unsigned short port,
                          const std::string& path,
                          const std::string& method,
@@ -195,6 +196,7 @@ HttpResponse httpRequest(const std::string& host,
                          int timeoutSeconds,
                          const std::atomic<bool>* cancel) {
     HttpResponse resp;
+    const auto started = std::chrono::steady_clock::now();
     if (cancel && cancel->load()) { resp.error = "cancelled"; return resp; }
 
     const bool secure = (port == 443); // 443 -> TLS via WINHTTP_FLAG_SECURE
@@ -259,6 +261,17 @@ HttpResponse httpRequest(const std::string& host,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusLen,
                         WINHTTP_NO_HEADER_INDEX);
     resp.status = static_cast<int>(status);
+    resp.headersMs = diagnosticMilliseconds(started);
+    auto header = [&](const wchar_t* name) {
+        wchar_t value[4096] = {}; DWORD size = sizeof(value);
+        if (!WinHttpQueryHeaders(req, WINHTTP_QUERY_CUSTOM, name, value, &size, WINHTTP_NO_HEADER_INDEX))
+            return std::string();
+        std::string text;
+        for (const wchar_t* c = value; *c; ++c) text += *c < 128 ? static_cast<char>(*c) : '?';
+        return text;
+    };
+    resp.cacheControl = header(L"Cache-Control"); resp.age = header(L"Age");
+    resp.cacheStatus = header(L"X-Vercel-Cache");
 
     // Body (WinHTTP de-chunks transparently), capped at kMaxResponseBytes.
     std::string out;
@@ -278,7 +291,7 @@ HttpResponse httpRequest(const std::string& host,
 
 #else // POSIX socket transport
 
-HttpResponse httpRequest(const std::string& host,
+static HttpResponse httpRequestImpl(const std::string& host,
                          unsigned short port,
                          const std::string& path,
                          const std::string& method,
@@ -379,5 +392,15 @@ HttpResponse httpRequest(const std::string& host,
 }
 
 #endif // transport
+
+HttpResponse httpRequest(const std::string& host, unsigned short port, const std::string& path,
+        const std::string& method, const std::string& body, const std::string& contentType,
+        int timeoutSeconds, const std::atomic<bool>* cancel) {
+    const auto start = std::chrono::steady_clock::now();
+    HttpResponse response = httpRequestImpl(host, port, path, method, body, contentType, timeoutSeconds, cancel);
+    DiagnosticLog::instance().request(std::string(port == 443 ? "https://" : "http://") + host + path,
+        response, diagnosticMilliseconds(start));
+    return response;
+}
 
 } // namespace ssc

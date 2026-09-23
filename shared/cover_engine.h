@@ -29,6 +29,7 @@
 #include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
 #include "info_presentation.h"
 #include "coming_next.h"
+#include "debug_overlay.h"
 
 namespace ssc { class CoverMonitor; }
 namespace ssc { struct TrackInfo; }
@@ -127,6 +128,7 @@ public:
     void onTimer(HWND h, UINT_PTR id);
     void onNewCover(HWND h); // SSC_WM_NEWCOVER: decode the pending cover
     void onNewMedia(HWND h); // SSC_WM_NEWMEDIA: decode/commit backdrop + ratings
+    std::string debugSnapshot(); // UI thread, credentials removed before serialization
 
     // Engine-owned repaint heartbeat (~30fps); the engine sets it on the window and
     // the host just forwards WM_TIMER to onTimer. Drives the crossfade + countdown.
@@ -246,6 +248,7 @@ private:
     unsigned coverRetryFailures_ = 0;
 
     MediaWorkerState* media_ = nullptr;
+    ssc::DebugOverlay debugOverlay_;
 };
 
 #endif // SSC_COVER_ENGINE_H

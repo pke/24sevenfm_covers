@@ -39,6 +39,13 @@ Fanart image's language and whether it contains text. Clients can use this to
 avoid duplicating a poster title while retaining headings for textless artwork.
 See the [API contract](docs/vercel-backdrop.md).
 
+Press **D** over the player stage to open translucent diagnostics in the web player,
+Windows viewer, Winamp or foobar2000. Escape or an outside click closes the panel.
+Snapshots include artwork URLs, request/response timings, API JSON, cache state and
+provider selection reasons. Freeze the snapshot or select text to pause updates;
+copy the complete report with **Copy snapshot**. Credentials are redacted and the
+history stays in memory. See [diagnostics](docs/debugging.md) for timing semantics.
+
 ## Repository layout
 
 ```

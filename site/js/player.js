@@ -16,6 +16,7 @@
 (function () {
 
 var PLAYER_SCRIPT_URL = new URL(document.currentScript.src, document.baseURI);
+var debug = PlayerDiagnostics.create();
 
 // Mirrors shared/stations.h: same ids (used as persistence keys), same hosts. The logo
 // filenames are wildly inconsistent per station and NOT guessable - each URL below was
@@ -551,7 +552,11 @@ var stage = $("stage"), coverBox = $("coverbox");
 // changing backdrop options must not cancel a still-valid cover load (and vice versa).
 var renderGenerations = { cover: 0, backdrop: 0, tint: 0 };
 function nextRenderGeneration(channel) { return ++renderGenerations[channel]; }
-function renderIsCurrent(channel, generation) { return renderGenerations[channel] === generation; }
+function renderIsCurrent(channel, generation) {
+    var current = renderGenerations[channel] === generation;
+    if (!current) debug.event("result.superseded", { channel: channel, generation: generation });
+    return current;
+}
 var IMAGE_TIMEOUT = 20000, COVER_RETRY_DELAY = 5000, COVER_RETRY_LIMIT = 3;
 var COVER_RETRY_COOLDOWN = 300000;
 var BACKDROP_RETRY_DELAY = 1000, BACKDROP_RETRY_LIMIT = 2;
@@ -559,10 +564,16 @@ var BACKDROP_RESOLVER_RETRY_DELAY = 3000, BACKDROP_RESOLVER_RETRY_LIMIT = 2;
 
 function preloadImage(url, onLoad, onError) {
     var image = new Image(), settled = false;
+    var debugStarted = performance.now();
     var kill = setTimeout(function () { settle(onError, true); }, IMAGE_TIMEOUT);
     function settle(callback, abort) {
         if (settled) return;
         settled = true;
+        debug.event(callback === onLoad ? "image.loaded" : "image.failed", {
+            url: url, totalMs: performance.now() - debugStarted,
+            width: image.naturalWidth || null, height: image.naturalHeight || null,
+            reason: abort ? "timeout" : null
+        });
         clearTimeout(kill);
         image.onload = image.onerror = null;
         if (abort) image.removeAttribute("src");
@@ -1560,7 +1571,7 @@ var MIN_POLL = 5, MAX_POLL = 3600, ERR_RETRY = 8, ERR_CAP = 60, REQ_TIMEOUT = 20
 var BOUNDARY_WATCH_SECONDS = 10, BOUNDARY_POLL_SECONDS = 2, BOUNDARY_GRACE_SECONDS = 15;
 var COMING_NEXT_SECONDS = 10;
 var pollTimer = null, tickTimer = null, inflight = null, errBackoff = ERR_RETRY;
-var retryAt = 0, pollActive = null, lastSuccessfulPollAt = 0;
+var retryAt = 0, pollActive = null, lastSuccessfulPollAt = 0, nextPollAt = 0;
 var boundaryTrackToken = "", boundaryExpectedEndAt = 0;
 var shownUrl = "", loadingCoverUrl = "", remAnchor = -1, remAnchorAt = 0;
 var currentTrackLengthSeconds = 0;
@@ -1727,8 +1738,9 @@ function resolveQueuedArtist(tracked) {
     url.searchParams.set("album", tracked.album);
     if (tracked.track) url.searchParams.set("track", tracked.track);
     url.searchParams.set("url", tracked.albumUrl);
+    url.searchParams.set("diagnostics", "1");
     var creditPromise;
-    creditPromise = fetch(url, { signal: ctl.signal }).then(function (response) {
+    creditPromise = debug.fetch(url, { signal: ctl.signal }).then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
     }).then(function (body) {
@@ -1814,6 +1826,7 @@ function resetCoverRetry(url) {
 
 function schedulePoll(seconds) {
     clearTimeout(pollTimer);
+    nextPollAt = Date.now() + seconds * 1000;
     pollTimer = setTimeout(poll, seconds * 1000);
 }
 function scheduleHealthyPoll(trackToken, lengthSeconds, remaining, timingIsValid) {
@@ -1887,7 +1900,7 @@ async function poll() {
                 SystemTime: previewTime,
             };
         } else {
-            const r = await fetch("https://" + station().host
+            const r = await debug.fetch("https://" + station().host
                 + "/soap/FM24sevenJSON.php?action=GetCurrentlyPlaying&_t=" + Date.now(),
                 { signal: ctl.signal });
             if (!r.ok) throw new Error("HTTP " + r.status);
@@ -2256,7 +2269,7 @@ async function refreshQueue() {
     };
     queueRefreshRequest = request;
     try {
-        const r = await fetch("https://" + requestedHost
+        const r = await debug.fetch("https://" + requestedHost
             + "/soap/FM24sevenJSON.php?action=GetQueue&_t=" + Date.now(),
             { signal: ctl.signal });
         if (!r.ok) throw new Error("HTTP " + r.status);
@@ -2459,7 +2472,8 @@ async function fetchResolverJson(url, signal, cacheMode) {
     var init = {};
     if (signal) init.signal = signal;
     if (cacheMode) init.cache = cacheMode;
-    try { response = await fetch(url.href, init); }
+    url.searchParams.set("diagnostics", "1");
+    try { response = await debug.fetch(url.href, init); }
     catch (error) {
         if (error && error.name === "AbortError") throw error;
         throw SERVER_ART_UNAVAILABLE;
@@ -2633,6 +2647,7 @@ function updateCoverTint(nextUrl) {
         return;
     }
     if (Object.prototype.hasOwnProperty.call(coverTintCache, nextUrl)) {
+        debug.cache("tint", "hit", { url: nextUrl });
         currentCoverTint = coverTintCache[nextUrl];
         applyPreferredPlayerTint();
         return;
@@ -2644,6 +2659,7 @@ function updateCoverTint(nextUrl) {
         kill: setTimeout(function () { ctl.abort(); }, REQ_TIMEOUT)
     };
     coverTintRequest = request;
+    debug.cache("tint", "miss", { url: nextUrl });
     serverCoverTint(nextUrl, ctl.signal).then(function (tint) {
         if (!renderIsCurrent("tint", generation) || coverTintUrl !== nextUrl) return;
         coverTintCache[nextUrl] = tint;
@@ -2672,6 +2688,7 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
         if (!includeArt) url.searchParams.set("art", "0");
         if (includeArt && opts.sstTitleLogos) url.searchParams.set("logos", "1");
         if (includeArt) {
+            url.searchParams.set("artwork_info", "1");
             viewport = viewport || backdropViewportForStage();
             url.searchParams.set("width", String(viewport.width));
             url.searchParams.set("height", String(viewport.height));
@@ -2917,8 +2934,11 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode) 
     const cache = movieCacheFor(requestedProviders, includeArt, includeRatings, orientation, viewport);
     const titleCacheKey = album + "\n" + track + "\n";
     const cacheKey = titleCacheKey + artist;
-    if (cacheMode !== "reload" && Object.prototype.hasOwnProperty.call(cache, cacheKey))
+    if (cacheMode !== "reload" && Object.prototype.hasOwnProperty.call(cache, cacheKey)) {
+        debug.cache("media", "hit", { album: album, track: track, orientation: orientation,
+            resolution: backdropResolutionClass(viewport) });
         return cache[cacheKey];
+    }
     // Every artistless result is provisional. Artist may turn a miss into a strict
     // composer-credit match or disambiguate multiple exact TV titles, so the
     // authoritative current-playing artist always receives its own resolver lookup.
@@ -2928,6 +2948,8 @@ async function movieArtFor(album, track, artist, generation, signal, cacheMode) 
     var pending = movieRequests.get(cache);
     if (!pending) movieRequests.set(cache, pending = new Map());
     var request = cacheMode !== "reload" && pending.get(cacheKey);
+    debug.cache("media", request ? "coalesced" : cacheMode === "reload" ? "reload" : "miss",
+        { album: album, track: track, orientation: orientation, resolution: backdropResolutionClass(viewport) });
     if (!request || request.ctl.signal.aborted) {
         request = { ctl: new AbortController(), consumers: new Set(), settled: false };
         const owned = request;
@@ -4662,6 +4684,36 @@ updateRefreshEl.addEventListener("click", function () {
 });
 
 // --- go ----------------------------------------------------------------------
+debug.mount(stage, function () {
+    var revision = document.querySelector('meta[name="build-revision"]');
+    return {
+        build: revision ? revision.content : "unknown", station: station().id,
+        track: { album: currentAlbum, track: currentTrack, artist: currentArtist,
+            normalized: currentInfoMetadata, stationIdent: stationIdActive,
+            lengthSeconds: currentTrackLengthSeconds, remainingSeconds: currentRemaining(),
+            nextPollAt: nextPollAt ? new Date(nextPollAt).toISOString() : null },
+        artwork: { shownCover: shownUrl, requestedCover: loadingCoverUrl,
+            backdropVisible: movieShown, coverHidden: stage.classList.contains("no-cover"),
+            tintImage: coverTintUrl, tint: currentMovieTint || currentCoverTint,
+            images: Array.from(stage.querySelectorAll("img")).filter(function (image) {
+                return image.getAttribute("src");
+            }).map(function (image) { return {
+                layer: image.id || image.className, url: image.currentSrc || image.src,
+                width: image.naturalWidth || null, height: image.naturalHeight || null,
+                complete: image.complete, opacity: Number(getComputedStyle(image).opacity)
+            }; }) },
+        display: { viewport: backdropViewportForStage(), pixelRatio: devicePixelRatio,
+            orientation: backdropOrientationForStage(), resolution: backdropResolutionClass(backdropViewportForStage()),
+            fullscreen: !!document.fullscreenElement, reducedMotion: reducedMotion.matches },
+        settings: opts,
+        localCache: { mediaVariants: Object.keys(movieCaches).length,
+            mediaEntries: Object.keys(movieCaches).reduce(function (n, key) { return n + Object.keys(movieCaches[key]).length; }, 0),
+            tintEntries: Object.keys(coverTintCache).length, queueEntries: queuedTrackStoreSize,
+            expiry: "session / bounded queue", httpCache: "See response headers; unknown when not exposed" },
+        queue: queuedTracks.map(function (entry) { return { album: entry.album, track: entry.track,
+            artist: entry.artist, cover: entry.coverUrl }; })
+    };
+});
 applyLayout();
 enableLocalBackchannel();
 beginCurrentInfoResolution(null);

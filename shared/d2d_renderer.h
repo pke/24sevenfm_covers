@@ -15,6 +15,12 @@
 
 namespace d2d {
 
+struct LiveDiagnostics {
+    size_t cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
+    unsigned coverWidth = 0, coverHeight = 0, backdropWidth = 0, backdropHeight = 0;
+};
+LiveDiagnostics liveDiagnostics(); // UI thread; reads retained state without decoding
+
 #ifdef SSC_RENDERER_DIAGNOSTICS
 // Test-only measurements; no counters or timing work in shipped clients.
 struct RendererDiagnostics {

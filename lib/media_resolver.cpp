@@ -1,6 +1,7 @@
 #include "media_resolver.h"
 
 #include "mini_json.h"
+#include "diagnostics.h"
 
 #include <algorithm>
 #include <cctype>
@@ -299,8 +300,12 @@ MediaResolver::MediaResolver(MediaResolverConfig config) : config_(std::move(con
 HttpResponse MediaResolver::get(const std::string& host, unsigned short port,
                                 const std::string& path,
                                 const std::atomic<bool>* cancel) const {
-    if (config_.transport)
-        return config_.transport(host, port, path, "GET", "", "", config_.timeoutSeconds);
+    if (config_.transport) {
+        const auto start = std::chrono::steady_clock::now();
+        auto response = config_.transport(host, port, path, "GET", "", "", config_.timeoutSeconds);
+        DiagnosticLog::instance().request("https://" + host + path, response, diagnosticMilliseconds(start));
+        return response;
+    }
     return httpRequest(host, port, path, "GET", "", "", config_.timeoutSeconds, cancel);
 }
 
@@ -327,7 +332,8 @@ MediaResult MediaResolver::resolve(const MediaRequest& request,
     result.track = request.track;
     result.artist = request.artist;
     std::string path = "/api/media?resolver_version=" + urlEncode(config_.resolverVersion)
-        + "&album=" + urlEncode(request.album);
+        + "&diagnostics=1&album=" + urlEncode(request.album);
+    if (request.includeArt) path += "&artwork_info=1";
     if (!request.track.empty()) path += "&track=" + urlEncode(request.track);
     if (!request.artist.empty()) path += "&artist=" + urlEncode(request.artist);
     path += "&providers=" + urlEncode(request.includeArt ? request.providers : "tmdb");
@@ -392,7 +398,7 @@ std::string MediaResolver::resolveCredit(const std::string& album, const std::st
     if (requestSucceeded) *requestSucceeded = false;
     if (!cleanRequestText(album, 180, true)
             || !trustedAlbumPageUrl(albumUrl, stationHost)) return std::string();
-    const std::string path = "/api/credit?album=" + urlEncode(album)
+    const std::string path = "/api/credit?diagnostics=1&album=" + urlEncode(album)
         + "&url=" + urlEncode(albumUrl);
     const HttpResponse response = get(config_.apiHost, config_.apiPort, path, cancel);
     if (!response.ok()) return std::string();

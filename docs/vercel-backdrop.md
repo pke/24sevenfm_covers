@@ -42,8 +42,8 @@ images only when the API returns a validated URL.
 
 `artwork_info=1` additionally exposes `artwork: { kind, language, containsText }`
 when the selected Fanart image supplies artwork metadata. `kind` is `poster` or
-`background`; Fanart `lang: "00"` (or the legacy empty string) means textless,
-while a two-letter language means text-bearing. Missing/invalid language yields
+`background`; Fanart `lang: "00"` explicitly labels textless artwork,
+while a two-letter language means text-bearing. Missing/empty/invalid language yields
 `language: null, containsText: null`; it must not be interpreted as textless or as
 permission to hide a title. The metadata belongs to the selected image, including
 a landscape fallback for a portrait viewport. Other providers currently omit this
@@ -51,6 +51,12 @@ object. Without the option, or with `artwork_info=0`/`art=0`, it is omitted.
 This response projection reuses the existing provider payload and metadata cache;
 it introduces no new provider calls. Clients should hide duplicate title/logo
 content only for a successfully loaded poster with `containsText === true`.
+
+The optional `diagnostics=1` projection adds bounded request/provider timings,
+cache outcome and original cache-creation measurements, selected-artwork reasons,
+and the actual tint image's URL, bytes, format and dimensions. It is also supported
+by `/api/tint` and `/api/credit`. Omission or `0` preserves the ordinary response;
+other values are invalid. See [diagnostics](debugging.md) for field semantics.
 
 Both variants share a server metadata cache before response projection. Matching
 inputs, provider order, credentials, rating countries and artwork orientation/HD/4K

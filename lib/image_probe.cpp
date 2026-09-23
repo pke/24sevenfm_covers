@@ -1,4 +1,5 @@
 #include "image_probe.h"
+#include "diagnostics.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -16,7 +17,8 @@ template <class T> void release(T*& value) { if (value) { value->Release(); valu
 
 namespace ssc {
 
-bool decodableImage(const std::string& bytes) {
+bool decodableImage(const std::string& bytes, const std::string& sourceUrl) {
+    const auto started = std::chrono::steady_clock::now();
     if (bytes.empty() || bytes.size() > 16u * 1024u * 1024u || bytes.size() > MAXDWORD) return false;
     const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool uninitialize = com == S_OK || com == S_FALSE;
@@ -49,6 +51,14 @@ bool decodableImage(const std::string& bytes) {
     }
     release(converter); release(frame); release(decoder); release(stream); release(factory);
     if (uninitialize) CoUninitialize();
+    JsonValue details = diagnosticObject();
+    details.object["url"] = diagnosticString(sourceUrl);
+    details.object["bytes"] = diagnosticNumber(static_cast<double>(bytes.size()));
+    details.object["width"] = width ? diagnosticNumber(width) : JsonValue();
+    details.object["height"] = height ? diagnosticNumber(height) : JsonValue();
+    details.object["decodeMs"] = diagnosticNumber(diagnosticMilliseconds(started));
+    details.object["valid"] = diagnosticBool(valid);
+    DiagnosticLog::instance().event("image.decode", details);
     return valid;
 }
 
@@ -56,7 +66,7 @@ bool decodableImage(const std::string& bytes) {
 
 #else
 namespace ssc {
-bool decodableImage(const std::string& bytes) {
+bool decodableImage(const std::string& bytes, const std::string&) {
     // The media feature is disabled until a non-Windows HTTPS/UI integration exists.
     // Keep a conservative probe for future callers rather than claiming arbitrary
     // bytes are images.

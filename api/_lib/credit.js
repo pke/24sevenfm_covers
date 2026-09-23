@@ -1,6 +1,7 @@
 "use strict";
 
 const { AsyncLocalStorage } = require("node:async_hooks");
+const diagnostics = require("./diagnostics");
 
 const CREDIT_CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
 const CREDIT_MISS_CACHE_SECONDS = 15 * 60;
@@ -435,7 +436,7 @@ function sendJson(res, status, body) {
     debugLog("info", "response.body", { status, body });
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify(body));
+    res.end(JSON.stringify(diagnostics.response(body)));
 }
 
 function createCreditHandler(options = {}) {
@@ -458,6 +459,7 @@ function createCreditHandler(options = {}) {
             return sendJson(res, 403, { error: "origin_not_allowed" });
         }
         if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Expose-Headers", "Cache-Control, Age, X-Vercel-Cache");
         res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type");
         if (req.method === "OPTIONS") {
@@ -470,6 +472,7 @@ function createCreditHandler(options = {}) {
             return sendJson(res, 405, { error: "method_not_allowed" });
         }
         try {
+            if (!diagnostics.validOption(req)) throw new CreditError("invalid_diagnostics", 400);
             const query = req.query || {};
             const album = query.album;
             const track = query.track;
@@ -481,9 +484,13 @@ function createCreditHandler(options = {}) {
                     || /[\u0000-\u001F\u007F]/.test(track)))
                 throw new CreditError("invalid_track", 400);
             if (!url) throw new CreditError("invalid_album_url", 400);
-            const artist = await fetchAlbumArtistWithFallback(
-                fetchImpl, url, album.trim(), typeof track === "string" ? track.trim() : "",
-                waitImpl);
+            const timing = diagnostics.span("credit.resolve", url);
+            let artist;
+            try {
+                artist = await fetchAlbumArtistWithFallback(
+                    fetchImpl, url, album.trim(), typeof track === "string" ? track.trim() : "", waitImpl);
+                timing.finish("ok");
+            } catch (error) { timing.finish("error"); throw error; }
             res.setHeader("Cache-Control", artist
                 ? cacheControl(CREDIT_CACHE_SECONDS, 86400)
                 : cacheControl(CREDIT_MISS_CACHE_SECONDS, 60));
@@ -499,14 +506,14 @@ function createCreditHandler(options = {}) {
 
     return function creditHandler(req, res) {
         const context = { env, requestId: debugRequestId(), startedAt: Date.now() };
-        return debugLogContext.run(context, async () => {
+        return diagnostics.runRequest(req, () => debugLogContext.run(context, async () => {
             const result = await handleCreditRequest(req, res);
             debugLog("info", "request.complete", {
                 status: res.statusCode,
                 duration_ms: Date.now() - context.startedAt,
             });
             return result;
-        });
+        }));
     };
 }
 

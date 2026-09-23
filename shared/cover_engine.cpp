@@ -18,9 +18,11 @@
 #include "media_policy.h"
 #include "media_resolver.h"
 #include "stations.h"
+#include "diagnostics.h"
 
 // --- logging ----------------------------------------------------------------
-// Diagnostics are OFF in production and have no UI toggle. Both the %TEMP% file AND
+// File diagnostics are OFF in production. The bounded in-memory stage snapshot
+// is available with D. Both the %TEMP% file AND
 // OutputDebugString stay silent unless a sentinel file exists next to where the log
 // would go: %TEMP%\<base>.log.enable. Support drops that file, restarts the host,
 // reproduces, then sends %TEMP%\<base>.log. When enabled, the file is capped at 1 MB
@@ -60,6 +62,7 @@ void rotateIfLarge(const std::string& path) {
 }
 
 void logLine(const std::string& msg) {
+    ssc::DiagnosticLog::instance().event("engine", ssc::diagnosticString(msg));
     std::lock_guard<std::mutex> lock(g_logMutex);
     if (!logEnabled()) return;               // prod default: no file, no OutputDebugString
     OutputDebugStringA(("[" + g_logBase + "] " + msg + "\n").c_str());
@@ -127,7 +130,7 @@ std::string downloadCover(const std::string& url, const std::atomic<bool>* cance
                                              std::string(), std::string(), 20, cancel);
     if (!res.ok())
         logLine("download failed: status=" + std::to_string(res.status) + " " + res.error);
-    if (!res.ok() || !ssc::decodableImage(res.body)) {
+    if (!res.ok() || !ssc::decodableImage(res.body, url)) {
         if (res.ok()) logLine("download failed: response is not a bounded decodable image");
         return std::string();
     }
@@ -319,12 +322,12 @@ void CoverEngine::startMediaWorker() {
                         }
                     }
                     if (bytes.empty() && state->resolver.downloadTitleLogo(result, bytes, item.cancel.get())
-                            && ssc::decodableImage(bytes) && !item.cancel->load()) {
+                            && ssc::decodableImage(bytes, result.titleLogoUrl) && !item.cancel->load()) {
                         std::lock_guard<std::mutex> lock(state->mutex);
                         state->titleLogoCache[result.titleLogoUrl] = bytes;
                         while (state->titleLogoCache.size() > ssc::kQueuedTrackStoreLimit)
                             state->titleLogoCache.erase(state->titleLogoCache.begin());
-                    } else if (bytes.empty() || !ssc::decodableImage(bytes)) bytes.clear();
+                    } else if (bytes.empty() || !ssc::decodableImage(bytes, result.titleLogoUrl)) bytes.clear();
                 }
                 if (item.current && !item.cancel->load())
                     publishTitleLogo(item.epoch, bytes, result.album,
@@ -364,6 +367,7 @@ void CoverEngine::startMediaWorker() {
                         haveCachedFallback = cachedBackdrop(state, item.track, item.request, cachedFallback);
                 }
                 if (haveCached) {
+                    ssc::DiagnosticLog::instance().event("cache.media.hit", ssc::diagnosticString(item.track.album));
                     if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
                     else publishQueuedMetadata(item.epoch, item.track, cached.result);
                     prepareTitleLogo(haveCachedFallback
@@ -487,7 +491,7 @@ void CoverEngine::startMediaWorker() {
             }
             const bool downloaded = !bytes.empty()
                 || (state->resolver.downloadBackdrop(item.result, bytes, item.cancel.get())
-                    && ssc::decodableImage(bytes));
+                    && ssc::decodableImage(bytes, item.result.backdropUrl));
             if (item.cancel->load()) continue;
             if (!downloaded) {
                 const unsigned failure = item.attempt + 1;
@@ -690,6 +694,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
         // Publish under the new epoch directly from the scheduler.
         const auto cached = state->cache.find(ssc::mediaCacheKey(current, request));
         if (cached != state->cache.end()) {
+            ssc::DiagnosticLog::instance().event("cache.media.hit", ssc::diagnosticString(current.album));
             auto& entry = cached->second;
             entry.used = ++state->lru;
             MediaWorkerState::CacheEntry fallback;
@@ -936,6 +941,7 @@ void CoverEngine::setStation(int index) {
 }
 
 void CoverEngine::stop() {
+    debugOverlay_.attach(nullptr, {});
     {
         std::lock_guard<std::mutex> life(monitorLifecycle_);
         if (monitor_) { monitor_->stop(); delete monitor_; monitor_ = nullptr; }
@@ -1005,6 +1011,7 @@ void CoverEngine::notifyNewCover() const {
 void CoverEngine::setWindow(HWND h) {
     if (HWND w = hwnd_.load()) KillTimer(w, kHeartbeat);
     hwnd_.store(h);
+    debugOverlay_.attach(h, [this] { return debugSnapshot(); });
     if (!h) return;
     ratingPointerInside_ = false;
     ratingPointerAutoHide_ = false;
@@ -1027,6 +1034,83 @@ void CoverEngine::setWindow(HWND h) {
     // followed by the outgoing fullscreen image and then the intended crossfade.
     onPaint(h);
     InvalidateRect(h, nullptr, FALSE);
+}
+
+std::string CoverEngine::debugSnapshot() {
+    using namespace ssc;
+    JsonValue out = DiagnosticLog::instance().snapshot();
+    auto& root = out.object;
+    root["client"] = diagnosticString(g_logBase);
+    root["build"] = diagnosticString(std::string(__DATE__) + " " + __TIME__);
+    root["resolverVersion"] = diagnosticString(MediaResolverConfig().resolverVersion);
+    root["station"] = diagnosticString(ssc::station(settings.station).host);
+    JsonValue display = diagnosticObject(); RECT r = {}; GetClientRect(hwnd_.load(), &r);
+    display.object["width"] = diagnosticNumber(r.right); display.object["height"] = diagnosticNumber(r.bottom);
+    display.object["orientation"] = diagnosticString(r.bottom > r.right ? "portrait" : "landscape");
+    display.object["resolution"] = diagnosticString(r.right > 1920 || r.bottom > 1080 ? "4k" : "hd");
+    display.object["layout"] = diagnosticString(settings.layout ? "poster" : "fill");
+    display.object["renderer"] = diagnosticString("Direct2D");
+    const auto renderer = d2d::liveDiagnostics();
+    display.object["coverWidth"] = diagnosticNumber(renderer.coverWidth);
+    display.object["coverHeight"] = diagnosticNumber(renderer.coverHeight);
+    display.object["backdropWidth"] = diagnosticNumber(renderer.backdropWidth);
+    display.object["backdropHeight"] = diagnosticNumber(renderer.backdropHeight);
+    display.object["decodedCacheBytes"] = diagnosticNumber(static_cast<double>(renderer.cacheBytes));
+    display.object["decodedCacheEntries"] = diagnosticNumber(static_cast<double>(renderer.cacheEntries));
+    display.object["blurBytes"] = diagnosticNumber(static_cast<double>(renderer.blurBytes));
+    display.object["backdropVisible"] = diagnosticBool(haveBackdrop_);
+    display.object["remainingSeconds"] = diagnosticNumber(currentRemaining());
+    BOOL motion = TRUE; SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &motion, 0);
+    display.object["reducedMotion"] = diagnosticBool(!motion);
+    root["display"] = display;
+    JsonValue options = diagnosticObject();
+    options.object["backdrops"] = diagnosticBool(settings.backdrops);
+    options.object["titleLogos"] = diagnosticBool(settings.titleLogos);
+    options.object["ratings"] = diagnosticBool(settings.ratings);
+    options.object["providers"] = diagnosticString(settings.mediaProviders);
+    options.object["hideCoverWithBackdrop"] = diagnosticBool(settings.hideCoverWithBackdrop);
+    options.object["personalAccessConfigured"] = diagnosticBool(!settings.fanartClientKey.empty());
+    root["settings"] = options;
+    if (media_) {
+        std::lock_guard<std::mutex> lock(media_->mutex);
+        auto track = [](const TrackInfo& t) {
+            JsonValue value = diagnosticObject();
+            value.object["album"] = diagnosticString(t.album); value.object["artist"] = diagnosticString(t.artist);
+            value.object["track"] = diagnosticString(t.track); value.object["coverUrl"] = diagnosticString(t.coverUrl);
+            value.object["originalCoverUrl"] = diagnosticString(t.originalCover);
+            value.object["thumbnailUrl"] = diagnosticString(t.thumbnailUrl);
+            value.object["lengthSeconds"] = diagnosticNumber(t.lengthSeconds); return value;
+        };
+        root["track"] = track(media_->current);
+        root["queue"] = diagnosticArray();
+        for (const auto& t : media_->queue) root["queue"].array.push_back(track(t));
+        JsonValue cache = diagnosticObject();
+        cache.object["mediaEntries"] = diagnosticNumber(static_cast<double>(media_->cache.size()));
+        cache.object["logoEntries"] = diagnosticNumber(static_cast<double>(media_->titleLogoCache.size()));
+        cache.object["pendingWork"] = diagnosticNumber(static_cast<double>(media_->work.size()));
+        cache.object["epoch"] = diagnosticNumber(static_cast<double>(media_->epoch));
+        cache.object["expiry"] = diagnosticString("session / bounded LRU");
+        root["localCache"] = cache;
+        const auto found = media_->cache.find(mediaCacheKey(media_->current, media_->request));
+        if (found != media_->cache.end()) {
+            const auto& result = found->second.result;
+            JsonValue resolved = diagnosticObject();
+            resolved.object["album"] = diagnosticString(result.album);
+            resolved.object["artist"] = diagnosticString(result.artist); resolved.object["track"] = diagnosticString(result.track);
+            resolved.object["backdropUrl"] = diagnosticString(result.backdropUrl);
+            resolved.object["logoUrl"] = diagnosticString(result.titleLogoUrl);
+            resolved.object["source"] = diagnosticString(result.source);
+            resolved.object["status"] = diagnosticString(result.status == MediaResult::Hit ? "hit" : result.status == MediaResult::Miss ? "miss" : "failure");
+            root["resolved"] = resolved;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        root["shownCoverUrl"] = diagnosticString(shownUrl_);
+        root["preloadedCoverUrl"] = diagnosticString(nextUrl_);
+        root["shownCoverBytes"] = diagnosticNumber(static_cast<double>(shownBytes_.size()));
+    }
+    return diagnosticJson(diagnosticSanitize(out));
 }
 
 // --- monitor callback (background thread) -----------------------------------

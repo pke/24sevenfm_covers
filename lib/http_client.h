@@ -15,6 +15,8 @@ struct HttpResponse {
     int status = 0;          // HTTP status code, or 0 on transport failure
     std::string body;        // decoded response body
     std::string error;       // human readable error when status == 0
+    double headersMs = -1;   // unknown for injected/unsupported transports
+    std::string cacheControl, age, cacheStatus; // only public diagnostic headers
     bool ok() const { return status >= 200 && status < 300; }
 };
 

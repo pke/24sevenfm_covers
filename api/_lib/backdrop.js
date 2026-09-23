@@ -3,6 +3,7 @@
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createHash } = require("node:crypto");
 const { createMetadataCache } = require("./metadata_cache");
+const diagnostics = require("./diagnostics");
 const he = require("he");
 
 const CACHE_SECONDS = 60 * 60 * 24 * 30 * 6;
@@ -1110,6 +1111,7 @@ function configuredMediaHint(query, requestHint, env) {
 }
 
 async function fetchJson(fetchImpl, url, init, provider) {
+    const timing = diagnostics.span("provider." + provider, url);
     const startedAt = Date.now();
     const loggedUrl = safeDebugUrl(url);
     debugLog("info", "provider.request", { provider, url: loggedUrl });
@@ -1120,6 +1122,7 @@ async function fetchJson(fetchImpl, url, init, provider) {
             signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
         });
     } catch (error) {
+        timing.finish("error");
         debugLog("warn", "provider.failure", {
             provider,
             url: loggedUrl,
@@ -1135,6 +1138,8 @@ async function fetchJson(fetchImpl, url, init, provider) {
         status: response.status,
         duration_ms: Date.now() - startedAt,
     });
+    timing.headers(response.status);
+    timing.finish();
     if (response.status === 401 || response.status === 403) {
         throw new ResolverError(provider + "_authentication", 502, provider + " rejected the configured key");
     }
@@ -1145,8 +1150,11 @@ async function fetchJson(fetchImpl, url, init, provider) {
         throw new ResolverError(provider + "_response", 502, provider + " returned HTTP " + response.status);
     }
     try {
-        return await response.json();
+        const body = await response.json();
+        timing.finish();
+        return body;
     } catch (error) {
+        timing.finish("invalid_json");
         debugLog("warn", "provider.invalid_json", {
             provider,
             url: loggedUrl,
@@ -1552,11 +1560,14 @@ async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId, pref
         // fanart.tv is an enhancement. Provider failure must still degrade to TMDB art.
         return null;
     }
-    const isTextless = (candidate) => candidate && (candidate.lang === "" || candidate.lang === "00");
+    // Only the explicit API value guarantees a textless label. Missing/empty
+    // language is unknown, not evidence that the pixels contain no title.
+    const isTextless = (candidate) => candidate && candidate.lang === "00";
+    const languageRank = candidate => isTextless(candidate) ? 0 : candidate && !candidate.lang ? 1 : 2;
     const selectedInfo = new Map();
     const best = (key) => {
         const candidates = Array.isArray(body && body[key]) ? body[key].slice() : [];
-        candidates.sort((a, b) => (isTextless(a) ? 0 : 1) - (isTextless(b) ? 0 : 1)
+        candidates.sort((a, b) => languageRank(a) - languageRank(b)
             || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0));
         for (const candidate of candidates) {
             const trusted = trustedFanartUrl(candidate && candidate.url);
@@ -1568,6 +1579,14 @@ async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId, pref
                     language,
                     containsText: language === null ? null : language !== "00",
                 });
+                diagnostics.selection({ scope: "provider-candidate", provider: "fanart", kind: key, policy: "prefer-textless",
+                    candidates: candidates.length,
+                    textlessCandidates: candidates.filter(item => isTextless(item) && trustedFanartUrl(item.url)).length,
+                    reason: isTextless(candidate) ? "textless-candidate" : "no-textless-candidate",
+                    selected: { id: String(candidate.id || ""), url: trusted,
+                        language: typeof candidate.lang === "string" ? candidate.lang : null,
+                        containsText: language === null ? null : language !== "00",
+                        likes: parseInt(candidate.likes, 10) || 0 } });
                 return trusted;
             }
         }
@@ -1702,6 +1721,7 @@ function tintPreviewUrl(source, backdrop, tmdbPath) {
 
 async function defaultTintForImage(fetchImpl, url) {
     if (!url) return [...WHITE_TINT];
+    const timing = diagnostics.image(url);
     const startedAt = Date.now();
     const loggedUrl = safeDebugUrl(url);
     debugLog("info", "tint.request", { url: loggedUrl });
@@ -1710,20 +1730,30 @@ async function defaultTintForImage(fetchImpl, url) {
             headers: { "Accept": "image/*", "User-Agent": "24sevenfm-covers-backdrop-resolver/1.0" },
             signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
         });
+        timing.headers(response.status);
         debugLog("info", "tint.response", {
             url: loggedUrl,
             status: response.status,
             duration_ms: Date.now() - startedAt,
         });
-        if (!response.ok) return [...WHITE_TINT];
+        if (!response.ok) {
+            timing.finish("fallback", "image_http_" + response.status);
+            return [...WHITE_TINT];
+        }
         // Enforce the limit while streaming, even without a trustworthy length.
         // An aborted/partial image must never reach the decoder.
         const bytes = await limitedImageBytes(response);
+        timing.downloaded(bytes.length);
         // Load sharp lazily: unit tests inject the tint reader, while Vercel bundles
         // the native dependency only for the production function that needs it.
         const sharp = require("sharp");
-        const stats = await sharp(bytes, { limitInputPixels: MAX_TINT_IMAGE_PIXELS })
-            .toColourspace("srgb").stats();
+        const analysisStarted = performance.now();
+        const input = sharp(bytes, { limitInputPixels: MAX_TINT_IMAGE_PIXELS });
+        const metadata = await input.metadata();
+        Object.assign(timing.result, { width: metadata.width, height: metadata.height, format: metadata.format });
+        const stats = await input.toColourspace("srgb").stats();
+        timing.result.analysisMs = diagnostics.milliseconds(analysisStarted);
+        timing.finish("ok");
         debugLog("info", "tint.decoded", {
             url: loggedUrl,
             bytes: bytes.length,
@@ -1731,6 +1761,7 @@ async function defaultTintForImage(fetchImpl, url) {
         });
         return tintFromMeans(stats.channels.slice(0, 3).map((channel) => channel.mean));
     } catch (error) {
+        timing.finish("fallback", error.code || "image_decode_failed");
         debugLog("warn", "tint.failure", {
             url: loggedUrl,
             duration_ms: Date.now() - startedAt,
@@ -1779,11 +1810,14 @@ async function limitedImageBytes(response) {
     return Buffer.concat(chunks, total);
 }
 
-async function defaultTintFromBytes(bytes) {
+async function defaultTintFromBytes(bytes, timing) {
     try {
         const sharp = require("sharp");
-        const stats = await sharp(bytes, { limitInputPixels: MAX_TINT_IMAGE_PIXELS })
-            .toColourspace("srgb").stats();
+        const input = sharp(bytes, { limitInputPixels: MAX_TINT_IMAGE_PIXELS });
+        const metadata = await input.metadata();
+        if (timing) Object.assign(timing.result,
+            { width: metadata.width, height: metadata.height, format: metadata.format });
+        const stats = await input.toColourspace("srgb").stats();
         return tintFromMeans(stats.channels.slice(0, 3).map((channel) => channel.mean));
     } catch (error) {
         throw new ResolverError("invalid_image", 422, "image cannot be decoded safely");
@@ -1793,59 +1827,71 @@ async function defaultTintFromBytes(bytes) {
 async function coverTintForUrl(rawUrl, dependencies) {
     let currentUrl = trustedCoverTintUrl(rawUrl, dependencies.env);
     if (!currentUrl) throw new ResolverError("invalid_image_url", 400, "image URL is not allowed");
+    const timing = diagnostics.image(currentUrl);
     const signal = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
-
-    for (let redirects = 0; redirects <= MAX_TINT_REDIRECTS; redirects++) {
-        let response;
-        try {
-            response = await dependencies.fetchImpl(currentUrl, {
-                headers: {
-                    "Accept": "image/jpeg, image/png, image/webp",
-                    "User-Agent": "24sevenfm-covers-tint-resolver/1.0",
-                },
-                redirect: "manual",
-                signal,
-            });
-        } catch (error) {
-            throw new ResolverError("image_unavailable", 502, "image request failed");
-        }
-
-        if ([301, 302, 303, 307, 308].includes(response.status)) {
-            if (redirects === MAX_TINT_REDIRECTS) {
-                throw new ResolverError("image_unavailable", 502, "too many image redirects");
-            }
-            let redirected;
+    try {
+        for (let redirects = 0; redirects <= MAX_TINT_REDIRECTS; redirects++) {
+            let response;
             try {
-                redirected = new URL(responseHeader(response, "location") || "", currentUrl).href;
+                response = await dependencies.fetchImpl(currentUrl, {
+                    headers: {
+                        "Accept": "image/jpeg, image/png, image/webp",
+                        "User-Agent": "24sevenfm-covers-tint-resolver/1.0",
+                    },
+                    redirect: "manual",
+                    signal,
+                });
+                timing.result.url = diagnostics.safeUrl(currentUrl);
+                timing.headers(response.status);
             } catch (error) {
-                redirected = "";
+                throw new ResolverError("image_unavailable", 502, "image request failed");
             }
-            currentUrl = trustedCoverTintUrl(redirected, dependencies.env);
-            if (!currentUrl) {
-                throw new ResolverError("image_redirect_not_allowed", 502, "image redirect is not allowed");
-            }
-            continue;
-        }
-        if (response.status === 429 || response.status >= 500) {
-            throw new ResolverError("image_unavailable", 502, "image host is temporarily unavailable");
-        }
-        if (!response.ok) throw new ResolverError("image_response", 502, "image host rejected the request");
 
-        const contentType = String(responseHeader(response, "content-type") || "")
-            .split(";", 1)[0].trim().toLowerCase();
-        if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(contentType)) {
-            throw new ResolverError("invalid_image_type", 415, "response is not a supported image");
+            if ([301, 302, 303, 307, 308].includes(response.status)) {
+                if (redirects === MAX_TINT_REDIRECTS) {
+                    throw new ResolverError("image_unavailable", 502, "too many image redirects");
+                }
+                let redirected;
+                try {
+                    redirected = new URL(responseHeader(response, "location") || "", currentUrl).href;
+                } catch (error) {
+                    redirected = "";
+                }
+                currentUrl = trustedCoverTintUrl(redirected, dependencies.env);
+                if (!currentUrl) {
+                    throw new ResolverError("image_redirect_not_allowed", 502, "image redirect is not allowed");
+                }
+                continue;
+            }
+            if (response.status === 429 || response.status >= 500) {
+                throw new ResolverError("image_unavailable", 502, "image host is temporarily unavailable");
+            }
+            if (!response.ok) throw new ResolverError("image_response", 502, "image host rejected the request");
+
+            const contentType = String(responseHeader(response, "content-type") || "")
+                .split(";", 1)[0].trim().toLowerCase();
+            if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(contentType)) {
+                throw new ResolverError("invalid_image_type", 415, "response is not a supported image");
+            }
+            let bytes;
+            try {
+                bytes = await limitedImageBytes(response);
+                timing.downloaded(bytes.length);
+            } catch (error) {
+                if (error instanceof ResolverError) throw error;
+                throw new ResolverError("image_unavailable", 502, "image body could not be read");
+            }
+            const started = performance.now();
+            const tint = await dependencies.tintFromBytes(bytes, timing);
+            timing.result.analysisMs = diagnostics.milliseconds(started);
+            timing.finish("ok");
+            return tint;
         }
-        let bytes;
-        try {
-            bytes = await limitedImageBytes(response);
-        } catch (error) {
-            if (error instanceof ResolverError) throw error;
-            throw new ResolverError("image_unavailable", 502, "image body could not be read");
-        }
-        return dependencies.tintFromBytes(bytes);
+        throw new ResolverError("image_unavailable", 502, "image could not be resolved");
+    } catch (error) {
+        timing.finish("error", error.code || "image_unavailable");
+        throw error;
     }
-    throw new ResolverError("image_unavailable", 502, "image could not be resolved");
 }
 
 function hasTmdbCredential(env) {
@@ -1882,6 +1928,10 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
                 landscape: tmdbImageUrl(media.backdrop_path, prefer4k ? "original" : "w1280"),
                 portrait: tmdbImageUrl(media.poster_path, prefer4k ? "original" : "w780"),
             };
+            diagnostics.selection({ scope: "provider-candidate", provider: "tmdb", kind: orientation === "portrait" ? "poster" : "background",
+                policy: "default-path", reason: orientation === "portrait" ? "media-poster-path" : "media-backdrop-path",
+                selected: { url: orientation === "portrait" ? artwork.portrait : artwork.landscape,
+                    language: null, containsText: null } });
         } else if (provider === "tvmaze" && mediaType(media) === "tv") {
             artwork = await tvmazeArtwork(fetchImpl, media, await tvdbId());
         }
@@ -2047,6 +2097,8 @@ function withCertifications(response, certifications, ratingCountries) {
 
 async function resolvedArtResponse(media, art, dependencies,
     certificationsPromise = Promise.resolve([]), ratingCountries = []) {
+    diagnostics.selection({ scope: "display-artwork", provider: art.source,
+        url: art.url, previewUrl: art.preview || null, artwork: art.artwork || null });
     const [tint, certifications] = await Promise.all([
         dependencies.tintForImage(art.preview, dependencies.fetchImpl),
         certificationsPromise,
@@ -2305,7 +2357,7 @@ function sendJson(res, status, body) {
     debugLog("info", "response.body", { status, body });
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify(body));
+    res.end(JSON.stringify(diagnostics.response(body)));
 }
 
 function createHandler(options = {}) {
@@ -2348,6 +2400,7 @@ function createHandler(options = {}) {
             return sendJson(res, 403, { error: "origin_not_allowed" });
         }
         if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Expose-Headers", "Cache-Control, Age, X-Vercel-Cache");
         res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type");
         if (req.method === "OPTIONS") {
@@ -2361,6 +2414,7 @@ function createHandler(options = {}) {
         }
 
         try {
+            if (!diagnostics.validOption(req)) throw new ResolverError("invalid_diagnostics", 400);
             const albumValue = requestQueryValue(req, "album");
             const trackValue = requestQueryValue(req, "track");
             const artistValue = requestQueryValue(req, "artist");
@@ -2479,7 +2533,7 @@ function createHandler(options = {}) {
                 ? MISS_CACHE_SECONDS : CACHE_SECONDS;
             const reload = /(?:no-cache|no-store|max-age=0)/i.test(
                 req.headers && req.headers["cache-control"] || "");
-            const resolved = await cachedMetadata(key, () => resolveBackdrop(title,
+            const resolved = await diagnostics.cached(cachedMetadata, "metadata", key, () => resolveBackdrop(title,
                 providers, clientKey, { env, fetchImpl, tintForImage }, mediaHint,
                 resolverArtist, resolverOptions), ttl, reload);
             // Project into a fresh object: stripping a logo must never mutate the
@@ -2487,7 +2541,7 @@ function createHandler(options = {}) {
             const result = { ...resolved, metadata };
             if (!includeArtworkInfo) delete result.artwork;
             if (includeLogos && !result.logo && result.media) {
-                result.logo = await cachedTitleLogo(key, () => titleLogoForResolvedMedia(
+                result.logo = await diagnostics.cached(cachedTitleLogo, "logo", key, () => titleLogoForResolvedMedia(
                     fetchImpl, resolved, providers, clientKey, env),
                 logo => logo ? CACHE_SECONDS : MISS_CACHE_SECONDS, reload);
                 if (!result.logo) delete result.logo;
@@ -2524,7 +2578,7 @@ function createHandler(options = {}) {
 
     return function backdropHandler(req, res) {
         const context = { env, requestId: debugRequestId() };
-        return debugLogContext.run(context, () => handleBackdropRequest(req, res));
+        return diagnostics.runRequest(req, () => debugLogContext.run(context, () => handleBackdropRequest(req, res)));
     };
 }
 
@@ -2533,7 +2587,7 @@ function createTintHandler(options = {}) {
     const fetchImpl = options.fetchImpl || globalThis.fetch;
     const tintFromBytes = options.tintFromBytes || defaultTintFromBytes;
 
-    return async function tintHandler(req, res) {
+    async function tintHandler(req, res) {
         res.setHeader("Vary", "Origin");
         res.setHeader("X-Content-Type-Options", "nosniff");
         const origin = req.headers && req.headers.origin;
@@ -2542,6 +2596,7 @@ function createTintHandler(options = {}) {
             return sendJson(res, 403, { error: "origin_not_allowed" });
         }
         if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Access-Control-Expose-Headers", "Cache-Control, Age, X-Vercel-Cache");
         res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type");
         if (req.method === "OPTIONS") {
@@ -2555,8 +2610,9 @@ function createTintHandler(options = {}) {
         }
 
         try {
+            if (!diagnostics.validOption(req)) throw new ResolverError("invalid_diagnostics", 400);
             const query = req.query || {};
-            const keys = Object.keys(query);
+            const keys = Object.keys(query).filter(key => key !== "diagnostics");
             if (keys.length !== 1 || keys[0] !== "url" || typeof query.url !== "string") {
                 throw new ResolverError("invalid_image_url", 400, "exactly one image URL is required");
             }
@@ -2570,7 +2626,8 @@ function createTintHandler(options = {}) {
                 error: known ? error.code : "internal_error",
             });
         }
-    };
+    }
+    return (req, res) => diagnostics.runRequest(req, () => tintHandler(req, res));
 }
 
 const handler = createHandler();

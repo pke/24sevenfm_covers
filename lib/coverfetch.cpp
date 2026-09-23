@@ -1,6 +1,7 @@
 #include "coverfetch.h"
 
 #include "http_client.h"
+#include "diagnostics.h"
 
 #include <atomic>
 #include <cctype>
@@ -294,9 +295,13 @@ void appendUtf8(std::string& out, unsigned cp) {
 // (the seam the unit tests use to feed canned responses without a socket).
 HttpResponse fetch(const Config& cfg, const std::string& path,
                    const std::atomic<bool>* cancel = nullptr) {
-    if (cfg.transport)
-        return cfg.transport(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
+    if (cfg.transport) {
+        const auto start = std::chrono::steady_clock::now();
+        auto response = cfg.transport(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
                              cfg.requestTimeoutSeconds);
+        DiagnosticLog::instance().request("https://" + cfg.host + path, response, diagnosticMilliseconds(start));
+        return response;
+    }
     return httpRequest(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
                        cfg.requestTimeoutSeconds, cancel);
 }

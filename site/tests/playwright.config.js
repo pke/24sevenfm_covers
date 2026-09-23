@@ -14,12 +14,13 @@ module.exports = defineConfig({
     retries: 2,        // retry before crying wolf - a canary that flakes gets ignored
     reporter: [["list"]],
     use: {
+        browserName: localMode ? process.env.PLAYER_TEST_BROWSER || "chromium" : "chromium",
         baseURL: process.env.PLAYER_URL || "https://24sevenfm-covers.dudesoft.app",
         // The deployed canary uses branded Chrome: the audio contract test needs its
         // proprietary AAC decoder, and the station WAF prefers its genuine fingerprint.
         // Local tests are mocked and need neither; bundled Chromium also avoids branded
         // Chrome's unreliable Windows teardown.
-        channel: localMode ? undefined : "chrome",
+        channel: localMode ? process.env.PLAYER_TEST_CHANNEL || undefined : "chrome",
         headless: true,
         viewport: { width: 1280, height: 800 },
         // A regular Chrome UA, not "HeadlessChrome": the station WAF answers 403 to

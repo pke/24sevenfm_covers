@@ -135,7 +135,7 @@ try {
         [Environment]::SetEnvironmentVariable('PLAYER_URL', $playerOrigin, 'Process')
         [Environment]::SetEnvironmentVariable('PLAYER_ATTACKER_URL', $attackerOrigin, 'Process')
         [Environment]::SetEnvironmentVariable('PLAYER_LOCAL', '1', 'Process')
-        $testArguments = @($cli, 'test', 'player.spec.js', '--retries=0') + $PlaywrightArguments
+        $testArguments = @($cli, 'test', 'player.spec.js', 'debug.spec.js', '--retries=0') + $PlaywrightArguments
         Push-Location $PSScriptRoot
         try { & $nodePath @testArguments } finally { Pop-Location }
         if ($LASTEXITCODE -ne 0) { throw "Playwright failed with exit code $LASTEXITCODE." }

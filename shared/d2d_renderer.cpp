@@ -926,6 +926,15 @@ bool renderCover(float cw, float ch, Transition transition, float progress,
 
 } // namespace
 
+LiveDiagnostics liveDiagnostics() {
+    LiveDiagnostics stats;
+    stats.cacheBytes = g_decodedBytes; stats.cacheEntries = g_decodedImages.size();
+    stats.blurBytes = g_blurPixels.size();
+    if (g_curBmp) { const auto size = g_curBmp->GetPixelSize(); stats.coverWidth = size.width; stats.coverHeight = size.height; }
+    if (g_backdropCurBmp) { const auto size = g_backdropCurBmp->GetPixelSize(); stats.backdropWidth = size.width; stats.backdropHeight = size.height; }
+    return stats;
+}
+
 #ifdef SSC_RENDERER_DIAGNOSTICS
 RendererDiagnostics rendererDiagnostics() {
     auto stats = g_diagnostics;
