@@ -48,6 +48,34 @@ struct CoverEngineTestAccess {
     }
     ~CoverEngineTestAccess() { engine.stopMediaWorker(); }
     CoverEngine::MediaWorkerState& state() { return *engine.media_; }
+    void diagnosticCards() {
+        ssc::TrackInfo past, current, future;
+        past.album = "Past album"; past.track = "Old cue";
+        current.album = "Current album"; current.track = "Playing cue";
+        future.album = "Future album"; future.track = "Next cue";
+        engine.scheduleMedia(past, {});
+        engine.scheduleMedia(current, {future});
+        for (const auto& track : {past, current, future}) {
+            ssc::MediaResult result; result.status = ssc::MediaResult::Hit;
+            result.album = track.album; result.track = track.track; result.hasMetadata = true;
+            result.backdropUrl = "https://images.test/" + track.album + ".jpg";
+            cacheMedia(&state(), track.album, track, state().request, result, "image bytes");
+        }
+        ssc::JsonValue snapshot;
+        REQUIRE(ssc::parseJson(engine.debugSnapshot(), snapshot));
+        const auto& timeline = ssc::debugValue(snapshot, "timeline").array;
+        REQUIRE(timeline.size() == 3);
+        for (const auto& card : timeline) {
+            const auto& variants = ssc::debugValue(ssc::debugValue(card, "artwork"), "variants").array;
+            REQUIRE(variants.size() == 1);
+            CHECK(ssc::debugValue(variants[0], "album").string == ssc::debugValue(card, "album").string);
+            CHECK(ssc::debugValue(variants[0], "imageBytes").number == 11);
+        }
+        state().cache.clear();
+        REQUIRE(ssc::parseJson(engine.debugSnapshot(), snapshot));
+        for (const auto& card : ssc::debugValue(snapshot, "timeline").array)
+            CHECK(ssc::debugValue(ssc::debugValue(card, "artwork"), "variants").array.empty());
+    }
     void comingNextQueue() {
         ssc::TrackInfo current, first, second;
         current.album = "Current"; first.album = "Crown, The"; second.album = "Next album";
@@ -657,6 +685,9 @@ struct CoverEngineTestAccess {
 
 TEST_CASE("native coming next consumes queue metadata and rejects empty or stale snapshots") {
     CoverEngineTestAccess test; test.comingNextQueue();
+}
+TEST_CASE("native diagnostic cards expose only their own cached artwork, including history and eviction") {
+    CoverEngineTestAccess test; test.diagnosticCards();
 }
 TEST_CASE("native resize updates current and queue resolution without downgrading metadata") {
     CoverEngineTestAccess test; test.artworkResize();

@@ -1543,6 +1543,9 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
 .stage-debug .debug-track.entering { opacity: 0; transform: translateY(6px); }
 .stage-debug .debug-track.leaving { opacity: 0; flex-basis: 0; width: 0; padding-inline: 0; pointer-events: none; }
 .debug-selection { border-top: 1px solid #ffffff13; margin-top: 10px; padding-top: 8px; }
+.debug-details { transition: opacity 100ms ease; }
+.debug-details.changing { opacity: 0; }
+#debug-requests-list:empty::before { content: "No retained requests for this track"; color: #b3bdcd; font-size: 11px; }
 .debug-fields { margin: 0; font-size: 11px; user-select: text; }
 .debug-field { display: grid; grid-template-columns: minmax(86px, .7fr) minmax(0, 1.6fr); gap: 8px;
     padding: 6px 0; border-bottom: 1px solid #ffffff08; }

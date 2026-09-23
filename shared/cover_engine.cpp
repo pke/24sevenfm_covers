@@ -379,7 +379,7 @@ void CoverEngine::startMediaWorker() {
                         haveCachedFallback = cachedBackdrop(state, item.track, item.request, cachedFallback);
                 }
                 if (haveCached) {
-                    ssc::DiagnosticLog::instance().event("cache.media.hit", ssc::diagnosticString(item.track.album));
+                    ssc::DiagnosticLog::instance().event("cache.media.hit", diagnosticTrack(item.track));
                     if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
                     else publishQueuedMetadata(item.epoch, item.track, cached.result);
                     prepareTitleLogo(haveCachedFallback
@@ -707,7 +707,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
         // Publish under the new epoch directly from the scheduler.
         const auto cached = state->cache.find(ssc::mediaCacheKey(current, request));
         if (cached != state->cache.end()) {
-            ssc::DiagnosticLog::instance().event("cache.media.hit", ssc::diagnosticString(current.album));
+            ssc::DiagnosticLog::instance().event("cache.media.hit", diagnosticTrack(current));
             auto& entry = cached->second;
             entry.used = ++state->lru;
             MediaWorkerState::CacheEntry fallback;
@@ -1109,19 +1109,41 @@ std::string CoverEngine::debugSnapshot() {
         auto timeline = media_->timeline.entries(upcoming, currentRemaining());
         for (auto& item : timeline.array) {
             auto prepared = diagnosticObject();
+            auto artworkDetails = diagnosticObject();
+            artworkDetails.object["coverUrl"] = debugValue(item, "coverUrl");
+            auto resolvedVariants = diagnosticArray();
             bool metadata = false, artwork = false, image = false; unsigned variants = 0;
             for (const auto& entry : media_->cache) {
                 const auto& cached = entry.second;
                 if (cached.track.album != debugValue(item, "album").string
                         || cached.track.track != debugValue(item, "track").string) continue;
-                ++variants; metadata = true;
+                ++variants; metadata = metadata || cached.result.hasMetadata;
                 artwork = artwork || cached.result.hasBackdrop(); image = image || !cached.bytes.empty();
+                auto resolved = diagnosticObject();
+                resolved.object["album"] = diagnosticString(cached.result.album);
+                resolved.object["track"] = diagnosticString(cached.result.track);
+                resolved.object["artist"] = diagnosticString(cached.result.artist);
+                resolved.object["backdropUrl"] = diagnosticString(cached.result.backdropUrl);
+                resolved.object["logoUrl"] = diagnosticString(cached.result.titleLogoUrl);
+                resolved.object["source"] = diagnosticString(cached.result.source);
+                resolved.object["status"] = diagnosticString(cached.result.status == MediaResult::Hit ? "hit"
+                    : cached.result.status == MediaResult::Miss ? "miss" : "failure");
+                resolved.object["orientation"] = diagnosticString(wantsPortraitArtwork(cached.request) ? "portrait" : "landscape");
+                resolved.object["resolution"] = diagnosticString(wants4kArtwork(cached.request) ? "4k" : "hd");
+                resolved.object["imageBytes"] = diagnosticNumber(static_cast<double>(cached.bytes.size()));
+                resolved.object["tint"] = diagnosticArray();
+                if (cached.result.hasTint) for (const auto channel : cached.result.tint)
+                    resolved.object["tint"].array.push_back(diagnosticNumber(channel));
+                resolvedVariants.array.push_back(resolved);
             }
             prepared.object["metadata"] = diagnosticBool(metadata);
             prepared.object["artwork"] = diagnosticBool(artwork);
             prepared.object["imageBytes"] = diagnosticBool(image);
             prepared.object["variants"] = diagnosticNumber(variants);
             item.object["cache"] = prepared;
+            artworkDetails.object["variants"] = resolvedVariants;
+            artworkDetails.object["status"] = diagnosticString(variants ? "Cached results for this track" : "No cached resolver result for this track");
+            item.object["artwork"] = artworkDetails;
         }
         root["timeline"] = timeline;
         const auto found = media_->cache.find(mediaCacheKey(media_->current, media_->request));

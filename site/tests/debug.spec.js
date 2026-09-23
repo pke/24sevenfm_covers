@@ -93,11 +93,27 @@ test("debug uses selectable fields and a horizontally scrollable timeline with o
     await expect(rail).toContainText("Future 8");
     expect(await rail.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
     await rail.evaluate(el => { el.scrollLeft = el.scrollWidth; });
-    await rail.getByRole("button", { name: /Future 8/ }).click();
+    const outgoing = await rail.getByRole("button", { name: /Future 8/ }).evaluate(el => {
+        el.click();
+        return document.querySelector("#debug-snapshot").textContent;
+    });
+    expect(outgoing).toContain("Debug Album"); // retain outgoing details during the exit fade
     await expect(page.locator("#debug-selection")).toContainText("Future 8");
-    await expect(page.locator("#debug-selection")).toContainText("Cache");
+    await expect(page.locator("#debug-cache")).toContainText("Variants");
+    await expect(page.locator("#debug-snapshot")).toContainText("Future 8");
+    for (const id of ["snapshot", "artwork", "requests-list", "cache", "player", "events"])
+        await expect(page.locator("#debug-" + id)).not.toContainText("Debug Album");
+    await expect(page.locator("#debug-player")).toContainText("future");
+    await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true,
+        value: { writeText: async value => { window.debugCopied = value; } } }));
+    await page.getByRole("button", { name: "Copy snapshot", exact: true }).click();
+    const copied = JSON.parse(await page.evaluate(() => window.debugCopied));
+    expect(copied.track.album).toBe("Future 8");
+    expect(JSON.stringify(copied)).not.toContain("Debug Album");
     await page.getByRole("button", { name: "Jump to current" }).click();
     await expect(page.locator("#debug-selection")).toContainText("Debug Album");
+    await rail.getByRole("button", { name: /Future 8/ }).click();
+    await expect(page.locator("#debug-snapshot")).toContainText("Future 8");
     await page.route(/\/soap\/FM24sevenJSON.php\?.*action=GetCurrentlyPlaying/, route => route.fulfill({ json: {
         Album: "Next current", Track: "Another cue", Artist: "Composer", Length: "180000",
         CoverLink: "https://streamingsoundtracks.com/images/cover/test.jpg",
@@ -108,6 +124,13 @@ test("debug uses selectable fields and a horizontally scrollable timeline with o
     await expect(rail.locator('[aria-current="true"]')).toContainText("Next current");
     await expect(rail.locator('[data-phase="past"]')).toContainText("Debug Album");
     await expect(rail.locator('[aria-current="true"]')).toHaveCount(1);
+    await expect(page.locator("#debug-snapshot")).toContainText("Future 8");
+    await rail.locator('[data-phase="past"]').click();
+    await expect(page.locator("#debug-snapshot")).toContainText("Debug Album");
+    await expect(page.locator("#debug-player")).toContainText("past");
+    await page.waitForTimeout(1200);
+    for (const id of ["snapshot", "artwork", "requests-list", "cache", "player", "events"])
+        await expect(page.locator("#debug-" + id)).not.toContainText("Next current");
     await page.locator("#stage").screenshot({ path: testInfo.outputPath("debug-timeline-desktop.png") });
 });
 

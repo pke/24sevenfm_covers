@@ -6,6 +6,7 @@
 #include <functional>
 #include <string>
 #include "debug_timeline.h"
+#include "../lib/diagnostic_selection.h"
 #pragma comment(lib, "comctl32.lib")
 
 namespace ssc {
@@ -77,7 +78,6 @@ private:
         POINT scroll = {}; SendMessageW(text_, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
         const auto raw = snapshot_();
         if (!parseJson(raw, snapshotData_)) return;
-        displayed_ = wide(raw);
         if (debugValue(snapshotData_, "timeline").array.empty()) selectedData_ = JsonValue();
         timeline_.setItems(debugValue(snapshotData_, "timeline"), force);
         renderReport();
@@ -92,17 +92,18 @@ private:
         if (!text_) return;
         if (reportTransition_ && !reportSwapped_) return;
         JsonValue view = diagnosticObject();
+        const auto details = diagnosticSelection(snapshotData_, selectedData_);
+        displayed_ = wide(diagnosticJson(details));
         const int tab = static_cast<int>(SendDlgItemMessageW(panel_, kView, CB_GETCURSEL, 0, 0));
         if (tab <= 0) {
-            if (selectedData_.type != JsonValue::Null) view.object["selected"] = selectedData_;
+            if (selectedData_.type != JsonValue::Null) view.object["track"] = debugValue(details, "track");
             else view.object["track"] = debugValue(snapshotData_, "track");
         } else if (tab == 1) {
-            view.object["track"] = debugValue(snapshotData_, "track");
-            view.object["resolved"] = debugValue(snapshotData_, "resolved");
-        } else if (tab == 2) view.object["requests"] = debugValue(snapshotData_, "requests");
-        else if (tab == 3) view.object["localCache"] = debugValue(snapshotData_, "localCache");
-        else if (tab == 4) { view.object["display"] = debugValue(snapshotData_, "display"); view.object["settings"] = debugValue(snapshotData_, "settings"); }
-        else view.object["events"] = debugValue(snapshotData_, "events");
+            view.object["resolved"] = debugValue(details, "resolved");
+        } else if (tab == 2) view.object["requests"] = debugValue(details, "requests");
+        else if (tab == 3) view.object["localCache"] = debugValue(details, "localCache");
+        else if (tab == 4) view.object["playback"] = debugValue(details, "playback");
+        else view.object["events"] = debugValue(details, "events");
         const auto report = wide(debugReport(view));
         SendMessageW(text_, WM_SETREDRAW, FALSE, 0);
         SetWindowTextW(text_, report.c_str());
@@ -189,12 +190,11 @@ private:
         child(L"BUTTON", L"Close", kClose, WS_TABSTOP);
         child(L"BUTTON", L"Current", kCurrent, WS_TABSTOP);
         const HWND view = child(L"COMBOBOX", L"", kView, WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL);
-        for (const auto* name : { L"Selected track", L"Now playing / artwork", L"Requests and timings", L"Cache", L"Player / settings", L"Recent events" })
+        for (const auto* name : { L"Selected track", L"Artwork", L"Requests and timings", L"Cache", L"Playback position", L"Recent events" })
             SendMessageW(view, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name));
         SendMessageW(view, CB_SETCURSEL, 0, 0);
         timeline_.create(panel_, kTimeline, font_);
         timeline_.key = [this](WPARAM wp, LPARAM lp) { return key(wp, lp); };
-        timeline_.activated = [this] { SendDlgItemMessageW(panel_, kView, CB_SETCURSEL, 0, 0); };
         timeline_.selected = [this](const JsonValue& item) {
             if (selectedData_.type != JsonValue::Null && debugValue(selectedData_, "id").string != debugValue(item, "id").string)
                 transitionReport();
@@ -210,6 +210,7 @@ private:
         return true;
     }
     void copy() {
+        displayed_ = wide(diagnosticJson(diagnosticSelection(snapshotData_, selectedData_)));
         HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, (displayed_.size() + 1) * sizeof(wchar_t));
         if (!memory) return;
         void* buffer = GlobalLock(memory);
@@ -285,7 +286,7 @@ private:
             if (LOWORD(wp) == kClose) self->setOpen(false);
             if (LOWORD(wp) == kCopy) self->copy();
             if (LOWORD(wp) == kCurrent) {
-                SendDlgItemMessageW(hwnd, kView, CB_SETCURSEL, 0, 0); self->timeline_.current();
+                self->timeline_.current();
             }
             if (LOWORD(wp) == kView && HIWORD(wp) == CBN_SELCHANGE) { self->transitionReport(); self->renderReport(); }
             if (LOWORD(wp) == kFreeze) {

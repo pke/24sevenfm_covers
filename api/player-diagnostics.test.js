@@ -3,6 +3,42 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { create, sanitize } = require("../site/js/player-debug");
 const { createTimeline } = require("../site/js/player-debug");
+const { selectedDetails } = require("../site/js/player-debug");
+
+test("selected diagnostics contain only the selected track, its assets and matching requests/events", () => {
+    const item = { id: "queued", phase: "future", album: "Film & score", track: "Later cue",
+        artist: "Composer", coverUrl: "https://images.test/later.jpg", relativeSeconds: 42,
+        cache: { variants: 1 }, artwork: { variants: [{ url: "https://images.test/later-art.jpg" }] } };
+    const matching = "https://api.test/api/media?album=Film+%26+score&track=Later+cue";
+    const other = "https://api.test/api/media?album=Film+%26+score&track=Playing+cue";
+    const snapshot = { capturedAt: "now", station: "sst", track: { album: item.album, track: "Playing cue" },
+        artwork: { shownCover: "playing.jpg", images: [{ url: item.coverUrl, width: 400 }, { url: "playing.jpg" }] },
+        localCache: { mediaEntries: 99 }, display: { remainingSeconds: 999 }, settings: { playing: true },
+        requests: [{ url: matching, response: { diagnostics: { totalMs: 12 } } }, { url: other },
+            { url: "https://api.test/api/tint?url=" + encodeURIComponent(item.coverUrl) },
+            { url: "https://station.test/?action=GetQueue", response: [{ Album: item.album, Track: item.track }] },
+            { url: "https://station.test/?action=GetCurrentlyPlaying", response: { Album: item.album, Track: "Playing cue" } }],
+        events: [{ name: "cache.media", album: item.album, track: item.track },
+            { name: "request.complete", url: matching }, { name: "request.complete", url: other },
+            { name: "image.loaded", url: "https://images.test/later-art.jpg", width: 1920 },
+            { name: "cache.media", album: item.album, track: "Playing cue" }] };
+    for (const phase of ["future", "past"]) {
+        const details = selectedDetails(snapshot, { ...item, phase });
+        assert.equal(details.track.track, item.track);
+        assert.equal(details.playback.phase, phase);
+        assert.equal(details.playback.relativeSeconds, 42);
+        assert.equal(details.localCache.variants, 1);
+        assert.equal(details.requests.length, 2);
+        assert.equal(details.events.length, 3);
+        assert.deepEqual(details.artwork.images, [{ url: item.coverUrl, width: 400 }]);
+        assert.doesNotMatch(JSON.stringify(details), /Playing cue|playing.jpg|mediaEntries|999/);
+    }
+    const unavailable = selectedDetails(snapshot, { id: "missing", phase: "past", album: "Gone", track: "Unknown" });
+    assert.equal(unavailable.requests.length, 0);
+    assert.equal(unavailable.events.length, 0);
+    assert.equal(unavailable.localCache.status, "Not available for this track");
+    assert.doesNotMatch(JSON.stringify(unavailable), /Playing cue|playing.jpg/);
+});
 
 test("timeline retains observed history, one current item and distinct queued repeats with live cache state", () => {
     let now = 100000;

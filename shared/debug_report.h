@@ -54,7 +54,7 @@ inline void debugReportFields(std::string& out, const JsonValue& value, unsigned
 inline std::string debugReport(const JsonValue& snapshot) {
     std::string out;
     const std::pair<const char*, const char*> sections[] = {
-        {"track", "Now playing"}, {"selected", "Selected timeline entry"}, {"resolved", "Artwork"},
+        {"track", "Selected track"}, {"selected", "Selected timeline entry"}, {"resolved", "Artwork"}, {"playback", "Playback position"},
         {"requests", "Requests and timings"}, {"localCache", "Cache"}, {"display", "Display"},
         {"settings", "Settings"}, {"events", "Recent events"} };
     for (const auto& section : sections) if (const auto* value = snapshot.get(section.first)) {

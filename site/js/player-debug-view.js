@@ -34,10 +34,10 @@
         });
         return list;
     }
-    function updateFields(target, value) {
+    function updateFields(target, value, force = false) {
         const stamp = JSON.stringify(value);
         if (target._stamp === stamp) return;
-        if (target.contains(document.activeElement) && document.activeElement.matches("button")) return;
+        if (!force && target.contains(document.activeElement) && document.activeElement.matches("button")) return;
         target._stamp = stamp; target.replaceChildren(fields(value));
     }
     function relative(item) {
@@ -57,27 +57,55 @@
             + '<div><h3>Playback &amp; cache</h3><p>Observed history · Current · Upcoming queue</p></div>'
             + '<button type="button" id="debug-current" aria-label="Jump to current">Current ↗</button></div>'
             + '<div id="debug-timeline" class="debug-timeline" role="group" aria-label="Playback timeline" tabindex="0"></div>'
-            + '<p class="debug-note">Scroll horizontally · Select a card for its metadata and cache</p>'
-            + '<div id="debug-selection" class="debug-selection"></div></section>'
-            + '<div class="debug-columns"><section class="debug-section"><h3>Now playing</h3><div id="debug-snapshot"></div></section>'
+            + '<p class="debug-note">Scroll horizontally · All details below follow the selected card</p></section>'
+            + '<div id="debug-details" class="debug-details"><section class="debug-section"><h3>Selected track</h3>'
+            + '<div id="debug-selection"></div></section>'
+            + '<div class="debug-columns"><section class="debug-section"><h3>Metadata</h3><div id="debug-snapshot"></div></section>'
             + '<section class="debug-section"><h3>Artwork</h3><div id="debug-artwork"></div></section></div>'
             + '<section class="debug-section"><h3>Requests &amp; timings</h3><p class="debug-note">Client durations; server measurements are separate.</p>'
             + '<div id="debug-requests-list"></div></section>'
             + '<div class="debug-columns"><section class="debug-section"><h3>Cache</h3><div id="debug-cache"></div></section>'
-            + '<section class="debug-section"><h3>Player</h3><div id="debug-player"></div></section></div>'
-            + '<section class="debug-section"><h3>Recent events</h3><div id="debug-events"></div></section></div>'
+            + '<section class="debug-section"><h3>Playback position</h3><div id="debug-player"></div></section></div>'
+            + '<section class="debug-section"><h3>Recent events</h3><div id="debug-events"></div></section></div></div>'
             + '<div class="debug-footer"><span>D / Esc to close · Select text to pause</span><span id="debug-updated"></span></div>'
             + '<span id="debug-copy-status" role="status"></span>';
         const find = id => panel.querySelector("#debug-" + id);
         const rail = find("timeline"), cards = new Map(), requests = new Map();
-        let selected = null, entries = [], follow = true;
+        let selected = null, entries = [], follow = true, latestSnapshot = {}, pendingDetails = null, detailTimer = null;
+        function renderDetails(details, changed) {
+            if (changed) { requests.clear(); find("requests-list").replaceChildren(); }
+            const item = entries.find(entry => entry.id === selected);
+            updateFields(find("selection"), item ? { album: item.album, track: item.track, artist: item.artist,
+                position: label(item.phase) + " · " + relative(item) } : { timeline: "Waiting for station metadata" }, changed);
+            updateFields(find("snapshot"), details.track, changed);
+            updateFields(find("artwork"), details.artwork, changed);
+            updateFields(find("cache"), details.localCache, changed);
+            updateFields(find("player"), details.playback, changed);
+            updateFields(find("events"), details.events.length ? details.events.slice(-10).reverse()
+                : { status: "No retained events for this track" }, changed);
+            renderRequests(details.requests);
+        }
         function select(id) {
+            const changed = selected !== id, hadSelection = selected !== null;
             selected = id;
             cards.forEach((card, key) => card.setAttribute("aria-pressed", String(key === id)));
             const item = entries.find(entry => entry.id === id);
-            updateFields(find("selection"), item ? { album: item.album, track: item.track, artist: item.artist,
-                position: label(item.phase) + " · " + relative(item), durationSeconds: item.lengthSeconds,
-                cache: item.cache, coverUrl: item.coverUrl } : { timeline: "Waiting for station metadata" });
+            pendingDetails = root.PlayerDiagnostics.selectedDetails(latestSnapshot, item);
+            const target = find("details"), motion = !root.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            if (changed && hadSelection && motion) {
+                clearTimeout(detailTimer); target.classList.add("changing"); target.inert = true;
+                detailTimer = setTimeout(() => {
+                    const before = target.getBoundingClientRect().height;
+                    renderDetails(pendingDetails, true); detailTimer = null;
+                    const after = target.getBoundingClientRect().height;
+                    target.animate([{ height: before + "px", overflow: "hidden" }, { height: after + "px", overflow: "hidden" }],
+                        { duration: 180, easing: "ease" });
+                    target.classList.remove("changing"); target.inert = false;
+                }, 100);
+            } else if (!detailTimer || changed) {
+                clearTimeout(detailTimer); detailTimer = null; target.classList.remove("changing"); target.inert = false;
+                renderDetails(pendingDetails, changed);
+            }
         }
         function center() {
             const item = entries.find(entry => entry.phase === "current");
@@ -113,7 +141,7 @@
                     card = el("button", "debug-track entering"); card.type = "button";
                     card.append(el("span", "debug-track-phase"), el("strong"), el("span", "debug-track-artist"),
                         el("span", "debug-track-time"), el("span", "debug-track-cache"));
-                    card.addEventListener("click", () => select(item.id)); cards.set(item.id, card);
+                    card.addEventListener("click", () => { follow = false; select(item.id); }); cards.set(item.id, card);
                     requestAnimationFrame(() => requestAnimationFrame(() => card.classList.remove("entering")));
                 }
                 card.classList.remove("leaving"); card.disabled = false;
@@ -152,6 +180,7 @@
                     card.append(heading, el("div", "debug-request-fields"), toggle, response); requests.set(id, card);
                 }
                 card._request = request;
+                card.classList.remove("leaving");
                 const currentAt = list.children[i]; if (currentAt !== card) list.insertBefore(card, currentAt || null);
                 let endpoint = request.url; try { endpoint = new URL(request.url).pathname; } catch (_) {}
                 card.children[0].children[0].textContent = endpoint;
@@ -163,11 +192,17 @@
                 if (card.children[2].getAttribute("aria-expanded") === "true")
                     updateFields(card.children[3].firstChild, { response: request.response });
             });
-            requests.forEach((card, id) => { if (!ids.has(id)) { card.classList.add("leaving");
-                setTimeout(() => { card.remove(); requests.delete(id); }, 200); } });
+            requests.forEach((card, id) => { if (!ids.has(id) && !card.classList.contains("leaving")) {
+                card.classList.add("leaving");
+                setTimeout(() => { if (card.classList.contains("leaving") && requests.get(id) === card) {
+                    card.remove(); requests.delete(id);
+                } }, 200);
+            } });
         }
         return {
+            snapshot() { return pendingDetails; },
             render(snapshot, opening) {
+                latestSnapshot = snapshot;
                 const latest = snapshot.requests[snapshot.requests.length - 1];
                 const metrics = { Station: snapshot.station || "—", Requests: snapshot.requests.length,
                     "Latest request": latest ? format(latest.totalMs, "totalMs") : "—",
@@ -177,11 +212,7 @@
                     const card = el("div"); card.append(el("span", "", key), el("strong")); target.append(card);
                 });
                 Object.values(metrics).forEach((value, i) => { target.children[i].lastChild.textContent = value; });
-                updateFields(find("snapshot"), snapshot.track); updateFields(find("artwork"), snapshot.artwork);
-                updateFields(find("cache"), { ...snapshot.localCache, lastOperations: snapshot.caches });
-                updateFields(find("player"), { build: snapshot.build, ...snapshot.display, settings: snapshot.settings });
-                updateFields(find("events"), snapshot.events.slice(-10).reverse());
-                renderTimeline(snapshot.timeline || [], opening); renderRequests(snapshot.requests);
+                renderTimeline(snapshot.timeline || [], opening);
                 find("updated").textContent = "Updated " + new Date(snapshot.capturedAt).toLocaleTimeString();
             }
         };

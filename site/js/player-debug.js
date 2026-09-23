@@ -52,6 +52,47 @@
             }
         };
     }
+    // Resolve every detail from the selected identity. Session-wide state is
+    // deliberately excluded; unavailable/evicted data must never fall back to now playing.
+    function selectedDetails(snapshot, item) {
+        const unavailable = () => ({ status: "Not available for this track" });
+        item = item || {};
+        const urls = new Set();
+        function collect(value) {
+            if (typeof value === "string" && /^https?:\/\//i.test(value)) urls.add(value);
+            else if (value && typeof value === "object") Object.values(value).forEach(collect);
+        }
+        collect(item.coverUrl); collect(item.tintUrl); collect(item.artwork);
+        const sameTrack = (album, track) => !!(item.album || item.track)
+            && album === (item.album || "") && track === (item.track || "");
+        function matchesUrl(value) {
+            if (!value) return false;
+            try {
+                const url = new URL(value), params = url.searchParams;
+                if (params.has("album") && params.has("track"))
+                    return sameTrack(params.get("album"), params.get("track"));
+                if (params.has("url")) return urls.has(params.get("url"));
+                return urls.has(value);
+            } catch (_) { return false; }
+        }
+        const requests = (snapshot.requests || []).filter(request => matchesUrl(request.url)
+            || (request.response && !Array.isArray(request.response)
+                && sameTrack(request.response.Album, request.response.Track)));
+        const requestUrls = new Set(requests.map(request => request.url));
+        const events = (snapshot.events || []).filter(event => sameTrack(event.album, event.track)
+            || matchesUrl(event.url) || requestUrls.has(event.url));
+        const track = { album: item.album, track: item.track, artist: item.artist, lengthSeconds: item.lengthSeconds };
+        if (item.phase === "current" && snapshot.track && sameTrack(snapshot.track.album, snapshot.track.track))
+            Object.assign(track, snapshot.track);
+        const artwork = { coverUrl: item.coverUrl || null, tintUrl: item.tintUrl || null,
+            ...(item.artwork || unavailable()),
+            images: ((snapshot.artwork || {}).images || []).filter(image => urls.has(image.url)) };
+        return { schemaVersion: snapshot.schemaVersion, capturedAt: snapshot.capturedAt, station: snapshot.station,
+            selected: { id: item.id, phase: item.phase }, track, artwork, localCache: item.cache || unavailable(),
+            playback: { phase: item.phase, observedAt: item.observedAt ? new Date(item.observedAt).toISOString() : null,
+                relativeSeconds: item.relativeSeconds, timeKind: item.timeKind,
+                ...(item.phase === "current" ? { remainingSeconds: track.remainingSeconds } : {}) }, requests, events };
+    }
     function create() {
         const requests = [], events = [], caches = {};
         const timeline = createTimeline();
@@ -152,7 +193,7 @@
                 clearTimeout(feedbackTimer); copyStatus.classList.add("show");
                 feedbackTimer = setTimeout(() => copyStatus.classList.remove("show"), 2200);
             }
-            panel.querySelector("#debug-copy").addEventListener("click", () => copy(JSON.stringify(captured, null, 2), "Snapshot copied"));
+            panel.querySelector("#debug-copy").addEventListener("click", () => copy(JSON.stringify(view.snapshot(), null, 2), "Snapshot copied"));
             panel.addEventListener("click", event => {
                 const button = event.target.closest("[data-copy]");
                 if (button) copy(button.dataset.copy, "Value copied");
@@ -182,6 +223,6 @@
         }
         return { fetch: fetchJson, event, cache, snapshot, mount, timeline };
     }
-    root.PlayerDiagnostics = { create, sanitize, safeUrl, createTimeline };
+    root.PlayerDiagnostics = { create, sanitize, safeUrl, createTimeline, selectedDetails };
     if (typeof module !== "undefined") module.exports = root.PlayerDiagnostics;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -31,11 +31,35 @@ TEST_CASE("native report presents labelled fields rather than raw JSON") {
     ssc::JsonValue snapshot;
     REQUIRE(ssc::parseJson(R"({"track":{"album":"Film","track":"Cue"},"display":{"width":900},"requests":[{"status":200,"totalMs":12.5}]})", snapshot));
     const auto report = ssc::debugReport(snapshot);
-    CHECK(report.find("Now playing") != std::string::npos);
+    CHECK(report.find("Selected track") != std::string::npos);
     CHECK(report.find("Album") != std::string::npos);
     CHECK(report.find("Film") != std::string::npos);
     CHECK(report.find("12.5 ms") != std::string::npos);
     CHECK(report.find("{\"track\"") == std::string::npos);
+}
+
+TEST_CASE("native selected diagnostics exclude other tracks and session data") {
+    ssc::JsonValue snapshot, item;
+    REQUIRE(ssc::parseJson(R"({"track":{"album":"Film & score","track":"Playing cue"},"display":{"remainingSeconds":999},"localCache":{"mediaEntries":99},"requests":[{"url":"https://api.test/api/media?album=Film+%26+score&track=Later+cue"},{"url":"https://api.test/api/media?album=Film+%26+score&track=Playing+cue"},{"url":"https://images.test/later.jpg"},{"url":"https://station.test/?action=GetQueue","response":[{"Album":"Film & score","Track":"Later cue"}]}],"events":[{"name":"image.loaded","details":{"url":"https://images.test/later.jpg"}},{"name":"cache.media.hit","details":{"album":"Film & score","track":"Later cue"}},{"name":"cache.media.hit","details":{"album":"Film & score","track":"Playing cue"}}]})", snapshot));
+    REQUIRE(ssc::parseJson(R"({"id":"next","album":"Film & score","track":"Later cue","phase":"future","relativeSeconds":42,"cache":{"variants":1},"artwork":{"coverUrl":"https://images.test/later.jpg"}})", item));
+    for (const auto* phase : {"future", "past"}) {
+        item.object["phase"] = ssc::diagnosticString(phase);
+        const auto details = ssc::diagnosticSelection(snapshot, item);
+        CHECK(ssc::debugValue(ssc::debugValue(details, "track"), "track").string == "Later cue");
+        CHECK(ssc::debugValue(ssc::debugValue(details, "playback"), "phase").string == phase);
+        CHECK(ssc::debugValue(details, "requests").array.size() == 2);
+        CHECK(ssc::debugValue(details, "events").array.size() == 2);
+        const auto json = ssc::diagnosticJson(details);
+        CHECK(json.find("Playing cue") == std::string::npos);
+        CHECK(json.find("mediaEntries") == std::string::npos);
+        CHECK(json.find("999") == std::string::npos);
+    }
+    item.object["album"] = ssc::diagnosticString("Unknown");
+    item.object.erase("artwork"); item.object.erase("cache");
+    const auto unknown = ssc::diagnosticSelection(snapshot, item);
+    CHECK(ssc::debugValue(unknown, "requests").array.empty());
+    CHECK(ssc::debugValue(unknown, "events").array.empty());
+    CHECK(ssc::debugValue(ssc::debugValue(unknown, "resolved"), "status").string == "Not available for this track");
 }
 
 TEST_CASE("debug history is bounded and redacts credentials in nested JSON and URLs") {
@@ -108,12 +132,18 @@ TEST_CASE("native debug timeline scrolls to future cards and returns to the curr
         0, 0, 640, 520, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     REQUIRE(parent != nullptr);
     auto snapshot = ssc::diagnosticObject(); snapshot.object["timeline"] = ssc::diagnosticArray();
+    snapshot.object["track"] = ssc::diagnosticObject();
+    snapshot.object["track"].object["album"] = ssc::diagnosticString("Current album");
+    snapshot.object["resolved"] = ssc::diagnosticObject();
+    snapshot.object["resolved"].object["backdropUrl"] = ssc::diagnosticString("https://images.test/current.jpg");
     for (int i = 0; i < 8; ++i) {
         auto item = ssc::diagnosticObject();
         item.object["id"] = ssc::diagnosticString(std::to_string(i));
         item.object["album"] = ssc::diagnosticString(i == 1 ? "Current album" : "Album " + std::to_string(i));
         item.object["phase"] = ssc::diagnosticString(i == 0 ? "past" : i == 1 ? "current" : "future");
         item.object["relativeSeconds"] = ssc::diagnosticNumber((i-1)*120);
+        item.object["artwork"] = ssc::diagnosticObject();
+        item.object["artwork"].object["coverUrl"] = ssc::diagnosticString("https://images.test/" + std::to_string(i) + ".jpg");
         snapshot.object["timeline"].array.push_back(item);
     }
     ssc::DebugOverlay overlay; overlay.attach(parent, [&] { return ssc::diagnosticJson(snapshot); });
@@ -127,6 +157,19 @@ TEST_CASE("native debug timeline scrolls to future cards and returns to the curr
     wchar_t text[2048] = {}; GetDlgItemTextW(overlay.window(), ssc::DebugOverlay::kText, text, 2048);
     CHECK(std::wstring(text).find(L"Album 7") != std::wstring::npos);
     CHECK(std::wstring(text).find(L"\"album\"") == std::wstring::npos);
+    SendDlgItemMessageW(overlay.window(), ssc::DebugOverlay::kView, CB_SETCURSEL, 1, 0);
+    SendMessageW(overlay.window(), WM_COMMAND, MAKEWPARAM(ssc::DebugOverlay::kView, CBN_SELCHANGE), 0);
+    overlay.advance(GetTickCount() + 200);
+    GetDlgItemTextW(overlay.window(), ssc::DebugOverlay::kText, text, 2048);
+    CHECK(std::wstring(text).find(L"https://images.test/7.jpg") != std::wstring::npos);
+    CHECK(std::wstring(text).find(L"Current album") == std::wstring::npos);
+    CHECK(std::wstring(text).find(L"current.jpg") == std::wstring::npos);
+    SendMessageW(rail, WM_KEYDOWN, VK_LEFT, 0);
+    overlay.advance(GetTickCount() + 200);
+    CHECK(SendDlgItemMessageW(overlay.window(), ssc::DebugOverlay::kView, CB_GETCURSEL, 0, 0) == 1);
+    GetDlgItemTextW(overlay.window(), ssc::DebugOverlay::kText, text, 2048);
+    CHECK(std::wstring(text).find(L"https://images.test/6.jpg") != std::wstring::npos);
+    SendDlgItemMessageW(overlay.window(), ssc::DebugOverlay::kView, CB_SETCURSEL, 0, 0);
     SendMessageW(overlay.window(), WM_COMMAND, ssc::DebugOverlay::kCurrent, 0);
     overlay.advance(GetTickCount() + 200);
     GetDlgItemTextW(overlay.window(), ssc::DebugOverlay::kText, text, 2048);
