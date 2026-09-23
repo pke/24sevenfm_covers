@@ -19,6 +19,17 @@
 #include "media_resolver.h"
 #include "stations.h"
 #include "diagnostics.h"
+#include "diagnostic_timeline.h"
+
+static ssc::JsonValue diagnosticTrack(const ssc::TrackInfo& track) {
+    auto value = ssc::diagnosticObject();
+    value.object["album"] = ssc::diagnosticString(track.album);
+    value.object["track"] = ssc::diagnosticString(track.track);
+    value.object["artist"] = ssc::diagnosticString(track.artist);
+    value.object["coverUrl"] = ssc::diagnosticString(track.coverUrl);
+    value.object["lengthSeconds"] = ssc::diagnosticNumber(track.lengthSeconds);
+    return value;
+}
 
 // --- logging ----------------------------------------------------------------
 // File diagnostics are OFF in production. The bounded in-memory stage snapshot
@@ -180,6 +191,7 @@ struct CoverEngine::MediaWorkerState {
     std::map<std::string, CacheEntry> cache;
     std::map<std::string, std::string> titleLogoCache; // decoded-safe bytes, bounded like queue art
     ssc::TrackInfo current;
+    ssc::DiagnosticTimeline timeline;
     std::vector<ssc::TrackInfo> queue;
     ssc::MediaRequest request;
     ssc::MediaResolver resolver;
@@ -565,6 +577,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
                                       bool queueSnapshot) {
     if (state->stopping) return;
     const Settings& snapshot = state->settingsSnapshot;
+    state->timeline.observe(ssc::station(snapshot.station).host, diagnosticTrack(current));
     ssc::MediaRequest request;
     request.providers = snapshot.mediaProviders;
     request.fanartClientKey = snapshot.fanartClientKey;
@@ -1091,6 +1104,26 @@ std::string CoverEngine::debugSnapshot() {
         cache.object["epoch"] = diagnosticNumber(static_cast<double>(media_->epoch));
         cache.object["expiry"] = diagnosticString("session / bounded LRU");
         root["localCache"] = cache;
+        std::vector<JsonValue> upcoming;
+        for (const auto& queued : media_->queue) upcoming.push_back(diagnosticTrack(queued));
+        auto timeline = media_->timeline.entries(upcoming, currentRemaining());
+        for (auto& item : timeline.array) {
+            auto prepared = diagnosticObject();
+            bool metadata = false, artwork = false, image = false; unsigned variants = 0;
+            for (const auto& entry : media_->cache) {
+                const auto& cached = entry.second;
+                if (cached.track.album != debugValue(item, "album").string
+                        || cached.track.track != debugValue(item, "track").string) continue;
+                ++variants; metadata = true;
+                artwork = artwork || cached.result.hasBackdrop(); image = image || !cached.bytes.empty();
+            }
+            prepared.object["metadata"] = diagnosticBool(metadata);
+            prepared.object["artwork"] = diagnosticBool(artwork);
+            prepared.object["imageBytes"] = diagnosticBool(image);
+            prepared.object["variants"] = diagnosticNumber(variants);
+            item.object["cache"] = prepared;
+        }
+        root["timeline"] = timeline;
         const auto found = media_->cache.find(mediaCacheKey(media_->current, media_->request));
         if (found != media_->cache.end()) {
             const auto& result = found->second.result;

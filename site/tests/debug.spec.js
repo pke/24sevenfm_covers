@@ -60,8 +60,13 @@ test("debug snapshot can be frozen and copied with response timings and redacted
     await page.keyboard.press("d");
     const snapshot = page.locator("#debug-snapshot");
     await expect(snapshot).toContainText("Debug Album");
-    await expect(snapshot).toContainText("headersMs");
-    await expect(page.locator("#debug-response-text")).toContainText('"totalMs": 12');
+    await expect(page.locator("#debug-requests-list")).toContainText("Headers");
+    await expect(page.locator("#debug-requests-list")).toContainText("Server");
+    await page.getByRole("button", { name: "Copy Album", exact: true }).first().click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("Debug Album");
+    await page.locator("#debug-selection .debug-value").first().dblclick();
+    expect(await page.evaluate(() => window.getSelection().toString())).toContain("Debug");
+    await page.evaluate(() => window.getSelection().removeAllRanges());
     await page.getByRole("button", { name: "Freeze", exact: true }).click();
     const frozen = await snapshot.textContent();
     await page.waitForTimeout(1200);
@@ -72,7 +77,38 @@ test("debug snapshot can be frozen and copied with response timings and redacted
     expect(copied.requests.some(request => request.url.includes("diagnostics=1"))).toBe(true);
     expect(copied.capturedAt).toBeTruthy();
     await page.getByRole("button", { name: "Resume", exact: true }).click();
-    await expect(snapshot).not.toHaveText(frozen);
+    await expect(page.locator("#debug-live-state")).toHaveText("Live");
+});
+
+test("debug uses selectable fields and a horizontally scrollable timeline with one current track", async ({ page }, testInfo) => {
+    await page.route(/\/soap\/FM24sevenJSON.php\?.*action=GetQueue/, route => route.fulfill({ json:
+        Array.from({ length: 9 }, (_, i) => ({ Album: "Future " + i, Track: "Cue " + i,
+            Artist: "Composer", Length: "180000", CoverLink: "https://streamingsoundtracks.com/images/cover/test.jpg" })) }));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.keyboard.press("d");
+    await expect(page.locator("#debug-snapshot dl").first()).toBeVisible();
+    await expect(page.locator("#debug-snapshot pre, #debug-snapshot textarea")).toHaveCount(0);
+    const rail = page.locator("#debug-timeline");
+    await expect(rail.locator('[aria-current="true"]')).toHaveCount(1);
+    await expect(rail).toContainText("Future 8");
+    expect(await rail.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+    await rail.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+    await rail.getByRole("button", { name: /Future 8/ }).click();
+    await expect(page.locator("#debug-selection")).toContainText("Future 8");
+    await expect(page.locator("#debug-selection")).toContainText("Cache");
+    await page.getByRole("button", { name: "Jump to current" }).click();
+    await expect(page.locator("#debug-selection")).toContainText("Debug Album");
+    await page.route(/\/soap\/FM24sevenJSON.php\?.*action=GetCurrentlyPlaying/, route => route.fulfill({ json: {
+        Album: "Next current", Track: "Another cue", Artist: "Composer", Length: "180000",
+        CoverLink: "https://streamingsoundtracks.com/images/cover/test.jpg",
+        PlayStart: "2026-09-23T12:05:00", SystemTime: "2026-09-23T12:05:10"
+    } }));
+    await page.waitForTimeout(2100); // the normal focus refresh ignores station polls newer than 2 s
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(rail.locator('[aria-current="true"]')).toContainText("Next current");
+    await expect(rail.locator('[data-phase="past"]')).toContainText("Debug Album");
+    await expect(rail.locator('[aria-current="true"]')).toHaveCount(1);
+    await page.locator("#stage").screenshot({ path: testInfo.outputPath("debug-timeline-desktop.png") });
 });
 
 test("debug overlay respects reduced motion and keeps long responses inside the stage", async ({ page }, testInfo) => {
@@ -84,7 +120,7 @@ test("debug overlay respects reduced motion and keeps long responses inside the 
     const box = await panel.boundingBox(), stage = await page.locator("#stage").boundingBox();
     expect(box.x).toBeGreaterThanOrEqual(stage.x);
     expect(box.x + box.width).toBeLessThanOrEqual(stage.x + stage.width + 1);
-    await page.screenshot({ path: testInfo.outputPath("debug-mobile.png"), fullPage: true });
+    await page.locator("#stage").screenshot({ path: testInfo.outputPath("debug-mobile.png") });
     await page.keyboard.press("Escape");
     await expect(panel).toBeHidden();
 });

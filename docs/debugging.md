@@ -7,6 +7,10 @@ or a click outside dismisses the panel. Entry/exit and geometry changes animate;
 the web reduced-motion preference and Windows client-area animation setting are
 respected. Outgoing content remains mounted throughout its fade.
 
+The panel presents labelled fields in sections, with selectable values rather
+than a JSON editor. The web view also provides individual Copy buttons. Native
+players offer a section selector and standard text selection / Ctrl+C.
+
 The report contains current/raw and resolved metadata, current/requested artwork,
 image dimensions, layout/viewport, enabled features, queue/cache state, and the
 last 30 requests and 30 events. The native renderer also reports decoded-cache
@@ -20,6 +24,26 @@ bodies for readability. URL query credentials and credential fields are redacted
 before retention. Non-JSON bodies are omitted; JSON bodies over 64 KiB are marked
 as truncated. No credentials, disk history or additional diagnostic image
 downloads are needed. Closing the panel does not clear the bounded session log.
+
+## Playback and cache timeline
+
+Scroll horizontally through up to 40 observed past plays, the highlighted Current
+play, and up to 40 upcoming queue entries. Select a card to inspect its metadata
+and current cache state; Current returns to the playing item. The native rail also
+supports Left/Right, Home/End, the mouse wheel and its horizontal scrollbar.
+Browsing older cards does not move the rail back on every live refresh.
+
+History is collected while diagnostics is closed and resets on a station change.
+It starts with observations in this session, not a fabricated playback history
+derived from cache contents. A repeated queue title remains a separate entry.
+Past offsets refer to when playback was first observed; future offsets are
+estimates from remaining time and queued lengths. Unknown lengths leave later
+ETAs unknown. These cards express playback order, not a duration-scaled ruler.
+
+Cache badges are refreshed from actual local stores, including on historical
+cards after eviction. They include all retained response variants for that title:
+metadata, artwork URL and, where known, retained cover/tint or downloaded image
+bytes. Selecting a card never downloads an image or changes playback.
 
 ## Timing semantics
 

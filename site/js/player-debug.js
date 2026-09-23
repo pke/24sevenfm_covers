@@ -23,8 +23,38 @@
             .map(([key, item]) => [key, secretKey.test(key) ? "[redacted]" : sanitize(item, depth + 1)]));
         return value;
     }
+    function createTimeline({ now = Date.now, limit = 40 } = {}) {
+        let station = null, current = null, serial = 0, past = [];
+        const identity = item => [item.album, item.track, item.occurrence || ""].join("\n");
+        return {
+            observe(nextStation, track) {
+                if (station !== nextStation) { station = nextStation; past = []; current = null; }
+                if (!track || !(track.album || track.track)) return;
+                if (current && identity(current) === identity(track)) {
+                    current = { ...current, ...sanitize(track) }; return;
+                }
+                if (current) { past.push(current); if (past.length > limit) past.shift(); }
+                current = { ...sanitize(track), id: "play-" + ++serial, observedAt: now() };
+            },
+            entries(queue = [], remaining = null, cacheFor = () => ({})) {
+                if (!current) return [];
+                const time = now();
+                const entries = past.map(item => ({ ...item, phase: "past",
+                    relativeSeconds: (item.observedAt - time) / 1000, timeKind: "observed" }));
+                entries.push({ ...current, phase: "current", relativeSeconds: 0, timeKind: "current" });
+                let offset = Number.isFinite(remaining) && remaining >= 0 ? remaining : null;
+                queue.slice(0, 40).forEach((item, i) => {
+                    entries.push({ ...sanitize(item), id: "queue-" + (item.queueId || identity(item) + "-" + i),
+                        phase: "future", relativeSeconds: offset, timeKind: "estimated" });
+                    offset = offset !== null && item.lengthSeconds > 0 ? offset + item.lengthSeconds : null;
+                });
+                return entries.map(item => ({ ...item, cache: sanitize(cacheFor(item)) }));
+            }
+        };
+    }
     function create() {
         const requests = [], events = [], caches = {};
+        const timeline = createTimeline();
         const ms = start => Math.round((performance.now() - start) * 100) / 100;
         function event(name, details) {
             events.push({ at: new Date().toISOString(), name, ...sanitize(details || {}) });
@@ -75,27 +105,19 @@
             panel.id = "stage-debug"; panel.className = "stage-debug"; panel.hidden = true;
             panel.dataset.state = "closed"; panel.tabIndex = -1;
             panel.setAttribute("aria-label", "Player diagnostics"); panel.setAttribute("aria-hidden", "true");
-            panel.innerHTML = '<div class="debug-toolbar"><strong>Diagnostics</strong>'
-                + '<button type="button" id="debug-freeze">Freeze</button>'
-                + '<button type="button" id="debug-copy">Copy snapshot</button>'
-                + '<button type="button" id="debug-close" aria-label="Close diagnostics">×</button></div>'
-                + '<p class="debug-note">D / Esc to close · Select text to pause updates · Timings in ms</p>'
-                + '<div class="debug-body"><pre id="debug-snapshot" tabindex="0"></pre>'
-                + '<button type="button" id="debug-requests" aria-expanded="false">API responses</button>'
-                + '<div class="debug-responses" data-open="false"><div><pre id="debug-response-text"></pre></div></div></div>'
-                + '<span id="debug-copy-status" role="status"></span>';
+            const view = root.PlayerDebugView.mount(panel);
             stage.append(panel);
-            const text = panel.querySelector("#debug-snapshot"), responseText = panel.querySelector("#debug-response-text");
             const freeze = panel.querySelector("#debug-freeze"), copyStatus = panel.querySelector("#debug-copy-status");
             let open = false, frozen = false, captured = null, timer = null, previousFocus = null, feedbackTimer = null;
             function update(force) {
                 if (!open || (frozen && !force)) return;
                 const selection = root.getSelection();
-                if (!force && selection && !selection.isCollapsed && panel.contains(selection.anchorNode)) return;
+                if (!force && selection && !selection.isCollapsed && panel.contains(selection.anchorNode)) {
+                    panel.querySelector("#debug-live-state").textContent = "Selection paused"; return;
+                }
                 captured = snapshot(getState());
-                const summary = { ...captured, requests: captured.requests.map(({ response, ...request }) => request) };
-                text.textContent = JSON.stringify(summary, null, 2);
-                responseText.textContent = JSON.stringify(captured.requests.map(({ at, url, response }) => ({ at, url, response })), null, 2);
+                view.render(captured, force);
+                panel.querySelector("#debug-live-state").textContent = "Live";
             }
             function setOpen(value) {
                 open = value; clearTimeout(timer);
@@ -114,27 +136,26 @@
             }
             freeze.addEventListener("click", () => {
                 frozen = !frozen; freeze.textContent = frozen ? "Resume" : "Freeze";
+                panel.querySelector("#debug-live-state").textContent = frozen ? "Frozen" : "Live";
                 freeze.setAttribute("aria-pressed", String(frozen)); if (!frozen) update();
             });
             panel.querySelector("#debug-close").addEventListener("click", () => setOpen(false));
-            panel.querySelector("#debug-requests").addEventListener("click", function () {
-                const expanded = this.getAttribute("aria-expanded") !== "true";
-                this.setAttribute("aria-expanded", String(expanded));
-                panel.querySelector(".debug-responses").dataset.open = String(expanded);
-            });
-            panel.querySelector("#debug-copy").addEventListener("click", async () => {
-                // Copy the exact displayed/frozen snapshot, never a newer request.
-                const value = JSON.stringify(captured, null, 2);
+            async function copy(value, message) {
                 try {
-                    await navigator.clipboard.writeText(value); copyStatus.textContent = "Snapshot copied";
+                    await navigator.clipboard.writeText(value); copyStatus.textContent = message;
                 } catch (_) {
                     const area = document.createElement("textarea"); area.value = value;
                     area.style.cssText = "position:absolute;opacity:0;pointer-events:none"; panel.append(area);
                     area.select(); const ok = document.execCommand("copy"); area.remove();
-                    copyStatus.textContent = ok ? "Snapshot copied" : "Copy unavailable — select the text";
+                    copyStatus.textContent = ok ? message : "Copy unavailable — select the text";
                 }
                 clearTimeout(feedbackTimer); copyStatus.classList.add("show");
                 feedbackTimer = setTimeout(() => copyStatus.classList.remove("show"), 2200);
+            }
+            panel.querySelector("#debug-copy").addEventListener("click", () => copy(JSON.stringify(captured, null, 2), "Snapshot copied"));
+            panel.addEventListener("click", event => {
+                const button = event.target.closest("[data-copy]");
+                if (button) copy(button.dataset.copy, "Value copied");
             });
             document.addEventListener("keydown", event => {
                 if (event.key === "Escape" && open) {
@@ -159,8 +180,8 @@
             setInterval(() => update(), 1000);
             return { update, setOpen };
         }
-        return { fetch: fetchJson, event, cache, snapshot, mount };
+        return { fetch: fetchJson, event, cache, snapshot, mount, timeline };
     }
-    root.PlayerDiagnostics = { create, sanitize, safeUrl };
+    root.PlayerDiagnostics = { create, sanitize, safeUrl, createTimeline };
     if (typeof module !== "undefined") module.exports = root.PlayerDiagnostics;
 })(typeof window !== "undefined" ? window : globalThis);

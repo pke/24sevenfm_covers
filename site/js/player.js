@@ -1932,6 +1932,9 @@ async function poll() {
         // logo and the veto can never disagree.
         const tintCover = trustedCoverUrl(j.ThumbnailLink) || trustedCoverUrl(j.CoverLink);
         const displayCover = sizedCoverUrl(j.CoverLink);
+        debug.timeline.observe(station().id, { album: album, track: track, artist: artist,
+            occurrence: localNowPlayingPreview ? "preview" : j.PlayStart || "",
+            coverUrl: displayCover, tintUrl: tintCover, lengthSeconds: lengthSec });
         const isStationId = !displayCover && !localNowPlayingPreview;
         // This feed marker is a station label, not an album to resolve. Keep raw
         // identity unchanged and mirror the native station-ident presentation.
@@ -4117,6 +4120,7 @@ function applyStation() {
     // The resolver is per-station now - always re-evaluate after a switch, even if
     // the new station plays an identically named album.
     currentAlbum = ""; currentTrack = ""; currentArtist = "";
+    debug.timeline.observe(station().id, null);
     beginCurrentInfoResolution(null);
     setStatus("");
     if (audioWanted) setAudio(true); // retune the stream
@@ -4684,6 +4688,20 @@ updateRefreshEl.addEventListener("click", function () {
 });
 
 // --- go ----------------------------------------------------------------------
+function debugTrackCache(item) {
+    var prefix = item.album + "\n" + item.track + "\n", variants = [];
+    Object.values(movieCaches).forEach(function (cache) {
+        Object.keys(cache).forEach(function (key) { if (key.indexOf(prefix) === 0) variants.push(cache[key]); });
+    });
+    var queued = Object.values(queuedTrackStore).filter(function (entry) {
+        return entry.album === item.album && entry.track === item.track;
+    });
+    return { metadata: variants.some(function (art) { return !!(art && art.metadata); }),
+        artwork: variants.some(function (art) { return !!(art && art.url); }),
+        cover: item.coverUrl === shownUrl || queued.some(function (entry) { return entry.coverPrepared; }),
+        tint: !!item.tintUrl && Object.prototype.hasOwnProperty.call(coverTintCache, item.tintUrl),
+        variants: variants.length };
+}
 debug.mount(stage, function () {
     var revision = document.querySelector('meta[name="build-revision"]');
     return {
@@ -4706,6 +4724,10 @@ debug.mount(stage, function () {
             orientation: backdropOrientationForStage(), resolution: backdropResolutionClass(backdropViewportForStage()),
             fullscreen: !!document.fullscreenElement, reducedMotion: reducedMotion.matches },
         settings: opts,
+        timeline: debug.timeline.entries(queuedTracks.map(function (entry) { return {
+            queueId: entry.queueKey, album: entry.album, track: entry.track, artist: entry.artist,
+            coverUrl: entry.coverUrl, tintUrl: entry.tintUrl, lengthSeconds: entry.lengthSeconds
+        }; }), currentRemaining(), debugTrackCache),
         localCache: { mediaVariants: Object.keys(movieCaches).length,
             mediaEntries: Object.keys(movieCaches).reduce(function (n, key) { return n + Object.keys(movieCaches[key]).length; }, 0),
             tintEntries: Object.keys(coverTintCache).length, queueEntries: queuedTrackStoreSize,
