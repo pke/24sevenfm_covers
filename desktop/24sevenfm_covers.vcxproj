@@ -130,6 +130,7 @@
     <ClInclude Include="viewer_resource.h" />
     <ClInclude Include="windows_theme.h" />
     <ClInclude Include="taskbar_preview.h" />
+    <ClInclude Include="caption_drag.h" />
     <ClInclude Include="..\shared\cover_engine.h" />
     <ClInclude Include="..\shared\cover_menu.h" />
     <ClInclude Include="..\shared\fullscreen_window.h" />

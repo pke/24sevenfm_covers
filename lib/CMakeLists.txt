@@ -97,6 +97,10 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         target_link_libraries(desktop_taskbar_tests PRIVATE comctl32 ole32 uuid)
         doctest_discover_tests(desktop_taskbar_tests)
 
+        add_executable(caption_drag_tests tests/test_caption_drag.cpp)
+        target_include_directories(caption_drag_tests PRIVATE .)
+        doctest_discover_tests(caption_drag_tests)
+
         enable_language(RC)
         add_executable(native_options_tests tests/test_native_options.cpp tests/native_options.rc)
         target_include_directories(native_options_tests PRIVATE . ../shared ../foobar2000/wtl)

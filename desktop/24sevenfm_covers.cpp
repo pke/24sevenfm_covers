@@ -27,6 +27,7 @@
 #include "cover_menu.h"        // shared right-click context menu (Fullscreen / Poster / Options)
 #include "fullscreen_window.h" // shared dedicated per-monitor fullscreen window
 #include "taskbar_preview.h"   // taskbar preview follows the active fullscreen surface
+#include "caption_drag.h"
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
 #include "config.h"         // shared option schema + INI adapter
@@ -54,6 +55,7 @@ static bool      g_firstRun = false; // no INI yet -> prompt for a station on fi
 // Borderless-fullscreen state (double-click / context menu / Esc toggle it).
 static ssc::FullscreenWindow g_fsWin; // dedicated per-monitor fullscreen window
 static dv::TaskbarPreview g_taskbarPreview;
+static dv::CaptionDrag g_captionDrag;
 
 static CoverEngine& eng() { return CoverEngine::instance(); }
 
@@ -341,6 +343,7 @@ static void toggleFullscreen(HWND hwnd) {
 // --- window -----------------------------------------------------------------
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (g_taskbarPreview.onMessage(msg)) return 0;
+    if (g_captionDrag.onMessage(hwnd, msg, wp, lp)) return 0;
     switch (msg) {
         case SSC_WM_NEWCOVER:
             eng().onNewCover(hwnd);

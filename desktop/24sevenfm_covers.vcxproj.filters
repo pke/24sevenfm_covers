@@ -53,6 +53,9 @@
     <ClInclude Include="taskbar_preview.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="caption_drag.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\shared\cover_engine.h">
       <Filter>Shared</Filter>
     </ClInclude>
