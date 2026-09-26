@@ -681,11 +681,17 @@ function mainTitleThemeCandidates(album, track) {
     // Prefer the longest candidate that is actually present in the album title;
     // this preserves genuine colon titles such as "Star Trek: Deep Space Nine".
     const albumWords = titleWords(cleanMovieTitle(album));
-    return candidates.sort((left, right) => {
-        const leftInAlbum = containsWordSequence(albumWords, titleWords(left));
-        const rightInAlbum = containsWordSequence(albumWords, titleWords(right));
-        return Number(rightInAlbum) - Number(leftInAlbum);
-    });
+    const ranked = candidates.map((candidate) => ({
+        candidate,
+        inAlbum: containsWordSequence(albumWords, titleWords(candidate)),
+    }));
+    // Character cues such as "Gale's Theme (Main Title)" describe music within
+    // the album's work, not a different screen title. Only let this track pattern
+    // override the album when at least one candidate is corroborated by the album.
+    if (!ranked.some((entry) => entry.inAlbum)) return [];
+    return ranked.sort((left, right) => {
+        return Number(right.inAlbum) - Number(left.inAlbum);
+    }).map((entry) => entry.candidate);
 }
 
 function metadataResolutionFor(album, track, artist) {

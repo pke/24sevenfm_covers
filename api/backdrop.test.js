@@ -3330,6 +3330,10 @@ test("uses a main-title theme description as the screen work", () => {
     ]);
     assert.equal(backdropTitleFor("Star Trek: Deep Space Nine",
         "Star Trek: Deep Space Nine Theme (Main Title)"), "Star Trek: Deep Space Nine");
+    assert.equal(backdropTitleFor("River Wild, The", "Gale's Theme (Main Title)"),
+        "The River Wild");
+    assert.deepEqual(backdropTitleCandidatesFor(
+        "River Wild, The", "Gale's Theme (Main Title)"), ["The River Wild"]);
 });
 
 test("uses the underlying work as a fallback for rotated soundtrack volumes", async () => {
@@ -6322,6 +6326,61 @@ test("resolves a prefixed main-title theme as an exact screen title", async () =
         source: "tmdb",
         tint: [215, 241, 255],
     });
+});
+
+test("keeps the album work for a character's main-title theme cue", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "The River Wild");
+                return response(200, { results: [{
+                    id: 8987,
+                    media_type: "movie",
+                    title: "The River Wild",
+                    backdrop_path: "/river-wild.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/person") {
+                assert.equal(parsed.searchParams.get("query"), "Jerry Goldsmith");
+                return response(200, { results: [{
+                    id: 748,
+                    name: "Jerry Goldsmith",
+                    known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/movie/8987/credits") {
+                return response(200, { crew: [{
+                    id: 748,
+                    name: "Jerry Goldsmith",
+                    job: "Original Music Composer",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [173, 201, 224],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "River Wild, The",
+        track: "Gale's Theme (Main Title)",
+        artist: "Jerry Goldsmith",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 8987, title: "The River Wild", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/river-wild.jpg",
+        source: "tmdb",
+        tint: [173, 201, 224],
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi", "/3/search/person", "/3/movie/8987/credits",
+    ]));
 });
 
 test("resolves a Television's Greatest Hits track as TV", async () => {
