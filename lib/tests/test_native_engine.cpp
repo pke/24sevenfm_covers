@@ -125,6 +125,44 @@ struct CoverEngineTestAccess {
         engine.publishQueuedMetadata(epoch, first, result);
         CHECK(frame().album.empty());
     }
+    void portraitProviderReorder() {
+        struct Window {
+            HWND value = CreateWindowExW(0, L"STATIC", L"Portrait provider test", WS_POPUP,
+                0, 0, 600, 900, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            ~Window() { DestroyWindow(value); }
+        } window;
+        REQUIRE(window.value);
+        engine.hwnd_.store(window.value);
+        engine.settings.backdrops = true;
+        engine.settings.mediaProviders = "fanart,tmdb";
+        state().settingsSnapshot = engine.settings;
+        ssc::TrackInfo current; current.album = "Current soundtrack";
+        engine.scheduleMedia(current, {});
+        REQUIRE(ssc::wantsPortraitArtwork(state().request));
+        const auto oldEpoch = state().epoch;
+        const auto originalRequest = state().request;
+        auto reorderedRequest = originalRequest;
+        reorderedRequest.providers = "tmdb,fanart";
+        ssc::MediaResult original, reordered;
+        original.backdropUrl = "https://images.test/fanart-poster.jpg";
+        reordered.backdropUrl = "https://images.test/tmdb-poster.jpg";
+        cacheMedia(&state(), ssc::mediaCacheKey(current, originalRequest), current,
+            originalRequest, original, "fanart portrait");
+        cacheMedia(&state(), ssc::mediaCacheKey(current, reorderedRequest), current,
+            reorderedRequest, reordered, "tmdb portrait");
+        engine.settings.mediaProviders = reorderedRequest.providers;
+        engine.repaint();
+        CHECK(state().epoch > oldEpoch);
+        CHECK(state().request.providers == "tmdb,fanart");
+        CHECK(engine.pendingBackdropBytes_ == "tmdb portrait");
+        CHECK(engine.pendingBackdropAnimate_);
+        engine.publishMedia(oldEpoch, "late old portrait", {}, false);
+        CHECK(engine.pendingBackdropBytes_ == "tmdb portrait");
+        engine.settings.mediaProviders = originalRequest.providers;
+        engine.repaint();
+        CHECK(engine.pendingBackdropBytes_ == "fanart portrait");
+        engine.hwnd_.store(nullptr);
+    }
     unsigned long long schedule(const char* album, bool reload = false) {
         ssc::TrackInfo info; info.album = album; info.track = "Cue";
         engine.scheduleMedia(info, std::vector<ssc::TrackInfo>(), reload);
@@ -685,6 +723,9 @@ struct CoverEngineTestAccess {
 
 TEST_CASE("native coming next consumes queue metadata and rejects empty or stale snapshots") {
     CoverEngineTestAccess test; test.comingNextQueue();
+}
+TEST_CASE("native provider reordering refreshes the portrait backdrop and rejects old results") {
+    CoverEngineTestAccess test; test.portraitProviderReorder();
 }
 TEST_CASE("native diagnostic cards expose only their own cached artwork, including history and eviction") {
     CoverEngineTestAccess test; test.diagnosticCards();
