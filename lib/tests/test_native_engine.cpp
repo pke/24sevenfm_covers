@@ -125,6 +125,89 @@ struct CoverEngineTestAccess {
         engine.publishQueuedMetadata(epoch, first, result);
         CHECK(frame().album.empty());
     }
+    void insertedJingles() {
+        ssc::TrackInfo current, next, later, ident;
+        current.album = "Scheduled A"; current.track = "Cue A";
+        current.coverUrl = "current cover";
+        next.album = "Scheduled B"; next.track = "Cue B"; next.coverUrl = "prepared cover";
+        later.album = "Scheduled C"; later.track = "Cue C";
+        ident.album = "StationID"; ident.track = "Inserted jingle"; ident.stationIdent = true;
+        engine.scheduleMedia(current, {next, later}, false, true);
+        const auto musicEpoch = state().epoch;
+        ssc::MediaResult canonical; canonical.album = "Scheduled B"; canonical.artist = "Composer B";
+        canonical.hasMetadata = true;
+        engine.publishQueuedMetadata(musicEpoch, next, canonical);
+        const auto frame = [&] { return engine.comingNext_.advance(true, 10, 100, 0); };
+        REQUIRE(frame().artist == L"Composer B");
+        engine.shownUrl_ = "current cover";
+        engine.nextUrl_ = next.coverUrl; engine.nextBytes_ = "prepared bytes";
+        engine.onTitleChanged("Cue A");
+        engine.onTitleChanged("Inserted jingle");
+        CHECK(engine.shownUrl_ == "current cover");
+        CHECK(engine.nextBytes_ == "prepared bytes");
+        CHECK(engine.currentRemaining() == -1); // await authoritative jingle timing
+
+        unsigned queueRequests = 0;
+        ssc::Config config;
+        config.transport = [&](const std::string&, unsigned short, const std::string&,
+                               const std::string&, const std::string&, const std::string&, int) {
+            ++queueRequests;
+            ssc::HttpResponse response; response.status = 200;
+            response.body = "[]";
+            return response;
+        };
+        ssc::CoverMonitor monitor({}, config);
+        engine.shownUrl_ = current.coverUrl;
+        engine.nextUrl_ = next.coverUrl; engine.nextBytes_ = "prepared bytes";
+        engine.monitor_ = &monitor;
+        engine.onCoverChanged(current.coverUrl, current); // retry/early ICY, still A
+        engine.monitor_ = nullptr;
+        CHECK(queueRequests == 0);
+        CHECK(frame().album == L"Scheduled B");
+        engine.shownUrl_ = ssc::station(0).logoUrl; // current ident art is already loaded
+        engine.monitor_ = &monitor;
+        engine.onCoverChanged("", ident);
+        engine.monitor_ = nullptr;
+        CHECK(queueRequests == 0);
+        CHECK(frame().album == L"Scheduled B");
+
+        for (int seconds : {30, 9, 3}) {
+            ident.lengthSeconds = seconds;
+            ident.track = "Jingle " + std::to_string(seconds);
+            engine.scheduleMedia(ident, {});
+            engine.setRemaining(seconds);
+            CHECK(state().queueSnapshotReady);
+            REQUIRE(state().queue.size() == 2);
+            CHECK(state().queue.front().album == "Scheduled B");
+            CHECK(frame().album == L"Scheduled B");
+            CHECK(frame().artist == L"Composer B");
+            // Even a late/new queue with B already dequeued cannot consume it.
+            engine.scheduleMedia(ident, {later}, false, true);
+            engine.scheduleMedia(ident, {}, false, true);
+            engine.repaint();
+            CHECK(frame().album == L"Scheduled B");
+        }
+        engine.onTitleChanged("Cue B");
+        CHECK(engine.nextBytes_ == "prepared bytes");
+        engine.scheduleMedia(next, {});
+        CHECK_FALSE(state().queueSnapshotReady);
+        CHECK(frame().album.empty());
+        engine.scheduleMedia(next, {later}, false, true);
+        CHECK(frame().album == L"Scheduled C");
+        engine.publishQueuedMetadata(musicEpoch, next, canonical);
+        CHECK(frame().album == L"Scheduled C");
+
+        // A fresh tune-in can fetch one snapshot during an ident; an empty
+        // successful snapshot is also authoritative and survives later idents.
+        engine.scheduleMedia(ssc::TrackInfo(), {}, true);
+        CHECK_FALSE(state().queueSnapshotReady);
+        engine.scheduleMedia(ident, {});
+        CHECK_FALSE(state().queueSnapshotReady);
+        engine.scheduleMedia(ident, {}, false, true);
+        CHECK(state().queueSnapshotReady);
+        engine.scheduleMedia(ident, {later}, false, true);
+        CHECK(frame().album.empty());
+    }
     void portraitProviderReorder() {
         struct Window {
             HWND value = CreateWindowExW(0, L"STATIC", L"Portrait provider test", WS_POPUP,
@@ -723,6 +806,9 @@ struct CoverEngineTestAccess {
 
 TEST_CASE("native coming next consumes queue metadata and rejects empty or stale snapshots") {
     CoverEngineTestAccess test; test.comingNextQueue();
+}
+TEST_CASE("native coming next preserves scheduled music across short and repeated inserted jingles") {
+    CoverEngineTestAccess test; test.insertedJingles();
 }
 TEST_CASE("native provider reordering refreshes the portrait backdrop and rejects old results") {
     CoverEngineTestAccess test; test.portraitProviderReorder();

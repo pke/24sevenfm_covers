@@ -193,6 +193,7 @@ struct CoverEngine::MediaWorkerState {
     ssc::TrackInfo current;
     ssc::DiagnosticTimeline timeline;
     std::vector<ssc::TrackInfo> queue;
+    bool queueSnapshotReady = false;
     ssc::MediaRequest request;
     ssc::MediaResolver resolver;
 };
@@ -577,6 +578,15 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
                                       bool queueSnapshot) {
     if (state->stopping) return;
     const Settings& snapshot = state->settingsSnapshot;
+    // GetQueue may already have dequeued the music scheduled AFTER an inserted
+    // ident. Only a confirmed music track may consume the saved announcement.
+    const bool retainQueue = current.stationIdent && state->queueSnapshotReady;
+    const auto updateQueue = [&] {
+        if (retainQueue || &queue == &state->queue) return;
+        state->queue.assign(queue.begin(), queue.begin()
+            + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
+        state->queueSnapshotReady = queueSnapshot || !queue.empty();
+    };
     state->timeline.observe(ssc::station(snapshot.station).host, diagnosticTrack(current));
     ssc::MediaRequest request;
     request.providers = snapshot.mediaProviders;
@@ -627,9 +637,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             state->work.erase(std::remove_if(state->work.begin(), state->work.end(),
                 [](const MediaWorkerState::Work& item) { return !item.current; }), state->work.end());
             // repaint/retry can pass the stored queue itself.
-            if (&queue != &state->queue)
-                state->queue.assign(queue.begin(), queue.begin()
-                    + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
+            updateQueue();
             setComingNextQueueLocked(state);
             for (size_t i = 0; i < state->queue.size(); ++i) {
                 if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
@@ -657,7 +665,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             // publisher can finish before this boundary, but never after it.
             std::lock_guard<std::mutex> publication(mutex_);
             epoch = state->epoch = ++activeMediaEpoch_;
-            if (!sameTrackIdentity) comingNext_.setQueue("", L"", L"");
+            if (!sameTrackIdentity && !retainQueue) comingNext_.setQueue("", L"", L"");
             mediaDirty_ = false; // discard an old result waiting in the UI mailbox
             titleLogoDirty_ = false;
             if (!request.includeTitleLogo || state->current.album != current.album
@@ -676,9 +684,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
         }
         state->work.clear();
         state->current = current;
-        if (&queue != &state->queue)
-            state->queue.assign(queue.begin(), queue.begin()
-                + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
+        updateQueue();
         state->request = request;
     }
     setComingNextQueueLocked(state);
@@ -898,8 +904,8 @@ void CoverEngine::startMonitor() {
         // Anchor the countdown from the current-playing endpoint's remaining
         // (Length - |SystemTime - PlayStart|) - known even when we join mid-track. This
         // re-syncs on every poll (each title change triggers one); between polls the
-        // overlay counts down locally. A title-change swap sets an instant estimate (the
-        // preloaded next length) which this poll then confirms/corrects.
+        // overlay counts down locally. Host title changes request confirmation;
+        // they cannot tell us whether music or an inserted jingle is starting.
         setRemaining(info.remainingSeconds);
         // Keep the outgoing text until /api/media has completed. Its result then
         // supplies canonical metadata or the validated stream fallback; on startup
@@ -943,7 +949,7 @@ void CoverEngine::setStation(int index) {
         std::lock_guard<std::mutex> lock(mutex_);
         coverBytes_.clear(); dirty_ = false;
         shownUrl_.clear(); shownBytes_.clear(); shownStation_ = -1;
-        nextUrl_.clear(); nextBytes_.clear(); nextLen_ = -1;
+        nextUrl_.clear(); nextBytes_.clear();
     }
     coverRetryAt_.store(0); coverRetryFailures_ = 0; coverRetryUrl_.clear();
     resetTitle();          // next accepted title reloads; hide the countdown
@@ -1229,7 +1235,15 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
     // (2) One queue request supplies both the next square cover and all media
     // prefetch metadata, so the clients cannot drift on Album/Track/Artist data.
     std::vector<ssc::TrackInfo> queue;
-    if (monitor_ && monitor_->queue(queue)) {
+    bool haveQueueSnapshot = false;
+    if (media_) {
+        std::lock_guard<std::mutex> lock(media_->mutex);
+        haveQueueSnapshot = media_->queueSnapshotReady;
+        if (haveQueueSnapshot) queue = media_->queue;
+    }
+    // A retry or an early ICY notification can still confirm the old track.
+    // Fetch only once per confirmed music track, as the web player does.
+    if (!haveQueueSnapshot && monitor_ && monitor_->queue(queue)) {
         scheduleMedia(info, queue, false, true);
     }
     if (!queue.empty() && !queue[0].coverUrl.empty()) {
@@ -1244,7 +1258,6 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
             std::lock_guard<std::mutex> lock(mutex_);
             nextUrl_ = nextUrl;
             nextBytes_.swap(nextImg);
-            nextLen_ = nextLen > 0 ? nextLen : -1;
         }
     }
 }
@@ -1263,38 +1276,13 @@ void CoverEngine::onTitleChanged(const std::string& title) {
         lower.rfind(ssc::station(settings.station).host, 0) != 0; // bare station host placeholder
     if (!realTitle || title == lastTitle_) return;
 
-    // First real title after tune-in only establishes the current track (the
-    // preload is the NEXT track, so swapping to it here would flash wrong art).
+    // A title notification may introduce a jingle, not the queued music. Keep
+    // its prepared cover until the now-playing feed confirms that identity.
     const bool firstTitle = lastTitle_.empty();
     lastTitle_ = title;
     if (!firstTitle) {
-        bool swapped = false;
-        int  swapLen = -1;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            comingNext_.setQueue("", L"", L""); // the announced track is now playing
-            if (!nextBytes_.empty()) {
-                coverBytes_.swap(nextBytes_);
-                dirty_ = true;
-                shownUrl_ = nextUrl_;
-                shownBytes_ = coverBytes_; // the swapped-in preloaded bytes
-                swapLen = nextLen_;
-                nextBytes_.clear(); nextUrl_.clear(); nextLen_ = -1;
-                swapped = true;
-            }
-        }
-        // The new track just started for us, so its remaining is its full (preloaded)
-        // length. This is the only place the countdown is anchored; the heartbeat
-        // repaints and the overlay counts down from here.
-        setRemaining(swapLen);
-        if (swapped) {
-            logLine("track change: instant swap to preloaded cover (len=" + std::to_string(swapLen) + "s)");
-            notifyNewCover();
-        } else {
-            logLine("track change: no preload ready, loading...");
-            loading_.store(true);
-            invalidate();
-        }
+        setRemaining(-1);
+        invalidate();
     }
     if (monitor_) monitor_->refresh(); // reconcile + preload following track (bg)
 }

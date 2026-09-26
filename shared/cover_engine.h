@@ -96,9 +96,9 @@ public:
 
     // --- host events -------------------------------------------------------
     // A track title the host observed (Winamp: polled IPC title; foobar: ICY
-    // dynamic-info title). Filters out stream/status placeholders, and on a genuine
-    // track change swaps to the preloaded cover instantly (else shows "Loading...")
-    // then reconciles + preloads via the monitor. Safe to call repeatedly with an
+    // dynamic-info title). Filters out stream/status placeholders, then asks the
+    // monitor to confirm the track before using its preloaded cover: an inserted
+    // jingle must not consume the next music track. Safe to call repeatedly with an
     // unchanged title (no-op).
     void onTitleChanged(const std::string& title);
     // Pointer visibility mirrors the web stage: hover reveals ratings in a normal
@@ -191,7 +191,6 @@ private:
     std::string shownUrl_, nextUrl_, nextBytes_; // preload state (guarded)
     std::string shownBytes_;             // bytes of the cover currently shown (guarded)
     int shownStation_ = -1;              // identity belongs to these bytes, not UI settings
-    int         nextLen_ = -1;
     ssc::InfoPresentation info_;         // guarded, including animation state
     ssc::ComingNextPresentation comingNext_; // guarded queue + retained presentation
     ssc::ComingNextFrame comingNextFrame_;   // UI thread only

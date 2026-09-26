@@ -2197,75 +2197,102 @@ test.describe("the deployed player page", () => {
             await expect(announcement).toHaveClass(/show/);
             await expect(page.locator("#coming-next-album")).toHaveText("Next Album");
         });
-    test("keeps the next scheduled title across an inserted station jingle",
-        async ({ page }) => {
-            const cover = "https://streamingsoundtracks.com/images/cover/current.svg";
-            let queueRequests = 0;
-            let current = {
-                Album: "Scheduled A", Track: "Current Cue", Artist: "Current Composer",
-                CoverLink: cover, ThumbnailLink: cover, Length: 60000,
-                PlayStart: "2026-08-23T12:00:00Z",
-                SystemTime: "2026-08-23T12:00:50Z",
-            };
-            await page.emulateMedia({ reducedMotion: "reduce" });
-            await page.addInitScript(() => {
-                const nativeSetTimeout = window.setTimeout.bind(window);
-                const nativeSetInterval = window.setInterval.bind(window);
-                window.setTimeout = (callback, delay, ...args) => {
-                    if (callback && callback.name === "poll") {
-                        window.__playerPoll = () => callback(...args);
-                        return 900001;
-                    }
-                    return nativeSetTimeout(callback, delay, ...args);
+    for (const jingleSeconds of [5, 15, 30]) {
+        test(`keeps the next scheduled title across an inserted ${jingleSeconds}s station jingle`,
+            async ({ page }) => {
+                const cover = "https://streamingsoundtracks.com/images/cover/current.svg";
+                let queueRequests = 0;
+                let current = {
+                    Album: "Scheduled A", Track: "Current Cue", Artist: "Current Composer",
+                    CoverLink: cover, ThumbnailLink: cover, Length: 60000,
+                    PlayStart: "2026-08-23T12:00:00Z",
+                    SystemTime: "2026-08-23T12:00:50Z",
                 };
-                window.setInterval = (callback, delay, ...args) => {
-                    if (delay === 1000) {
-                        window.__playerTick = () => callback(...args);
-                        return 900002;
+                await page.emulateMedia({ reducedMotion: "reduce" });
+                await page.addInitScript(() => {
+                    const nativeSetTimeout = window.setTimeout.bind(window);
+                    const nativeSetInterval = window.setInterval.bind(window);
+                    window.setTimeout = (callback, delay, ...args) => {
+                        if (callback && callback.name === "poll") {
+                            window.__playerPoll = () => callback(...args);
+                            return 900001;
+                        }
+                        return nativeSetTimeout(callback, delay, ...args);
+                    };
+                    window.setInterval = (callback, delay, ...args) => {
+                        if (delay === 1000) {
+                            window.__playerTick = () => callback(...args);
+                            return 900002;
+                        }
+                        return nativeSetInterval(callback, delay, ...args);
+                    };
+                });
+                await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
+                    JSON.stringify({ comingNext: true })));
+                await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
+                    const action = new URL(route.request().url()).searchParams.get("action");
+                    if (action === "GetQueue") {
+                        queueRequests++;
+                        const albums = queueRequests === 1
+                            ? ["Scheduled B", "Scheduled C"] : ["Scheduled C"];
+                        return route.fulfill({ json: albums.map((album) => ({
+                            Album: album, Track: "Queued Cue", Artist: album + " Composer",
+                            CoverLink: "", SiteLink: "",
+                        })) });
                     }
-                    return nativeSetInterval(callback, delay, ...args);
+                    return route.fulfill({ json: current });
+                });
+                await page.route("https://streamingsoundtracks.com/images/**/*", (route) =>
+                    route.fulfill({ status: 200, contentType: "image/svg+xml",
+                        body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+
+                await page.goto("/player.html", { waitUntil: "domcontentloaded" });
+                await expect(page.locator("#coming-next")).toHaveClass(/show/);
+                await expect(page.locator("#coming-next-album")).toHaveText("Scheduled B");
+                expect(queueRequests).toBe(1);
+
+                current = {
+                    Album: "StreamingSoundtracks.com", Track: "Station Jingle", Artist: "",
+                    CoverLink: "", ThumbnailLink: "", Length: jingleSeconds * 1000,
+                    PlayStart: "2026-08-23T12:01:00Z",
+                    SystemTime: "2026-08-23T12:01:00Z",
                 };
-            });
-            await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
-                JSON.stringify({ comingNext: true })));
-            await page.route("https://streamingsoundtracks.com/soap/FM24sevenJSON.php?*", (route) => {
-                const action = new URL(route.request().url()).searchParams.get("action");
-                if (action === "GetQueue") {
-                    queueRequests++;
-                    const albums = queueRequests === 1
-                        ? ["Scheduled B", "Scheduled C"] : ["Scheduled C"];
-                    return route.fulfill({ json: albums.map((album) => ({
-                        Album: album, Track: "Queued Cue", Artist: album + " Composer",
-                        CoverLink: "", SiteLink: "",
-                    })) });
+                await expect.poll(() => page.evaluate(() => typeof window.__playerPoll))
+                    .toBe("function");
+                await page.evaluate(() => window.__playerPoll());
+                await page.waitForTimeout(50);
+                await page.evaluate(() => window.__playerTick());
+
+                expect(queueRequests).toBe(1);
+                if (jingleSeconds > 10) {
+                    await expect(page.locator("#coming-next")).not.toHaveClass(/show/);
+                    current.SystemTime = new Date(Date.parse(current.PlayStart)
+                        + (jingleSeconds - 5) * 1000).toISOString();
+                    await page.evaluate(() => window.__playerPoll());
+                    await page.evaluate(() => window.__playerTick());
                 }
-                return route.fulfill({ json: current });
+                await expect(page.locator("#coming-next")).toHaveClass(/show/);
+                await expect(page.locator("#coming-next-album")).toHaveText("Scheduled B");
+
+                current.Track = "Another inserted jingle";
+                await page.evaluate(() => window.__playerPoll());
+                await page.evaluate(() => window.__playerTick());
+                expect(queueRequests).toBe(1);
+                await expect(page.locator("#coming-next")).toHaveClass(/show/);
+                await expect(page.locator("#coming-next-album")).toHaveText("Scheduled B");
+
+                current = {
+                    Album: "Scheduled B", Track: "Queued Cue", Artist: "Scheduled B Composer",
+                    CoverLink: cover, ThumbnailLink: cover, Length: 60000,
+                    PlayStart: "2026-08-23T12:02:00Z",
+                    SystemTime: "2026-08-23T12:02:55Z",
+                };
+                await page.evaluate(() => window.__playerPoll());
+                await expect.poll(() => queueRequests).toBe(2);
+                await page.evaluate(() => window.__playerTick());
+                await expect(page.locator("#coming-next-album")).toHaveText("Scheduled C");
             });
-            await page.route("https://streamingsoundtracks.com/images/**/*", (route) =>
-                route.fulfill({ status: 200, contentType: "image/svg+xml",
-                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
-
-            await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            await expect(page.locator("#coming-next")).toHaveClass(/show/);
-            await expect(page.locator("#coming-next-album")).toHaveText("Scheduled B");
-            expect(queueRequests).toBe(1);
-
-            current = {
-                Album: "StreamingSoundtracks.com", Track: "Station Jingle", Artist: "",
-                CoverLink: "", ThumbnailLink: "", Length: 30000,
-                PlayStart: "2026-08-23T12:01:00Z",
-                SystemTime: "2026-08-23T12:01:20Z",
-            };
-            await expect.poll(() => page.evaluate(() => typeof window.__playerPoll))
-                .toBe("function");
-            await page.evaluate(() => window.__playerPoll());
-            await page.waitForTimeout(50);
-            await page.evaluate(() => window.__playerTick());
-
-            expect(queueRequests).toBe(1);
-            await expect(page.locator("#coming-next")).toHaveClass(/show/);
-            await expect(page.locator("#coming-next-album")).toHaveText("Scheduled B");
-        });
+    }
     test("fetches an album credit only when the queue omits Artist and retains text while fading",
         async ({ page }) => {
             let currentAlbum = "Current Album", queueAvailable = true, creditRequests = 0;
