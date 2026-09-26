@@ -154,7 +154,7 @@ static prefsDlgRec g_prefsRec = {}; // our node in Winamp's Preferences treeview
 
 static winampGeneralPurposePlugin g_plugin = {
     GPPHDR_VER,
-    (char*)"24seven.fm Covers (dockable cover art)",
+    (char*)"24seven.fm Covers v" SSC_VER_STR " (dockable cover art)",
     init,
     config,
     quit,
