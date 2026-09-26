@@ -2653,6 +2653,63 @@ test("matches the album against exact-name composers before accepting a title", 
     });
 });
 
+test("resolves a compact romanized album through the composer's colon-subtitled credit", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"), "Taegukgi");
+                return response(200, { results: [{
+                    id: 11658,
+                    media_type: "movie",
+                    title: "Tae Guk Gi: The Brotherhood of War",
+                    backdrop_path: "/taegukgi.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/person") {
+                assert.equal(parsed.searchParams.get("query"), "Lee Dong-Jun");
+                return response(200, { results: [{
+                    id: 64886,
+                    name: "Lee Dong-Jun",
+                    known_for_department: "Sound",
+                }] });
+            }
+            if (parsed.pathname === "/3/person/64886/combined_credits") {
+                return response(200, { crew: [{
+                    id: 11658,
+                    media_type: "movie",
+                    title: "Tae Guk Gi: The Brotherhood of War",
+                    job: "Original Music Composer",
+                    backdrop_path: "/taegukgi.jpg",
+                }] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [140, 150, 160],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Taegukgi",
+        track: "Letter",
+        artist: "Lee Dong-Jun",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 11658, title: "Tae Guk Gi: The Brotherhood of War", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/taegukgi.jpg",
+        source: "tmdb",
+        tint: [140, 150, 160],
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi", "/3/search/person", "/3/person/64886/combined_credits",
+    ]));
+});
+
 test("matches a composer credit when the station album omits a leading article", async () => {
     const requests = [];
     const handler = createHandler({
@@ -3701,6 +3758,14 @@ test("matches a unique whole-title composer crew credit inside an album title", 
     };
     assert.equal(pickComposerCredit({ crew: [devilsAdvocate] }, "Devil's Advocate"),
         devilsAdvocate);
+
+    const taegukgi = {
+        id: 11658,
+        media_type: "movie",
+        title: "Tae Guk Gi: The Brotherhood of War",
+        job: "Original Music Composer",
+    };
+    assert.equal(pickComposerCredit({ crew: [taegukgi] }, "Taegukgi"), taegukgi);
 });
 
 test("rejects unsafe composer-credit fallbacks", () => {
@@ -3717,6 +3782,7 @@ test("rejects unsafe composer-credit fallbacks", () => {
         "The Up Sketchbook"), null);
     assert.equal(pickComposerCredit({ crew: [credit(1, "The Up")] },
         "Up Sketchbook"), null);
+    assert.equal(pickComposerCredit({ crew: [credit(1, "Home Alone")] }, "Home"), null);
     assert.equal(pickComposerCredit({ cast: [credit(1, "Dune")] },
         "The Dune Sketchbook"), null);
 });

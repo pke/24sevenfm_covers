@@ -929,6 +929,34 @@ function titleWordSequences(value) {
     return [words];
 }
 
+function composerCreditTitleSequences(value) {
+    const sequences = titleWordSequences(value);
+    const subtitle = String(value || "").match(/^(.+?)\s*:\s*.+$/);
+    if (subtitle) sequences.push(...titleWordSequences(subtitle[1]));
+    return sequences;
+}
+
+function containsComposerTitleSequence(albumWords, sequence) {
+    if (containsWordSequence(albumWords, sequence)) return true;
+
+    // Catalogs disagree about spacing in romanized titles (for example
+    // "Taegukgi" versus "Tae Guk Gi"). Only bridge that tokenization gap for
+    // a multi-word provider title of useful length; the surrounding composer
+    // identity, job and unique-credit checks remain mandatory.
+    if (sequence.length < 2) return false;
+    const compactSequence = sequence.join("");
+    if (compactSequence.length < 6) return false;
+    for (let start = 0; start < albumWords.length; start++) {
+        let compactAlbum = "";
+        for (let end = start; end < albumWords.length; end++) {
+            compactAlbum += albumWords[end];
+            if (compactAlbum === compactSequence) return true;
+            if (compactAlbum.length >= compactSequence.length) break;
+        }
+    }
+    return false;
+}
+
 function pickComposerCredit(combinedCredits, album) {
     const albumWords = titleWords(album);
     const matches = new Map();
@@ -939,11 +967,11 @@ function pickComposerCredit(combinedCredits, album) {
                 || (credit.media_type !== "movie" && credit.media_type !== "tv")
                 || !Number.isSafeInteger(id) || id <= 0) continue;
         const title = mediaTitle(credit);
-        const wordSequences = titleWordSequences(title).filter((words) =>
+        const wordSequences = composerCreditTitleSequences(title).filter((words) =>
             normalizedTitle(words.join(" ")).length >= 4);
         // Reject tiny one-word titles such as Up, It, Her, or Us. Even with a verified
         // composer they are too weak to infer safely from a soundtrack-album phrase.
-        if (!wordSequences.some((words) => containsWordSequence(albumWords, words))) continue;
+        if (!wordSequences.some((words) => containsComposerTitleSequence(albumWords, words))) continue;
         const key = credit.media_type + ":" + id;
         if (!matches.has(key)) matches.set(key, credit);
     }
