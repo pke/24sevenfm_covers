@@ -2710,6 +2710,76 @@ test("resolves a compact romanized album through the composer's colon-subtitled 
     ]));
 });
 
+test("keeps a distinguishing album subtitle when matching composer credits", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") {
+                assert.equal(parsed.searchParams.get("query"),
+                    "Star Wars: Episode IV - A New Hope");
+                return response(200, { results: [{
+                    id: 11,
+                    media_type: "movie",
+                    title: "Star Wars",
+                    backdrop_path: "/star-wars.jpg",
+                }] });
+            }
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 491,
+                name: "John Williams",
+                known_for_department: "Sound",
+            }, {
+                id: 3218086,
+                name: "John Williams",
+                known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/person/491/combined_credits") {
+                const credit = (id, title, backdropPath) => ({
+                    id,
+                    media_type: "movie",
+                    title,
+                    job: "Original Music Composer",
+                    backdrop_path: backdropPath,
+                });
+                return response(200, { crew: [
+                    credit(11, "Star Wars", "/star-wars.jpg"),
+                    credit(140607, "Star Wars: The Force Awakens", "/force-awakens.jpg"),
+                    credit(181808, "Star Wars: The Last Jedi", "/last-jedi.jpg"),
+                ] });
+            }
+            if (parsed.pathname === "/3/person/3218086/combined_credits") {
+                return response(200, { crew: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [205, 214, 226],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Star Wars: Episode IV - A New Hope",
+        track: "The Hologram/Binary Sunset",
+        artist: "John Williams",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 11, title: "Star Wars", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/star-wars.jpg",
+        source: "tmdb",
+        tint: [205, 214, 226],
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi",
+        "/3/search/person",
+        "/3/person/491/combined_credits",
+        "/3/person/3218086/combined_credits",
+    ]));
+});
+
 test("matches a composer credit when the station album omits a leading article", async () => {
     const requests = [];
     const handler = createHandler({
@@ -3770,6 +3840,18 @@ test("matches a unique whole-title composer crew credit inside an album title", 
         job: "Original Music Composer",
     };
     assert.equal(pickComposerCredit({ crew: [taegukgi] }, "Taegukgi"), taegukgi);
+
+    const starWars = {
+        id: 11,
+        media_type: "movie",
+        title: "Star Wars",
+        job: "Original Music Composer",
+    };
+    assert.equal(pickComposerCredit({ crew: [
+        starWars,
+        { ...starWars, id: 140607, title: "Star Wars: The Force Awakens" },
+        { ...starWars, id: 181808, title: "Star Wars: The Last Jedi" },
+    ] }, "Star Wars: Episode IV - A New Hope"), starWars);
 });
 
 test("rejects unsafe composer-credit fallbacks", () => {
