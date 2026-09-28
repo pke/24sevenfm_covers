@@ -61,6 +61,12 @@ test("returns normalized album, track and composer metadata for every client", (
         track: "≂̸",
         artist: "Caf&eacute;", // exactly one server-side decode pass
     });
+    assert.deepEqual(normalizedTrackMetadata(
+        "Gladiator, More music from", "Now We Are Free", "Hans Zimmer"), {
+        album: "More music from Gladiator",
+        track: "Now We Are Free",
+        artist: "Hans Zimmer",
+    });
 });
 
 test("corrects the malformed Jurassic World end-credits track separator", () => {
@@ -3054,6 +3060,7 @@ test("cleans soundtrack noise and rotated articles", () => {
     assert.equal(cleanMovieTitle("Defiance (Video Game)"), "Defiance");
     assert.equal(cleanMovieTitle("Assassin's Creed IV: Black Flag (The Complete Edition)"),
         "Assassin's Creed IV: Black Flag");
+    assert.equal(cleanMovieTitle("Gladiator, More music from"), "Gladiator");
 });
 
 test("resolves a parenthesized complete game edition through its base title", async () => {

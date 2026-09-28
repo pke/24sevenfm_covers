@@ -535,6 +535,7 @@ function cleanMovieTitle(album) {
         .replace(/\s*[:\-–]\s*(?:the\s+)?symphonic\s+suite\s*$/i, " ")
         .replace(/[:\-–]\s*$/, "")
         .replace(/\s{2,}/g, " ").trim())
+        .replace(/^more\s+music\s+from\s+/i, "")
         .replace(/\s*&\s*/g, " and ")
         .replace(/\s{2,}/g, " ").trim();
     // A few compilation albums use a marketing title rather than the screen
@@ -843,7 +844,9 @@ function mediaHintForAlbum(album) {
 }
 
 function unrotateTitleArticle(title) {
-    return String(title || "").replace(
+    return String(title || "")
+        .replace(/^(.+),\s*more\s+music\s+from$/i, "More music from $1")
+        .replace(
         /^(.+),\s*(The|A|An)(\s+\((?:18|19|20|21)\d{2}\))?(\s*[:\-–—]\s*.+)?$/i,
         "$2 $1$3$4");
 }
