@@ -2786,6 +2786,57 @@ test("keeps a distinguishing album subtitle when matching composer credits", asy
     ]));
 });
 
+test("resolves an episode-prefixed soundtrack through its canonical movie title", async () => {
+    const queries = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            if (parsed.pathname === "/3/search/multi") {
+                const query = parsed.searchParams.get("query");
+                queries.push(query);
+                if (query === "The Empire Strikes Back") return response(200, { results: [{
+                    id: 1891,
+                    media_type: "movie",
+                    title: "The Empire Strikes Back",
+                    backdrop_path: "/empire.jpg",
+                }] });
+                return response(200, { results: [] });
+            }
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 491,
+                name: "John Williams",
+                known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/movie/1891/credits") return response(200, { crew: [{
+                id: 491,
+                job: "Original Music Composer",
+            }] });
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [18, 29, 44],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Star Wars: Episode V - The Empire Strikes Back",
+        track: "Yoda And The Force",
+        artist: "John Williams",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 1891, title: "The Empire Strikes Back", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/empire.jpg",
+        source: "tmdb",
+        tint: [18, 29, 44],
+    });
+    assert.deepEqual(queries, [
+        "Star Wars: Episode V - The Empire Strikes Back",
+        "The Empire Strikes Back",
+    ]);
+});
+
 test("matches a composer credit when the station album omits a leading article", async () => {
     const requests = [];
     const handler = createHandler({

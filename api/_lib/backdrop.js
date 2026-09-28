@@ -782,6 +782,9 @@ function backdropTitleCandidatesFor(album, track) {
     const quotedAlbumTitle = quotedOriginalMusicTitle(album);
     if (quotedAlbumTitle) return [quotedAlbumTitle];
     const normalizedAlbum = cleanMovieTitle(album);
+    const episodeSubtitle = normalizedAlbum.match(
+        /^.+?\s*:\s*episode\s+(?:\d{1,3}|[ivxlcdm]+)\s*[-–—]\s*(.+)$/i);
+    const episodeTitle = episodeSubtitle && cleanMovieTitle(episodeSubtitle[1]);
     const quotedFromTitle = quotedFromScreenTitle(track);
     if (quotedFromTitle) return [quotedFromTitle];
     const themeFromTitle = leadingThemeFromTitle(track);
@@ -817,6 +820,13 @@ function backdropTitleCandidatesFor(album, track) {
     if (catalogVolumeTitle
             && normalizedTitle(catalogVolumeTitle) !== normalizedTitle(normalizedAlbum)) {
         return [normalizedAlbum, catalogVolumeTitle];
+    }
+    // Soundtrack catalogues often retain a franchise/episode prefix that the
+    // screen database omits (for example "Star Wars: Episode V - The Empire
+    // Strikes Back"). Keep the complete album title first, then try the exact
+    // episode subtitle; provider matching and composer validation still apply.
+    if (episodeTitle && normalizedTitle(episodeTitle) !== normalizedTitle(normalizedAlbum)) {
+        return [normalizedAlbum, episodeTitle];
     }
     return [backdropTitleFor(album, track)];
 }
