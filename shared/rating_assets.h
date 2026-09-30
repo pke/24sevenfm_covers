@@ -1,13 +1,26 @@
 #pragma once
 
-#include <cstddef>
-#include <string>
+#include "../lib/media_resolver.h"
+#include "../lib/rating_asset_paths.h"
+#include <map>
+#include <mutex>
 
 namespace ssc {
 
-// Returns a compiled-in, high-resolution PNG for every certification accepted by
-// MediaResolver. False lets the renderer fall back to a text badge safely.
-bool ratingAssetPng(const std::string& country, const std::string& system,
-                    const std::string& rating, const void*& data, size_t& size);
+// UI reads copy only memory-cached bytes. Disk/network I/O belongs to the media
+// worker; the finite certification whitelist bounds this cache to 17 entries.
+class RatingAssetCache {
+public:
+    explicit RatingAssetCache(std::wstring directory = defaultDirectory());
+    static std::wstring defaultDirectory();
+    std::string find(const Certification& certification) const;
+    bool load(const Certification& certification, const MediaResolver& resolver,
+              const std::atomic<bool>* cancel = nullptr);
+private:
+    std::wstring directory_;
+    mutable std::mutex mutex_;
+    std::map<std::string, std::string> pngs_;
+};
+RatingAssetCache& ratingAssets();
 
 } // namespace ssc

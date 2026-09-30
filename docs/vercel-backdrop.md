@@ -1,5 +1,14 @@
 # Vercel artwork resolvers
 
+Native rating PNGs live alongside the functions in `public/ratings/v1/` and are
+served as `/ratings/v1/<name>.<sha256-prefix>.png`. `vercel.json` sets the public
+output directory and one-year immutable client/edge caching on those paths.
+`vercel-ignore-build.cjs` includes `public/` in deployment change detection.
+Run `node tools/generate-rating-assets.js` to refresh the manifest and native path
+table; retain existing hashed files for older clients. Deploy the API/static
+assets before releasing a native binary with new badge URLs. The local API server
+serves the same URLs and cache policy for testing.
+
 ADR 0001 is implemented by `api/media.js` and `api/tint.js`; the web player's
 queued-credit fallback is `api/credit.js`. Vercel discovers all three as Node.js
 Functions and installs the root `package.json`. The media API always returns

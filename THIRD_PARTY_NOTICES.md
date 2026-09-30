@@ -15,11 +15,11 @@ validated CDN host.
 
 ## Age-rating logos
 
-Native applications contain locally rasterised PNG versions of the known rating
-marks so Windows does not need to download or decode remote SVG. The authoritative
+Native applications fetch locally rasterised PNG versions of the known rating
+marks from the project API deployment so Windows does not need to decode remote SVG. The authoritative
 source URLs are kept in `tools/generate-rating-assets.js`; the generated assets live
-under `shared/rating_assets/` and are compiled through
-`shared/rating_assets.generated.inc`.
+under `shared/rating_assets/` and are published with content-hashed filenames under
+`public/ratings/v1/`. Native clients retain a local disk cache.
 
 - FSK 0/6/12/16/18 source files: Wikimedia Commons. Consult each linked file page
   from the generator for its attribution and licence terms.

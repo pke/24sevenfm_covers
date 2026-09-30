@@ -5,13 +5,13 @@
 
 #include "config.h"
 #include "media_resolver.h"
+#include "utc_time.h"
 
 #include <commctrl.h>
 #include <shellapi.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <ctime>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -94,12 +94,7 @@ std::string editKey(PanelState* state) {
 
 std::string verificationDate(unsigned long long epochMs) {
     if (!epochMs) return std::string();
-    const std::time_t seconds = static_cast<std::time_t>(epochMs / 1000ULL);
-    std::tm utc = {};
-    if (gmtime_s(&utc, &seconds) != 0) return std::string();
-    char text[32] = {0};
-    std::strftime(text, sizeof(text), "%Y-%m-%d", &utc);
-    return text;
+    return ssc::formatUtcTime(static_cast<std::int64_t>(epochMs / 1000ULL), ssc::UtcFormat::Date);
 }
 
 void refreshKeyButton(PanelState* state) {

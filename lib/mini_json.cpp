@@ -1,8 +1,12 @@
 #include "mini_json.h"
 
-#include <cerrno>
 #include <cmath>
+#if defined(_MSVC_LANG) && _MSVC_LANG >= 201703L
+#include <charconv>
+#else
+#include <cerrno>
 #include <cstdlib>
+#endif
 
 namespace ssc {
 namespace {
@@ -129,11 +133,23 @@ private:
             while (pos_ < text_.size() && text_[pos_] >= '0' && text_[pos_] <= '9') ++pos_;
             if (pos_ == digits) return fail("invalid JSON exponent");
         }
+#if defined(_MSVC_LANG) && _MSVC_LANG >= 201703L
+        // Native hosts use C++17: parse the validated token in place, without
+        // a temporary string or the CRT's locale-dependent strtod machinery.
+        double n = 0;
+        const char* first = text_.data() + begin;
+        const char* last = text_.data() + pos_;
+        const auto converted = std::from_chars(first, last, n);
+        if (converted.ec != std::errc() || converted.ptr != last || !std::isfinite(n))
+            return fail("invalid JSON number");
+#else
+        // Keep the portable library compatible with C++11 toolchains.
         errno = 0;
         char* end = nullptr;
         const std::string raw = text_.substr(begin, pos_ - begin);
         const double n = std::strtod(raw.c_str(), &end);
         if (errno == ERANGE || !end || *end || !std::isfinite(n)) return fail("invalid JSON number");
+#endif
         out.type = JsonValue::Number;
         out.number = n;
         return true;

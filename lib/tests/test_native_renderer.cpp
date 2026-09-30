@@ -2,6 +2,7 @@
 #include "doctest.h"
 #include "d2d_renderer.h"
 #include "rating_assets.h"
+#include "rating_fixture.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <chrono>
@@ -29,10 +30,10 @@ struct RendererFixture {
         DestroyWindow(portrait);
         DestroyWindow(landscape);
     }
-    void paint(HWND hwnd, float progress = 1.0f) {
+    void paint(HWND hwnd, float progress = 1.0f, float ratingProgress = 1.0f) {
         d2d::render(hwnd, 1, d2d::Transition::Crossfade, 90, 1.0f / 16, false,
             nullptr, 1, L"Benchmark album", L"Artist", progress, true,
-            1, 1, 1, L"Benchmark album", L"Track (1:30)", 0);
+            ratingProgress, 1, 1, L"Benchmark album", L"Track (1:30)", 0);
         CHECK(d2d::backdropReady());
         CHECK(d2d::rendererDiagnostics().failedFrames == 0);
     }
@@ -120,6 +121,7 @@ TEST_CASE("native renderer prepares cached artwork across repeated window handof
     d2d::setCover(cover.data(), cover.size(), false);
     d2d::setTitleLogo(logo, L"Benchmark album", 0);
     d2d::RatingBadge badge; badge.country = L"DE"; badge.system = L"FSK"; badge.rating = L"12";
+    badge.png = ratingFixturePng(); REQUIRE_FALSE(badge.png.empty());
     d2d::setRatings(std::vector<d2d::RatingBadge>(1, badge), false);
 
     // Warm both variants, including the outgoing surface of the crossfade.
@@ -151,6 +153,26 @@ TEST_CASE("native renderer prepares cached artwork across repeated window handof
         std::printf("HANDOFF average ms: total=%.2f frame=%.2f target=%.2f images=%.2f blur=%.2f; decodes=%zu blurs=%zu hits=%zu bytes=%zu\n",
             elapsed / 8, stats.frameMs / 8, stats.targetMs / 8, stats.imageMs / 8,
             stats.blurMs / 8, stats.decodes, stats.blurGenerations, stats.cacheHits, stats.cacheBytes);
+}
+
+TEST_CASE("rating images replace fallback text only during their incoming fade") {
+    RendererFixture fixture;
+    const auto cover = artwork(300, 300);
+    d2d::setCover(cover.data(), cover.size(), false);
+    d2d::setBackdrop(cover.data(), cover.size(), false);
+    d2d::RatingBadge badge; badge.country = L"DE"; badge.system = L"FSK"; badge.rating = L"12";
+    d2d::setRatings({badge}, false);
+    fixture.paint(fixture.portrait);
+    badge.png = ratingFixturePng(); REQUIRE_FALSE(badge.png.empty());
+    d2d::setRatings({badge}, true);
+    d2d::resetRendererDiagnostics();
+    fixture.paint(fixture.portrait, 1, 0);
+    CHECK(d2d::rendererDiagnostics().decodes == 0); // outgoing text remains visible
+    fixture.paint(fixture.portrait, 1, .5f);
+    CHECK(d2d::rendererDiagnostics().decodes == 1);
+    fixture.paint(fixture.portrait, 1, 1);
+    CHECK(d2d::rendererDiagnostics().decodes == 1);
+    d2d::endMediaFade();
 }
 
 TEST_CASE("native renderer reuses blur after target and device release but invalidates changed inputs") {

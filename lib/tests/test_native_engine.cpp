@@ -3,6 +3,26 @@
 #include <future>
 #include "../../shared/cover_engine.cpp"
 #include "../../shared/rating_assets.h"
+#include "rating_fixture.h"
+
+TEST_CASE("downloaded rating bytes preserve the outgoing text snapshot") {
+    ssc::MediaResult result;
+    ssc::Certification cert; cert.country = "DE"; cert.system = "FSK"; cert.rating = "12"; cert.label = "FSK 12";
+    result.certifications.push_back(cert);
+    ssc::RatingAssetCache cache(L"");
+    const auto before = ratingBadges(result, cache);
+    REQUIRE(before.size() == 1); CHECK(before[0].png.empty()); CHECK(before[0].label == L"FSK 12");
+    const auto png = ratingFixturePng(); REQUIRE_FALSE(png.empty());
+    ssc::MediaResolverConfig config;
+    config.transport = [&](const std::string&, unsigned short, const std::string&,
+            const std::string&, const std::string&, const std::string&, int) {
+        ssc::HttpResponse response; response.status = 200; response.body = png; return response;
+    };
+    REQUIRE(cache.load(cert, ssc::MediaResolver(config)));
+    const auto after = ratingBadges(result, cache);
+    CHECK(after[0].png == png); CHECK(after[0].label == before[0].label);
+    CHECK(before[0].png.empty()); // renderer can crossfade the saved fallback independently
+}
 
 TEST_CASE("coming next retains outgoing content, handles rapid queue changes and reduced motion") {
     ssc::ComingNextPresentation next;
@@ -369,9 +389,7 @@ struct CoverEngineTestAccess {
         engine.stopMediaWorker();
         engine.settings.backdrops = true;
         engine.startMediaWorker();
-        const void* png = nullptr; size_t length = 0;
-        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
-        const std::string image(static_cast<const char*>(png), length);
+        const std::string image = ratingFixturePng(); REQUIRE_FALSE(image.empty());
         std::atomic<unsigned> resolutions{0}, downloads{0};
         ssc::MediaResolverConfig config;
         config.transport = [&](const std::string& host, unsigned short, const std::string& path,
@@ -454,9 +472,7 @@ struct CoverEngineTestAccess {
         engine.settings.backdrops = true;
         engine.settings.titleLogos = !cachedMiss;
         engine.startMediaWorker();
-        const void* png = nullptr; size_t length = 0;
-        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
-        const std::string image(static_cast<const char*>(png), length);
+        const std::string image = ratingFixturePng(); REQUIRE_FALSE(image.empty());
         std::atomic<unsigned> backdropDownloads{0};
         ssc::MediaResolverConfig config;
         config.transport = [&](const std::string& host, unsigned short, const std::string& path,
@@ -580,9 +596,7 @@ struct CoverEngineTestAccess {
         engine.settings.transition = 1;
         engine.hwnd_.store(initial);
         engine.startMediaWorker();
-        const void* png = nullptr; size_t length = 0;
-        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
-        const std::string image(static_cast<const char*>(png), length);
+        const std::string image = ratingFixturePng(); REQUIRE_FALSE(image.empty());
         std::promise<void> entered, release;
         auto enteredFuture = entered.get_future();
         auto releaseFuture = release.get_future().share();
@@ -676,9 +690,7 @@ struct CoverEngineTestAccess {
         engine.settings.backdrops = true;
         engine.hwnd_.store(window.value);
         engine.startMediaWorker();
-        const void* png = nullptr; size_t length = 0;
-        REQUIRE(ssc::ratingAssetPng("DE", "FSK", "12", png, length));
-        const std::string image(static_cast<const char*>(png), length);
+        const std::string image = ratingFixturePng(); REQUIRE_FALSE(image.empty());
         std::promise<void> entered, release;
         auto enteredFuture = entered.get_future();
         auto releaseFuture = release.get_future().share();

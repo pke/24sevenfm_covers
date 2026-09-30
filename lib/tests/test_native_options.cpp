@@ -12,6 +12,16 @@
 #include "../../shared/config.h"
 #include <map>
 
+TEST_CASE("verification dates preserve UTC days and reject invalid persisted timestamps") {
+    CHECK(optpanel::verificationDate(0).empty());
+    CHECK(optpanel::verificationDate(1) == "1970-01-01");
+    CHECK(optpanel::verificationDate(1709251199999ULL) == "2024-02-29");
+    CHECK(optpanel::verificationDate(1709251200000ULL) == "2024-03-01");
+    CHECK(optpanel::verificationDate(32535215999999ULL) == "3000-12-31");
+    CHECK(optpanel::verificationDate(32535216000000ULL).empty());
+    CHECK(optpanel::verificationDate(~0ULL).empty());
+}
+
 namespace {
 struct Dialogs {
     HWND parent = nullptr, options = nullptr, about = nullptr;

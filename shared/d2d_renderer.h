@@ -39,6 +39,7 @@ struct RatingBadge {
     std::wstring rating;
     std::wstring label;
     std::wstring descriptors;
+    std::string png; // worker-prepared bytes; empty keeps the text fallback
 };
 
 // Creates the Direct2D / WIC / DirectWrite factories. Returns false if Direct2D

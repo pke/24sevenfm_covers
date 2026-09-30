@@ -1,6 +1,8 @@
 "use strict";
 
 const http = require("node:http");
+const fs = require("node:fs/promises");
+const path = require("node:path");
 
 function defaultRoutes() {
     const backdrop = require("../api/_lib/backdrop");
@@ -45,7 +47,6 @@ function disableBrowserCache(res) {
 
 function createRequestListener(routes) {
     return function localApiRequest(req, res) {
-        disableBrowserCache(res);
         let url;
         try {
             url = new URL(req.url, "http://localhost");
@@ -53,6 +54,20 @@ function createRequestListener(routes) {
             sendError(res, 400, "invalid_url");
             return;
         }
+        if (/^\/ratings\/v1\/[a-z0-9_-]+\.[a-f0-9]{12}\.png$/.test(url.pathname)) {
+            if (req.method !== "GET" && req.method !== "HEAD") {
+                sendError(res, 405, "method_not_allowed"); return;
+            }
+            fs.readFile(path.join(__dirname, "..", "public", url.pathname)).then((png) => {
+                res.setHeader("Content-Type", "image/png");
+                res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+                res.setHeader("X-Content-Type-Options", "nosniff");
+                res.setHeader("Content-Length", png.length);
+                res.end(req.method === "HEAD" ? undefined : png);
+            }).catch(() => sendError(res, 404, "not_found"));
+            return;
+        }
+        disableBrowserCache(res);
         const handler = routes[url.pathname];
         if (typeof handler !== "function") {
             sendError(res, 404, "not_found");

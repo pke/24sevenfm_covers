@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.15)
 project(coverfetch LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
+if(MSVC)
+    # Match the native hosts and exercise their locale-free JSON number parser.
+    set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(coverfetch STATIC
@@ -51,6 +55,10 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     # as its own CTest entry, so ctest reports 26/26 cases instead of one opaque exe.
     include(tests/doctest.cmake)
     doctest_discover_tests(coverfetch_tests)
+
+    add_executable(json_number_tests tests/test_json_numbers.cpp mini_json.cpp)
+    target_include_directories(json_number_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    doctest_discover_tests(json_number_tests)
 
     add_executable(media_resolver_tests tests/test_media_resolver.cpp)
     target_link_libraries(media_resolver_tests PRIVATE coverfetch)

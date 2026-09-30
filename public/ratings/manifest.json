@@ -1,0 +1,104 @@
+[
+  {
+    "country": "DE",
+    "system": "FSK",
+    "rating": "0",
+    "path": "/ratings/v1/de_fsk_0.7f540a6545cb.png"
+  },
+  {
+    "country": "DE",
+    "system": "FSK",
+    "rating": "6",
+    "path": "/ratings/v1/de_fsk_6.3fbefdcc120c.png"
+  },
+  {
+    "country": "DE",
+    "system": "FSK",
+    "rating": "12",
+    "path": "/ratings/v1/de_fsk_12.73a0f1640cf6.png"
+  },
+  {
+    "country": "DE",
+    "system": "FSK",
+    "rating": "16",
+    "path": "/ratings/v1/de_fsk_16.bed0656b31fb.png"
+  },
+  {
+    "country": "DE",
+    "system": "FSK",
+    "rating": "18",
+    "path": "/ratings/v1/de_fsk_18.685f05c6a775.png"
+  },
+  {
+    "country": "US",
+    "system": "MPA",
+    "rating": "G",
+    "path": "/ratings/v1/us_mpa_g.b9b221b45c3a.png"
+  },
+  {
+    "country": "US",
+    "system": "MPA",
+    "rating": "PG",
+    "path": "/ratings/v1/us_mpa_pg.620c2b54fed4.png"
+  },
+  {
+    "country": "US",
+    "system": "MPA",
+    "rating": "PG-13",
+    "path": "/ratings/v1/us_mpa_pg_13.832960b44490.png"
+  },
+  {
+    "country": "US",
+    "system": "MPA",
+    "rating": "R",
+    "path": "/ratings/v1/us_mpa_r.7cc5d6f5a230.png"
+  },
+  {
+    "country": "US",
+    "system": "MPA",
+    "rating": "NC-17",
+    "path": "/ratings/v1/us_mpa_nc_17.0af5fe4e9765.png"
+  },
+  {
+    "country": "US",
+    "system": "TV Parental Guidelines",
+    "rating": "TV-Y",
+    "path": "/ratings/v1/us_tv_parental_guidelines_tv_y.70e33b3f84f5.png"
+  },
+  {
+    "country": "US",
+    "system": "TV Parental Guidelines",
+    "rating": "TV-Y7",
+    "path": "/ratings/v1/us_tv_parental_guidelines_tv_y7.33b88a7bf900.png"
+  },
+  {
+    "country": "US",
+    "system": "TV Parental Guidelines",
+    "rating": "TV-Y7-FV",
+    "path": "/ratings/v1/us_tv_parental_guidelines_tv_y7_fv.d7ce8a445270.png"
+  },
+  {
+    "country": "US",
+    "system": "TV Parental Guidelines",
+    "rating": "TV-G",
+    "path": "/ratings/v1/us_tv_parental_guidelines_tv_g.7082a1f2fdba.png"
+  },
+  {
+    "country": "US",
+    "system": "TV Parental Guidelines",
+    "rating": "TV-PG",
+    "path": "/ratings/v1/us_tv_parental_guidelines_tv_pg.bde60676d33a.png"
+  },
+  {
+    "country": "US",
+    "system": "TV Parental Guidelines",
+    "rating": "TV-14",
+    "path": "/ratings/v1/us_tv_parental_guidelines_tv_14.33894cfc7b3e.png"
+  },
+  {
+    "country": "US",
+    "system": "TV Parental Guidelines",
+    "rating": "TV-MA",
+    "path": "/ratings/v1/us_tv_parental_guidelines_tv_ma.57b822c9dc9b.png"
+  }
+]

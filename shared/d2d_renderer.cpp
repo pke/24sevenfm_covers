@@ -3,7 +3,6 @@
 #include "d2d_rolldigits.h" // rolling countdown overlay
 #include "image_limits.h"   // coverDimsOk - reject decompression-bomb covers
 #include "media_policy.h"   // DPI-aware rating geometry shared with tests
-#include "rating_assets.h"  // compiled-in PNG logos; no native SVG/network dependency
 #include "title_logo_presentation.h"
 
 #include <d2d1.h>
@@ -579,22 +578,11 @@ void drawRatingSet(const std::vector<RatingBadge>& ratings, float cw, float ch,
         const size_t i = remaining - 1;
         const std::wstring key = ratings[i].country + L"\n" + ratings[i].system + L"\n" + ratings[i].rating;
         ID2D1Bitmap* logo = nullptr;
-        for (size_t b = 0; b < g_ratingBitmaps.size(); ++b)
+        for (size_t b = 0; !ratings[i].png.empty() && b < g_ratingBitmaps.size(); ++b)
             if (g_ratingBitmaps[b].key == key) { logo = g_ratingBitmaps[b].bitmap; break; }
-        if (!logo) {
-            std::string country, system, rating;
-            for (size_t c = 0; c < ratings[i].country.size(); ++c)
-                country += static_cast<char>(ratings[i].country[c] & 0x7f);
-            for (size_t c = 0; c < ratings[i].system.size(); ++c)
-                system += static_cast<char>(ratings[i].system[c] & 0x7f);
-            for (size_t c = 0; c < ratings[i].rating.size(); ++c)
-                rating += static_cast<char>(ratings[i].rating[c] & 0x7f);
-            const void* data = nullptr; size_t size = 0;
-            if (ssc::ratingAssetPng(country, system, rating, data, size)) {
-                const std::string png(static_cast<const char*>(data), size);
-                logo = decodeBitmap(g_rt, png, nullptr);
-                if (logo) { RatingBitmap item; item.key = key; item.bitmap = logo; g_ratingBitmaps.push_back(item); }
-            }
+        if (!logo && !ratings[i].png.empty()) {
+            logo = decodeBitmap(g_rt, ratings[i].png, nullptr);
+            if (logo) { RatingBitmap item; item.key = key; item.bitmap = logo; g_ratingBitmaps.push_back(item); }
         }
         std::wstring text = ratings[i].label.empty() ? ratings[i].rating : ratings[i].label;
         if (logo) text = ratings[i].descriptors;

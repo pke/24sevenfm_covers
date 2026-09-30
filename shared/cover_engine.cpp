@@ -15,6 +15,7 @@
 #include "coverfetch.h"
 #include "http_client.h"
 #include "image_probe.h"
+#include "rating_assets.h"
 #include "media_policy.h"
 #include "media_resolver.h"
 #include "stations.h"
@@ -99,7 +100,8 @@ std::wstring toWide(const std::string& s) {
     return w;
 }
 
-std::vector<d2d::RatingBadge> ratingBadges(const ssc::MediaResult& result) {
+std::vector<d2d::RatingBadge> ratingBadges(const ssc::MediaResult& result,
+                                        const ssc::RatingAssetCache& cache = ssc::ratingAssets()) {
     std::vector<d2d::RatingBadge> out;
     for (size_t i = 0; i < result.certifications.size(); ++i) {
         const ssc::Certification& c = result.certifications[i];
@@ -108,6 +110,7 @@ std::vector<d2d::RatingBadge> ratingBadges(const ssc::MediaResult& result) {
         badge.system = toWide(c.system);
         badge.rating = toWide(c.rating);
         badge.label = toWide(c.label);
+        badge.png = cache.find(c);
         for (size_t j = 0; j < c.descriptors.size(); ++j) {
             if (j) badge.descriptors += L", ";
             badge.descriptors += toWide(c.descriptors[j]);
@@ -163,7 +166,7 @@ struct CoverEngine::MediaWorkerState {
         unsigned long long used = 0;
     };
     struct Work {
-        enum Kind { Resolve, Download } kind = Resolve;
+        enum Kind { Resolve, Download, Ratings } kind = Resolve;
         Clock::time_point due;
         unsigned long long order = 0;
         unsigned long long epoch = 0;
@@ -321,6 +324,51 @@ void CoverEngine::startMediaWorker() {
             }
             if (!item.cancel || item.cancel->load()) continue;
 
+            if (item.kind == MediaWorkerState::Work::Ratings) {
+                bool ready = true;
+                bool changed = false;
+                for (const auto& cert : item.result.certifications) {
+                    if (item.cancel->load()) break;
+                    if (!ssc::ratingAssets().find(cert).empty()) continue;
+                    const bool loaded = ssc::ratingAssets().load(cert, state->resolver, item.cancel.get());
+                    changed = changed || loaded;
+                    ready = ready && loaded;
+                }
+                if ((ready || changed) && item.current && !item.cancel->load())
+                    publishRatings(item.epoch, ratingBadges(item.result));
+                if (!ready && !item.cancel->load() && item.attempt < 2) {
+                    item.due = MediaWorkerState::Clock::now() + std::chrono::seconds(++item.attempt * 30);
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    if (!state->stopping && item.epoch == state->epoch) {
+                        item.order = ++state->order;
+                        state->work.push_back(item);
+                        state->cv.notify_all();
+                    }
+                }
+                continue;
+            }
+            const auto queueRatingAssets = [&](const ssc::MediaResult& result) {
+                if (!item.request.includeRatings || result.certifications.empty()) return;
+                bool missing = false;
+                for (const auto& cert : result.certifications)
+                    missing = missing || ssc::ratingAssets().find(cert).empty();
+                if (!missing) return;
+                if (item.current) publishRatings(item.epoch, ratingBadges(result));
+                auto work = item;
+                work.kind = MediaWorkerState::Work::Ratings;
+                work.result = result;
+                work.attempt = 0;
+                work.due = MediaWorkerState::Clock::now() + std::chrono::milliseconds(50);
+                std::lock_guard<std::mutex> lock(state->mutex);
+                if (state->stopping || item.epoch != state->epoch) return;
+                for (const auto& pending : state->work)
+                    if (pending.kind == MediaWorkerState::Work::Ratings && pending.epoch == item.epoch
+                            && pending.key == item.key) return;
+                work.order = ++state->order;
+                state->work.push_back(work);
+                state->cv.notify_all();
+            };
+
             const auto prepareTitleLogo = [&](const ssc::MediaResult& result) {
                 if (!item.request.includeArt) return;
                 std::string bytes;
@@ -380,6 +428,8 @@ void CoverEngine::startMediaWorker() {
                         haveCachedFallback = cachedBackdrop(state, item.track, item.request, cachedFallback);
                 }
                 if (haveCached) {
+                    queueRatingAssets(cached.result.certifications.empty() && haveCachedFallback
+                        ? cachedFallback.result : cached.result);
                     ssc::DiagnosticLog::instance().event("cache.media.hit", diagnosticTrack(item.track));
                     if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
                     else publishQueuedMetadata(item.epoch, item.track, cached.result);
@@ -419,6 +469,7 @@ void CoverEngine::startMediaWorker() {
                             haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
                         }
                         if (haveFallback) {
+                            queueRatingAssets(fallback.result);
                             if (sameResolverConfig(fallback.request, item.request))
                                 prepareTitleLogo(fallback.result);
                             publishMedia(item.epoch, fallback.bytes, ratingBadges(fallback.result), false,
@@ -440,6 +491,7 @@ void CoverEngine::startMediaWorker() {
                 }
                 if (item.current)
                     publishMetadata(item.epoch, resolved, item.track.lengthSeconds);
+                queueRatingAssets(resolved);
                 prepareTitleLogo(resolved);
                 if (item.cancel->load()) continue;
 
@@ -774,7 +826,7 @@ void CoverEngine::publishRatings(unsigned long long epoch,
         std::lock_guard<std::mutex> lock(mutex_);
         if (!epoch || activeMediaEpoch_ != epoch) return;
         pendingRatings_ = ratings;
-        pendingBackdropChange_ = false;
+        pendingBackdropChange_ = mediaDirty_ && pendingBackdropChange_;
         pendingMediaEpoch_ = epoch;
         mediaImageFailed_ = false;
         mediaDirty_ = true;

@@ -4,6 +4,196 @@
 #include "../../shared/debug_overlay.h"
 #include "../diagnostic_timeline.h"
 #include "../../shared/debug_report.h"
+#include <regex>
+#include <iomanip>
+#include <sstream>
+#include <limits>
+#include <cstring>
+#include <cstdint>
+#include <ctime>
+
+TEST_CASE("native UTC formatting matches CRT across date boundaries") {
+    const struct { std::int64_t seconds; const char* iso; } cases[] = {
+        {0, "1970-01-01T00:00:00Z"},
+        {951782400, "2000-02-29T00:00:00Z"},
+        {1709251199, "2024-02-29T23:59:59Z"},
+        {1709251200, "2024-03-01T00:00:00Z"},
+        {1767225599, "2025-12-31T23:59:59Z"},
+        {1767225600, "2026-01-01T00:00:00Z"},
+        {2147483647, "2038-01-19T03:14:07Z"},
+        {2147483648, "2038-01-19T03:14:08Z"},
+        {32535215999LL, "3000-12-31T23:59:59Z"}
+    };
+    for (const auto& item : cases) {
+        CAPTURE(item.seconds);
+        CHECK(ssc::formatUtcTime(item.seconds, ssc::UtcFormat::Iso8601) == item.iso);
+        CHECK(ssc::formatUtcTime(item.seconds, ssc::UtcFormat::Date) == std::string(item.iso, 10));
+    }
+    std::uint64_t state = 0x24f00d;
+    for (unsigned sample = 0; sample < 2000; ++sample) {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        const auto seconds = static_cast<std::time_t>(state % 32535216000ULL);
+        std::tm utc = {};
+        REQUIRE(gmtime_s(&utc, &seconds) == 0);
+        const char* patterns[] = {"%Y-%m-%d", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S UTC"};
+        const ssc::UtcFormat formats[] = {ssc::UtcFormat::Date, ssc::UtcFormat::Iso8601, ssc::UtcFormat::Display};
+        for (unsigned i = 0; i < 3; ++i) {
+            char expected[32]; REQUIRE(std::strftime(expected, sizeof(expected), patterns[i], &utc) != 0);
+            CHECK(ssc::formatUtcTime(seconds, formats[i]) == expected);
+        }
+    }
+    const auto before = std::time(nullptr);
+    const auto timestamp = ssc::diagnosticTimestamp();
+    const auto after = std::time(nullptr);
+    CHECK((timestamp == ssc::formatUtcTime(before, ssc::UtcFormat::Iso8601) ||
+        timestamp == ssc::formatUtcTime(after, ssc::UtcFormat::Iso8601)));
+    CHECK(ssc::debugDisplayValue(ssc::diagnosticNumber(1709251199999.), "observedAt") == "2024-02-29 23:59:59 UTC");
+}
+
+TEST_CASE("native UTC formatting rejects invalid epochs before conversion") {
+    for (auto seconds : {-1LL, 32535216000LL, (std::numeric_limits<long long>::max)()})
+        CHECK(ssc::formatUtcTime(seconds, ssc::UtcFormat::Date).empty());
+    for (double milliseconds : {-1., 32535216000000., (std::numeric_limits<double>::max)()})
+        CHECK(ssc::debugDisplayValue(ssc::diagnosticNumber(milliseconds), "observedAt") == "Unknown");
+}
+
+// Retain the old stream serializer here only, to compare exact output.
+static std::string streamJson(const ssc::JsonValue& value, unsigned depth = 0) {
+    using ssc::JsonValue;
+    std::ostringstream out; out.imbue(std::locale::classic());
+    switch (value.type) {
+    case JsonValue::Null: return "null";
+    case JsonValue::Boolean: return value.boolean ? "true" : "false";
+    case JsonValue::Number: out << std::fixed << std::setprecision(2) << value.number; return out.str();
+    case JsonValue::String:
+        out << '"';
+        for (unsigned char c : value.string) {
+            if (c == '"' || c == '\\') out << '\\' << c;
+            else if (c < 32) out << "\\u" << std::hex << std::setw(4) << std::setfill('0') << unsigned(c);
+            else out << c;
+        }
+        out << '"'; return out.str();
+    default: break;
+    }
+    const bool object = value.type == JsonValue::Object;
+    out << (object ? '{' : '[');
+    size_t count = 0;
+    if (object) for (const auto& pair : value.object) {
+        out << (count++ ? ",\n" : "\n") << std::string((depth + 1) * 2, ' ')
+            << streamJson(ssc::diagnosticString(pair.first)) << ": " << streamJson(pair.second, depth + 1);
+    }
+    else for (const auto& item : value.array)
+        out << (count++ ? ",\n" : "\n") << std::string((depth + 1) * 2, ' ') << streamJson(item, depth + 1);
+    if (count) out << '\n' << std::string(depth * 2, ' ');
+    out << (object ? '}' : ']'); return out.str();
+}
+
+TEST_CASE("diagnostic JSON preserves stream escaping and indentation") {
+    std::string text;
+    for (unsigned c = 0; c < 32; ++c) text += static_cast<char>(c);
+    text += "\"\\ UTF-8: \xc3\xa9 \xf0\x9f\x8e\xb5";
+    auto object = ssc::diagnosticObject();
+    object.object[text] = ssc::diagnosticString(text);
+    object.object["array"] = ssc::diagnosticArray();
+    object.object["array"].array = {ssc::diagnosticBool(true), ssc::diagnosticBool(false),
+        ssc::JsonValue(), ssc::diagnosticNumber(-12.125), ssc::diagnosticObject(), ssc::diagnosticArray()};
+    for (unsigned depth : {0u, 1u, 4u})
+        CHECK(ssc::diagnosticJson(object, depth) == streamJson(object, depth));
+    CHECK(ssc::diagnosticJson(ssc::diagnosticString("")) == "\"\"");
+}
+
+TEST_CASE("diagnostic numeric formatting matches streams across finite doubles") {
+    const auto check = [](double number) {
+        CAPTURE(number);
+        const auto value = ssc::diagnosticNumber(number);
+        CHECK(ssc::diagnosticJson(value) == streamJson(value));
+        std::ostringstream report; report.imbue(std::locale::classic());
+        report << std::setprecision(6) << number;
+        CHECK(ssc::debugDisplayValue(value) == report.str());
+    };
+    for (double number : {0., -0., 0.005, -0.005, 12.125, 12.375, 999999.5, 0.00009999995,
+            1e20, -1e20, (std::numeric_limits<double>::max)(), (std::numeric_limits<double>::lowest)(),
+            (std::numeric_limits<double>::min)(), std::numeric_limits<double>::denorm_min()}) check(number);
+    std::uint64_t state = 0x24f00d;
+    for (unsigned sample = 0; sample < 2000; ++sample) {
+        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        double number; std::memcpy(&number, &state, sizeof(number));
+        if (std::isfinite(number)) check(number);
+    }
+    CHECK(ssc::diagnosticJson(ssc::diagnosticNumber(std::numeric_limits<double>::infinity())) == "null");
+    CHECK(ssc::diagnosticJson(ssc::diagnosticNumber(std::numeric_limits<double>::quiet_NaN())) == "null");
+    CHECK(ssc::debugDisplayValue(ssc::diagnosticNumber(12.5), "totalMs") == "12.5 ms");
+    CHECK(ssc::debugDisplayValue(ssc::diagnosticNumber(1024), "responseBytes") == "1024 bytes");
+    CHECK(ssc::debugDisplayValue(ssc::diagnosticNumber(1.25), "remainingSeconds") == "1.25 s");
+}
+
+TEST_CASE("diagnostic formatting stays locale independent without changing the host locale") {
+    struct RestoreLocale {
+        std::string original = std::setlocale(LC_NUMERIC, nullptr);
+        ~RestoreLocale() { std::setlocale(LC_NUMERIC, original.c_str()); }
+    } restore;
+    REQUIRE(std::setlocale(LC_NUMERIC, "German_Germany.1252") != nullptr);
+    REQUIRE(std::string(std::localeconv()->decimal_point) == ",");
+    CHECK(ssc::diagnosticJson(ssc::diagnosticNumber(12.5)) == "12.50");
+    CHECK(ssc::debugDisplayValue(ssc::diagnosticNumber(12.5), "totalMs") == "12.5 ms");
+    CHECK(std::string(std::localeconv()->decimal_point) == ",");
+}
+
+TEST_CASE("diagnostic redaction preserves delimiters, casing and URL authority boundaries") {
+    const struct { const char* input; const char* expected; } cases[] = {
+        {"", ""},
+        {"album=Film&key=public", "album=Film&key=public"},
+        {"API_KEY=private&Client-Key=other", "API_KEY=[redacted]&Client-Key=[redacted]"},
+        {"apikey=&clientkey=abc", "apikey=[redacted]&clientkey=[redacted]"},
+        {"prefixTOKEN=private", "prefixTOKEN=[redacted]"},
+        {"password=a=b&album=Film", "password=[redacted]&album=Film"},
+        {"secret=a\ttoken=b\r\n", "secret=[redacted]\ttoken=[redacted]\r\n"},
+        {"token=a\vpassword=b\fsecret=c", "token=[redacted]\vpassword=[redacted]\fsecret=[redacted]"},
+        {"authorization=a\"<token=b>", "authorization=[redacted]\"<token=[redacted]>"},
+        {"https://user:pass@host/path", "https://host/path"},
+        {"HTTP://a@b@host/?album=Film", "HTTP://host/?album=Film"},
+        {"https://host/path@name?q=x@y#z@w", "https://host/path@name?q=x@y#z@w"},
+        {"https://host?x@y https://host#x@y", "https://host?x@y https://host#x@y"},
+        {"https://host user@elsewhere", "https://host user@elsewhere"},
+        {"https://u:p@host/?token=private", "https://host/?token=[redacted]"},
+        {"http://@one https://u@two", "http://one https://two"},
+    };
+    for (const auto& item : cases) {
+        CAPTURE(item.input);
+        CHECK(ssc::diagnosticSafeText(item.input) == item.expected);
+    }
+    CHECK(ssc::diagnosticSafeText(std::string(4097, 'x')) == std::string(4096, 'x') + "[truncated]");
+    CHECK(ssc::diagnosticSafeText("token=" + std::string(5000, 'x')) == "token=[redacted]");
+    CHECK(ssc::diagnosticSecret("nestedClient_KEY"));
+    CHECK(ssc::diagnosticSecret("CREDENTIALS"));
+    CHECK_FALSE(ssc::diagnosticSecret("album"));
+}
+
+TEST_CASE("diagnostic scanners match the previous regex redaction") {
+    // Keep the old implementation only in the test executable as a regression oracle.
+    const std::regex secret("key|token|password|secret|authorization|credential", std::regex::icase);
+    const std::regex query("((?:api[_-]?key|client[_-]?key|token|password|secret|authorization)=)[^&\\s\"<>]*", std::regex::icase);
+    const std::regex userinfo("(https?://)[^/?#\\s]*@", std::regex::icase);
+    const std::string pieces[] = {
+        "api_key=", "API-KEY=", "apikey=", "client_key=", "Client-Key=", "clientkey=",
+        "token=", "PASSWORD=", "secret=", "authorization=", "credential", "key=",
+        "https://", "HtTp://", "user:pass@", "a@b@", "host", "Film", "&", "?", "#", "/",
+        " ", "\t", "\n", "\r", "\v", "\f", "\"", "<", ">", "=", "@", "\xc3\xa9", std::string(1, '\0')
+    };
+    unsigned state = 0x24f00d;
+    for (unsigned sample = 0; sample < 2000; ++sample) {
+        std::string input;
+        for (unsigned part = 0; part < 16; ++part) {
+            state = state * 1664525u + 1013904223u;
+            input += pieces[(state >> 16) % (sizeof(pieces) / sizeof(pieces[0]))];
+        }
+        CAPTURE(sample);
+        auto expected = std::regex_replace(input, query, "$1[redacted]");
+        expected = std::regex_replace(expected, userinfo, "$1");
+        CHECK(ssc::diagnosticSafeText(input) == expected);
+        CHECK(ssc::diagnosticSecret(input) == std::regex_search(input, secret));
+    }
+}
 
 TEST_CASE("native timeline separates history, current and repeated future tracks with unknown ETAs") {
     ssc::DiagnosticTimeline timeline(2);

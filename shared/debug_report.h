@@ -18,21 +18,16 @@ inline std::string debugDisplayValue(const JsonValue& value, const std::string& 
     if (value.type == JsonValue::Boolean) return value.boolean ? "Yes" : "No";
     if (value.type == JsonValue::String) return value.string.empty() ? "--" : value.string;
     if (key == "observedAt") {
-        const std::time_t time = static_cast<std::time_t>(value.number / 1000);
-        std::tm utc = {};
-#ifdef _WIN32
-        gmtime_s(&utc, &time);
-#else
-        gmtime_r(&time, &utc);
-#endif
-        char text[32]; std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S UTC", &utc); return text;
+        const double seconds = value.number / 1000;
+        if (!std::isfinite(seconds) || seconds < 0 || seconds >= 32535216000.) return "Unknown";
+        const auto text = formatUtcTime(static_cast<std::int64_t>(seconds), UtcFormat::Display);
+        return text.empty() ? "Unknown" : text;
     }
-    std::ostringstream out; out.imbue(std::locale::classic());
-    out << std::setprecision(6) << value.number;
-    if (key.size() >= 2 && key.substr(key.size()-2) == "Ms") out << " ms";
-    else if (key.find("Bytes") != std::string::npos || key == "bytes") out << " bytes";
-    else if (key.find("Seconds") != std::string::npos) out << " s";
-    return out.str();
+    std::string out = diagnosticFormatNumber(value.number, false);
+    if (key.size() >= 2 && key.substr(key.size()-2) == "Ms") out += " ms";
+    else if (key.find("Bytes") != std::string::npos || key == "bytes") out += " bytes";
+    else if (key.find("Seconds") != std::string::npos) out += " s";
+    return out;
 }
 inline void debugReportFields(std::string& out, const JsonValue& value, unsigned depth = 0) {
     if (depth > 10) return;

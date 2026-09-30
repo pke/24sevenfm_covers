@@ -2,6 +2,7 @@
 
 #include "mini_json.h"
 #include "diagnostics.h"
+#include "rating_asset_paths.h"
 
 #include <algorithm>
 #include <cctype>
@@ -408,6 +409,19 @@ std::string MediaResolver::resolveCredit(const std::string& album, const std::st
     if (!cleanText(root.get("artist"), artist, 180)) artist.clear();
     if (requestSucceeded) *requestSucceeded = true;
     return artist;
+}
+
+bool MediaResolver::downloadRatingAsset(const Certification& certification, std::string& bytes,
+                                        const std::atomic<bool>* cancel) const {
+    bytes.clear();
+    const auto path = ratingAssetPath(certification.country, certification.system, certification.rating);
+    if (path.empty() || (cancel && cancel->load())) return false;
+    // Only project-owned, versioned PNGs; no URLs supplied by provider metadata.
+    const auto response = get(config_.apiHost, config_.apiPort, path, cancel);
+    if (!response.ok() || response.body.empty() || response.body.size() > 65536
+            || (cancel && cancel->load())) return false;
+    bytes = response.body;
+    return true;
 }
 
 bool MediaResolver::downloadTitleLogo(const MediaResult& media, std::string& bytes,

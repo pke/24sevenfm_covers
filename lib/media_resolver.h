@@ -106,6 +106,8 @@ public:
                           const std::atomic<bool>* cancel = nullptr) const;
     bool downloadTitleLogo(const MediaResult& media, std::string& bytes,
                            const std::atomic<bool>* cancel = nullptr) const;
+    bool downloadRatingAsset(const Certification& certification, std::string& bytes,
+                             const std::atomic<bool>* cancel = nullptr) const;
 
 private:
     HttpResponse get(const std::string& host, unsigned short port, const std::string& path,

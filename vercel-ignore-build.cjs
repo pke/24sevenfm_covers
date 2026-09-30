@@ -9,7 +9,7 @@ function ignoreBuild({ previousSha = process.env.VERCEL_GIT_PREVIOUS_SHA,
     cwd = __dirname, run = spawnSync } = {}) {
     if (!/^[a-f0-9]{40,64}$/i.test(previousSha || "")) return false;
     const result = run("git", ["diff", "--quiet", previousSha, "HEAD", "--",
-        "api/", "package.json", "package-lock.json", "vercel.json",
+        "api/", "public/", "package.json", "package-lock.json", "vercel.json",
         ".vercelignore", "vercel-ignore-build.cjs",
         ":(glob,exclude)api/**/*.test.js"], { cwd, stdio: "ignore" });
     return !result.error && result.status === 0;
