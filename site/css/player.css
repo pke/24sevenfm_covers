@@ -428,6 +428,38 @@
     transition-delay: 0s;
 }
 
+.stage-provider-hint {
+    appearance: none;
+    border: 0;
+    text-align: left;
+    cursor: pointer;
+    position: absolute;
+    top: .7rem;
+    left: .7rem;
+    z-index: 3;
+    max-width: 45%;
+    margin: 0;
+    padding: .5rem;
+    border-radius: .5rem;
+    background: rgba(0, 0, 0, .62);
+    color: #ffdc9e;
+    font: .75rem/1.4 "Segoe UI", sans-serif;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity .2s ease, visibility 0s linear .2s;
+}
+.stage-provider-hint.show {
+    pointer-events: auto;
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+.stage-provider-hint:focus-visible {
+    outline: 2px solid #ffdc9e;
+    outline-offset: 2px;
+}
+
 /* --- stage chrome: audio, fullscreen toggle + fullscreen options ----------------- */
 .stage-button {
     position: absolute;
@@ -927,6 +959,10 @@
 .stage-opts { top: .7rem; right: 3.8rem; display: none; } /* fullscreen only - embedded, the panel is right below */
 .stage:fullscreen .stage-opts { display: block; }
 .stage:hover .stage-button, .stage-button:focus-visible { opacity: 1; }
+.stage-backdrop { top: 50%; transform: translateY(-50%); }
+.stage-backdrop-prev { left: .7rem; }
+.stage-backdrop-next { right: .7rem; }
+.stage .stage-backdrop:disabled { opacity: 0; pointer-events: none; }
 @media (hover: none) { .stage-button { opacity: .6; } } /* touch: no hover, keep visible */
 
 /* In fullscreen the stage IS the screen, so :hover is permanently true and useless as
@@ -1475,7 +1511,7 @@ input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.
     .info .t, .info #info-artist, .backchannel-status, .backchannel-pairing,
     .stage-button, .stage-update, .stage-milkdrop, .stage-lasers, .stage-lasers-front, .stage-spectrum,
     .stage-bpm,
-    .stage-status, .options-overlay,
+    .stage-status, .stage-provider-hint, .options-overlay,
     .backdrop, .backdrop-error, .backdrop-error button, .fanart-key-check,
     .fanart-key-check span, .provider-key-help, .provider-key-status,
     .rating-badges, .rating-slot, .rating-card, .rating-face, .rating-descriptors,

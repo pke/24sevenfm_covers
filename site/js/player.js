@@ -590,6 +590,7 @@ function preloadImage(url, onLoad, onError) {
 // same crossfade the cover gets.
 function makeLayer(a, b, channel) {
     var front = null, pendingLoad = null;
+    var showVersion = 0;
     var retirements = new Map();
 
     function loadedElement(url) {
@@ -722,12 +723,13 @@ function makeLayer(a, b, channel) {
     return {
         prepare: function (url) { return loadIntoBack(url, "prepare"); },
         show: function (url, generation, onShown, onError) {
+            const version = ++showVersion;
             if (front && front.src === url && front.classList.contains("show")) {
                 if (onShown) onShown();
                 return;
             }
             loadIntoBack(url, "show").then(function (back) {
-                if (!renderIsCurrent(channel, generation)) return;
+                if (version !== showVersion || !renderIsCurrent(channel, generation)) return;
                 if (!back) {
                     if (onError) onError();
                     return;
@@ -743,6 +745,7 @@ function makeLayer(a, b, channel) {
             });
         },
         hide: function () {
+            ++showVersion;
             [a, b].forEach(function (element) {
                 if (!element.classList.contains("show")) return;
                 element.classList.remove("show");
@@ -755,6 +758,7 @@ function makeLayer(a, b, channel) {
 var blurLayer = makeLayer($("backdropA"), $("backdropB"), "cover");
 var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), stageStatusEl = $("stage-status");
+var fanartStageHintEl = $("fanart-stage-hint");
 var comingNextEl = $("coming-next");
 var comingNextAlbumEl = $("coming-next-album"), comingNextArtistEl = $("coming-next-artist");
 var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
@@ -2358,6 +2362,53 @@ function showCover(url) {
 // meanwhile the player falls back to the blurred cover.
 var movieLayer = makeLayer($("movieA"), $("movieB"), "backdrop");
 var movieShown = false; // a screen backdrop is currently visible (drives hide-cover)
+var movieAlternatives = [], movieAlternativeIndex = 0, movieAlternativeArt = null, movieSelectionVersion = 0;
+var movieSelectionContext = "", movieOrientationSelections = Object.create(null);
+function setBackdropNavigation(art) {
+    const providers = enabledMovieProviders();
+    const context = JSON.stringify([opts.station, currentAlbum, currentTrack, currentArtist,
+        providers, providers.indexOf("fanart") >= 0 ? opts.fanartKey : ""]);
+    if (context !== movieSelectionContext) {
+        movieSelectionContext = context;
+        movieOrientationSelections = Object.create(null);
+    }
+    movieAlternativeArt = art;
+    movieAlternatives = art && art.url ? [{ url: art.url, source: art.source }] : [];
+    (art && art.backdrops || []).forEach(function (candidate) {
+        if (movieAlternatives.length < 50 && candidate
+                && trustedResolvedBackdrop(candidate.url, candidate.source)
+                && !movieAlternatives.some(item => item.url === candidate.url))
+            movieAlternatives.push(candidate);
+    });
+    const selected = movieOrientationSelections[backdropOrientationForStage()];
+    movieAlternativeIndex = Math.max(0, movieAlternatives.findIndex(item => item.url === selected));
+    [$("backdrop-prev"), $("backdrop-next")].forEach(function (button) {
+        button.disabled = movieAlternatives.length < 2;
+    });
+}
+function cycleBackdrop(direction) {
+    if (movieAlternatives.length < 2 || !sstBackdropsEnabled()) return false;
+    ++movieSelectionVersion;
+    movieAlternativeIndex = (movieAlternativeIndex + direction + movieAlternatives.length) % movieAlternatives.length;
+    cancelBackdropRequest();
+    cancelBackdropResolverRetry();
+    const generation = renderGenerations.backdrop;
+    // The blurred cover is already underneath. Keep the logical backdrop active
+    // so the hide-cover preference also applies while its replacement downloads.
+    movieLayer.hide();
+    currentMovieTint = null;
+    applyPreferredPlayerTint();
+    movieShown = true;
+    updateCoverVisibility();
+    const candidate = movieAlternatives[movieAlternativeIndex];
+    movieOrientationSelections[backdropOrientationForStage()] = candidate.url;
+    setMovieBackdrop(Object.assign({}, movieAlternativeArt, candidate, {
+        tint: movieAlternativeIndex === 0 ? movieAlternativeArt.tint : null,
+    }), generation, undefined, true);
+    return true;
+}
+$("backdrop-prev").addEventListener("click", function () { cycleBackdrop(-1); });
+$("backdrop-next").addEventListener("click", function () { cycleBackdrop(1); });
 var activeBackdropOrientation = "";
 var activeBackdropResolution = "";
 var coverHiddenUntilCoverReady = false;
@@ -2678,6 +2729,21 @@ function updateCoverTint(nextUrl) {
     });
 }
 
+function fanartKeyWasRejected(body) {
+    const diagnostics = body && body.diagnostics;
+    return !!diagnostics && [diagnostics.resolution, diagnostics.logoResolution].some(function (work) {
+        return work && Array.isArray(work.spans) && work.spans.some(function (span) {
+            return span && span.name === "provider.fanart" && (span.status === 401 || span.status === 403);
+        });
+    });
+}
+
+function setFanartStageHint(rejected) {
+    fanartStageHintEl.classList.toggle("show", !!rejected);
+    fanartStageHintEl.setAttribute("aria-hidden", rejected ? "false" : "true");
+    fanartStageHintEl.disabled = !rejected;
+}
+
 async function serverMovieArt(album, track, artist, providers, includeArt, includeRatings,
     signal, cacheMode, viewport) {
     if (!BACKDROP_API_URL) throw SERVER_ART_UNAVAILABLE;
@@ -2691,6 +2757,7 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
         if (!includeArt) url.searchParams.set("art", "0");
         if (includeArt && opts.sstTitleLogos) url.searchParams.set("logos", "1");
         if (includeArt) {
+            url.searchParams.set("backdrops", "1");
             url.searchParams.set("artwork_info", "1");
             viewport = viewport || backdropViewportForStage();
             url.searchParams.set("width", String(viewport.width));
@@ -2729,8 +2796,10 @@ async function serverMovieArt(album, track, artist, providers, includeArt, inclu
     if (body.backdrop && !resolved) throw SERVER_ART_UNAVAILABLE;
     return resolved || logo || certifications.length || metadata ? {
         url: resolved,
+        backdrops: includeArt && Array.isArray(body.backdrops) ? body.backdrops : [],
         tint: resolved ? validTint(body.tint) : null,
         source: resolved ? body.source : null,
+        fanartKeyRejected: fanartKeyWasRejected(body),
         certifications: certifications,
         metadata: metadata,
         logo: includeArt ? logo : null,
@@ -2773,8 +2842,10 @@ function mergeMovieArt(authoritative, fallback) {
     var hasAuthoritativeBackdrop = !!authoritative.url;
     return {
         url: authoritative.url || fallback.url,
+        backdrops: hasAuthoritativeBackdrop ? authoritative.backdrops : fallback.backdrops,
         tint: hasAuthoritativeBackdrop ? authoritative.tint : fallback.tint,
         source: hasAuthoritativeBackdrop ? authoritative.source : fallback.source,
+        fanartKeyRejected: !!authoritative.fanartKeyRejected,
         certifications: authoritative.certifications && authoritative.certifications.length
             ? authoritative.certifications : fallback.certifications || [],
         metadata: authoritative.metadata || fallback.metadata || null,
@@ -2792,10 +2863,16 @@ function cancelBackdropResolverRetry() {
     backdropResolverRetryTimer = null;
 }
 
-function setMovieBackdrop(art, generation, retryFailures) {
+function setMovieBackdrop(art, generation, retryFailures, cycling) {
     if (!renderIsCurrent("backdrop", generation)) return;
+    setFanartStageHint(art && art.fanartKeyRejected);
     setMediaLogo(art, generation);
     const isAutomaticRetry = typeof retryFailures === "number";
+    if (!isAutomaticRetry && !cycling) {
+        setBackdropNavigation(art);
+        if (movieAlternativeIndex > 0) art = Object.assign({}, art,
+            movieAlternatives[movieAlternativeIndex], { tint: null });
+    }
     if (!isAutomaticRetry) cancelBackdropImageRetry();
     if (!art || !art.url) {
         movieLayer.hide();
@@ -2818,7 +2895,7 @@ function setMovieBackdrop(art, generation, retryFailures) {
         },
         function () {
             movieLayer.hide();
-            movieShown = false;
+            movieShown = !!cycling;
             currentMovieTint = null;
             applyPreferredPlayerTint();
             updateCoverVisibility();
@@ -2826,7 +2903,7 @@ function setMovieBackdrop(art, generation, retryFailures) {
             if (failures <= BACKDROP_RETRY_LIMIT) {
                 backdropImageRetryTimer = setTimeout(function () {
                     backdropImageRetryTimer = null;
-                    setMovieBackdrop(art, generation, failures);
+                    setMovieBackdrop(art, generation, failures, cycling);
                 }, BACKDROP_RETRY_DELAY * Math.pow(2, failures - 1));
             } else {
                 setBackdropErrorState("error");
@@ -2847,6 +2924,7 @@ function setBackdropErrorState(state) {
 }
 
 function requestBackdrop(cacheMode, prefetchedArt, resolverRetryFailures) {
+    setBackdropNavigation(null);
     const isAutomaticResolverRetry = typeof resolverRetryFailures === "number";
     const hasPrefetchedResult = arguments.length > 1 && !isAutomaticResolverRetry;
     const generation = nextRenderGeneration("backdrop");
@@ -2994,10 +3072,11 @@ function consumeMovieRequest(request, signal) {
 async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt,
         resolverRetryFailures) {
     if (!renderIsCurrent("backdrop", generation)) return;
+    const selection = movieSelectionVersion;
     try {
         const art = await movieArtFor(currentAlbum, currentTrack, currentArtist, generation, signal,
             cacheMode);
-        if (!renderIsCurrent("backdrop", generation)) return;
+        if (!renderIsCurrent("backdrop", generation) || selection !== movieSelectionVersion) return;
         const renderedArt = mergeMovieArt(art, prefetchedArt);
         applyResolvedMetadata(renderedArt && renderedArt.metadata);
         clearStatus("backdrop");
@@ -3005,7 +3084,7 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
         setMovieBackdrop(sstBackdropsEnabled() ? renderedArt : null, generation);
         setRatings(renderedArt && renderedArt.certifications || [], generation);
     } catch (e) {
-        if (!renderIsCurrent("backdrop", generation)) return;
+        if (!renderIsCurrent("backdrop", generation) || selection !== movieSelectionVersion) return;
         settleCurrentInfo(null);
         if (prefetchedArt) {
             // Queue artwork is already validated and visible. A best-effort refinement
@@ -3454,6 +3533,13 @@ audioBtn.addEventListener("click", function () {
 });
 stageAudioBtn.addEventListener("click", toggleAudio);
 document.addEventListener("keydown", function (e) {
+    if ((e.key === "ArrowLeft" || e.key === "ArrowRight")
+            && !e.defaultPrevented && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey
+            && !e.target.closest("input, select, textarea, [contenteditable], [role=tablist], .fs-options, .spectrum-options")
+            && (!e.target.closest("button, a") || e.target.closest(".stage-backdrop"))) {
+        if (cycleBackdrop(e.key === "ArrowLeft" ? -1 : 1)) e.preventDefault();
+        return;
+    }
     if (e.key !== " " || e.repeat || e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.target.closest("a, button, input, select, textarea, [contenteditable]")) return;
     e.preventDefault();
@@ -3469,7 +3555,7 @@ function toggleFullscreen() {
 stage.addEventListener("dblclick", function (e) {
     // Double-clicks inside the options overlay (a slider, a fast toggle) or on the
     // chrome buttons must not yank the user out of fullscreen.
-    if (e.target.closest(".fs-options, .spectrum-options, .stage-audio, .stage-spectrum, .stage-fs, .stage-opts")) return;
+    if (e.target.closest(".fs-options, .spectrum-options, .stage-audio, .stage-spectrum, .stage-fs, .stage-opts, .stage-backdrop, .stage-provider-hint")) return;
     toggleFullscreen();
 });
 $("fullscreen").addEventListener("click", toggleFullscreen);
@@ -3930,6 +4016,12 @@ function selectSettingsTab(tab, animate) {
 }
 settingsTabList.addEventListener("click", function (event) {
     selectSettingsTab(event.target.closest('[role="tab"]'), true);
+});
+fanartStageHintEl.addEventListener("click", function () {
+    setSpectrumOptions(false);
+    setOptionsOverlay(true);
+    selectSettingsTab($("settings-tab-station"), true);
+    fanartKeyElement.focus();
 });
 settingsTabList.addEventListener("keydown", function (event) {
     var current = event.target.closest('[role="tab"]');

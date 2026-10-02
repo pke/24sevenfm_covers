@@ -19,6 +19,68 @@ test.beforeEach(async ({ page }) => {
     await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 });
 
+for (const motion of ["no-preference", "reduce"]) {
+    test(`fanart stage hint follows current artwork and fades with ${motion} motion`, async ({ page }, testInfo) => {
+        await page.emulateMedia({ reducedMotion: motion });
+        let rejection = true;
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+            metadata: { album: "Debug Album", artist: "Debug Artist", track: "Debug Track" },
+            backdrop: "https://assets.fanart.tv/fanart/test.jpg", source: "fanart",
+            diagnostics: { resolution: { spans: [
+                ...(rejection ? [{ name: "provider.fanart", status: motion === "reduce" ? 403 : 401 }] : []),
+                { name: "provider.fanart", status: 200 },
+            ] } },
+        } }));
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1");
+        const hint = page.locator("#fanart-stage-hint");
+        await expect(hint).toHaveClass(/show/);
+        await expect(hint).toContainText("Check provider settings");
+        await expect(hint).toHaveAttribute("aria-hidden", "false");
+        const stage = page.locator("#stage");
+        const rects = await page.evaluate(() => {
+            const stage = document.querySelector("#stage").getBoundingClientRect();
+            const hint = document.querySelector("#fanart-stage-hint").getBoundingClientRect();
+            return { inside: hint.left >= stage.left && hint.right <= stage.right && hint.top >= stage.top && hint.bottom <= stage.bottom };
+        });
+        expect(rects.inside).toBe(true);
+        await hint.click();
+        await expect(page.locator("#fs-options")).toHaveAttribute("data-state", "open");
+        await expect(page.locator("#settings-tab-station")).toHaveAttribute("aria-selected", "true");
+        await expect(page.locator("#fanart-key")).toBeFocused();
+        await stage.click({ position: { x: 5, y: 100 } });
+        await expect(page.locator("#fs-options")).toBeHidden();
+        await page.locator("#fullscreen").click();
+        await expect.poll(() => stage.evaluate(el => document.fullscreenElement === el)).toBe(true);
+        await expect(hint).toBeVisible();
+        await hint.focus();
+        await page.keyboard.press("Enter");
+        await expect(page.locator("#fs-options")).toHaveAttribute("data-state", "open");
+        await expect(page.locator("#fanart-key")).toBeFocused();
+        await expect.poll(() => stage.evaluate(el => document.fullscreenElement === el)).toBe(true);
+        await stage.click({ position: { x: 5, y: 100 } });
+        await expect(page.locator("#fs-options")).toBeHidden();
+        await stage.screenshot({ path: testInfo.outputPath("fanart-stage-hint.png") });
+        // Retain the mounted text while its outgoing opacity transition runs.
+        const outgoing = await page.evaluate(() => {
+            const checkbox = document.querySelector("#backdrops-enabled");
+            checkbox.checked = false;
+            checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+            const el = document.querySelector("#fanart-stage-hint");
+            return { text: el.textContent, duration: getComputedStyle(el).transitionDuration,
+                animations: el.getAnimations().length };
+        });
+        expect(outgoing.text).toContain("fanart.tv key rejected");
+        if (motion === "no-preference") expect(outgoing.animations).toBeGreaterThan(0);
+        else expect(outgoing.duration).toMatch(/^0s/);
+        await expect(hint).toBeHidden();
+        rejection = false;
+        const healthyResponse = page.waitForResponse(/\/api\/media\?/);
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1");
+        await healthyResponse;
+        await expect(hint).not.toHaveClass(/show/);
+    });
+}
+
 test("debug overlay fades, ignores typing and closes outside or with Escape in fullscreen", async ({ page }) => {
     const panel = page.locator("#stage-debug");
     await page.keyboard.press("d");
@@ -64,7 +126,17 @@ test("debug snapshot can be frozen and copied with response timings and redacted
     await expect(page.locator("#debug-requests-list")).toContainText("Server");
     await page.getByRole("button", { name: "Copy Album", exact: true }).first().click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("Debug Album");
-    await page.locator("#debug-selection .debug-value").first().dblclick();
+    const albumValue = page.locator("#debug-selection .debug-value")
+        .filter({ hasText: /^Debug Album$/ }).first();
+    const wordCenter = await albumValue.evaluate(element => {
+        const word = document.createRange();
+        word.setStart(element.firstChild, 0);
+        word.setEnd(element.firstChild, "Debug".length);
+        const rect = word.getBoundingClientRect(), elementRect = element.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2 - elementRect.left,
+            y: rect.top + rect.height / 2 - elementRect.top };
+    });
+    await albumValue.dblclick({ position: wordCenter });
     expect(await page.evaluate(() => window.getSelection().toString())).toContain("Debug");
     await page.evaluate(() => window.getSelection().removeAllRanges());
     await page.getByRole("button", { name: "Freeze", exact: true }).click();

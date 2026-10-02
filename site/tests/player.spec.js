@@ -115,6 +115,116 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
     }
 
+    for (const cover of ["hide", "show"]) test(`backdrop cycling fades to the default while loading with cover=${cover}`, async ({ page }) => {
+        await mockTitleLogoFeed(page);
+        const first = "https://image.tmdb.org/t/p/w1280/cycle-a.svg";
+        const second = "https://image.tmdb.org/t/p/w1280/cycle-b.svg";
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"><rect width="800" height="450" fill="navy"/></svg>';
+        await page.route(first, route => route.fulfill({ contentType: "image/svg+xml", body: svg }));
+        let release;
+        const waiting = new Promise(resolve => { release = resolve; });
+        await page.route(second, async route => { await waiting; await route.fulfill({ contentType: "image/svg+xml", body: svg }); });
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+            backdrop: first, source: "tmdb", backdrops: [
+                { url: first, source: "tmdb" }, { url: second, source: "tmdb" },
+            ],
+        } }));
+        await page.goto(`/player.html?preset=1&station=sst&sstBackdrops=1&sstBackdropCover=${cover}`);
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+        await page.mouse.move(0, 0);
+        const next = page.getByRole("button", { name: "Next backdrop", exact: true });
+        await expect(next).toHaveCSS("opacity", "0");
+        await page.locator("#stage").hover();
+        await expect(next).toHaveCSS("opacity", "1");
+        await next.click();
+        await expect(page.locator(".backdrop-movie.show")).toHaveCount(0);
+        const outgoing = page.locator(`.backdrop-movie[src="${first}"]`);
+        await expect(outgoing).toHaveCount(1); // retain its pixels through the exit
+        await expect(outgoing).toHaveCSS("opacity", "0");
+        if (cover === "hide") await expect(page.locator("#stage")).toHaveClass(/no-cover/);
+        else await expect(page.locator("#stage")).not.toHaveClass(/no-cover/);
+        release();
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", second);
+        await page.keyboard.press("ArrowRight");
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+        await page.keyboard.press("ArrowLeft");
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", second);
+        await page.getByRole("button", { name: "Previous backdrop", exact: true }).click();
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+    });
+
+    test("backdrop selection survives orientation changes", async ({ page }) => {
+        await mockTitleLogoFeed(page);
+        const url = (orientation, index) => `https://image.tmdb.org/t/p/w1280/${orientation}-${index}.svg`;
+        await page.route(/image\.tmdb\.org\/t\/p\/w1280\/.*\.svg/, route => route.fulfill({
+            contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"/>',
+        }));
+        await page.route(/\/api\/media\?/, route => {
+            const params = new URL(route.request().url()).searchParams;
+            const orientation = Number(params.get("height")) > Number(params.get("width")) ? "portrait" : "landscape";
+            return route.fulfill({ json: { backdrop: url(orientation, 0), source: "tmdb",
+                backdrops: [0, 1, 2].map(index => ({ url: url(orientation, index), source: "tmdb" })) } });
+        });
+        const shown = page.locator(".backdrop-movie.show");
+        await page.setViewportSize({ width: 1280, height: 720 });
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1");
+        await expect(shown).toHaveAttribute("src", url("landscape", 0));
+        await page.locator("#stage").click();
+        await page.keyboard.press("ArrowRight");
+        await expect(shown).toHaveAttribute("src", url("landscape", 1));
+        await page.setViewportSize({ width: 600, height: 900 });
+        await expect(shown).toHaveAttribute("src", url("portrait", 0));
+        await page.keyboard.press("ArrowLeft");
+        await expect(shown).toHaveAttribute("src", url("portrait", 2));
+        await page.setViewportSize({ width: 1280, height: 720 });
+        await expect(shown).toHaveAttribute("src", url("landscape", 1));
+        await page.keyboard.press("ArrowRight");
+        await expect(shown).toHaveAttribute("src", url("landscape", 2));
+        await page.setViewportSize({ width: 600, height: 900 });
+        await expect(shown).toHaveAttribute("src", url("portrait", 2));
+    });
+
+    test("backdrop cycling ignores stale downloads, editable keys and unavailable alternatives", async ({ page }) => {
+        await mockTitleLogoFeed(page);
+        const first = "https://image.tmdb.org/t/p/w1280/cycle-one.svg";
+        const second = "https://image.tmdb.org/t/p/w1280/cycle-two.svg";
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"/>';
+        await page.route(first, route => route.fulfill({ contentType: "image/svg+xml", body: svg }));
+        let release, requested = false;
+        const waiting = new Promise(resolve => { release = resolve; });
+        await page.route(second, async route => { requested = true; await waiting;
+            await route.fulfill({ contentType: "image/svg+xml", body: svg }).catch(() => {}); });
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: {
+            backdrop: first, source: "tmdb", backdrops: [
+                { url: first, source: "tmdb" }, { url: second, source: "tmdb" },
+                { url: "https://evil.test/art.svg", source: "tmdb" }, { url: second, source: "tmdb" },
+            ],
+        } }));
+        await page.goto("/player.html?preset=1&station=sst&sstBackdrops=1");
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+        await page.locator("#stage").hover();
+        const next = page.getByRole("button", { name: "Next backdrop", exact: true });
+        await next.click();
+        await expect.poll(() => requested).toBe(true);
+        await page.keyboard.press("ArrowRight"); // wraps past duplicates and rejected hosts
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+        release();
+        await page.waitForLoadState("networkidle");
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+        await page.locator("#settings-tab-station").focus();
+        await page.keyboard.press("ArrowRight");
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+        await openBackdropSettings(page);
+        await page.locator("#backdrops-enabled").uncheck();
+        await expect(next).toBeDisabled();
+        await page.route(/\/api\/media\?/, route => route.fulfill({ json: { backdrop: first, source: "tmdb" } }));
+        await page.reload();
+        await openBackdropSettings(page);
+        await expect(page.locator(".backdrop-movie.show")).toHaveAttribute("src", first);
+        await expect(next).toBeDisabled();
+        await expect(next).toHaveCSS("opacity", "0");
+    });
+
     for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
         test(`holds info geometry until the title logo fade settles at ${viewport.width}px`, async ({ page }, testInfo) => {
             await page.setViewportSize(viewport);
@@ -770,7 +880,7 @@ test.describe("the deployed player page", () => {
         await mockProviderTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator(".stage-button")).toHaveCount(3);
+        await expect(page.locator(".stage-button")).toHaveCount(5);
         await expect(page.locator(".options-overlay")).toHaveCount(2);
         for (const selector of ["#spectrum-options", "#fs-options"]) {
             const transitionProperties = await page.locator(selector).evaluate((element) =>
