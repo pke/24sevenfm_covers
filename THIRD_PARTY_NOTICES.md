@@ -39,3 +39,11 @@ image-optimisation service.
 The project media endpoint uses Mathias Bynens' MIT-licensed `he` package to decode
 the complete HTML character-reference set into Unicode metadata before returning it
 to the players. The package is used server-side only.
+
+## Native executable compression
+
+The Windows viewer and plugins are compressed with unmodified
+[UPX 5.2.1](https://github.com/upx/upx/releases/tag/v5.2.1). UPX is licensed under
+GPL-2.0-or-later with its special exception for compressed executables. The
+original decompression stub is retained. See the upstream
+[license and exception](https://github.com/upx/upx/blob/v5.2.1/LICENSE).

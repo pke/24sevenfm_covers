@@ -11,7 +11,7 @@
 #   viewer_24sevenfm_covers-<ver>-<date>.zip             24sevenfm_covers.exe + README (manual)
 #   <artifact>.sha256                                    SHA-256 sidecar for each of the above
 #
-# The unit tests (lib/) are run FIRST and packaging is aborted if any fail.
+# Signed builds first check the certificate/provider, then gate packaging on unit tests.
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File build_artifacts.ps1              (test, then package existing DLLs)
@@ -20,11 +20,17 @@
 
 param(
     [switch]$Build,
+    [switch]$EnableDebugOverlay, # with -Build: include native diagnostics in Release
     [switch]$SkipTests,
-    [string]$ReleaseTag = '',    # set by the release workflow: links point at this GitHub release
+    [string]$ReleaseTag = '',    # local publisher: links point at this GitHub release
+    [string]$Repo = 'pke/24sevenfm_covers',
     [string]$SiteUrl    = '',    # absolute site base URL (og:image); empty = relative (local preview)
     [string]$Toolset    = 'v145', # MSBuild platform toolset (CI runners have v143)
-    [string]$VCToolsVersion = '' # pin a specific MSVC tools version (ATL is not in every one)
+    [string]$VCToolsVersion = '', # pin a specific MSVC tools version (ATL is not in every one)
+    [switch]$Unsigned,          # CI/dev artifacts only; publish_release.ps1 rejects them
+    [string]$SigningThumbprint = '', # defaults to signing.json; public identifier, no secrets
+    [string]$TimestampUrl = '',
+    [string]$SignToolPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,10 +69,23 @@ $nViZip  = "viewer_24sevenfm_covers-$viVer-$stamp.zip"
 Write-Host "Winamp $winVer  |  foobar $fbVer  |  viewer $viVer   (build $stamp)" -ForegroundColor Cyan
 
 function Find-Tool([string]$name, [string[]]$candidates) {
-    $c = (Get-Command $name -ErrorAction SilentlyContinue).Source
-    if ($c) { return $c }
+    $command = Get-Command $name -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
     foreach ($p in $candidates) { if ($p -and (Test-Path $p)) { return $p } }
     return $null
+}
+
+Import-Module (Join-Path $here 'code_signing.psm1') -Force
+$signing = Get-CodeSigningSettings -Thumbprint $SigningThumbprint -TimestampUrl $TimestampUrl
+$nsisSigning = @()
+if (-not $Unsigned) {
+    $SignToolPath = Find-CodeSigningTool -Path $SignToolPath
+    Assert-CodeSigningCertificate -Thumbprint $signing.Thumbprint
+    $nsisSigning = @("/DSIGN_THUMBPRINT=$($signing.Thumbprint)",
+        "/DSIGN_TIMESTAMP=$($signing.TimestampUrl)", "/DSIGNTOOL=$SignToolPath",
+        "/DSIGN_POWERSHELL=$(Find-CodeSigningPowerShell)")
+} else {
+    Write-Warning 'Creating UNSIGNED development artifacts. These cannot be published by publish_release.ps1.'
 }
 
 # --- Test gate: the unit tests MUST pass before we build or package anything. -----
@@ -88,12 +107,21 @@ if (-not $SkipTests) {
     Write-Warning "Skipping unit tests (-SkipTests) - packaging an unverified build."
 }
 
+# Preserve outputs before rebuilding, packing or signing (including unsigned builds).
+$backup = Join-Path $root ('.codex\native-backups\' + (Get-Date -Format 'yyyyMMdd-HHmmssfff'))
+New-Item -ItemType Directory -Path $backup -Force | Out-Null
+foreach ($binary in @($winDll, $fbDll, $viExe)) {
+    if (Test-Path -LiteralPath $binary -PathType Leaf) { Copy-Item -LiteralPath $binary -Destination $backup }
+}
+Write-Host "Previous native binaries retained in $backup"
+
 if ($Build) {
     Write-Host "== Rebuilding plugins ==" -ForegroundColor Cyan
     $cmake = Find-Tool 'cmake.exe' @('C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')
     $msb   = Find-Tool 'MSBuild.exe' @('C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe')
     if (-not $cmake -or -not $msb) { throw "cmake/MSBuild not found - build the plugins manually, then run without -Build." }
-    & $cmake -S (Join-Path $root 'winamp') -B (Join-Path $root 'winamp\build') -A Win32 | Out-Null
+    $debugValue = if ($EnableDebugOverlay) { 1 } else { 0 }
+    & $cmake -S (Join-Path $root 'winamp') -B (Join-Path $root 'winamp\build') -A Win32 "-DSSC_ENABLE_DEBUG_OVERLAY=$debugValue" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Winamp CMake configure FAILED" }
     & $cmake --build (Join-Path $root 'winamp\build') --config Release
     if ($LASTEXITCODE -ne 0) { throw "Winamp plugin build FAILED" }
@@ -117,10 +145,10 @@ if ($Build) {
     $vcPin = if ($VCToolsVersion) { "/p:VCToolsVersion=$VCToolsVersion" } else { $null }
     $props = Join-Path $root 'foobar2000\wtl.props'
     & $msb (Join-Path $root 'foobar2000\foo_24sevenfm_covers\foo_24sevenfm_covers.vcxproj') `
-        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /p:ForceImportAfterCppProps=$props $vcPin /m /v:minimal
+        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /p:SSCEnableDebugOverlay=$debugValue /p:ForceImportAfterCppProps=$props $vcPin /m /v:minimal
     if ($LASTEXITCODE -ne 0) { throw "foobar2000 component build FAILED" }
     & $msb (Join-Path $root 'desktop\24sevenfm_covers.vcxproj') `
-        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /m /v:minimal
+        /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$Toolset /p:SSCEnableDebugOverlay=$debugValue /m /v:minimal
     if ($LASTEXITCODE -ne 0) { throw "desktop viewer build FAILED" }
 }
 
@@ -128,9 +156,27 @@ foreach ($d in @($winDll, $fbDll, $viExe)) {
     if (-not (Test-Path $d)) { throw "Missing $d`nBuild first (or pass -Build)." }
 }
 
+Write-Host '== Packing viewer and plugins ==' -ForegroundColor Cyan
+& (Join-Path $here 'pack_native.ps1') -Path @($winDll, $fbDll, $viExe)
+
+if (-not $Unsigned) {
+    Write-Host '== Signing viewer and plugins ==' -ForegroundColor Cyan
+    Invoke-CodeSigning -Path @($winDll, $fbDll, $viExe) -Thumbprint $signing.Thumbprint `
+        -TimestampUrl $signing.TimestampUrl -SignToolPath $SignToolPath
+}
+
 # Fresh dist + scratch (clean contents, not the dir itself - avoids "dir in use" if a
 # shell is cwd'd there or an AV is scanning a just-written file).
-if (Test-Path $dist) { Get-ChildItem $dist -Force -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue }
+$dist = [IO.Path]::GetFullPath($dist)
+if (-not $dist.StartsWith([IO.Path]::GetFullPath($root) + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Distribution output must stay within the repository.'
+}
+if (Test-Path -LiteralPath $dist) {
+    if ((Get-Item -LiteralPath $dist).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'Refusing to clear a linked distribution directory.'
+    }
+    Get-ChildItem -LiteralPath $dist -Force | Remove-Item -Force -Recurse
+}
 else { New-Item -ItemType Directory -Path $dist -Force | Out-Null }
 $wWin = Join-Path $dist '_win'; $wFb = Join-Path $dist '_fb'; $wVi = Join-Path $dist '_vi'
 New-Item -ItemType Directory -Path $wWin, $wFb, $wVi | Out-Null
@@ -148,22 +194,29 @@ Write-Host "  $nFbComp"
 #    version/date suffix is added here. Each carries its own module version.
 $makensis = Find-Tool 'makensis.exe' @("${env:ProgramFiles(x86)}\NSIS\makensis.exe", "$env:ProgramFiles\NSIS\makensis.exe")
 if ($makensis) {
-    & $makensis /V2 "/DAPPVER=$winVer" "/DAPPVER4=$winVer4" (Join-Path $here 'winamp_24sevenfm_covers.nsi')
+    & $makensis /V2 @nsisSigning "/DAPPVER=$winVer" "/DAPPVER4=$winVer4" (Join-Path $here 'winamp_24sevenfm_covers.nsi')
     if ($LASTEXITCODE -ne 0) { throw "makensis (Winamp) failed." }
     Move-Item (Join-Path $dist 'winamp_24sevenfm_covers.exe') (Join-Path $dist $nWinExe) -Force
     Write-Host "  $nWinExe"
 
-    & $makensis /V2 "/DAPPVER=$fbVer" "/DAPPVER4=$fbVer4" (Join-Path $here 'foobar_24sevenfm_covers.nsi')
+    & $makensis /V2 @nsisSigning "/DAPPVER=$fbVer" "/DAPPVER4=$fbVer4" (Join-Path $here 'foobar_24sevenfm_covers.nsi')
     if ($LASTEXITCODE -ne 0) { throw "makensis (foobar) failed." }
     Move-Item (Join-Path $dist 'foobar_24sevenfm_covers.exe') (Join-Path $dist $nFbExe) -Force
     Write-Host "  $nFbExe"
 
-    & $makensis /V2 "/DAPPVER=$viVer" "/DAPPVER4=$viVer4" (Join-Path $here 'viewer_24sevenfm_covers.nsi')
+    & $makensis /V2 @nsisSigning "/DAPPVER=$viVer" "/DAPPVER4=$viVer4" (Join-Path $here 'viewer_24sevenfm_covers.nsi')
     if ($LASTEXITCODE -ne 0) { throw "makensis (viewer) failed." }
     Move-Item (Join-Path $dist 'viewer_24sevenfm_covers.exe') (Join-Path $dist $nViExe) -Force
     Write-Host "  $nViExe"
 } else {
-    Write-Warning "makensis not found - skipping both NSIS installers. Install NSIS (https://nsis.sourceforge.io), then re-run."
+    if (-not $Unsigned) { throw 'makensis not found - signed releases require all three installers.' }
+    Write-Warning 'makensis not found - skipping the three NSIS installers.'
+}
+
+if (-not $Unsigned) {
+    Write-Host '== Signing installers ==' -ForegroundColor Cyan
+    Invoke-CodeSigning -Path @((Join-Path $dist $nWinExe), (Join-Path $dist $nFbExe), (Join-Path $dist $nViExe)) `
+        -Thumbprint $signing.Thumbprint -TimestampUrl $signing.TimestampUrl -SignToolPath $SignToolPath
 }
 
 # 3. Manual-install zips (DLL + README.txt at the zip root)
@@ -203,7 +256,7 @@ if (Test-Path (Join-Path $root 'site\index.html')) {
     $assets = @(Get-ChildItem $dist -File | Where-Object { $_.Extension -ne '.sha256' } |
                 ForEach-Object { @{ name = $_.Name; size = $_.Length } })
     & (Join-Path $here 'render_site.ps1') -Assets (ConvertTo-Json $assets -Compress) `
-        -ReleaseTag $ReleaseTag -SiteUrl $SiteUrl
+        -ReleaseTag $ReleaseTag -SiteUrl $SiteUrl -Repo $Repo
 }
 
 Write-Host "`nArtifacts in $dist :" -ForegroundColor Green

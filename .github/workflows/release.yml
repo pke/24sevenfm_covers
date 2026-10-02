@@ -1,16 +1,6 @@
-# Release: build all three binaries from source, run the test gate, publish a
-# GitHub Release with every artifact, and deploy the website (rendered against
-# that release's download URLs) to GitHub Pages.
-#
-# Runs when a push changes a per-module version header, and on demand (Actions > Release >
-# Run workflow). Tag format: vYYYY.MM.DD-<run>, <run> being the workflow run number - unique
-# even for several releases a day.
-#
-# Keying off the version headers means a release happens exactly when something SHIPPABLE
-# moved: .githooks/post-commit rewrites them only for fix/perf/feat commits touching that
-# module (or shared/), so pushing docs, CI or site-only changes releases nothing. Batch your
-# commits and push once - one push of shippable work is one release, not one per commit.
-name: Release
+# Hosted runners validate release builds. SimplySign authentication happens locally;
+# installer/publish_release.ps1 is the only publisher of new native releases.
+name: Native release build
 
 on:
   push:
@@ -19,143 +9,39 @@ on:
       - 'winamp/gen_version.h'
       - 'foobar2000/foo_24sevenfm_covers/foo_version.h'
       - 'desktop/viewer_version.h'
+      - 'installer/**'
+      - '.github/workflows/release.yml'
+  pull_request:
+    paths:
+      - 'installer/**'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write   # create the tag + release
-  pages: write      # deploy the site
-  id-token: write   # Pages OIDC
-
-# Shares the group with deploy-site.yml: both end in a GitHub Pages deployment, and a push
-# that changes site\ AND a version header triggers both at once. Same group = the second
-# waits instead of racing the first to the same Pages environment. Never cancel in
-# progress - a half-published release is worse than a slow one.
-concurrency:
-  group: pages
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  release:
+  build:
     runs-on: windows-latest
     steps:
-      # Full history + tags: the release notes are built from the commits since the
-      # previous tag, and the default shallow clone has neither.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-
-      - name: Compute release tag
-        id: tag
-        shell: pwsh
-        run: |
-          $tag = 'v' + (Get-Date -Format 'yyyy.MM.dd') + '-' + '${{ github.run_number }}'
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          Write-Host "release tag: $tag"
-
-      - name: Configure Pages
-        id: pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
-
-      # Runners do not have MSBuild on PATH; build_artifacts.ps1 locates it via Get-Command.
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
-
-      # The image no longer preinstalls NSIS; without it the script would skip
-      # the three installers. Verify the install really happened - a choco
-      # download flake behind a pipe otherwise passes silently (seen in run 9).
       - name: Install NSIS
         shell: pwsh
         run: |
           choco install nsis -y --no-progress
           if ($LASTEXITCODE -ne 0) { throw "choco install nsis failed ($LASTEXITCODE)" }
-          $mk = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-          if (-not (Test-Path $mk)) { throw "makensis.exe missing after install" }
-          Write-Host "NSIS ready: $mk"
-
-      # Toolset selection (v145 + an ATL-capable VCToolsVersion) is handled inside
-      # build_artifacts.ps1 - the runner image carries VS 2026 like the dev machine.
-      - name: Test, build & package
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            throw 'makensis.exe missing after install'
+          }
+      - name: Verify signing failure gates
+        shell: pwsh
+        run: ./installer/code_signing.test.ps1
+      - name: Test, build and package development artifacts
         shell: pwsh
         run: |
-          ./installer/build_artifacts.ps1 -Build `
-            -ReleaseTag '${{ steps.tag.outputs.tag }}' `
-            -SiteUrl '${{ steps.pages.outputs.base_url }}/'
-
-      - name: Create GitHub release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # The tag comes in via env, not an inline expression: GitHub's workflow
-          # parser refused to register the file with ${{ }} inside this line, and
-          # env indirection avoids template injection anyway.
-          TAG: ${{ steps.tag.outputs.tag }}
-        run: |
-          function Ver([string]$file) {
-            $c = Get-Content $file -Raw
-            $p = @('MAJOR','MINOR','PATCH') | ForEach-Object {
-              if ($c -match "#define\s+SSC_VER_$_\s+(\d+)") { $Matches[1] } else { '0' } }
-            $p -join '.'
-          }
-          # These binaries are unsigned. Saying so on the release page, next to the hashes that
-          # let a reader verify the download instead, is the difference between informing them
-          # and letting SmartScreen's warning be their first clue.
-          # --- changelog from the Conventional Commits since the previous release --------
-          # Only user-facing types appear: feat/fix/perf are exactly the ones that move a
-          # version (see .githooks/post-commit), so the notes and the version bumps can't
-          # tell different stories. chore/ci/docs/test/refactor are deliberately omitted.
-          $prev = git describe --tags --abbrev=0 2>$null
-          $groups = [ordered]@{ feat = @(); fix = @(); perf = @() }
-          if ($LASTEXITCODE -eq 0 -and $prev) {
-            $friendly = @{
-              winamp   = 'Winamp';   foobar = 'foobar2000'; viewer = 'Desktop viewer'
-              renderer = 'Renderer'; shared = 'All apps';   site   = 'Website'
-            }
-            foreach ($s in @(git log "$prev..HEAD" --pretty=format:%s)) {
-              if ($s -match '^(feat|fix|perf)(\(([^)]+)\))?!?:\s*(.+)$') {
-                $type = $Matches[1]; $scope = $Matches[3]; $text = $Matches[4]
-                # No scope means the change wasn't confined to one host - shared code, which
-                # ships in all three. Labelling it 'All apps' rather than leaving it bare
-                # keeps every line in the same shape, however carefully the scope was typed.
-                $label = if ($scope) { if ($friendly[$scope]) { $friendly[$scope] } else { $scope } } else { 'All apps' }
-                $groups[$type] += "- **$label** - $text"
-              }
-            }
-          }
-          $changelog = @()
-          foreach ($g in @(@('feat','### New'), @('fix','### Fixed'), @('perf','### Performance'))) {
-            if ($groups[$g[0]].Count) { $changelog += $g[1]; $changelog += $groups[$g[0]]; $changelog += '' }
-          }
-          if (-not $changelog.Count) { $changelog = @('No user-facing changes since the previous release.', '') }
-
-          $notes = @(
-            ('Winamp plugin **v{0}** - foobar2000 component **v{1}** - desktop viewer **v{2}**' -f `
-              (Ver 'winamp/gen_version.h'), (Ver 'foobar2000/foo_24sevenfm_covers/foo_version.h'), (Ver 'desktop/viewer_version.h')),
-            ''
-          ) + $changelog + @(
-            'Every artifact has a `.sha256` sidecar (`sha256sum -c <file>.sha256`).',
-            '',
-            ('These binaries are **not signed**, so Windows SmartScreen will warn on first run - ' +
-             'verify a download against its `.sha256` sidecar instead.')
-          )
-          if ($prev) {
-            $notes += @('', "**Full changelog:** https://github.com/${{ github.repository }}/compare/$prev...$env:TAG")
-          }
-          $notes = $notes -join "`n"
-          $files = Get-ChildItem www/downloads -File | ForEach-Object FullName
-          # 7 artifacts + 7 sha256 sidecars; fewer means something was skipped upstream
-          if ($files.Count -ne 14) { throw "expected 14 release files, found $($files.Count) - refusing to ship a partial release" }
-          gh release create $env:TAG @files --title $env:TAG --notes $notes
-          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
-
-      # The site links to the release assets - the downloads folder itself is not served.
-      - name: Strip downloads from the site output
-        shell: pwsh
-        run: Remove-Item www/downloads -Recurse -Force
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
-        with:
-          path: www
-
-      - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
+          ./installer/build_artifacts.ps1 -Build -Unsigned -Toolset v143
+          $files = @(Get-ChildItem www/downloads -File)
+          if ($files.Count -ne 14) { throw "expected 14 build files, found $($files.Count)" }
+          'Native build passed. Publish signed releases locally with installer/publish_release.ps1 -Publish.' >> $env:GITHUB_STEP_SUMMARY

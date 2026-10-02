@@ -10,6 +10,7 @@
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "signing.nsh"
 
 !ifndef APPVER
   !define APPVER "0.0.0"

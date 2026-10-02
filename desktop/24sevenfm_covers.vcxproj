@@ -164,6 +164,7 @@
     <None Include="24sevenfm_covers.manifest" /> <!-- merged via Manifest/AdditionalManifestFiles above -->
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="..\installer\native_packing.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
 </Project>

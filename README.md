@@ -39,8 +39,9 @@ Fanart image's language and whether it contains text. Clients can use this to
 avoid duplicating a poster title while retaining headings for textless artwork.
 See the [API contract](docs/vercel-backdrop.md).
 
-Press **D** over the player stage to open translucent diagnostics in the web player,
-Windows viewer, Winamp or foobar2000. Escape or an outside click closes the panel.
+Press **D** over the player stage to open translucent diagnostics in the web player
+or a diagnostic-enabled native build (Windows viewer, Winamp or foobar2000).
+Native Release builds omit diagnostics by default. Escape or an outside click closes the panel.
 Snapshots include artwork URLs, request/response timings, API JSON, cache state and
 provider selection reasons. Freeze the snapshot or select text to pause updates;
 copy the complete report with **Copy snapshot**. Credentials are redacted and the
@@ -74,6 +75,7 @@ history stays in memory. See [diagnostics](docs/debugging.md) for timing semanti
   `shell32`, plus `user32`/`gdi32`/`kernel32`). The desktop viewer statically links the C runtime (`/MT`),
   so it needs **no VC++ redistributable**. **Requires Windows 7 or later** (Direct2D/DirectWrite).
 - **Only for building the foobar2000 component** — two vendored SDKs (see below).
+- **PowerShell 7** — used by native post-link UPX packing and signing tools.
 - **Only for packaging the Winamp installer** — [NSIS](https://nsis.sourceforge.io) (`makensis.exe`).
 - **Only for cross-compiling `lib/` to a phone** (optional) — the Android NDK / CMake.
 
@@ -91,6 +93,39 @@ that need them:
 The **Winamp** plugin needs no external SDK — a minimal `winamp/gen.h` is included.
 
 ## Building
+
+All three Windows front-ends are UPX-compressed after linking, in both Release and
+Debug configurations. The build downloads pinned [UPX 5.2.1](https://github.com/upx/upx/releases/tag/v5.2.1)
+into `.codex/tools/`, verifies its SHA-256 checksums, and checks every packed output
+with `upx -t`. The first build needs Internet access. The original binary and its
+linker map are retained in an `unpacked/` directory beside the output for debugging
+and size analysis. Packing preserves relocations and icons. Static libraries,
+unit-test executables and web assets are outside this native packing step.
+
+Packaging uses **link → UPX → Authenticode signing → installers/archives → checksums**.
+An already packed binary is verified without rewriting it, preserving any existing
+signature. Signed, unpacked inputs must be rebuilt before packing. NSIS compresses
+installer payloads itself; its generated installers and uninstallers are signed
+after generation.
+
+### Native diagnostics build option
+
+`SSC_ENABLE_DEBUG_OVERLAY=0` removes the native debug overlay, snapshots,
+timeline/history, response capture, diagnostic timings and file logging. Native
+Release builds default to `0`; Debug builds enable diagnostics. The web panel is
+independent of this flag.
+
+To build and package a troubleshooting Release with diagnostics:
+
+```powershell
+./installer/build_artifacts.ps1 -Build -EnableDebugOverlay
+```
+
+A normal `-Build` restores compact Release builds. When building projects directly,
+use `-DSSC_ENABLE_DEBUG_OVERLAY=ON` with Winamp's CMake configuration and
+`/p:SSCEnableDebugOverlay=1` with MSBuild for DV or foobar. Set these to `OFF` and `0`
+to disable diagnostics. The `lib/` test project defaults to diagnostics enabled
+and also accepts `-DSSC_ENABLE_DEBUG_OVERLAY=OFF` to test the compact code path.
 
 Open **`desktop\24sevenfm_covers.sln`** in Visual Studio for the desktop viewer, or use the command line:
 
@@ -135,6 +170,16 @@ cmake --build lib\build --config Release
 uses **WinHTTP** for HTTPS/TLS (linked automatically); other platforms use a plain-socket client
 and link `Threads`. A console demo (`coverfetch_example`) builds by default;
 disable with `-DCOVERFETCH_BUILD_EXAMPLE=OFF`.
+
+Shared code uses `lib/platform_concurrency.h` for workers, locks, and waits. Windows
+uses SRW locks and condition variables with CRT-aware thread startup; other platforms
+use standard C++11 concurrency. `lib/platform_text.h` provides bounded numeric and
+byte-scanning helpers without requiring newer C++ language features. UTC calendar
+conversion uses `lib/platform_time.h`: Win32 file-time conversion on Windows, the
+existing `timegm` backend elsewhere. Wall-clock timestamps use the Win32 file-time
+clock, with the precise API when available and a Windows 7 fallback. Windows tests compare date normalization and
+range boundaries against the original CRT implementation; both concurrency backends
+and text behavior are also covered by the test suite.
 
 ## Tests
 
@@ -282,11 +327,13 @@ Windows system libraries.
 
 ## Verifying a download
 
-Releases are built from source by the public `Release` workflow and published with a `.sha256`
-sidecar for every artifact, so a download can be checked without a signature:
+The public `Native release build` workflow validates native builds. Releases are signed
+and published locally with a `.sha256` sidecar for every artifact:
 
 ```bat
 certutil -hashfile <file> SHA256      :: compare against <file>.sha256
 ```
 
-The binaries are **not signed**, so Windows SmartScreen warns on first run.
+The local release process signs binaries with Certum SimplySign; Windows shows
+**Open Source Developer Philipp Kursawe** as the publisher. Earlier releases may be
+unsigned. See [the signing and release process](installer/README.md#code-signing-with-certum-simplysign).

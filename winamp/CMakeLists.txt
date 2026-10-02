@@ -73,7 +73,17 @@ set_target_properties(gen_24sevenfm_covers PROPERTIES
     PREFIX ""
     OUTPUT_NAME "gen_24sevenfm_covers"
 )
-
+find_program(SSC_POWERSHELL NAMES pwsh HINTS "$ENV{ProgramW6432}/PowerShell/7")
+if(NOT SSC_POWERSHELL)
+    message(FATAL_ERROR "PowerShell 7 is required for native UPX packing")
+endif()
+add_custom_command(TARGET gen_24sevenfm_covers POST_BUILD
+    COMMAND "${SSC_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+        -File "${CMAKE_CURRENT_SOURCE_DIR}/../installer/pack_native.ps1"
+        -Path "$<TARGET_FILE:gen_24sevenfm_covers>"
+    VERBATIM
+    COMMENT "Compressing and verifying native plugin with UPX"
+)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(WARNING "Building ${CMAKE_SIZEOF_VOID_P}-byte pointers - Winamp 5.x needs a 32-bit DLL. Reconfigure with: cmake -A Win32")

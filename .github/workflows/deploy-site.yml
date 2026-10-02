@@ -7,7 +7,7 @@
 # the newest GitHub release and renders against them.
 #
 # Runs on every push that touches site\, and on demand. Takes seconds - no MSBuild, no NSIS.
-# Cutting a release still deploys the site too (release.yml), so the two never diverge.
+# Publishing a locally signed release also triggers this workflow.
 name: Deploy site
 
 on:
@@ -22,6 +22,8 @@ on:
       - 'installer/serve_site.test.ps1'
       - '.github/workflows/deploy-site.yml'
   workflow_dispatch:
+  release:
+    types: [published]
   pull_request:
     paths:
       - 'site/**'
@@ -66,7 +68,7 @@ jobs:
 
   deploy:
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.event_name != 'release' || !github.event.release.prerelease)
     permissions:
       contents: read
       pages: write

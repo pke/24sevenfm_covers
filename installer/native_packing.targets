@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <SSCPowerShellExe Condition="'$(SSCPowerShellExe)'==''">$(ProgramW6432)\PowerShell\7\pwsh.exe</SSCPowerShellExe>
+  </PropertyGroup>
+  <!-- Import only into our EXE/DLL projects, never their SDK/static libraries. -->
+  <Target Name="PackNativeBinary" AfterTargets="Link" Condition="Exists('$(TargetPath)')">
+    <Exec Command="&quot;$(SSCPowerShellExe)&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)pack_native.ps1&quot; -Path &quot;$(TargetPath)&quot;" />
+  </Target>
+</Project>
