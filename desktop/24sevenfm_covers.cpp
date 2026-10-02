@@ -50,6 +50,7 @@ static const UINT   SC_OPTIONS     = 0x1000; // system-menu command id (must be 
 static HINSTANCE g_hInst    = nullptr;
 static HWND      g_hwnd     = nullptr;
 static bool      g_d2dReady = false;
+static bool      g_firstFramePainted = false;
 static bool      g_firstRun = false; // no INI yet -> prompt for a station on first launch
 
 // Borderless-fullscreen state (double-click / context menu / Esc toggle it).
@@ -363,12 +364,26 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // Once, when the user lets go - not on every pixel of the drag.
             saveWindowPosIfMoved(hwnd);
             return 0;
-        case WM_ERASEBKGND:
-            return 1; // D2D paints the whole client area
+        case WM_ERASEBKGND: {
+            // Windows can erase while showing the window, before the first D2D
+            // frame is presented. Acknowledge only after painting the dark base.
+            if (!g_firstFramePainted || !g_d2dReady) {
+                RECT client = {};
+                GetClientRect(hwnd, &client);
+                FillRect(reinterpret_cast<HDC>(wp), &client,
+                         reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            }
+            return 1;
+        }
         case WM_PAINT: {
             PAINTSTRUCT ps;
-            BeginPaint(hwnd, &ps);
-            if (g_d2dReady) eng().onPaint(hwnd);
+            HDC dc = BeginPaint(hwnd, &ps);
+            if (g_d2dReady) {
+                eng().onPaint(hwnd);
+                if (eng().currentWindow() == hwnd) g_firstFramePainted = true;
+            }
+            else FillRect(dc, &ps.rcPaint,
+                          reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
             EndPaint(hwnd, &ps);
             return 0;
         }
@@ -495,15 +510,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         AppendMenuA(sys, MF_STRING, SC_OPTIONS, "Options...");
     }
 
+    // Attach and prime the dark render surface before ShowWindow/UpdateWindow
+    // can request the first paint. The engine rejects paints for unattached HWNDs.
+    eng().setLogName("24seven.fm-covers-viewer");
+    eng().setWindow(g_hwnd);
+
     // Reopen maximized if that's how it was left - unless the shell asked for something
     // specific (e.g. a shortcut set to "Minimized"), which takes precedence.
     const int show = nCmdShow ? nCmdShow : SW_SHOWNORMAL;
     ShowWindow(g_hwnd, (g_savedRect.maximized && show == SW_SHOWNORMAL) ? SW_SHOWMAXIMIZED : show);
     UpdateWindow(g_hwnd);
 
-    // Hand the window to the engine and start the monitor in live/auto-advance mode.
-    eng().setLogName("24seven.fm-covers-viewer");
-    eng().setWindow(g_hwnd);
+    // Start the monitor in live/auto-advance mode once the window is visible.
     eng().start(/*autoAdvance=*/true);
 
     // No station chosen yet (missing INI entry): the viewer has no player to auto-follow,
