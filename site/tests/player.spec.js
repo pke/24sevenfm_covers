@@ -5461,9 +5461,7 @@ test.describe("the deployed player page", () => {
             const newCover = "https://streamingsoundtracks.com/images/cover/new-boundary.svg";
             const oldBackdrop = "https://image.tmdb.org/t/p/w1280/old-boundary.jpg";
             const newBackdrop = "https://image.tmdb.org/t/p/w1280/new-boundary.jpg";
-            let nowRequests = 0, queueRequests = 0, newResolverRequested = false;
-            let releaseNewResolver;
-            const newResolverMayFinish = new Promise((resolve) => { releaseNewResolver = resolve; });
+            let nowRequests = 0, queueRequests = 0, resolveNewMedia = null;
             await page.addInitScript(() => localStorage.setItem("24sevenfm-covers.player.v2",
                 JSON.stringify({ sstBackdrops: { enabled: true, options: { providers: ["tmdb"], cover: "show" } },
                     transition: { enabled: true,
@@ -5492,18 +5490,22 @@ test.describe("the deployed player page", () => {
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
             await page.route(/\/api\/tint\?/, (route) =>
                 route.fulfill({ json: { tint: [40, 50, 60] } }));
-            await page.route(/\/api\/media\?/, async (route) => {
+            await page.route(/\/api\/media\?/, (route) => {
                 const album = new URL(route.request().url()).searchParams.get("album");
-                if (album === "New Boundary Movie") {
-                    newResolverRequested = true;
-                    await newResolverMayFinish;
-                }
-                return route.fulfill({ json: {
+                const respond = () => route.fulfill({ json: {
                     media: { id: album === "New Boundary Movie" ? 2 : 1,
                         title: album, type: "movie" },
+                    metadata: { album: album === "New Boundary Movie" ? "The New Boundary Movie" : album,
+                        track: album === "New Boundary Movie" ? "New Cue" : "Old Cue",
+                        artist: album === "New Boundary Movie" ? "New Composer" : "Old Composer" },
                     backdrop: album === "New Boundary Movie" ? newBackdrop : oldBackdrop,
                     source: "tmdb", tint: [80, 100, 120],
                 } });
+                if (album === "New Boundary Movie") {
+                    resolveNewMedia = respond;
+                    return;
+                }
+                return respond();
             });
             await page.route(/https:\/\/image\.tmdb\.org\/t\/p\/w1280\/(?:old|new)-boundary\.jpg/,
                 (route) => route.fulfill({ status: 200, contentType: "image/svg+xml",
@@ -5514,16 +5516,24 @@ test.describe("the deployed player page", () => {
                 `#movieA[src="${oldBackdrop}"], #movieB[src="${oldBackdrop}"]`);
             await expect(oldImage).toHaveClass(/show/);
 
-            await expect.poll(() => newResolverRequested).toBe(true);
-            await expect(page.locator("#stage .info")).toBeVisible();
-            await expect(page.locator("#info-title")).toContainText("New Boundary Movie");
+            await expect.poll(() => resolveNewMedia !== null).toBe(true);
+            const info = page.locator("#stage .info");
+            // The media response also owns canonical metadata. Do not reveal the
+            // raw replacement title while that response is intentionally held.
+            await expect(info).toHaveClass(/metadata-pending/);
+            await expect(info).toHaveAttribute("aria-hidden", "true");
+            await expect(info).toHaveCSS("opacity", "0");
+            await expect(page.locator("#info-title")).not.toContainText("New Boundary Movie");
             await expect(oldImage).not.toHaveClass(/show/);
             await expect(oldImage).toHaveAttribute("src", oldBackdrop);
             expect(queueRequests).toBe(2);
 
-            releaseNewResolver();
+            await resolveNewMedia();
+            await expect(info).not.toHaveClass(/metadata-pending/);
+            await expect(info).toHaveAttribute("aria-hidden", "false");
+            await expect(info).toHaveCSS("opacity", "1");
             await expect(page.locator("#info-title"))
-                .toContainText("New Boundary Movie");
+                .toHaveText("The New Boundary Movie - New Cue (3:00)");
             await expect(page.locator("#movieA.show, #movieB.show"))
                 .toHaveAttribute("src", newBackdrop);
         });
