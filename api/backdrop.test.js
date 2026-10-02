@@ -2591,6 +2591,51 @@ test("uses the composer to disambiguate exact movie and TV titles", async () => 
     assert.equal(requests.includes("/3/tv/95543/content_ratings"), false);
 });
 
+test("prefers an exact film over a namesake TV series without a TV marker", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [
+                { id: 31179, media_type: "tv", name: "The Lone Ranger",
+                    backdrop_path: "/lone-ranger-tv.jpg" },
+                { id: 57201, media_type: "movie", title: "The Lone Ranger",
+                    backdrop_path: "/lone-ranger-movie.jpg" },
+            ] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 1019,
+                name: "Jack White",
+                known_for_department: "Acting",
+            }] });
+            if (parsed.pathname === "/3/person/1019/combined_credits") {
+                return response(200, { crew: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [188, 201, 214],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Lone Ranger, The",
+        track: "Red's Theater Of The Absurd",
+        artist: "Jack White",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 57201, title: "The Lone Ranger", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/lone-ranger-movie.jpg",
+        source: "tmdb",
+        tint: [188, 201, 214],
+    });
+    assert.deepEqual(requests, [
+        "/3/search/person", "/3/search/multi", "/3/person/1019/combined_credits",
+    ]);
+});
+
 test("matches the album against exact-name composers before accepting a title", async () => {
     const requests = [];
     const handler = createHandler({
@@ -5849,6 +5894,55 @@ test("keeps exact movies when composer validation is positive or inconclusive", 
             tint: [100, 110, 120],
         }, scenario.name);
     }
+});
+
+test("keeps an exact soundtrack film for a credited classical source work", async () => {
+    const requests = [];
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "tmdb-key" },
+        fetchImpl: async (url) => {
+            const parsed = new URL(url);
+            requests.push(parsed.pathname);
+            if (parsed.pathname === "/3/search/multi") return response(200, { results: [{
+                id: 9428,
+                media_type: "movie",
+                title: "The Royal Tenenbaums",
+                backdrop_path: "/royal-tenenbaums.jpg",
+            }] });
+            if (parsed.pathname === "/3/search/person") return response(200, { results: [{
+                id: 1950616,
+                name: "George Enescu",
+                known_for_department: "Sound",
+            }] });
+            if (parsed.pathname === "/3/movie/9428/credits") return response(200, { crew: [{
+                id: 123,
+                job: "Original Music Composer",
+            }] });
+            if (parsed.pathname === "/3/person/1950616/combined_credits") {
+                return response(200, { crew: [] });
+            }
+            throw new Error("unexpected request " + parsed.href);
+        },
+        tintForImage: async () => [190, 175, 160],
+    });
+    const res = mockResponse();
+    await handler(mockRequest({
+        album: "Royal Tenenbaums, The",
+        track: "Sonata For Cello And Piano In F Minor",
+        artist: "George Enescu",
+        providers: "tmdb",
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.body), {
+        media: { id: 9428, title: "The Royal Tenenbaums", type: "movie" },
+        backdrop: "https://image.tmdb.org/t/p/w1280/royal-tenenbaums.jpg",
+        source: "tmdb",
+        tint: [190, 175, 160],
+    });
+    assert.deepEqual(new Set(requests), new Set([
+        "/3/search/multi", "/3/search/person", "/3/movie/9428/credits",
+    ]));
 });
 
 test("uses an exact base-game hero when an exact expansion has no hero", async () => {

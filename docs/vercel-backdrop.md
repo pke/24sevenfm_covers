@@ -41,6 +41,25 @@ dimensions by devicePixelRatio; native clients send HWND client pixels. Current 
 queued artwork caches distinguish HD/4K classes rather than every window size.
 Tint still uses the selected fanart image's small preview, including for 4K artwork.
 
+An optional personal fanart `client_key` supplements the server credential. If
+fanart rejects it with HTTP 401/403, the resolver retries once using only the
+server credential so a stale personal key does not change provider priority.
+If that retry also fails, normal fallback to the next enabled provider applies.
+The rejected provider span includes a short diagnostic hint explaining the retry
+and suggesting checking or clearing the personal key in provider settings. A
+server credential rejection instead points to the server API key. These hints
+also appear in debug logs when `BACKDROP_DEBUG_LOG` is enabled.
+
+`backdrops=1` enables manual cycling in updated players. When the selected provider
+has multiple images for the requested orientation/resolution, the response includes
+`backdrops: [{ url, source }, ...]`, with the default first and at most 50 distinct,
+trusted URLs. Provider priority remains unchanged. TMDB uses its matched movie/TV
+image catalog; Fanart, TVmaze and SteamGridDB reuse their existing artwork payloads.
+The option has a separate metadata cache variant and is ignored with `art=0`.
+Without it, existing clients retain the single-image contract and provider calls.
+Players fade to the cover's default background while loading a manually selected
+image, preserve the hide-cover preference, and wrap using hover arrows or Left/Right.
+
 `logos=1` adds an optional `logo: { url, source }`. The resolver reuses fanart.tv
 and TVmaze logos found in artwork payloads; otherwise it can query TMDB for the
 already matched movie/TV ID or SteamGridDB for the already matched game ID. It never

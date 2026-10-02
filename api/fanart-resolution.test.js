@@ -30,6 +30,18 @@ async function resolve(query, images = {}, type = "movie") {
     return {...res, preview, providerCalls};
 }
 const both = {moviebackground:[artwork(hd)],movie4kbackground:[artwork(uhd)],movieposter:[artwork(poster)]};
+test("backdrop cycling exposes ranked unique trusted alternatives for the selected orientation", async () => {
+    const second = hd.replace("-hd.jpg", "-second.jpg");
+    const res = await resolve({backdrops:"1"}, { moviebackground: [
+        artwork(second, "en", "99"), artwork(hd, "00", "3"),
+        artwork(hd, "00", "2"), artwork("https://evil.test/image.jpg", "00", "999"),
+    ], movieposter: [artwork(poster)] });
+    assert.deepEqual(res.body.backdrops, [
+        { url: hd, source: "fanart" }, { url: second, source: "fanart" },
+    ]);
+    const portrait = await resolve({width:"720",height:"1080"}, both);
+    assert.equal(portrait.body.backdrops, undefined);
+});
 test("4K fanart is selected only when a physical viewport exceeds HD", async () => {
     for (const query of [{},{width:"1920",height:"1080"},{width:"1280",height:"720"}]) {
         const res = await resolve(query,both);

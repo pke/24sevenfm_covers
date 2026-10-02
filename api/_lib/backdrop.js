@@ -695,6 +695,15 @@ function mainTitleThemeCandidates(album, track) {
     }).map((entry) => entry.candidate);
 }
 
+function isClassicalSourceWork(track) {
+    // A soundtrack can credit the composer of licensed concert music rather
+    // than the screen work's original-score composer. Limit this exception to
+    // conventional classical work names so an unrelated artist cannot validate
+    // an arbitrary same-title movie or series.
+    return /^(?:(?:piano|violin|viola|cello|flute|clarinet|oboe|bassoon|horn|string)\s+)?(?:sonata|concerto|symphony|quartet|quintet|sextet|trio|prelude|fugue|nocturne|etude|serenade|overture|requiem|mass)\b/i
+        .test(String(track || "").trim());
+}
+
 function metadataResolutionFor(album, track, artist) {
     const values = { album, track, artist };
     return METADATA_RESOLUTIONS.find((entry) =>
@@ -1014,7 +1023,7 @@ function pickComposerCredit(combinedCredits, album) {
     return matches.size === 1 ? matches.values().next().value : null;
 }
 
-function pickMediaMatch(results, query, wantedType) {
+function pickMediaMatch(results, query, wantedType, preferMovieOnTypeTie = false) {
     const wanted = normalizedTitle(query);
     const wantedIdentity = normalizedTitleIdentity(query);
     let exact = null;
@@ -1037,7 +1046,18 @@ function pickMediaMatch(results, query, wantedType) {
         }
         if (!withBackdrop && media.backdrop_path) withBackdrop = media;
     }
-    return { media: exact || withBackdrop || first || null, exact: !!exact, exactMatches };
+    let preferredExact = exact;
+    if (preferMovieOnTypeTie && !wantedType && exactMatches.length > 1) {
+        const exactMovies = exactMatches.filter((media) => mediaType(media) === "movie");
+        const exactShows = exactMatches.filter((media) => mediaType(media) === "tv");
+        // Soundtrack albums without an explicit TV marker are film-oriented by
+        // default. TMDB's popularity ordering can otherwise put a namesake TV
+        // series ahead of the exact film. A positive composer credit can still
+        // replace this provisional choice later in the resolver.
+        if (exactMovies.length === 1 && exactShows.length) preferredExact = exactMovies[0];
+    }
+    return { media: preferredExact || withBackdrop || first || null,
+        exact: !!preferredExact, exactMatches };
 }
 
 function pickMedia(results, query, wantedType) {
@@ -1210,6 +1230,13 @@ async function fetchJson(fetchImpl, url, init, provider) {
     timing.headers(response.status);
     timing.finish();
     if (response.status === 401 || response.status === 403) {
+        if (provider === "fanart") {
+            const hint = url.searchParams.has("client_key")
+                ? `fanart.tv rejected the personal key (HTTP ${response.status}). Retrying without it; check or clear the key in provider settings.`
+                : `fanart.tv authentication failed (HTTP ${response.status}). Check the server API key; trying the next artwork provider.`;
+            timing.finish(undefined, hint);
+            debugLog("warn", "provider.authentication", { provider, url: loggedUrl, status: response.status, hint });
+        }
         throw new ResolverError(provider + "_authentication", 502, provider + " rejected the configured key");
     }
     if (response.status === 429 || response.status >= 500) {
@@ -1253,7 +1280,7 @@ function tmdbRequest(url, env) {
     return { headers };
 }
 
-async function searchTmdb(fetchImpl, query, env, wantedType) {
+async function searchTmdb(fetchImpl, query, env, wantedType, preferMovieOnTypeTie = false) {
     // SST appends a release year to some otherwise ambiguous album titles. TMDB
     // does not reliably find a title when that year remains inside `query`, so
     // carry it in the dedicated movie and TV filters. Those two searches run in
@@ -1282,7 +1309,7 @@ async function searchTmdb(fetchImpl, query, env, wantedType) {
     const results = successes.flatMap((result) => result.results.map((media) =>
         media && !media.media_type && result.type !== "multi"
             ? { ...media, media_type: result.type } : media));
-    return pickMediaMatch(results, searchTitle, wantedType);
+    return pickMediaMatch(results, searchTitle, wantedType, preferMovieOnTypeTie);
 }
 
 async function searchTmdbPerson(fetchImpl, artist, album, env) {
@@ -1495,6 +1522,8 @@ async function steamGridDbHero(fetchImpl, game, env) {
         const hero = trustedSteamGridDbUrl(candidate && candidate.url, "hero");
         if (!hero) continue;
         return {
+            urls: [...new Set(candidates.filter(c => c && (!c.style || c.style === "alternate"))
+                .map(c => trustedSteamGridDbUrl(c.url, "hero")).filter(Boolean))].slice(0, 50),
             url: hero,
             preview: trustedSteamGridDbUrl(candidate && candidate.thumb, "thumb") || hero,
         };
@@ -1524,6 +1553,8 @@ async function steamGridDbGrid(fetchImpl, game, env) {
         const grid = trustedSteamGridDbUrl(candidate && candidate.url, "grid");
         if (!grid) continue;
         return {
+            urls: [...new Set(candidates.filter(c => c && !(Number(c.width) > 0 && Number(c.height) > 0 && Number(c.height) <= Number(c.width)))
+                .map(c => trustedSteamGridDbUrl(c.url, "grid")).filter(Boolean))].slice(0, 50),
             url: grid,
             preview: trustedSteamGridDbUrl(candidate && candidate.thumb, "thumb") || grid,
         };
@@ -1626,18 +1657,29 @@ async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId, pref
     try {
         body = await fetchJson(fetchImpl, url, { headers: { "Accept": "application/json" } }, "fanart");
     } catch (error) {
-        // fanart.tv is an enhancement. Provider failure must still degrade to TMDB art.
-        return null;
+        // A rejected optional personal key must not disable the server's fanart
+        // access or change artwork provider priority between otherwise equal clients.
+        if (!clientKey || error.code !== "fanart_authentication") return null;
+        url.searchParams.delete("client_key");
+        try {
+            body = await fetchJson(fetchImpl, url, { headers: { "Accept": "application/json" } }, "fanart");
+        } catch (_) {
+            // Provider failure must still degrade to the next enabled provider.
+            return null;
+        }
     }
     // Only the explicit API value guarantees a textless label. Missing/empty
     // language is unknown, not evidence that the pixels contain no title.
     const isTextless = (candidate) => candidate && candidate.lang === "00";
     const languageRank = candidate => isTextless(candidate) ? 0 : candidate && !candidate.lang ? 1 : 2;
     const selectedInfo = new Map();
+    const alternatives = new Map();
     const best = (key) => {
         const candidates = Array.isArray(body && body[key]) ? body[key].slice() : [];
         candidates.sort((a, b) => languageRank(a) - languageRank(b)
             || (parseInt(b.likes, 10) || 0) - (parseInt(a.likes, 10) || 0));
+        const urls = [...new Set(candidates.map(candidate => trustedFanartUrl(candidate && candidate.url)).filter(Boolean))].slice(0, 50);
+        if (urls.length) alternatives.set(urls[0], urls);
         for (const candidate of candidates) {
             const trusted = trustedFanartUrl(candidate && candidate.url);
             if (trusted) {
@@ -1666,6 +1708,7 @@ async function fanartArtwork(fetchImpl, media, clientKey, env, knownTvdbId, pref
     const portrait = best(type === "tv" ? "tvposter" : "movieposter");
     return {
         landscape, portrait,
+        landscapeUrls: alternatives.get(landscape), portraitUrls: alternatives.get(portrait),
         landscapeInfo: selectedInfo.get(landscape),
         portraitInfo: selectedInfo.get(portrait),
         logo: (() => {
@@ -1726,10 +1769,12 @@ async function tvmazeArtwork(fetchImpl, media, tvdbId) {
         return Math.max(0, Number(original && original.width) || 0)
             * Math.max(0, Number(original && original.height) || 0);
     };
+    const alternatives = {};
     const best = (type) => {
         const candidates = Array.isArray(images) ? images.filter((candidate) =>
             candidate && candidate.type === type).slice() : [];
         candidates.sort((a, b) => Number(!!b.main) - Number(!!a.main) || area(b) - area(a));
+        alternatives[type] = [...new Set(candidates.map(candidate => trustedTvmazeUrl(candidate.resolutions && candidate.resolutions.original && candidate.resolutions.original.url)).filter(Boolean))].slice(0, 50);
         for (const candidate of candidates) {
             const original = candidate.resolutions && candidate.resolutions.original;
             const trusted = trustedTvmazeUrl(original && original.url);
@@ -1737,7 +1782,8 @@ async function tvmazeArtwork(fetchImpl, media, tvdbId) {
         }
         return "";
     };
-    return { landscape: best("background"), portrait: best("poster"), logo: best("typography") };
+    return { landscape: best("background"), portrait: best("poster"), logo: best("typography"),
+        landscapeUrls: alternatives.background, portraitUrls: alternatives.poster };
 }
 
 function tmdbImageUrl(path, size) {
@@ -1972,7 +2018,7 @@ function hasSteamGridDbCredential(env) {
 }
 
 async function screenArt(fetchImpl, media, providers, clientKey, env,
-    orientation = "landscape", prefer4k = false) {
+    orientation = "landscape", prefer4k = false, includeAlternatives = false) {
     let tvdbIdPromise = null;
     let landscapeFallback = null;
     let logo = null;
@@ -1997,6 +2043,22 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
                 landscape: tmdbImageUrl(media.backdrop_path, prefer4k ? "original" : "w1280"),
                 portrait: tmdbImageUrl(media.poster_path, prefer4k ? "original" : "w780"),
             };
+            // Keep the selected default stable, with the provider's other images
+            // available for manual cycling. An optional catalog failure must not
+            // discard the default artwork supplied by the search result.
+            if (includeAlternatives) try {
+                const imagesUrl = new URL("https://api.themoviedb.org/3/" + mediaType(media)
+                    + "/" + encodeURIComponent(media.id) + "/images");
+                const images = await fetchJson(fetchImpl, imagesUrl, tmdbRequest(imagesUrl, env), "tmdb");
+                const urls = (key, first, size) => [...new Set([first,
+                    ...(Array.isArray(images && images[key]) ? images[key] : [])
+                        .map(item => tmdbImageUrl(item && item.file_path, size)),
+                ].filter(Boolean))].slice(0, 50);
+                artwork.landscapeUrls = urls("backdrops", artwork.landscape, prefer4k ? "original" : "w1280");
+                artwork.portraitUrls = urls("posters", artwork.portrait, prefer4k ? "original" : "w780");
+                artwork.landscape = artwork.landscape || artwork.landscapeUrls[0];
+                artwork.portrait = artwork.portrait || artwork.portraitUrls[0];
+            } catch (_) { /* retain the search result's default */ }
             diagnostics.selection({ scope: "provider-candidate", provider: "tmdb", kind: orientation === "portrait" ? "poster" : "background",
                 policy: "default-path", reason: orientation === "portrait" ? "media-poster-path" : "media-backdrop-path",
                 selected: { url: orientation === "portrait" ? artwork.portrait : artwork.landscape,
@@ -2012,6 +2074,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
             return {
                 url,
                 source: provider,
+                urls: orientation === "portrait" ? artwork.portraitUrls : artwork.landscapeUrls,
                 preview: tintPreviewUrl(provider, url, tmdbPath),
                 logo,
                 artwork: orientation === "portrait" ? artwork.portraitInfo : artwork.landscapeInfo,
@@ -2023,6 +2086,7 @@ async function screenArt(fetchImpl, media, providers, clientKey, env,
         if (orientation === "portrait" && !landscapeFallback && artwork.landscape) {
             landscapeFallback = {
                 url: artwork.landscape,
+                urls: artwork.landscapeUrls,
                 source: provider,
                 preview: tintPreviewUrl(provider, artwork.landscape, media.backdrop_path),
                 logo,
@@ -2173,6 +2237,7 @@ async function resolvedArtResponse(media, art, dependencies,
         certificationsPromise,
     ]);
     return withCertifications({ media, backdrop: art.url, source: art.source, tint,
+        ...(art.urls && art.urls.length > 1 ? { backdrops: art.urls.map(url => ({ url, source: art.source })) } : {}),
         ...(art.artwork ? { artwork: art.artwork } : {}),
         ...(art.logo ? { logo: art.logo } : {}) },
         certifications, ratingCountries);
@@ -2254,7 +2319,8 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             const titleLookups = await Promise.all(screenQueries.map(async (candidate) => {
                 try {
                     return { candidate, match: await searchTmdb(dependencies.fetchImpl, candidate,
-                        dependencies.env, hint === "movie" || hint === "tv" ? hint : undefined) };
+                        dependencies.env, hint === "movie" || hint === "tv" ? hint : undefined,
+                        hint === "auto") };
                 } catch (error) {
                     return { candidate, error };
                 }
@@ -2309,9 +2375,10 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                             && mediaType(creditedMedia) === mediaType(match.media);
                         const composerIds = creditedMedia ? null : await screenComposerIds(
                             dependencies.fetchImpl, match.media, dependencies.env);
-                        if ((creditedMedia && !creditedMatch)
+                        if (!options.allowSourceMusicArtistMismatch
+                                && ((creditedMedia && !creditedMatch)
                                 || (composerIds && composerIds.size
-                                    && !composerIds.has(Number(personResult.person.id)))) {
+                                    && !composerIds.has(Number(personResult.person.id))))) {
                             match = null;
                             rejectedComposerMismatch = true;
                         } else if (creditedMatch) {
@@ -2354,7 +2421,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
                     dependencies.env).catch(() => [])
                 : Promise.resolve([]);
             const art = includeArt ? await screenArt(dependencies.fetchImpl, match.media, providers,
-                clientKey, dependencies.env, artOrientation, prefer4k) : null;
+                clientKey, dependencies.env, artOrientation, prefer4k, options.includeAlternatives) : null;
             if (art) return resolvedArtResponse(media, art, dependencies,
                 certifications, ratingCountries);
             if (!matchedWithoutArt) {
@@ -2402,7 +2469,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             }
             if (gameArt) {
                 return resolvedArtResponse(media, {
-                    url: gameArt.url, preview: gameArt.preview, source: "steamgriddb",
+                    url: gameArt.url, urls: gameArt.urls, preview: gameArt.preview, source: "steamgriddb",
                 }, dependencies, Promise.resolve([]), ratingCountries);
             }
             if (!matchedWithoutArt) {
@@ -2526,6 +2593,10 @@ function createHandler(options = {}) {
             const providers = requestedProviders(requestQueryValue(req, "providers"));
             const ratingCountries = requestedRatings(requestQueryValue(req, "ratings"));
             const includeArt = requestedArt(requestQueryValue(req, "art"));
+            const alternativesOption = requestQueryValue(req, "backdrops");
+            if (alternativesOption !== undefined && alternativesOption !== "0" && alternativesOption !== "1")
+                throw new ResolverError("invalid_backdrops", 400, "backdrops must be 0 or 1");
+            const includeAlternatives = includeArt && alternativesOption === "1";
             const logoOption = requestQueryValue(req, "logos");
             if (logoOption !== undefined && logoOption !== "0" && logoOption !== "1")
                 throw new ResolverError("invalid_logos", 400, "logos must be 0 or 1");
@@ -2572,6 +2643,7 @@ function createHandler(options = {}) {
             const resolverOptions = {
                 ratingCountries,
                 includeArt,
+                includeAlternatives,
                 viewport,
                 suppress: !!(metadataResolution && metadataResolution.suppress),
                 screenQueries: titleCandidates,
@@ -2584,6 +2656,7 @@ function createHandler(options = {}) {
                     || !!(metadataResolution && metadataResolution.title),
                 allowGameTitleExtension:
                     isTrackTitledGameCompilation(cleanMovieTitle(decodedTitle)),
+                allowSourceMusicArtistMismatch: isClassicalSourceWork(decodedTrack),
             };
             // The display option is deliberately absent: both HTTP response
             // variants reuse matching/artwork work and any piggybacked logo metadata.
@@ -2608,6 +2681,7 @@ function createHandler(options = {}) {
             // Project into a fresh object: stripping a logo must never mutate the
             // common cache or another in-flight client's response.
             const result = { ...resolved, metadata };
+            if (!includeAlternatives) delete result.backdrops;
             if (!includeArtworkInfo) delete result.artwork;
             if (includeLogos && !result.logo && result.media) {
                 result.logo = await diagnostics.cached(cachedTitleLogo, "logo", key, () => titleLogoForResolvedMedia(

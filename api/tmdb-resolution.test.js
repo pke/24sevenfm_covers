@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createHandler } = require("./_lib/backdrop");
 
-function resolver(type = "movie", fanart = null) {
+function resolver(type = "movie", fanart = null, images = {}) {
     const requests = [], previews = [];
     const handler = createHandler({
         env: { TMDB_READ_TOKEN: "test", FANART_API_KEY: "test" },
@@ -16,6 +16,7 @@ function resolver(type = "movie", fanart = null) {
                 backdrop_path: "/arrival-backdrop.jpg", poster_path: "/arrival-poster.jpg",
             }] });
             if (parsed.hostname === "webservice.fanart.tv") return Response.json(fanart || {});
+            if (parsed.pathname.endsWith("/images")) return Response.json(images);
             throw new Error("Unexpected provider request: " + parsed.pathname);
         },
         tintForImage: async url => { previews.push(url); return [10, 20, 30]; },
@@ -33,6 +34,22 @@ function resolver(type = "movie", fanart = null) {
         },
     };
 }
+
+test("TMDB backdrop cycling keeps the default first and exposes safe orientation-specific images", async () => {
+    const api = resolver("movie", null, {
+        backdrops: [{file_path:"/second.jpg"}, {file_path:"/arrival-backdrop.jpg"}, {file_path:"https://evil.test/a.jpg"}],
+        posters: [{file_path:"/other-poster.jpg"}],
+    });
+    const result = await api.resolve({backdrops:"1"});
+    assert.deepEqual(result.backdrops, [
+        {url:"https://image.tmdb.org/t/p/w1280/arrival-backdrop.jpg", source:"tmdb"},
+        {url:"https://image.tmdb.org/t/p/w1280/second.jpg", source:"tmdb"},
+    ]);
+    const portrait = await api.resolve({width:"720",height:"1080",backdrops:"1"});
+    assert.deepEqual(portrait.backdrops.map(item => item.url), [
+        "https://image.tmdb.org/t/p/w780/arrival-poster.jpg", "https://image.tmdb.org/t/p/w780/other-poster.jpg",
+    ]);
+});
 
 test("TMDB chooses originals for UHD movie and TV surfaces, with HD boundary preserved", async () => {
     for (const type of ["movie", "tv"]) {

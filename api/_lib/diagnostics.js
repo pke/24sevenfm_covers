@@ -41,7 +41,11 @@ function span(name, url) {
         ...(url ? { url: safeUrl(url) } : {}), status: null, headersMs: null, totalMs: null };
     if (current && current.spans.length < 64) current.spans.push(result);
     return { headers(status) { result.status = status; result.headersMs = milliseconds(started); },
-        finish(status) { if (status !== undefined) result.status = status; result.totalMs = milliseconds(started); } };
+        finish(status, hint) {
+            if (status !== undefined) result.status = status;
+            if (hint) result.hint = hint;
+            result.totalMs = milliseconds(started);
+        } };
 }
 function image(url) {
     const current = storage.getStore(), started = performance.now();
