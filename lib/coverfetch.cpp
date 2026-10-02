@@ -1,7 +1,14 @@
+#include "platform_text.h"
 #include "coverfetch.h"
 
 #include "http_client.h"
+#include "debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 #include "diagnostics.h"
+#endif
+#include "json_view.h"
+#include "media_policy.h"
+#include "platform_time.h"
 
 #include <atomic>
 #include <cctype>
@@ -37,20 +44,7 @@ time_t isoToUnixTime(const std::string& value) {
     const int h = num(11, 2), mi = num(14, 2), s = num(17, 2);
     if (y < 0 || mo < 0 || d < 0 || h < 0 || mi < 0 || s < 0)
         return 0;
-    std::tm tm;
-    std::memset(&tm, 0, sizeof(tm));
-    tm.tm_year = y - 1900;
-    tm.tm_mon  = mo - 1;
-    tm.tm_mday = d;
-    tm.tm_hour = h;
-    tm.tm_min  = mi;
-    tm.tm_sec  = s;
-    tm.tm_isdst = -1;
-#if defined(_WIN32)
-    return _mkgmtime(&tm);
-#else
-    return timegm(&tm);
-#endif
+    return platform::utcEpochSeconds(y, mo, d, h, mi, s);
 }
 
 // Seconds remaining in the current track: full length minus elapsed play time.
@@ -90,173 +84,17 @@ std::string sizedCoverUrl(const std::string& original, int size) {
     if (pos == std::string::npos)
         return original;
     std::string result = original;
-    result.replace(pos, marker.size(), "/cover/" + std::to_string(size) + "/");
+    result.replace(pos, marker.size(), "/cover/" + ssc::platform::integerText(size) + "/");
     return result;
 }
 
-void appendUtf8(std::string& out, unsigned cp); // defined below; used by jsonString
-
-// Reads exactly 4 hex digits at s[pos..pos+4) into `out`. Returns false without
-// touching pos-advance if fewer than 4 hex digits are present, so a malformed \uXX
-// escape can't desync the scan by having strtol silently consume non-hex bytes.
-bool parseHex4(const std::string& s, size_t pos, int& out) {
-    if (pos + 4 > s.size()) return false;
-    int v = 0;
-    for (int k = 0; k < 4; ++k) {
-        const char c = s[pos + k];
-        int d;
-        if (c >= '0' && c <= '9') d = c - '0';
-        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-        else return false;
-        v = (v << 4) | d;
-    }
-    out = v;
-    return true;
-}
-
-// Minimal extractor for a string value of a top-level key in a flat JSON object.
-// Handles the JSON string escapes present in the feed (\/ \" \\ \n \t \r \uXXXX).
-// The GetCurrentlyPlaying payload is a flat object of quoted values, including
-// numeric ones ("Length":"150572"), so this covers every field we read.
+// Tests use this convenience seam; production validates each document once.
 bool jsonString(const std::string& json, const char* key, std::string& out) {
-    std::string needle = "\"";
-    needle += key;
-    needle += "\"";
-
-    size_t pos = 0;
-    while ((pos = json.find(needle, pos)) != std::string::npos) {
-        size_t i = pos + needle.size();
-        auto skipWs = [&]() {
-            while (i < json.size() && (json[i] == ' ' || json[i] == '\t' ||
-                                       json[i] == '\n' || json[i] == '\r'))
-                ++i;
-        };
-        skipWs();
-        if (i >= json.size() || json[i] != ':') { pos = i; continue; }
-        ++i;
-        skipWs();
-        if (i >= json.size() || json[i] != '"') { pos = i; continue; }
-        ++i;
-
-        std::string result;
-        while (i < json.size()) {
-            char c = json[i++];
-            if (c == '"') {
-                out.swap(result);
-                return true;
-            }
-            if (c != '\\') { result += c; continue; }
-            if (i >= json.size()) break;
-            char e = json[i++];
-            switch (e) {
-                case 'n': result += '\n'; break;
-                case 't': result += '\t'; break;
-                case 'r': result += '\r'; break;
-                case 'b': result += '\b'; break;
-                case 'f': result += '\f'; break;
-                case '/': result += '/'; break;
-                case '\\': result += '\\'; break;
-                case '"': result += '"'; break;
-                case 'u': {
-                    int cp;
-                    if (!parseHex4(json, i, cp)) { result += 'u'; break; } // not \uXXXX: literal, no desync
-                    i += 4;
-                    if (cp >= 0xD800 && cp <= 0xDBFF) {            // high surrogate: expect a low one next
-                        int lo;
-                        if (i + 6 <= json.size() && json[i] == '\\' && json[i + 1] == 'u' &&
-                            parseHex4(json, i + 2, lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
-                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                            i += 6;
-                        } else break;                             // lone high surrogate: drop
-                    } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
-                        break;                                    // lone low surrogate: drop
-                    }
-                    if (cp != 0) appendUtf8(result, static_cast<unsigned>(cp)); // drop NUL (would truncate)
-                    break;
-                }
-                default: result += e; break;
-            }
-        }
-        return false; // unterminated string
-    }
-    return false;
+    JsonView root;
+    return readJsonView(json, root) && root.get(key).text(out);
 }
-
-// Same lookup as jsonString(), plus JSON scalar-to-text conversion. This is only
-// transport parsing: it deliberately does not decode HTML character references or
-// reorder title articles. The live feed normally quotes every field, but JSON
-// number/bool/null values should not make native clients diverge.
-bool jsonText(const std::string& json, const char* key, std::string& out) {
-    if (jsonString(json, key, out)) return true;
-    std::string needle = "\"";
-    needle += key;
-    needle += "\"";
-    size_t pos = 0;
-    while ((pos = json.find(needle, pos)) != std::string::npos) {
-        size_t i = pos + needle.size();
-        while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
-        if (i >= json.size() || json[i] != ':') { pos = i; continue; }
-        ++i;
-        while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
-        const size_t begin = i;
-        if (json.compare(i, 4, "true") == 0) { out = "true"; return true; }
-        if (json.compare(i, 5, "false") == 0) { out = "false"; return true; }
-        if (json.compare(i, 4, "null") == 0) { out.clear(); return true; }
-        if (i < json.size() && (json[i] == '-' || (json[i] >= '0' && json[i] <= '9'))) {
-            if (json[i] == '-') ++i;
-            while (i < json.size() && json[i] >= '0' && json[i] <= '9') ++i;
-            if (i < json.size() && json[i] == '.') {
-                ++i;
-                while (i < json.size() && json[i] >= '0' && json[i] <= '9') ++i;
-            }
-            if (i > begin && (i == json.size() || json[i] == ',' || json[i] == '}'
-                    || std::isspace(static_cast<unsigned char>(json[i])))) {
-                out.assign(json, begin, i - begin);
-                return true;
-            }
-        }
-        pos = begin + 1;
-    }
-    return false;
-}
-
-// Extract flat object rows from a top-level array without treating braces inside
-// JSON strings as structure. GetQueue is exactly this shape.
-bool jsonObjectArray(const std::string& json, std::vector<std::string>& out) {
-    out.clear();
-    size_t i = 0;
-    while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
-    if (i >= json.size() || json[i++] != '[') return false;
-    bool inString = false, escaped = false;
-    int depth = 0;
-    size_t begin = std::string::npos;
-    for (; i < json.size(); ++i) {
-        const char c = json[i];
-        if (inString) {
-            if (escaped) escaped = false;
-            else if (c == '\\') escaped = true;
-            else if (c == '"') inString = false;
-            continue;
-        }
-        if (c == '"') { inString = true; continue; }
-        if (c == '{') {
-            if (depth++ == 0) begin = i;
-        } else if (c == '}') {
-            if (depth <= 0) return false;
-            if (--depth == 0 && begin != std::string::npos) {
-                out.push_back(json.substr(begin, i - begin + 1));
-                begin = std::string::npos;
-            }
-        } else if (c == ']' && depth == 0) {
-            ++i;
-            while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
-            return i == json.size();
-        } else if (depth == 0 && c != ',' && !std::isspace(static_cast<unsigned char>(c))) {
-            return false;
-        }
-    }
-    return false;
+bool jsonText(JsonView json, const char* key, std::string& out) {
+    return json.get(key).scalarText(out);
 }
 
 // Parse the feed's "Length" (milliseconds) from an untrusted string. atoll/atol are
@@ -271,35 +109,20 @@ long long parseLengthMs(const std::string& s) {
     return v > kMaxLenMs ? kMaxLenMs : v;
 }
 
-// Appends a Unicode code point to `out` as UTF-8.
-void appendUtf8(std::string& out, unsigned cp) {
-    if (cp < 0x80) {
-        out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-        out += static_cast<char>(0xF0 | (cp >> 18));
-        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-}
-
 // Dispatch a GET through the Config's injected transport if it has one, else the
 // built-in networking. Keeps pollOnce/nextCoverUrl agnostic of where bytes come from
 // (the seam the unit tests use to feed canned responses without a socket).
 HttpResponse fetch(const Config& cfg, const std::string& path,
                    const std::atomic<bool>* cancel = nullptr) {
     if (cfg.transport) {
+#if SSC_ENABLE_DEBUG_OVERLAY
         const auto start = std::chrono::steady_clock::now();
+#endif
         auto response = cfg.transport(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
                              cfg.requestTimeoutSeconds);
+#if SSC_ENABLE_DEBUG_OVERLAY
         DiagnosticLog::instance().request("https://" + cfg.host + path, response, diagnosticMilliseconds(start));
+#endif
         return response;
     }
     return httpRequest(cfg.host, cfg.port, path, "GET", std::string(), std::string(),
@@ -364,23 +187,27 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
     // ("...&_t=<ms>"). A rolling counter keeps it unique within the same second.
     static std::atomic<unsigned long long> counter{0};
     unsigned long long cb =
-        static_cast<unsigned long long>(std::time(nullptr)) * 1000ull + (counter++ % 1000ull);
+        static_cast<unsigned long long>(platform::utcNowSeconds()) * 1000ull + (counter++ % 1000ull);
     std::string requestPath =
-        config_.path + "?action=" + config_.action + "&_t=" + std::to_string(cb);
+        config_.path + "?action=" + config_.action + "&_t=" + ssc::platform::integerText(cb);
 
     HttpResponse response = fetch(config_, requestPath, cancelToken());
     if (!response.ok()) {
         if (error) {
             *error = response.status == 0
                 ? ("HTTP transport error: " + response.error)
-                : ("HTTP status " + std::to_string(response.status));
+                : ("HTTP status " + ssc::platform::integerText(response.status));
         }
         return false;
     }
 
     // Capture local time as close to the response as possible.
-    const time_t captureNow = std::time(nullptr);
-    const std::string& body = response.body;
+    const time_t captureNow = platform::utcNowSeconds();
+    JsonView body;
+    if (!readJsonView(response.body, body) || body.type != JsonView::Object) {
+        if (error) *error = "Invalid now-playing response";
+        return false;
+    }
 
     std::string backendError;
     if (jsonText(body, "error", backendError)) {
@@ -414,7 +241,7 @@ bool CoverMonitor::pollOnce(TrackInfo& out, std::string* error) const {
                                             isoToUnixTime(systemTimeStr));
 
     // Correct for any time spent between capture and this computation.
-    remaining -= static_cast<int>(std::time(nullptr) - captureNow);
+    remaining -= static_cast<int>(platform::utcNowSeconds() - captureNow);
     if (remaining < 0)
         remaining = 0;
     info.remainingSeconds = remaining;
@@ -447,23 +274,24 @@ bool CoverMonitor::nextCoverUrl(std::string& out, int* lengthSeconds) const {
 bool CoverMonitor::queue(std::vector<TrackInfo>& out, std::string* error) const {
     static std::atomic<unsigned long long> counter{0};
     unsigned long long cb =
-        static_cast<unsigned long long>(std::time(nullptr)) * 1000ull + (counter++ % 1000ull);
-    // GetQueue returns a JSON array of upcoming tracks; the first "CoverLink" and
-    // "Length" are the next track's (jsonString finds the first occurrence).
-    std::string requestPath = config_.path + "?action=GetQueue&_t=" + std::to_string(cb);
+        static_cast<unsigned long long>(platform::utcNowSeconds()) * 1000ull + (counter++ % 1000ull);
+    // GetQueue returns an array of upcoming tracks in playback order.
+    std::string requestPath = config_.path + "?action=GetQueue&_t=" + ssc::platform::integerText(cb);
     HttpResponse response = fetch(config_, requestPath, cancelToken());
     if (!response.ok()) {
         if (error) *error = response.status == 0 ? response.error
-            : ("HTTP status " + std::to_string(response.status));
+            : ("HTTP status " + ssc::platform::integerText(response.status));
         return false;
     }
-    std::vector<std::string> rows;
-    if (!jsonObjectArray(response.body, rows)) {
+    JsonView rows;
+    if (!readJsonView(response.body, rows) || rows.type != JsonView::Array) {
         if (error) *error = "Invalid queue response";
         return false;
     }
     out.clear();
-    for (const std::string& row : rows) {
+    JsonItems items(rows); JsonView row;
+    while (out.size() < kQueuedTrackStoreLimit && items.next(row)) {
+        if (row.type != JsonView::Object) continue;
         TrackInfo info;
         std::string cover, len, thumbnail;
         if (!jsonText(row, "Album", info.album) || info.album.empty()) continue;
@@ -499,10 +327,10 @@ void CoverMonitor::start() {
         return; // already running
     cancelled_.store(false); // fresh run: callbacks may work again
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         stopRequested_ = false;
     }
-    thread_ = std::thread(&CoverMonitor::run, this);
+    thread_ = ssc::platform::Thread([this] { run(); });
 }
 
 void CoverMonitor::stop() {
@@ -514,7 +342,7 @@ void CoverMonitor::stop() {
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         stopRequested_ = true;
     }
     cv_.notify_all();
@@ -524,7 +352,7 @@ void CoverMonitor::stop() {
 
 void CoverMonitor::refresh() {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         refreshRequested_ = true;
     }
     cv_.notify_all();
@@ -534,7 +362,7 @@ void CoverMonitor::run() {
     int consecutiveErrors = 0;
     while (true) {
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            ssc::platform::LockGuard lock(mutex_);
             if (stopRequested_)
                 break;
             if (refreshRequested_) {
@@ -576,7 +404,7 @@ void CoverMonitor::run() {
                 }
                 if (config_.autoAdvance && elapsed >= repollDelay)
                     break; // live-clock mode: re-poll at the track boundary
-                std::unique_lock<std::mutex> lock(mutex_);
+                ssc::platform::UniqueLock lock(mutex_);
                 cv_.wait_for(lock, std::chrono::seconds(1),
                              [this] { return stopRequested_ || refreshRequested_; });
                 if (stopRequested_) { stopped = true; break; }
@@ -598,7 +426,7 @@ void CoverMonitor::run() {
             if (config_.cycleErrorRetryAfterCap && backoff >= retryCap)
                 consecutiveErrors = 0; // web parity: 8,16,32,60, then 8 again
 
-            std::unique_lock<std::mutex> lock(mutex_);
+            ssc::platform::UniqueLock lock(mutex_);
             cv_.wait_for(lock, std::chrono::seconds(static_cast<int>(backoff)),
                          [this] { return stopRequested_ || refreshRequested_; });
             if (stopRequested_)

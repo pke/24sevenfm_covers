@@ -1,14 +1,17 @@
+#include "platform_text.h"
 #include "media_resolver.h"
 
-#include "mini_json.h"
+#include "json_view.h"
+#include "debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 #include "diagnostics.h"
+#endif
 #include "rating_asset_paths.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
-#include <set>
 #include <utility>
 
 namespace ssc {
@@ -47,19 +50,15 @@ bool cleanRequestText(const std::string& value, size_t maxLength, bool required)
     return true;
 }
 
-bool cleanText(const JsonValue* value, std::string& out, size_t maxLength) {
-    if (!value || value->type != JsonValue::String || value->string.empty()
-            || !cleanRequestText(value->string, maxLength, true)) return false;
-    out = value->string;
-    return true;
+bool cleanOptionalText(JsonView value, std::string& out, size_t maxLength) {
+    std::string text;
+    if (!value.text(text, maxLength * 4) || !cleanRequestText(text, maxLength, false)) return false;
+    out = std::move(text); return true;
 }
-
-bool cleanOptionalText(const JsonValue* value, std::string& out, size_t maxLength) {
-    if (!value || value->type != JsonValue::String
-            || !cleanRequestText(value->string, maxLength, false))
-        return false;
-    out = value->string;
-    return true;
+bool cleanText(JsonView value, std::string& out, size_t maxLength) {
+    std::string text;
+    if (!cleanOptionalText(value, text, maxLength) || text.empty()) return false;
+    out = std::move(text); return true;
 }
 
 bool splitHttps(const std::string& url, std::string& host, std::string& path) {
@@ -67,7 +66,7 @@ bool splitHttps(const std::string& url, std::string& host, std::string& path) {
     if (url.compare(0, 8, "https://") != 0) return false;
     for (unsigned char c : url) if (c < 0x20 || c == 0x7F) return false;
     const size_t authority = 8;
-    const size_t end = url.find_first_of("/?#", authority);
+    const size_t end = ssc::platform::firstOf(url, "/?#", authority);
     std::string authorityText = url.substr(authority,
         end == std::string::npos ? std::string::npos : end - authority);
     if (authorityText.empty() || authorityText.find('@') != std::string::npos) return false;
@@ -87,19 +86,20 @@ bool splitHttps(const std::string& url, std::string& host, std::string& path) {
 
 bool knownProviderList(const std::string& csv) {
     if (csv.empty() || csv.size() > 128) return false;
-    std::set<std::string> seen;
+    unsigned seen = 0;
     size_t begin = 0;
     while (begin <= csv.size()) {
         const size_t end = csv.find(',', begin);
         const std::string id = csv.substr(begin,
             end == std::string::npos ? std::string::npos : end - begin);
-        if (id != "fanart" && id != "tmdb" && id != "tvmaze" && id != "steamgriddb")
-            return false;
-        if (!seen.insert(id).second) return false;
+        const unsigned bit = id == "fanart" ? 1 : id == "tmdb" ? 2
+            : id == "tvmaze" ? 4 : id == "steamgriddb" ? 8 : 0;
+        if (!bit || (seen & bit)) return false;
+        seen |= bit;
         if (end == std::string::npos) break;
         begin = end + 1;
     }
-    return !seen.empty();
+    return seen != 0;
 }
 
 bool hasProvider(const std::string& csv, const char* wanted) {
@@ -134,124 +134,118 @@ bool knownCertification(const std::string& country, const std::string& system,
     return false;
 }
 
-std::vector<std::string> cleanDescriptors(const JsonValue* value, const std::string& rating) {
-    const char* allowed[4] = {nullptr, nullptr, nullptr, nullptr};
-    size_t allowedCount = 0;
-    if (rating == "TV-Y7" || rating == "TV-Y7-FV") {
-        allowed[allowedCount++] = "FV";
-    } else if (rating == "TV-PG" || rating == "TV-14") {
-        allowed[allowedCount++] = "D"; allowed[allowedCount++] = "L";
-        allowed[allowedCount++] = "S"; allowed[allowedCount++] = "V";
-    } else if (rating == "TV-MA") {
-        allowed[allowedCount++] = "L"; allowed[allowedCount++] = "S";
-        allowed[allowedCount++] = "V";
+std::vector<std::string> cleanDescriptors(JsonView value, const std::string& rating) {
+    const char* codes[] = {"FV", "D", "L", "S", "V"};
+    unsigned allowed = rating == "TV-Y7" || rating == "TV-Y7-FV" ? 1
+        : rating == "TV-PG" || rating == "TV-14" ? 30 : rating == "TV-MA" ? 28 : 0;
+    unsigned supplied = rating == "TV-Y7-FV" ? 1 : 0;
+    JsonItems items(value.type == JsonView::Array ? value : JsonView()); JsonView item;
+    while (items.next(item)) {
+        std::string code;
+        if (!item.text(code, 2)) continue;
+        for (char& c : code) if (c >= 'a' && c <= 'z') c -= 'a' - 'A';
+        for (unsigned i = 0; i < 5; ++i) if (code == codes[i]) supplied |= 1u << i;
     }
-    std::set<std::string> supplied;
-    if (value && value->type == JsonValue::Array) {
-        for (const JsonValue& item : value->array) {
-            if (item.type != JsonValue::String) continue;
-            std::string code = item.string;
-            for (char& c : code) c = static_cast<char>(
-                std::toupper(static_cast<unsigned char>(c)));
-            supplied.insert(code);
-        }
-    }
-    if (rating == "TV-Y7-FV") supplied.insert("FV");
     std::vector<std::string> out;
-    for (size_t i = 0; i < allowedCount; ++i)
-        if (supplied.count(allowed[i])) out.push_back(allowed[i]);
+    for (unsigned i = 0; i < 5; ++i) if (allowed & supplied & (1u << i)) out.push_back(codes[i]);
     return out;
 }
 
 bool parseResponse(const std::string& body, MediaResult& out) {
-    JsonValue root;
-    if (!parseJson(body, root, &out.error) || root.type != JsonValue::Object) {
+    JsonView root;
+    if (!readJsonView(body, root, &out.error) || root.type != JsonView::Object) {
         if (out.error.empty()) out.error = "invalid resolver JSON";
         return false;
     }
-
-    const JsonValue* media = root.get("media");
-    if (media && media->type == JsonValue::Object) {
-        cleanText(media->get("title"), out.mediaTitle, 180);
-        cleanText(media->get("type"), out.mediaType, 16);
-        if (out.mediaType != "movie" && out.mediaType != "tv" && out.mediaType != "game")
-            out.mediaType.clear();
-    } else if (media && media->type != JsonValue::Null) {
-        out.error = "invalid media result";
-        return false;
-    }
-
-    const JsonValue* metadata = root.get("metadata");
-    if (metadata && metadata->type == JsonValue::Object) {
-        std::string album, track, artist;
-        if (!cleanText(metadata->get("album"), album, 180)
-                || !cleanOptionalText(metadata->get("track"), track, 300)
-                || !cleanOptionalText(metadata->get("artist"), artist, 180)) {
-            out.error = "invalid normalized metadata";
-            return false;
+    const auto diagnostics = root.get("diagnostics");
+    for (const char* phase : {"resolution", "logoResolution"}) {
+        const auto values = diagnostics.get(phase).get("spans");
+        JsonItems spans(values.type == JsonView::Array ? values : JsonView()); JsonView span;
+        while (spans.next(span)) {
+            std::string name; double status;
+            if (span.get("name").text(name, 32) && name == "provider.fanart"
+                    && span.get("status").number(status) && (status == 401 || status == 403))
+                out.fanartKeyRejected = true;
         }
-        out.album = album; out.track = track; out.artist = artist;
-        out.hasMetadata = true;
-    } else if (metadata) {
-        out.error = "invalid normalized metadata";
-        return false;
     }
-
-    const JsonValue* backdrop = root.get("backdrop");
-    const JsonValue* source = root.get("source");
-    if (backdrop && backdrop->type == JsonValue::String) out.backdropUrl = backdrop->string;
-    else if (backdrop && backdrop->type != JsonValue::Null) {
+    auto media = root.get("media");
+    if (media.type == JsonView::Object) {
+        cleanText(media.get("title"), out.mediaTitle, 180);
+        cleanText(media.get("type"), out.mediaType, 16);
+        if (out.mediaType != "movie" && out.mediaType != "tv" && out.mediaType != "game") out.mediaType.clear();
+    } else if (media.exists() && media.type != JsonView::Null) {
+        out.error = "invalid media result"; return false;
+    }
+    auto metadata = root.get("metadata");
+    if (metadata.type == JsonView::Object) {
+        std::string album, track, artist;
+        if (!cleanText(metadata.get("album"), album, 180)
+                || !cleanOptionalText(metadata.get("track"), track, 300)
+                || !cleanOptionalText(metadata.get("artist"), artist, 180)) {
+            out.error = "invalid normalized metadata"; return false;
+        }
+        out.album = std::move(album); out.track = std::move(track); out.artist = std::move(artist);
+        out.hasMetadata = true;
+    } else if (metadata.exists()) {
+        out.error = "invalid normalized metadata"; return false;
+    }
+    auto backdrop = root.get("backdrop"), source = root.get("source");
+    if (backdrop.exists() && backdrop.type != JsonView::Null && !backdrop.text(out.backdropUrl, 2048)) {
         out.error = "invalid backdrop result"; return false;
     }
-    if (source && source->type == JsonValue::String) out.source = source->string;
-    else if (source && source->type != JsonValue::Null) {
+    if (source.exists() && source.type != JsonView::Null && !source.text(out.source, 32)) {
         out.error = "invalid backdrop source"; return false;
     }
     if (!out.backdropUrl.empty() && !trustedBackdropUrl(out.backdropUrl, out.source)) {
         out.error = "untrusted backdrop URL"; return false;
     }
-
-    // An optional invalid logo must not discard valid metadata/backdrops/ratings.
-    const JsonValue* logo = root.get("logo");
-    if (logo && logo->type == JsonValue::Object) {
-        std::string url, provider;
-        if (cleanText(logo->get("url"), url, 2048)
-                && cleanText(logo->get("source"), provider, 32)
-                && trustedBackdropUrl(url, provider)) {
-            out.titleLogoUrl = url; out.titleLogoSource = provider;
+    if (!out.backdropUrl.empty()) {
+        out.backdrops.push_back({out.backdropUrl, out.source});
+        const auto values = root.get("backdrops");
+        JsonItems alternatives(values.type == JsonView::Array ? values : JsonView()); JsonView candidate;
+        while (out.backdrops.size() < 50 && alternatives.next(candidate)) {
+            std::string url, provider;
+            if (candidate.type != JsonView::Object || !cleanText(candidate.get("url"), url, 2048)
+                    || !cleanText(candidate.get("source"), provider, 32) || !trustedBackdropUrl(url, provider)) continue;
+            bool duplicate = false;
+            for (const auto& known : out.backdrops) if (known.url == url) { duplicate = true; break; }
+            if (!duplicate) out.backdrops.push_back({std::move(url), std::move(provider)});
         }
     }
-    const JsonValue* tint = root.get("tint");
-    if (tint && tint->type == JsonValue::Array && tint->array.size() == 3) {
-        bool valid = true;
-        for (size_t i = 0; i < 3; ++i) {
-            const JsonValue& v = tint->array[i];
-            if (v.type != JsonValue::Number || v.number < 0 || v.number > 255) valid = false;
-            else out.tint[i] = static_cast<int>(std::floor(v.number + 0.5));
-        }
-        out.hasTint = valid;
+    auto logo = root.get("logo"); std::string url, provider;
+    if (logo.type == JsonView::Object && cleanText(logo.get("url"), url, 2048)
+            && cleanText(logo.get("source"), provider, 32) && trustedBackdropUrl(url, provider)) {
+        out.titleLogoUrl = std::move(url); out.titleLogoSource = std::move(provider);
     }
-
-    const JsonValue* certs = root.get("certifications");
-    std::set<std::string> countries;
-    if (certs && certs->type != JsonValue::Array) {
+    auto tint = root.get("tint");
+    if (tint.type == JsonView::Array) {
+        JsonItems channels(tint); JsonView channel; unsigned count = 0; bool valid = true;
+        while (channels.next(channel)) {
+            double n;
+            if (count >= 3 || !channel.number(n) || n < 0 || n > 255) valid = false;
+            else out.tint[count] = static_cast<int>(std::floor(n + 0.5));
+            ++count;
+        }
+        out.hasTint = valid && count == 3;
+    }
+    auto certs = root.get("certifications");
+    if (certs.exists() && certs.type != JsonView::Array) {
         out.error = "invalid certifications result"; return false;
     }
-    if (certs) for (const JsonValue& raw : certs->array) {
-        if (raw.type != JsonValue::Object) continue;
+    unsigned countries = 0; JsonItems certificates(certs); JsonView raw;
+    while (certificates.next(raw)) {
         Certification cert;
-        if (!cleanText(raw.get("country"), cert.country, 2)
+        if (raw.type != JsonView::Object || !cleanText(raw.get("country"), cert.country, 2)
                 || !cleanText(raw.get("system"), cert.system, 40)
                 || !cleanText(raw.get("rating"), cert.rating, 32)
                 || !cleanText(raw.get("label"), cert.label, 40)
-                || countries.count(cert.country)
                 || !knownCertification(cert.country, cert.system, cert.rating)) continue;
-        if (cert.system == "TV Parental Guidelines")
-            cert.descriptors = cleanDescriptors(raw.get("descriptors"), cert.rating);
-        countries.insert(cert.country);
+        const unsigned country = cert.country == "DE" ? 1 : 2;
+        if (countries & country) continue;
+        countries |= country;
+        if (cert.system == "TV Parental Guidelines") cert.descriptors = cleanDescriptors(raw.get("descriptors"), cert.rating);
         out.certifications.push_back(std::move(cert));
     }
-
     out.status = (!out.backdropUrl.empty() || !out.titleLogoUrl.empty() || !out.certifications.empty())
         ? MediaResult::Hit : MediaResult::Miss;
     return true;
@@ -261,14 +255,13 @@ bool parseResponse(const std::string& body, MediaResult& out) {
 
 std::string urlEncode(const std::string& utf8) {
     std::string out;
-    char hex[4];
+    static const char hex[] = "0123456789ABCDEF";
     for (unsigned char c : utf8) {
         if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
                 || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
             out += static_cast<char>(c);
         } else {
-            std::snprintf(hex, sizeof(hex), "%%%02X", static_cast<unsigned>(c));
-            out += hex;
+            out += '%'; out += hex[c >> 4]; out += hex[c & 15];
         }
     }
     return out;
@@ -302,9 +295,13 @@ HttpResponse MediaResolver::get(const std::string& host, unsigned short port,
                                 const std::string& path,
                                 const std::atomic<bool>* cancel) const {
     if (config_.transport) {
+#if SSC_ENABLE_DEBUG_OVERLAY
         const auto start = std::chrono::steady_clock::now();
+#endif
         auto response = config_.transport(host, port, path, "GET", "", "", config_.timeoutSeconds);
+#if SSC_ENABLE_DEBUG_OVERLAY
         DiagnosticLog::instance().request("https://" + host + path, response, diagnosticMilliseconds(start));
+#endif
         return response;
     }
     return httpRequest(host, port, path, "GET", "", "", config_.timeoutSeconds, cancel);
@@ -333,15 +330,22 @@ MediaResult MediaResolver::resolve(const MediaRequest& request,
     result.track = request.track;
     result.artist = request.artist;
     std::string path = "/api/media?resolver_version=" + urlEncode(config_.resolverVersion)
-        + "&diagnostics=1&album=" + urlEncode(request.album);
-    if (request.includeArt) path += "&artwork_info=1";
+        + "&album=" + urlEncode(request.album);
+#if SSC_ENABLE_DEBUG_OVERLAY
+    path += "&diagnostics=1";
+#else
+    // Provider rejection is also used by the personal-key status UI. Keep this
+    // functional response information even when diagnostic capture is disabled.
+    if (useFanartClientKey) path += "&diagnostics=1";
+#endif
+    if (request.includeArt) path += "&artwork_info=1&backdrops=1";
     if (!request.track.empty()) path += "&track=" + urlEncode(request.track);
     if (!request.artist.empty()) path += "&artist=" + urlEncode(request.artist);
     path += "&providers=" + urlEncode(request.includeArt ? request.providers : "tmdb");
     if (!request.includeArt) path += "&art=0";
     if (request.includeArt && request.includeTitleLogo) path += "&logos=1";
     if (request.includeArt && request.width > 0 && request.height > 0)
-        path += "&width=" + std::to_string(request.width) + "&height=" + std::to_string(request.height);
+        path += "&width=" + ssc::platform::integerText(request.width) + "&height=" + ssc::platform::integerText(request.height);
     if (useFanartClientKey)
         path += "&client_key=" + urlEncode(request.fanartClientKey);
     if (request.includeRatings) path += "&ratings=" + urlEncode(request.ratingCountries);
@@ -349,7 +353,7 @@ MediaResult MediaResolver::resolve(const MediaRequest& request,
     const HttpResponse response = get(config_.apiHost, config_.apiPort, path, cancel);
     if (!response.ok()) {
         result.error = response.status == 0 ? response.error
-            : ("resolver HTTP " + std::to_string(response.status));
+            : ("resolver HTTP " + ssc::platform::integerText(response.status));
         return result;
     }
     parseResponse(response.body, result);
@@ -374,17 +378,17 @@ FanartKeyCheckResult MediaResolver::checkFanartClientKey(
     if (!response.ok()) {
         result.status = FanartKeyCheckStatus::Failure;
         result.error = response.status == 0 ? response.error
-            : ("fanart.tv HTTP " + std::to_string(response.status));
+            : ("fanart.tv HTTP " + ssc::platform::integerText(response.status));
         return result;
     }
-    JsonValue root;
-    if (!parseJson(response.body, root) || root.type != JsonValue::Object) {
+    JsonView root;
+    if (!readJsonView(response.body, root) || root.type != JsonView::Object) {
         result.error = "invalid fanart.tv response";
         return result;
     }
-    const JsonValue* id = root.get("tmdb_id");
-    const bool expected = id && ((id->type == JsonValue::String && id->string == "27205")
-        || (id->type == JsonValue::Number && std::floor(id->number) == 27205.0));
+    const auto id = root.get("tmdb_id"); std::string text; double number;
+    const bool expected = (id.text(text, 16) && text == "27205")
+        || (id.number(number) && std::floor(number) == 27205.0);
     if (!expected) {
         result.error = "unexpected fanart.tv response";
         return result;
@@ -399,12 +403,15 @@ std::string MediaResolver::resolveCredit(const std::string& album, const std::st
     if (requestSucceeded) *requestSucceeded = false;
     if (!cleanRequestText(album, 180, true)
             || !trustedAlbumPageUrl(albumUrl, stationHost)) return std::string();
-    const std::string path = "/api/credit?diagnostics=1&album=" + urlEncode(album)
+    std::string path = "/api/credit?album=" + urlEncode(album)
         + "&url=" + urlEncode(albumUrl);
+#if SSC_ENABLE_DEBUG_OVERLAY
+    path += "&diagnostics=1";
+#endif
     const HttpResponse response = get(config_.apiHost, config_.apiPort, path, cancel);
     if (!response.ok()) return std::string();
-    JsonValue root;
-    if (!parseJson(response.body, root) || root.type != JsonValue::Object) return std::string();
+    JsonView root;
+    if (!readJsonView(response.body, root) || root.type != JsonView::Object) return std::string();
     std::string artist;
     if (!cleanText(root.get("artist"), artist, 180)) artist.clear();
     if (requestSucceeded) *requestSucceeded = true;

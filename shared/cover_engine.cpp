@@ -1,3 +1,4 @@
+#include "../lib/platform_text.h"
 // cover_engine.cpp - see header. Host-agnostic; talks only to the shared Direct2D
 // renderer, the CoverMonitor library, and an HWND. Ported from the Winamp plugin so
 // both hosts share identical cover/preload/animation behaviour.
@@ -6,10 +7,10 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <condition_variable>
+
 #include <map>
 #include <memory>
-#include <thread>
+
 #include <vector>
 
 #include "coverfetch.h"
@@ -19,28 +20,23 @@
 #include "media_policy.h"
 #include "media_resolver.h"
 #include "stations.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 #include "diagnostics.h"
 #include "diagnostic_timeline.h"
+#endif
 
-static ssc::JsonValue diagnosticTrack(const ssc::TrackInfo& track) {
-    auto value = ssc::diagnosticObject();
-    value.object["album"] = ssc::diagnosticString(track.album);
-    value.object["track"] = ssc::diagnosticString(track.track);
-    value.object["artist"] = ssc::diagnosticString(track.artist);
-    value.object["coverUrl"] = ssc::diagnosticString(track.coverUrl);
-    value.object["lengthSeconds"] = ssc::diagnosticNumber(track.lengthSeconds);
-    return value;
-}
+
 
 // --- logging ----------------------------------------------------------------
-// File diagnostics are OFF in production. The bounded in-memory stage snapshot
-// is available with D. Both the %TEMP% file AND
+// Diagnostics are compiled only with SSC_ENABLE_DEBUG_OVERLAY=1. The stage
+// snapshot is available with D in those builds. Both the %TEMP% file AND
 // OutputDebugString stay silent unless a sentinel file exists next to where the log
 // would go: %TEMP%\<base>.log.enable. Support drops that file, restarts the host,
 // reproduces, then sends %TEMP%\<base>.log. When enabled, the file is capped at 1 MB
 // with one rolled generation (<base>.log.1), so it can never grow without bound.
 namespace {
-std::mutex g_logMutex;
+#if SSC_ENABLE_DEBUG_OVERLAY
+ssc::platform::Mutex g_logMutex;
 // Log basename, shared by the OutputDebugString tag and the %TEMP% file. Each host
 // overrides it (CoverEngine::setLogName) so Winamp / foobar / the viewer write to
 // distinct files instead of interleaving into one. Set once at startup.
@@ -74,8 +70,8 @@ void rotateIfLarge(const std::string& path) {
 }
 
 void logLine(const std::string& msg) {
-    ssc::DiagnosticLog::instance().event("engine", ssc::diagnosticString(msg));
-    std::lock_guard<std::mutex> lock(g_logMutex);
+    ssc::DiagnosticLog::instance().event("engine", std::string(msg));
+    ssc::platform::LockGuard lock(g_logMutex);
     if (!logEnabled()) return;               // prod default: no file, no OutputDebugString
     OutputDebugStringA(("[" + g_logBase + "] " + msg + "\n").c_str());
     const std::string path = tempDir() + g_logBase + ".log";
@@ -89,6 +85,10 @@ void logLine(const std::string& msg) {
         CloseHandle(h);
     }
 }
+#endif
+#if !SSC_ENABLE_DEBUG_OVERLAY
+#define logLine(...) ((void)0)
+#endif
 
 // UTF-8 (the station feed's encoding) -> UTF-16 for DirectWrite (poster info box).
 std::wstring toWide(const std::string& s) {
@@ -143,7 +143,7 @@ std::string downloadCover(const std::string& url, const std::atomic<bool>* cance
     ssc::HttpResponse res = ssc::httpRequest(host, port, path, "GET",
                                              std::string(), std::string(), 20, cancel);
     if (!res.ok())
-        logLine("download failed: status=" + std::to_string(res.status) + " " + res.error);
+        logLine("download failed: status=" + ssc::platform::integerText(res.status) + " " + res.error);
     if (!res.ok() || !ssc::decodableImage(res.body, url)) {
         if (res.ok()) logLine("download failed: response is not a bounded decodable image");
         return std::string();
@@ -166,7 +166,8 @@ struct CoverEngine::MediaWorkerState {
         unsigned long long used = 0;
     };
     struct Work {
-        enum Kind { Resolve, Download, Ratings } kind = Resolve;
+        enum Kind { Resolve, Download, Cycle, Ratings } kind = Resolve;
+        unsigned long long selection = 0;
         Clock::time_point due;
         unsigned long long order = 0;
         unsigned long long epoch = 0;
@@ -175,7 +176,9 @@ struct CoverEngine::MediaWorkerState {
         bool reload = false;
         ssc::TrackInfo track;
         ssc::MediaRequest request;
-        ssc::MediaResult result;
+        // Resolve jobs carry no result. Only image/rating/cycle jobs allocate
+        // a payload; retry/move/queue operations share that owned result.
+        std::shared_ptr<ssc::MediaResult> result;
         std::string key, creditHost;
         bool animateBackdrop = true;
         bool backdropPublished = false;
@@ -183,9 +186,9 @@ struct CoverEngine::MediaWorkerState {
         std::shared_ptr<std::atomic<bool> > cancel;
     };
 
-    std::mutex mutex;
-    std::condition_variable cv;
-    std::thread thread;
+    ssc::platform::Mutex mutex;
+    ssc::platform::ConditionVariable cv;
+    ssc::platform::Thread thread;
     bool stopping = false;
     unsigned long long epoch = 0, order = 0, lru = 0;
     Settings settingsSnapshot; // guarded by mutex; only the UI thread copies settings here
@@ -194,7 +197,9 @@ struct CoverEngine::MediaWorkerState {
     std::map<std::string, CacheEntry> cache;
     std::map<std::string, std::string> titleLogoCache; // decoded-safe bytes, bounded like queue art
     ssc::TrackInfo current;
+#if SSC_ENABLE_DEBUG_OVERLAY
     ssc::DiagnosticTimeline timeline;
+#endif
     std::vector<ssc::TrackInfo> queue;
     bool queueSnapshotReady = false;
     ssc::MediaRequest request;
@@ -203,13 +208,33 @@ struct CoverEngine::MediaWorkerState {
 
 namespace {
 
+// Both queue-only refreshes and new epochs use the same job construction path.
+// Keep its string ownership/cancellation setup out of both scheduler branches.
+__declspec(noinline) void queueMediaPrefetchLocked(CoverEngine::MediaWorkerState* state,
+        const ssc::MediaRequest& request, int station, bool animateBackdrop = true,
+        bool immediateCachedTitleLogo = false) {
+    for (size_t i = 0; i < state->queue.size(); ++i) {
+        if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
+        CoverEngine::MediaWorkerState::Work queued;
+        queued.due = CoverEngine::MediaWorkerState::Clock::now()
+            + std::chrono::milliseconds(ssc::queuePrefetchDelayMs(i));
+        queued.order = ++state->order; queued.epoch = state->epoch;
+        queued.track = state->queue[i]; queued.request = request; queued.cancel = state->cancel;
+        queued.creditHost = ssc::station(station).host;
+        queued.animateBackdrop = animateBackdrop;
+        queued.immediateCachedTitleLogo = immediateCachedTitleLogo;
+        state->work.push_back(std::move(queued));
+    }
+}
+
+
 void cacheMedia(CoverEngine::MediaWorkerState* state, const std::string& key,
                 const ssc::TrackInfo& track, const ssc::MediaRequest& request,
                 const ssc::MediaResult& result, const std::string& bytes) {
     CoverEngine::MediaWorkerState::CacheEntry entry;
     entry.track = track; entry.request = request; entry.result = result;
     entry.bytes = bytes; entry.used = ++state->lru;
-    state->cache[key] = entry;
+    state->cache[key] = std::move(entry);
     while (state->cache.size() > ssc::kQueuedTrackStoreLimit) {
         std::map<std::string, CoverEngine::MediaWorkerState::CacheEntry>::iterator oldest = state->cache.begin();
         for (std::map<std::string, CoverEngine::MediaWorkerState::CacheEntry>::iterator it = state->cache.begin();
@@ -286,8 +311,10 @@ d2d::Transition CoverEngine::transitionEffect() const {
 
 // --- lifecycle --------------------------------------------------------------
 void CoverEngine::setLogName(const std::string& base) {
-    std::lock_guard<std::mutex> lock(g_logMutex);
+#if SSC_ENABLE_DEBUG_OVERLAY
+    ssc::platform::LockGuard lock(g_logMutex);
     if (!base.empty()) { g_logBase = base; g_logResolved = false; } // re-resolve sentinel for new base
+#endif
 }
 
 void CoverEngine::startMediaWorker() {
@@ -295,314 +322,327 @@ void CoverEngine::startMediaWorker() {
     media_ = new MediaWorkerState();
     MediaWorkerState* state = media_;
     state->settingsSnapshot = settings;
-    state->thread = std::thread([this, state] {
-        for (;;) {
-            MediaWorkerState::Work item;
-            {
-                std::unique_lock<std::mutex> lock(state->mutex);
-                for (;;) {
-                    if (state->stopping) return;
-                    if (state->work.empty()) {
-                        state->cv.wait(lock);
-                        continue;
-                    }
-                    size_t best = 0;
-                    for (size_t i = 1; i < state->work.size(); ++i) {
-                        if (state->work[i].due < state->work[best].due
-                                || (state->work[i].due == state->work[best].due
-                                    && state->work[i].order < state->work[best].order)) best = i;
-                    }
-                    const MediaWorkerState::Clock::time_point now = MediaWorkerState::Clock::now();
-                    if (state->work[best].due > now) {
-                        state->cv.wait_until(lock, state->work[best].due);
-                        continue;
-                    }
-                    item = state->work[best];
-                    state->work.erase(state->work.begin() + best);
-                    break;
+    state->thread = ssc::platform::Thread([this, state] { runMediaWorker(state); });
+}
+
+void CoverEngine::runMediaWorker(MediaWorkerState* state) {
+    for (;;) {
+        MediaWorkerState::Work item;
+        {
+            ssc::platform::UniqueLock lock(state->mutex);
+            for (;;) {
+                if (state->stopping) return;
+                if (state->work.empty()) {
+                    state->cv.wait(lock);
+                    continue;
+                }
+                size_t best = 0;
+                for (size_t i = 1; i < state->work.size(); ++i) {
+                    if (state->work[i].due < state->work[best].due
+                            || (state->work[i].due == state->work[best].due
+                                && state->work[i].order < state->work[best].order)) best = i;
+                }
+                const MediaWorkerState::Clock::time_point now = MediaWorkerState::Clock::now();
+                if (state->work[best].due > now) {
+                    state->cv.wait_until(lock, state->work[best].due);
+                    continue;
+                }
+                item = std::move(state->work[best]);
+                state->work.erase(state->work.begin() + best);
+                break;
+            }
+        }
+        if (!item.cancel || item.cancel->load()) continue;
+
+        if (item.kind == MediaWorkerState::Work::Ratings) {
+            bool ready = true;
+            bool changed = false;
+            for (const auto& cert : item.result->certifications) {
+                if (item.cancel->load()) break;
+                if (!ssc::ratingAssets().find(cert).empty()) continue;
+                const bool loaded = ssc::ratingAssets().load(cert, state->resolver, item.cancel.get());
+                changed = changed || loaded;
+                ready = ready && loaded;
+            }
+            if ((ready || changed) && item.current && !item.cancel->load())
+                publishRatings(item.epoch, ratingBadges(*item.result));
+            if (!ready && !item.cancel->load() && item.attempt < 2) {
+                item.due = MediaWorkerState::Clock::now() + std::chrono::seconds(++item.attempt * 30);
+                ssc::platform::LockGuard lock(state->mutex);
+                if (!state->stopping && item.epoch == state->epoch) {
+                    item.order = ++state->order;
+                    state->work.push_back(std::move(item));
+                    state->cv.notify_all();
                 }
             }
-            if (!item.cancel || item.cancel->load()) continue;
+            continue;
+        }
+        const auto queueRatingAssets = [&](const ssc::MediaResult& result) {
+            if (!item.request.includeRatings || result.certifications.empty()) return;
+            bool missing = false;
+            for (const auto& cert : result.certifications)
+                missing = missing || ssc::ratingAssets().find(cert).empty();
+            if (!missing) return;
+            if (item.current) publishRatings(item.epoch, ratingBadges(result));
+            auto work = item;
+            work.kind = MediaWorkerState::Work::Ratings;
+            work.result = std::make_shared<ssc::MediaResult>(result);
+            work.attempt = 0;
+            work.due = MediaWorkerState::Clock::now() + std::chrono::milliseconds(50);
+            ssc::platform::LockGuard lock(state->mutex);
+            if (state->stopping || item.epoch != state->epoch) return;
+            for (const auto& pending : state->work)
+                if (pending.kind == MediaWorkerState::Work::Ratings && pending.epoch == item.epoch
+                        && pending.key == item.key) return;
+            work.order = ++state->order;
+            state->work.push_back(std::move(work));
+            state->cv.notify_all();
+        };
 
-            if (item.kind == MediaWorkerState::Work::Ratings) {
-                bool ready = true;
-                bool changed = false;
-                for (const auto& cert : item.result.certifications) {
-                    if (item.cancel->load()) break;
-                    if (!ssc::ratingAssets().find(cert).empty()) continue;
-                    const bool loaded = ssc::ratingAssets().load(cert, state->resolver, item.cancel.get());
-                    changed = changed || loaded;
-                    ready = ready && loaded;
+        const auto prepareTitleLogo = [&](const ssc::MediaResult& result) {
+            if (!item.request.includeArt) return;
+            std::string bytes;
+            bool cacheHit = false;
+            if (!result.titleLogoUrl.empty()) {
+                {
+                    ssc::platform::LockGuard lock(state->mutex);
+                    const auto found = state->titleLogoCache.find(result.titleLogoUrl);
+                    if (found != state->titleLogoCache.end()) {
+                        bytes = found->second;
+                        cacheHit = !bytes.empty();
+                    }
                 }
-                if ((ready || changed) && item.current && !item.cancel->load())
-                    publishRatings(item.epoch, ratingBadges(item.result));
-                if (!ready && !item.cancel->load() && item.attempt < 2) {
-                    item.due = MediaWorkerState::Clock::now() + std::chrono::seconds(++item.attempt * 30);
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    if (!state->stopping && item.epoch == state->epoch) {
-                        item.order = ++state->order;
-                        state->work.push_back(item);
-                        state->cv.notify_all();
+                if (bytes.empty() && state->resolver.downloadTitleLogo(result, bytes, item.cancel.get())
+                        && ssc::decodableImage(bytes, result.titleLogoUrl) && !item.cancel->load()) {
+                    ssc::platform::LockGuard lock(state->mutex);
+                    state->titleLogoCache[result.titleLogoUrl] = bytes;
+                    while (state->titleLogoCache.size() > ssc::kQueuedTrackStoreLimit)
+                        state->titleLogoCache.erase(state->titleLogoCache.begin());
+                } else if (bytes.empty() || !ssc::decodableImage(bytes, result.titleLogoUrl)) bytes.clear();
+            }
+            if (item.current && !item.cancel->load())
+                publishTitleLogo(item.epoch, bytes, result.album,
+                                 item.immediateCachedTitleLogo
+                                     && cacheHit && !bytes.empty());
+        };
+
+        if (item.kind == MediaWorkerState::Work::Cycle) {
+            std::string bytes;
+            for (unsigned attempt = 0; attempt < 3 && !item.cancel->load(); ++attempt) {
+                { ssc::platform::LockGuard lock(mutex_);
+                  if (item.epoch != activeMediaEpoch_ || item.selection != backdropSelection_) break; }
+                if (state->resolver.downloadBackdrop(*item.result, bytes, item.cancel.get())
+                        && ssc::decodableImage(bytes, item.result->backdropUrl)) break;
+                bytes.clear();
+            }
+            if (!item.cancel->load()) publishCycledBackdrop(item.epoch, item.selection, bytes, *item.result);
+            continue;
+        }
+        if (item.kind == MediaWorkerState::Work::Resolve) {
+            // Queue rows can omit composer credit. Use the same project-owned
+            // credit endpoint as web before resolving, never scrape arbitrary URLs.
+            if (!item.current && item.track.artist.empty() && !item.track.albumUrl.empty()) {
+                bool creditOk = false;
+                const std::string artist = state->resolver.resolveCredit(
+                    item.track.album, item.track.albumUrl,
+                    item.creditHost, &creditOk, item.cancel.get());
+                if (item.cancel->load()) continue;
+                if (creditOk && !artist.empty()) item.track.artist = artist;
+            }
+            item.request.album = item.track.album;
+            item.request.track = item.track.track;
+            item.request.artist = item.track.artist;
+            item.key = ssc::mediaCacheKey(item.track, item.request);
+
+            MediaWorkerState::CacheEntry cached;
+            MediaWorkerState::CacheEntry cachedFallback;
+            bool haveCached = false;
+            bool haveCachedFallback = false;
+            if (!item.reload) {
+                ssc::platform::LockGuard lock(state->mutex);
+                std::map<std::string, MediaWorkerState::CacheEntry>::iterator it = state->cache.find(item.key);
+                if (it != state->cache.end()) {
+                    it->second.used = ++state->lru;
+                    cached = it->second;
+                    haveCached = true;
+                }
+                if (item.current && haveCached && cached.bytes.empty())
+                    haveCachedFallback = cachedBackdrop(state, item.track, item.request, cachedFallback);
+            }
+            if (haveCached) {
+                queueRatingAssets(cached.result.certifications.empty() && haveCachedFallback
+                    ? cachedFallback.result : cached.result);
+#if SSC_ENABLE_DEBUG_OVERLAY
+                ssc::DiagnosticLog::instance().event("cache.media.hit", item.track);
+#endif
+                if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
+                else publishQueuedMetadata(item.epoch, item.track, cached.result);
+                prepareTitleLogo(haveCachedFallback
+                    && sameResolverConfig(cachedFallback.request, item.request)
+                    ? cachedFallback.result : cached.result);
+                if (item.current && !item.backdropPublished) {
+                    if (haveCachedFallback) {
+                        const auto& ratings = cached.result.certifications.empty() ? cachedFallback.result : cached.result;
+                        publishMedia(item.epoch, cachedFallback.bytes, ratingBadges(ratings), false,
+                                     &cachedFallback.result, item.animateBackdrop);
+                    } else {
+                        publishMedia(item.epoch, cached.bytes, ratingBadges(cached.result), false,
+                                     &cached.result, item.animateBackdrop);
                     }
                 }
                 continue;
             }
-            const auto queueRatingAssets = [&](const ssc::MediaResult& result) {
-                if (!item.request.includeRatings || result.certifications.empty()) return;
-                bool missing = false;
-                for (const auto& cert : result.certifications)
-                    missing = missing || ssc::ratingAssets().find(cert).empty();
-                if (!missing) return;
-                if (item.current) publishRatings(item.epoch, ratingBadges(result));
-                auto work = item;
-                work.kind = MediaWorkerState::Work::Ratings;
-                work.result = result;
-                work.attempt = 0;
-                work.due = MediaWorkerState::Clock::now() + std::chrono::milliseconds(50);
-                std::lock_guard<std::mutex> lock(state->mutex);
-                if (state->stopping || item.epoch != state->epoch) return;
-                for (const auto& pending : state->work)
-                    if (pending.kind == MediaWorkerState::Work::Ratings && pending.epoch == item.epoch
-                            && pending.key == item.key) return;
-                work.order = ++state->order;
-                state->work.push_back(work);
-                state->cv.notify_all();
-            };
 
-            const auto prepareTitleLogo = [&](const ssc::MediaResult& result) {
-                if (!item.request.includeArt) return;
-                std::string bytes;
-                bool cacheHit = false;
-                if (!result.titleLogoUrl.empty()) {
-                    {
-                        std::lock_guard<std::mutex> lock(state->mutex);
-                        const auto found = state->titleLogoCache.find(result.titleLogoUrl);
-                        if (found != state->titleLogoCache.end()) {
-                            bytes = found->second;
-                            cacheHit = !bytes.empty();
-                        }
-                    }
-                    if (bytes.empty() && state->resolver.downloadTitleLogo(result, bytes, item.cancel.get())
-                            && ssc::decodableImage(bytes, result.titleLogoUrl) && !item.cancel->load()) {
-                        std::lock_guard<std::mutex> lock(state->mutex);
-                        state->titleLogoCache[result.titleLogoUrl] = bytes;
-                        while (state->titleLogoCache.size() > ssc::kQueuedTrackStoreLimit)
-                            state->titleLogoCache.erase(state->titleLogoCache.begin());
-                    } else if (bytes.empty() || !ssc::decodableImage(bytes, result.titleLogoUrl)) bytes.clear();
-                }
-                if (item.current && !item.cancel->load())
-                    publishTitleLogo(item.epoch, bytes, result.album,
-                                     item.immediateCachedTitleLogo
-                                         && cacheHit && !bytes.empty());
-            };
-
-            if (item.kind == MediaWorkerState::Work::Resolve) {
-                // Queue rows can omit composer credit. Use the same project-owned
-                // credit endpoint as web before resolving, never scrape arbitrary URLs.
-                if (!item.current && item.track.artist.empty() && !item.track.albumUrl.empty()) {
-                    bool creditOk = false;
-                    const std::string artist = state->resolver.resolveCredit(
-                        item.track.album, item.track.albumUrl,
-                        item.creditHost, &creditOk, item.cancel.get());
-                    if (item.cancel->load()) continue;
-                    if (creditOk && !artist.empty()) item.track.artist = artist;
-                }
-                item.request.album = item.track.album;
-                item.request.track = item.track.track;
-                item.request.artist = item.track.artist;
-                item.key = ssc::mediaCacheKey(item.track, item.request);
-
-                MediaWorkerState::CacheEntry cached;
-                MediaWorkerState::CacheEntry cachedFallback;
-                bool haveCached = false;
-                bool haveCachedFallback = false;
-                if (!item.reload) {
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    std::map<std::string, MediaWorkerState::CacheEntry>::iterator it = state->cache.find(item.key);
-                    if (it != state->cache.end()) {
-                        it->second.used = ++state->lru;
-                        cached = it->second;
-                        haveCached = true;
-                    }
-                    if (item.current && haveCached && cached.bytes.empty())
-                        haveCachedFallback = cachedBackdrop(state, item.track, item.request, cachedFallback);
-                }
-                if (haveCached) {
-                    queueRatingAssets(cached.result.certifications.empty() && haveCachedFallback
-                        ? cachedFallback.result : cached.result);
-                    ssc::DiagnosticLog::instance().event("cache.media.hit", diagnosticTrack(item.track));
-                    if (item.current) publishMetadata(item.epoch, cached.result, item.track.lengthSeconds);
-                    else publishQueuedMetadata(item.epoch, item.track, cached.result);
-                    prepareTitleLogo(haveCachedFallback
-                        && sameResolverConfig(cachedFallback.request, item.request)
-                        ? cachedFallback.result : cached.result);
-                    if (item.current && !item.backdropPublished) {
-                        if (haveCachedFallback) {
-                            ssc::MediaResult merged = cachedFallback.result;
-                            if (!cached.result.certifications.empty())
-                                merged.certifications = cached.result.certifications;
-                            publishMedia(item.epoch, cachedFallback.bytes, ratingBadges(merged), false,
-                                         &cachedFallback.result, item.animateBackdrop);
-                        } else {
-                            publishMedia(item.epoch, cached.bytes, ratingBadges(cached.result), false,
-                                         &cached.result, item.animateBackdrop);
-                        }
-                    }
-                    continue;
-                }
-
-                const ssc::MediaResult resolved = state->resolver.resolve(item.request, item.cancel.get());
-                if (item.cancel->load()) continue;
-                if (!item.current) publishQueuedMetadata(item.epoch, item.track, resolved);
-                if (resolved.status == ssc::MediaResult::Failure) {
-                    // A current-track refinement must not erase an already prepared
-                    // queue hit. Failures remain uncached and retry on the feed cadence.
-                    if (item.current) {
-                        // The resolver retains the validated stream metadata when
-                        // /api/media cannot provide its normalized form. Show that
-                        // fallback instead of leaving native clients without a title.
-                        publishMetadata(item.epoch, resolved, item.track.lengthSeconds);
-                        MediaWorkerState::CacheEntry fallback;
-                        bool haveFallback = false;
-                        {
-                            std::lock_guard<std::mutex> lock(state->mutex);
-                            haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
-                        }
-                        if (haveFallback) {
-                            queueRatingAssets(fallback.result);
-                            if (sameResolverConfig(fallback.request, item.request))
-                                prepareTitleLogo(fallback.result);
-                            publishMedia(item.epoch, fallback.bytes, ratingBadges(fallback.result), false,
-                                         &fallback.result, item.animateBackdrop);
-                        }
-                    }
-                    const unsigned failure = item.attempt + 1;
-                    item.attempt = failure;
-                    item.due = MediaWorkerState::Clock::now()
-                        + std::chrono::milliseconds(item.current
-                            ? ssc::stationRetryDelayMs(failure) : 60000);
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    if (!state->stopping && item.epoch == state->epoch) {
-                        item.order = ++state->order;
-                        state->work.push_back(item);
-                        state->cv.notify_all();
-                    }
-                    continue;
-                }
-                if (item.current)
+            ssc::MediaResult resolved = state->resolver.resolve(item.request, item.cancel.get());
+            if (item.cancel->load()) continue;
+            if (!item.current) publishQueuedMetadata(item.epoch, item.track, resolved);
+            if (resolved.status == ssc::MediaResult::Failure) {
+                // A current-track refinement must not erase an already prepared
+                // queue hit. Failures remain uncached and retry on the feed cadence.
+                if (item.current) {
+                    // The resolver retains the validated stream metadata when
+                    // /api/media cannot provide its normalized form. Show that
+                    // fallback instead of leaving native clients without a title.
                     publishMetadata(item.epoch, resolved, item.track.lengthSeconds);
-                queueRatingAssets(resolved);
-                prepareTitleLogo(resolved);
-                if (item.cancel->load()) continue;
-
-                if (resolved.status == ssc::MediaResult::Miss || !resolved.hasBackdrop()) {
                     MediaWorkerState::CacheEntry fallback;
                     bool haveFallback = false;
-                    if (item.current) {
-                        std::lock_guard<std::mutex> lock(state->mutex);
+                    {
+                        ssc::platform::LockGuard lock(state->mutex);
                         haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
                     }
-                    {
-                        std::lock_guard<std::mutex> lock(state->mutex);
-                        cacheMedia(state, item.key, item.track, item.request, resolved, std::string());
-                    }
-                    if (item.current) {
-                        if (haveFallback) {
-                            if (resolved.titleLogoUrl.empty()
-                                    && sameResolverConfig(fallback.request, item.request))
-                                prepareTitleLogo(fallback.result);
-                            ssc::MediaResult merged = fallback.result;
-                            if (!resolved.certifications.empty()) merged.certifications = resolved.certifications;
-                            publishMedia(item.epoch, fallback.bytes, ratingBadges(merged), false,
-                                         &fallback.result, item.animateBackdrop);
-                        } else {
-                            publishMedia(item.epoch, std::string(), ratingBadges(resolved), false,
-                                         nullptr, item.animateBackdrop);
-                        }
-                    }
-                    continue;
-                }
-
-                MediaWorkerState::Work image = item;
-                if (item.current) {
-                    // Ratings are independent of art loading. Reveal them as soon
-                    // as the resolver is authoritative; the backdrop can still use
-                    // its own bounded image retry sequence.
-                    publishRatings(item.epoch, ratingBadges(resolved));
-                }
-                image.kind = MediaWorkerState::Work::Download;
-                image.result = resolved;
-                image.attempt = 0;
-                // Finish the current item as one transaction before another due
-                // queue resolver can occupy the single network lane for 20 seconds.
-                image.due = MediaWorkerState::Clock::now() - std::chrono::hours(1);
-                {
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    if (!state->stopping && image.epoch == state->epoch) {
-                        image.order = ++state->order;
-                        state->work.push_back(image);
-                        state->cv.notify_all();
+                    if (haveFallback) {
+                        queueRatingAssets(fallback.result);
+                        if (sameResolverConfig(fallback.request, item.request))
+                            prepareTitleLogo(fallback.result);
+                        publishMedia(item.epoch, fallback.bytes, ratingBadges(fallback.result), false,
+                                     &fallback.result, item.animateBackdrop);
                     }
                 }
-                continue;
-            }
-
-            std::string bytes;
-            if (!item.reload) {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                MediaWorkerState::CacheEntry prepared;
-                if (cachedBackdrop(state, item.track, item.request, prepared, &item.result.backdropUrl))
-                    bytes = prepared.bytes;
-            }
-            const bool downloaded = !bytes.empty()
-                || (state->resolver.downloadBackdrop(item.result, bytes, item.cancel.get())
-                    && ssc::decodableImage(bytes, item.result.backdropUrl));
-            if (item.cancel->load()) continue;
-            if (!downloaded) {
                 const unsigned failure = item.attempt + 1;
-                const int delay = ssc::backdropImageRetryDelayMs(failure);
-                if (delay >= 0) {
-                    item.attempt = failure;
-                    item.due = MediaWorkerState::Clock::now() + std::chrono::milliseconds(delay);
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    if (!state->stopping && item.epoch == state->epoch) {
-                        item.order = ++state->order;
-                        state->work.push_back(item);
-                        state->cv.notify_all();
-                    }
-                } else if (item.current) {
-                    MediaWorkerState::CacheEntry fallback;
-                    bool haveFallback;
-                    {
-                        std::lock_guard<std::mutex> lock(state->mutex);
-                        haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
-                    }
-                    publishMedia(item.epoch, haveFallback ? fallback.bytes : std::string(),
-                                 ratingBadges(item.result), true,
-                                 haveFallback ? &fallback.result : nullptr, item.animateBackdrop);
+                item.attempt = failure;
+                item.due = MediaWorkerState::Clock::now()
+                    + std::chrono::milliseconds(item.current
+                        ? ssc::stationRetryDelayMs(failure) : 60000);
+                ssc::platform::LockGuard lock(state->mutex);
+                if (!state->stopping && item.epoch == state->epoch) {
+                    item.order = ++state->order;
+                    state->work.push_back(std::move(item));
+                    state->cv.notify_all();
                 }
                 continue;
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                cacheMedia(state, item.key, item.track, item.request, item.result, bytes);
             }
             if (item.current)
-                publishMedia(item.epoch, bytes, ratingBadges(item.result), false,
-                             &item.result, item.animateBackdrop);
+                publishMetadata(item.epoch, resolved, item.track.lengthSeconds);
+            queueRatingAssets(resolved);
+            prepareTitleLogo(resolved);
+            if (item.cancel->load()) continue;
+
+            if (resolved.status == ssc::MediaResult::Miss || !resolved.hasBackdrop()) {
+                MediaWorkerState::CacheEntry fallback;
+                bool haveFallback = false;
+                if (item.current) {
+                    ssc::platform::LockGuard lock(state->mutex);
+                    haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
+                }
+                {
+                    ssc::platform::LockGuard lock(state->mutex);
+                    cacheMedia(state, item.key, item.track, item.request, resolved, std::string());
+                }
+                if (item.current) {
+                    if (haveFallback) {
+                        if (resolved.titleLogoUrl.empty()
+                                && sameResolverConfig(fallback.request, item.request))
+                            prepareTitleLogo(fallback.result);
+                        const auto& ratings = resolved.certifications.empty() ? fallback.result : resolved;
+                        publishMedia(item.epoch, fallback.bytes, ratingBadges(ratings), false,
+                                     &fallback.result, item.animateBackdrop);
+                    } else {
+                        publishMedia(item.epoch, std::string(), ratingBadges(resolved), false,
+                                     nullptr, item.animateBackdrop);
+                    }
+                }
+                continue;
+            }
+
+            if (item.current) {
+                // Ratings are independent of art loading. Reveal them as soon
+                // as the resolver is authoritative; the backdrop can still use
+                // its own bounded image retry sequence.
+                publishRatings(item.epoch, ratingBadges(resolved));
+            }
+            MediaWorkerState::Work image = std::move(item);
+            image.kind = MediaWorkerState::Work::Download;
+            image.result = std::make_shared<ssc::MediaResult>(std::move(resolved));
+            image.attempt = 0;
+            // Finish the current item as one transaction before another due
+            // queue resolver can occupy the single network lane for 20 seconds.
+            image.due = MediaWorkerState::Clock::now() - std::chrono::hours(1);
+            {
+                ssc::platform::LockGuard lock(state->mutex);
+                if (!state->stopping && image.epoch == state->epoch) {
+                    image.order = ++state->order;
+                    state->work.push_back(std::move(image));
+                    state->cv.notify_all();
+                }
+            }
+            continue;
         }
-    });
+
+        std::string bytes;
+        if (!item.reload) {
+            ssc::platform::LockGuard lock(state->mutex);
+            MediaWorkerState::CacheEntry prepared;
+            if (cachedBackdrop(state, item.track, item.request, prepared, &item.result->backdropUrl))
+                bytes = prepared.bytes;
+        }
+        const bool downloaded = !bytes.empty()
+            || (state->resolver.downloadBackdrop(*item.result, bytes, item.cancel.get())
+                && ssc::decodableImage(bytes, item.result->backdropUrl));
+        if (item.cancel->load()) continue;
+        if (!downloaded) {
+            const unsigned failure = item.attempt + 1;
+            const int delay = ssc::backdropImageRetryDelayMs(failure);
+            if (delay >= 0) {
+                item.attempt = failure;
+                item.due = MediaWorkerState::Clock::now() + std::chrono::milliseconds(delay);
+                ssc::platform::LockGuard lock(state->mutex);
+                if (!state->stopping && item.epoch == state->epoch) {
+                    item.order = ++state->order;
+                    state->work.push_back(std::move(item));
+                    state->cv.notify_all();
+                }
+            } else if (item.current) {
+                MediaWorkerState::CacheEntry fallback;
+                bool haveFallback;
+                {
+                    ssc::platform::LockGuard lock(state->mutex);
+                    haveFallback = cachedBackdrop(state, item.track, item.request, fallback);
+                }
+                publishMedia(item.epoch, haveFallback ? fallback.bytes : std::string(),
+                             ratingBadges(*item.result), true,
+                             haveFallback ? &fallback.result : nullptr, item.animateBackdrop);
+            }
+            continue;
+        }
+
+        {
+            ssc::platform::LockGuard lock(state->mutex);
+            cacheMedia(state, item.key, item.track, item.request, *item.result, bytes);
+        }
+        if (item.current)
+            publishMedia(item.epoch, bytes, ratingBadges(*item.result), false,
+                         item.result.get(), item.animateBackdrop);
+    }
 }
 
 void CoverEngine::stopMediaWorker() {
     MediaWorkerState* state = media_;
     if (!state) return;
     {
-        std::lock_guard<std::mutex> lock(state->mutex);
+        ssc::platform::LockGuard lock(state->mutex);
         state->stopping = true;
         {
-            std::lock_guard<std::mutex> publication(mutex_);
+            ssc::platform::LockGuard publication(mutex_);
             ++activeMediaEpoch_;
             mediaDirty_ = false;
             comingNext_.setQueue("", L"", L"");
@@ -621,7 +661,7 @@ void CoverEngine::scheduleMedia(const ssc::TrackInfo& current,
                                 bool queueSnapshot) {
     MediaWorkerState* state = media_;
     if (!state) return;
-    std::lock_guard<std::mutex> lock(state->mutex);
+    ssc::platform::LockGuard lock(state->mutex);
     scheduleMediaLocked(state, current, queue, forceReload, queueSnapshot);
 }
 
@@ -639,7 +679,9 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             + (queue.size() < ssc::kQueuedTrackStoreLimit ? queue.size() : ssc::kQueuedTrackStoreLimit));
         state->queueSnapshotReady = queueSnapshot || !queue.empty();
     };
-    state->timeline.observe(ssc::station(snapshot.station).host, diagnosticTrack(current));
+#if SSC_ENABLE_DEBUG_OVERLAY
+    state->timeline.observe(ssc::station(snapshot.station).host, ssc::diagnosticTrackRecord(current));
+#endif
     ssc::MediaRequest request;
     request.providers = snapshot.mediaProviders;
     request.fanartClientKey = snapshot.fanartClientKey;
@@ -691,17 +733,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             // repaint/retry can pass the stored queue itself.
             updateQueue();
             setComingNextQueueLocked(state);
-            for (size_t i = 0; i < state->queue.size(); ++i) {
-                if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
-                MediaWorkerState::Work queued;
-                queued.due = MediaWorkerState::Clock::now()
-                    + std::chrono::milliseconds(ssc::queuePrefetchDelayMs(i));
-                queued.order = ++state->order; queued.epoch = state->epoch;
-                queued.current = false; queued.track = state->queue[i];
-                queued.creditHost = ssc::station(snapshot.station).host;
-                queued.request = request; queued.cancel = state->cancel;
-                state->work.push_back(queued);
-            }
+            queueMediaPrefetchLocked(state, request, snapshot.station);
             state->cv.notify_all();
             return;
         }
@@ -715,8 +747,17 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
         {
             // Generation changes and publication share the SAME lock. An old
             // publisher can finish before this boundary, but never after it.
-            std::lock_guard<std::mutex> publication(mutex_);
+            ssc::platform::LockGuard publication(mutex_);
             epoch = state->epoch = ++activeMediaEpoch_;
+            fanartKeyRejected_ = false;
+            if (!sameTrackIdentity || state->request.providers != request.providers
+                    || effectiveFanartKey(state->request) != effectiveFanartKey(request)) {
+                for (auto& selected : backdropSelections_) selected = BackdropSelection();
+            }
+            backdropPortrait_ = ssc::wantsPortraitArtwork(request);
+            cyclingEpoch_ = 0;
+            backdropSelection_ = 0;
+            backdropLoading_ = false;
             if (!sameTrackIdentity && !retainQueue) comingNext_.setQueue("", L"", L"");
             mediaDirty_ = false; // discard an old result waiting in the UI mailbox
             titleLogoDirty_ = false;
@@ -730,7 +771,7 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             }
             infoFadeMs_ = snapshot.transition != 0 && clientAnimationsEnabled()
                 ? snapshot.fadeMs : 0;
-            info_.begin(std::to_string(snapshot.station) + "\n" + current.album + "\n"
+            info_.begin(ssc::platform::integerText(snapshot.station) + "\n" + current.album + "\n"
                 + current.track + "\n" + current.artist + (current.stationIdent ? "\nident" : "\ntrack"),
                 GetTickCount(), infoFadeMs_);
         }
@@ -765,16 +806,17 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
         // Publish under the new epoch directly from the scheduler.
         const auto cached = state->cache.find(ssc::mediaCacheKey(current, request));
         if (cached != state->cache.end()) {
-            ssc::DiagnosticLog::instance().event("cache.media.hit", diagnosticTrack(current));
+#if SSC_ENABLE_DEBUG_OVERLAY
+            ssc::DiagnosticLog::instance().event("cache.media.hit", current);
+#endif
             auto& entry = cached->second;
             entry.used = ++state->lru;
             MediaWorkerState::CacheEntry fallback;
             const bool haveFallback = entry.bytes.empty() && cachedBackdrop(state, current, request, fallback);
             const auto& artwork = haveFallback ? fallback : entry;
-            ssc::MediaResult merged = artwork.result;
-            if (!entry.result.certifications.empty()) merged.certifications = entry.result.certifications;
+            const auto& ratings = entry.result.certifications.empty() ? artwork.result : entry.result;
             publishMetadata(epoch, entry.result, current.lengthSeconds);
-            publishMedia(epoch, artwork.bytes, ratingBadges(merged), false,
+            publishMedia(epoch, artwork.bytes, ratingBadges(ratings), false,
                          &artwork.result, animateBackdrop);
             now.backdropPublished = true;
             const auto& logoResult = haveFallback && sameResolverConfig(fallback.request, request)
@@ -786,16 +828,8 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
                                  logoResult.album, immediateCachedTitleLogo);
         }
     }
-    if (!now.backdropPublished || !logoPrepared) state->work.push_back(now);
-    for (size_t i = 0; i < state->queue.size(); ++i) {
-        if (state->queue[i].album.empty() || state->queue[i].stationIdent) continue;
-        MediaWorkerState::Work queued = now;
-        queued.current = false; queued.reload = false; queued.track = state->queue[i];
-        queued.backdropPublished = false;
-        queued.due += std::chrono::milliseconds(ssc::queuePrefetchDelayMs(i));
-        queued.order = ++state->order;
-        state->work.push_back(queued);
-    }
+    if (!now.backdropPublished || !logoPrepared) state->work.push_back(std::move(now));
+    queueMediaPrefetchLocked(state, request, snapshot.station, animateBackdrop, immediateCachedTitleLogo);
     state->cv.notify_all();
 }
 
@@ -803,15 +837,34 @@ void CoverEngine::publishMedia(unsigned long long epoch, const std::string& back
                                const std::vector<d2d::RatingBadge>& ratings, bool imageFailed,
                                const ssc::MediaResult* mediaResult, bool animateBackdrop) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         if (!epoch || activeMediaEpoch_ != epoch) return;
+        if (cyclingEpoch_ == epoch && backdropSelection_) return; // keep the user's selection
+        cyclingMedia_ = mediaResult ? *mediaResult : ssc::MediaResult();
+        cyclingEpoch_ = epoch;
+        backdropIndex_ = 0;
         pendingBackdropBytes_ = backdropBytes;
+        // Viewport changes resolve the provider's default again. Restore the
+        // listener's choice only when it still belongs to this variant's list.
+        const auto& selected = backdropSelections_[backdropPortrait_ ? 1 : 0];
+        if (mediaResult && !selected.bytes.empty()) {
+            for (size_t i = 0; i < cyclingMedia_.backdrops.size(); ++i) {
+                const auto& candidate = cyclingMedia_.backdrops[i];
+                if (candidate.url == selected.result.backdropUrl && candidate.source == selected.result.source) {
+                    backdropIndex_ = i;
+                    pendingBackdropBytes_ = selected.bytes;
+                    mediaResult = &selected.result;
+                    imageFailed = false;
+                    break;
+                }
+            }
+        }
         pendingRatings_ = ratings;
-        pendingMediaClear_ = backdropBytes.empty();
+        pendingMediaClear_ = pendingBackdropBytes_.empty();
         pendingBackdropChange_ = true;
         pendingBackdropAnimate_ = animateBackdrop;
         mediaImageFailed_ = imageFailed;
-        pendingMediaHasTint_ = !backdropBytes.empty() && mediaResult && mediaResult->hasTint;
+        pendingMediaHasTint_ = !pendingBackdropBytes_.empty() && mediaResult && mediaResult->hasTint;
         pendingMediaEpoch_ = epoch;
         if (pendingMediaHasTint_)
             for (int i = 0; i < 3; ++i) pendingMediaTint_[i] = mediaResult->tint[i];
@@ -823,7 +876,7 @@ void CoverEngine::publishMedia(unsigned long long epoch, const std::string& back
 void CoverEngine::publishRatings(unsigned long long epoch,
                                  const std::vector<d2d::RatingBadge>& ratings) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         if (!epoch || activeMediaEpoch_ != epoch) return;
         pendingRatings_ = ratings;
         pendingBackdropChange_ = mediaDirty_ && pendingBackdropChange_;
@@ -846,7 +899,7 @@ void CoverEngine::setComingNextQueueLocked(MediaWorkerState* state) {
     for (const auto& track : state->queue) {
         if (!track.album.empty() && !track.stationIdent) { next = &track; break; }
     }
-    std::lock_guard<std::mutex> lock(mutex_);
+    ssc::platform::LockGuard lock(mutex_);
     if (!next) { comingNext_.setQueue("", L"", L""); return; }
     const std::string identity = queuedTrackIdentity(*next);
     comingNext_.setQueue(identity, toWide(next->album), toWide(next->artist));
@@ -866,7 +919,7 @@ void CoverEngine::setComingNextQueueLocked(MediaWorkerState* state) {
 void CoverEngine::publishQueuedMetadata(unsigned long long epoch, const ssc::TrackInfo& track,
                                         const ssc::MediaResult& result) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         if (!epoch || epoch != activeMediaEpoch_) return;
         comingNext_.resolve(queuedTrackIdentity(track),
             toWide(result.album.empty() ? track.album : result.album),
@@ -876,7 +929,7 @@ void CoverEngine::publishQueuedMetadata(unsigned long long epoch, const ssc::Tra
 }
 
 bool CoverEngine::updateComingNext(DWORD now) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    ssc::platform::LockGuard lock(mutex_);
     const auto frame = comingNext_.advance(settings.comingNext, currentRemaining(), now,
         clientAnimationsEnabled() ? 250 : 0);
     const bool changed = frame != comingNextFrame_;
@@ -892,16 +945,17 @@ void CoverEngine::publishMetadata(unsigned long long epoch, const ssc::MediaResu
     if (!result.track.empty()) title += " - " + result.track;
     if (lengthSeconds > 0) {
         const int mm = lengthSeconds / 60, ss = lengthSeconds % 60;
-        const std::string duration = "(" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "")
-            + std::to_string(ss) + ")";
+        const std::string duration = "(" + ssc::platform::integerText(mm) + ":" + (ss < 10 ? "0" : "")
+            + ssc::platform::integerText(ss) + ")";
         title += " " + duration;
         track += (track.empty() ? "" : " ") + duration;
     }
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         if (!epoch || activeMediaEpoch_ != epoch) return;
         info_.settle(toWide(title), toWide(result.artist), result.hasMetadata,
             GetTickCount(), infoFadeMs_, toWide(result.album), toWide(track));
+        fanartKeyRejected_ = result.fanartKeyRejected;
     }
     invalidate();
 }
@@ -914,7 +968,7 @@ void CoverEngine::clearMedia(unsigned long long epoch) {
 void CoverEngine::publishTitleLogo(unsigned long long epoch, const std::string& bytes,
                                    const std::string& album, bool immediate) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         if (!epoch || epoch != activeMediaEpoch_) return;
         pendingTitleLogoBytes_ = bytes; pendingTitleLogoAlbum_ = album;
         pendingTitleLogoEpoch_ = epoch; pendingTitleLogoImmediate_ = immediate;
@@ -924,7 +978,7 @@ void CoverEngine::publishTitleLogo(unsigned long long epoch, const std::string& 
 }
 
 void CoverEngine::start(bool autoAdvance) {
-    std::lock_guard<std::mutex> life(monitorLifecycle_);
+    ssc::platform::LockGuard life(monitorLifecycle_);
     if (monitor_ || demoOn_) return;
     autoAdvance_ = autoAdvance;
     startMediaWorker();
@@ -932,7 +986,7 @@ void CoverEngine::start(bool autoAdvance) {
     // covers instead of a station. Everything downstream is the unchanged real engine.
     if (ssc::Demo::active() && demo_.load()) {
         demoOn_ = true;
-        logLine("demo mode: " + std::to_string(demo_.count()) + " covers");
+        logLine("demo mode: " + ssc::platform::integerText(demo_.count()) + " covers");
         showDemoFrame();
         return;
     }
@@ -980,10 +1034,10 @@ void CoverEngine::setStation(int index) {
     // that silently clamp to 0 (SST) and show SST covers for something unrecognized.
     // Any out-of-range index is ignored; the current station stays untouched.
     if (index < 0 || index >= ssc::kStationCount) {
-        logLine("setStation: ignoring invalid index " + std::to_string(index));
+        logLine("setStation: ignoring invalid index " + ssc::platform::integerText(index));
         return;
     }
-    std::lock_guard<std::mutex> life(monitorLifecycle_);
+    ssc::platform::LockGuard life(monitorLifecycle_);
     if (index == settings.station && monitor_) return; // already on this station
     settings.station = index;
     if (!monitor_) return; // not started yet; start() will pick up settings.station
@@ -993,12 +1047,12 @@ void CoverEngine::setStation(int index) {
     // monitor's background thread before we tear it down.
     monitor_->stop(); delete monitor_; monitor_ = nullptr;
     if (media_) {
-        std::lock_guard<std::mutex> lock(media_->mutex);
+        ssc::platform::LockGuard lock(media_->mutex);
         media_->settingsSnapshot = settings;
         scheduleMediaLocked(media_, ssc::TrackInfo(), std::vector<ssc::TrackInfo>(), true);
     }
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         coverBytes_.clear(); dirty_ = false;
         shownUrl_.clear(); shownBytes_.clear(); shownStation_ = -1;
         nextUrl_.clear(); nextBytes_.clear();
@@ -1012,9 +1066,11 @@ void CoverEngine::setStation(int index) {
 }
 
 void CoverEngine::stop() {
+#if SSC_ENABLE_DEBUG_OVERLAY
     debugOverlay_.attach(nullptr, {});
+#endif
     {
-        std::lock_guard<std::mutex> life(monitorLifecycle_);
+        ssc::platform::LockGuard life(monitorLifecycle_);
         if (monitor_) { monitor_->stop(); delete monitor_; monitor_ = nullptr; }
         demoOn_ = false;
     }
@@ -1035,14 +1091,14 @@ void CoverEngine::demoNext() {
 void CoverEngine::showDemoFrame() {
     const ssc::DemoFrame& f = demo_.current();
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         coverBytes_ = f.bytes; dirty_ = true;
         std::string t = f.album;
         if (!f.album.empty() && !f.track.empty()) t = f.album + " - " + f.track;
         else if (!f.track.empty())                t = f.track;
         if (!t.empty() && f.seconds > 0) {
             const int mm = f.seconds / 60, ss = f.seconds % 60;
-            t += " (" + std::to_string(mm) + ":" + (ss < 10 ? "0" : "") + std::to_string(ss) + ")";
+            t += " (" + ssc::platform::integerText(mm) + ":" + (ss < 10 ? "0" : "") + ssc::platform::integerText(ss) + ")";
         }
         const int duration = settings.transition != 0 && clientAnimationsEnabled() ? settings.fadeMs : 0;
         info_.begin("demo\n" + t + "\n" + f.artist, GetTickCount(), duration);
@@ -1082,7 +1138,9 @@ void CoverEngine::notifyNewCover() const {
 void CoverEngine::setWindow(HWND h) {
     if (HWND w = hwnd_.load()) KillTimer(w, kHeartbeat);
     hwnd_.store(h);
+#if SSC_ENABLE_DEBUG_OVERLAY
     debugOverlay_.attach(h, [this] { return debugSnapshot(); });
+#endif
     if (!h) return;
     ratingPointerInside_ = false;
     ratingPointerAutoHide_ = false;
@@ -1093,7 +1151,7 @@ void CoverEngine::setWindow(HWND h) {
     // Show whatever we have: if a cover is pending, decode it now; otherwise ask the
     // monitor to (re)fetch the current one for this freshly-created window.
     bool havePending, haveMediaPending;
-    { std::lock_guard<std::mutex> lock(mutex_); havePending = !coverBytes_.empty(); if (havePending) dirty_ = true;
+    { ssc::platform::LockGuard lock(mutex_); havePending = !coverBytes_.empty(); if (havePending) dirty_ = true;
       haveMediaPending = mediaDirty_; }
     if (havePending) PostMessageA(h, SSC_WM_NEWCOVER, 0, 0);
     else if (monitor_) monitor_->refresh();
@@ -1107,64 +1165,63 @@ void CoverEngine::setWindow(HWND h) {
     InvalidateRect(h, nullptr, FALSE);
 }
 
-std::string CoverEngine::debugSnapshot() {
+#if SSC_ENABLE_DEBUG_OVERLAY
+ssc::JsonValue CoverEngine::debugSnapshot() {
     using namespace ssc;
     JsonValue out = DiagnosticLog::instance().snapshot();
     auto& root = out.object;
-    root["client"] = diagnosticString(g_logBase);
-    root["build"] = diagnosticString(std::string(__DATE__) + " " + __TIME__);
-    root["resolverVersion"] = diagnosticString(MediaResolverConfig().resolverVersion);
-    root["station"] = diagnosticString(ssc::station(settings.station).host);
+    diagnosticSetString(root, "client", g_logBase);
+    diagnosticSetString(root, "build", std::string(__DATE__) + " " + __TIME__);
+    diagnosticSetString(root, "resolverVersion", MediaResolverConfig().resolverVersion);
+    diagnosticSetString(root, "station", ssc::station(settings.station).host);
     JsonValue display = diagnosticObject(); RECT r = {}; GetClientRect(hwnd_.load(), &r);
-    display.object["width"] = diagnosticNumber(r.right); display.object["height"] = diagnosticNumber(r.bottom);
-    display.object["orientation"] = diagnosticString(r.bottom > r.right ? "portrait" : "landscape");
-    display.object["resolution"] = diagnosticString(r.right > 1920 || r.bottom > 1080 ? "4k" : "hd");
-    display.object["layout"] = diagnosticString(settings.layout ? "poster" : "fill");
-    display.object["renderer"] = diagnosticString("Direct2D");
+    diagnosticSetNumber(display.object, "width", r.right); diagnosticSetNumber(display.object, "height", r.bottom);
+    diagnosticSetString(display.object, "orientation", r.bottom > r.right ? "portrait" : "landscape");
+    diagnosticSetString(display.object, "resolution", r.right > 1920 || r.bottom > 1080 ? "4k" : "hd");
+    diagnosticSetString(display.object, "layout", settings.layout ? "poster" : "fill");
+    diagnosticSetString(display.object, "renderer", "Direct2D");
     const auto renderer = d2d::liveDiagnostics();
-    display.object["coverWidth"] = diagnosticNumber(renderer.coverWidth);
-    display.object["coverHeight"] = diagnosticNumber(renderer.coverHeight);
-    display.object["backdropWidth"] = diagnosticNumber(renderer.backdropWidth);
-    display.object["backdropHeight"] = diagnosticNumber(renderer.backdropHeight);
-    display.object["decodedCacheBytes"] = diagnosticNumber(static_cast<double>(renderer.cacheBytes));
-    display.object["decodedCacheEntries"] = diagnosticNumber(static_cast<double>(renderer.cacheEntries));
-    display.object["blurBytes"] = diagnosticNumber(static_cast<double>(renderer.blurBytes));
-    display.object["backdropVisible"] = diagnosticBool(haveBackdrop_);
-    display.object["remainingSeconds"] = diagnosticNumber(currentRemaining());
+    diagnosticSetNumber(display.object, "coverWidth", renderer.coverWidth);
+    diagnosticSetNumber(display.object, "coverHeight", renderer.coverHeight);
+    diagnosticSetNumber(display.object, "backdropWidth", renderer.backdropWidth);
+    diagnosticSetNumber(display.object, "backdropHeight", renderer.backdropHeight);
+    diagnosticSetNumber(display.object, "decodedCacheBytes", static_cast<double>(renderer.cacheBytes));
+    diagnosticSetNumber(display.object, "decodedCacheEntries", static_cast<double>(renderer.cacheEntries));
+    diagnosticSetNumber(display.object, "blurBytes", static_cast<double>(renderer.blurBytes));
+    diagnosticSetBool(display.object, "backdropVisible", haveBackdrop_);
+    diagnosticSetNumber(display.object, "remainingSeconds", currentRemaining());
     BOOL motion = TRUE; SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &motion, 0);
-    display.object["reducedMotion"] = diagnosticBool(!motion);
+    diagnosticSetBool(display.object, "reducedMotion", !motion);
     root["display"] = display;
     JsonValue options = diagnosticObject();
-    options.object["backdrops"] = diagnosticBool(settings.backdrops);
-    options.object["titleLogos"] = diagnosticBool(settings.titleLogos);
-    options.object["ratings"] = diagnosticBool(settings.ratings);
-    options.object["providers"] = diagnosticString(settings.mediaProviders);
-    options.object["hideCoverWithBackdrop"] = diagnosticBool(settings.hideCoverWithBackdrop);
-    options.object["personalAccessConfigured"] = diagnosticBool(!settings.fanartClientKey.empty());
+    diagnosticSetBool(options.object, "backdrops", settings.backdrops);
+    diagnosticSetBool(options.object, "titleLogos", settings.titleLogos);
+    diagnosticSetBool(options.object, "ratings", settings.ratings);
+    diagnosticSetString(options.object, "providers", settings.mediaProviders);
+    diagnosticSetBool(options.object, "hideCoverWithBackdrop", settings.hideCoverWithBackdrop);
+    diagnosticSetBool(options.object, "personalAccessConfigured", !settings.fanartClientKey.empty());
     root["settings"] = options;
     if (media_) {
-        std::lock_guard<std::mutex> lock(media_->mutex);
+        ssc::platform::LockGuard lock(media_->mutex);
         auto track = [](const TrackInfo& t) {
             JsonValue value = diagnosticObject();
-            value.object["album"] = diagnosticString(t.album); value.object["artist"] = diagnosticString(t.artist);
-            value.object["track"] = diagnosticString(t.track); value.object["coverUrl"] = diagnosticString(t.coverUrl);
-            value.object["originalCoverUrl"] = diagnosticString(t.originalCover);
-            value.object["thumbnailUrl"] = diagnosticString(t.thumbnailUrl);
-            value.object["lengthSeconds"] = diagnosticNumber(t.lengthSeconds); return value;
+            diagnosticSetString(value.object, "album", t.album); diagnosticSetString(value.object, "artist", t.artist);
+            diagnosticSetString(value.object, "track", t.track); diagnosticSetString(value.object, "coverUrl", t.coverUrl);
+            diagnosticSetString(value.object, "originalCoverUrl", t.originalCover);
+            diagnosticSetString(value.object, "thumbnailUrl", t.thumbnailUrl);
+            diagnosticSetNumber(value.object, "lengthSeconds", t.lengthSeconds); return value;
         };
         root["track"] = track(media_->current);
         root["queue"] = diagnosticArray();
         for (const auto& t : media_->queue) root["queue"].array.push_back(track(t));
         JsonValue cache = diagnosticObject();
-        cache.object["mediaEntries"] = diagnosticNumber(static_cast<double>(media_->cache.size()));
-        cache.object["logoEntries"] = diagnosticNumber(static_cast<double>(media_->titleLogoCache.size()));
-        cache.object["pendingWork"] = diagnosticNumber(static_cast<double>(media_->work.size()));
-        cache.object["epoch"] = diagnosticNumber(static_cast<double>(media_->epoch));
-        cache.object["expiry"] = diagnosticString("session / bounded LRU");
+        diagnosticSetNumber(cache.object, "mediaEntries", static_cast<double>(media_->cache.size()));
+        diagnosticSetNumber(cache.object, "logoEntries", static_cast<double>(media_->titleLogoCache.size()));
+        diagnosticSetNumber(cache.object, "pendingWork", static_cast<double>(media_->work.size()));
+        diagnosticSetNumber(cache.object, "epoch", static_cast<double>(media_->epoch));
+        diagnosticSetString(cache.object, "expiry", "session / bounded LRU");
         root["localCache"] = cache;
-        std::vector<JsonValue> upcoming;
-        for (const auto& queued : media_->queue) upcoming.push_back(diagnosticTrack(queued));
-        auto timeline = media_->timeline.entries(upcoming, currentRemaining());
+        auto timeline = media_->timeline.entries(media_->queue, currentRemaining());
         for (auto& item : timeline.array) {
             auto prepared = diagnosticObject();
             auto artworkDetails = diagnosticObject();
@@ -1178,29 +1235,29 @@ std::string CoverEngine::debugSnapshot() {
                 ++variants; metadata = metadata || cached.result.hasMetadata;
                 artwork = artwork || cached.result.hasBackdrop(); image = image || !cached.bytes.empty();
                 auto resolved = diagnosticObject();
-                resolved.object["album"] = diagnosticString(cached.result.album);
-                resolved.object["track"] = diagnosticString(cached.result.track);
-                resolved.object["artist"] = diagnosticString(cached.result.artist);
-                resolved.object["backdropUrl"] = diagnosticString(cached.result.backdropUrl);
-                resolved.object["logoUrl"] = diagnosticString(cached.result.titleLogoUrl);
-                resolved.object["source"] = diagnosticString(cached.result.source);
-                resolved.object["status"] = diagnosticString(cached.result.status == MediaResult::Hit ? "hit"
+                diagnosticSetString(resolved.object, "album", cached.result.album);
+                diagnosticSetString(resolved.object, "track", cached.result.track);
+                diagnosticSetString(resolved.object, "artist", cached.result.artist);
+                diagnosticSetString(resolved.object, "backdropUrl", cached.result.backdropUrl);
+                diagnosticSetString(resolved.object, "logoUrl", cached.result.titleLogoUrl);
+                diagnosticSetString(resolved.object, "source", cached.result.source);
+                diagnosticSetString(resolved.object, "status", cached.result.status == MediaResult::Hit ? "hit"
                     : cached.result.status == MediaResult::Miss ? "miss" : "failure");
-                resolved.object["orientation"] = diagnosticString(wantsPortraitArtwork(cached.request) ? "portrait" : "landscape");
-                resolved.object["resolution"] = diagnosticString(wants4kArtwork(cached.request) ? "4k" : "hd");
-                resolved.object["imageBytes"] = diagnosticNumber(static_cast<double>(cached.bytes.size()));
+                diagnosticSetString(resolved.object, "orientation", wantsPortraitArtwork(cached.request) ? "portrait" : "landscape");
+                diagnosticSetString(resolved.object, "resolution", wants4kArtwork(cached.request) ? "4k" : "hd");
+                diagnosticSetNumber(resolved.object, "imageBytes", static_cast<double>(cached.bytes.size()));
                 resolved.object["tint"] = diagnosticArray();
                 if (cached.result.hasTint) for (const auto channel : cached.result.tint)
                     resolved.object["tint"].array.push_back(diagnosticNumber(channel));
                 resolvedVariants.array.push_back(resolved);
             }
-            prepared.object["metadata"] = diagnosticBool(metadata);
-            prepared.object["artwork"] = diagnosticBool(artwork);
-            prepared.object["imageBytes"] = diagnosticBool(image);
-            prepared.object["variants"] = diagnosticNumber(variants);
+            diagnosticSetBool(prepared.object, "metadata", metadata);
+            diagnosticSetBool(prepared.object, "artwork", artwork);
+            diagnosticSetBool(prepared.object, "imageBytes", image);
+            diagnosticSetNumber(prepared.object, "variants", variants);
             item.object["cache"] = prepared;
             artworkDetails.object["variants"] = resolvedVariants;
-            artworkDetails.object["status"] = diagnosticString(variants ? "Cached results for this track" : "No cached resolver result for this track");
+            diagnosticSetString(artworkDetails.object, "status", variants ? "Cached results for this track" : "No cached resolver result for this track");
             item.object["artwork"] = artworkDetails;
         }
         root["timeline"] = timeline;
@@ -1208,23 +1265,24 @@ std::string CoverEngine::debugSnapshot() {
         if (found != media_->cache.end()) {
             const auto& result = found->second.result;
             JsonValue resolved = diagnosticObject();
-            resolved.object["album"] = diagnosticString(result.album);
-            resolved.object["artist"] = diagnosticString(result.artist); resolved.object["track"] = diagnosticString(result.track);
-            resolved.object["backdropUrl"] = diagnosticString(result.backdropUrl);
-            resolved.object["logoUrl"] = diagnosticString(result.titleLogoUrl);
-            resolved.object["source"] = diagnosticString(result.source);
-            resolved.object["status"] = diagnosticString(result.status == MediaResult::Hit ? "hit" : result.status == MediaResult::Miss ? "miss" : "failure");
+            diagnosticSetString(resolved.object, "album", result.album);
+            diagnosticSetString(resolved.object, "artist", result.artist); diagnosticSetString(resolved.object, "track", result.track);
+            diagnosticSetString(resolved.object, "backdropUrl", result.backdropUrl);
+            diagnosticSetString(resolved.object, "logoUrl", result.titleLogoUrl);
+            diagnosticSetString(resolved.object, "source", result.source);
+            diagnosticSetString(resolved.object, "status", result.status == MediaResult::Hit ? "hit" : result.status == MediaResult::Miss ? "miss" : "failure");
             root["resolved"] = resolved;
         }
     }
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        root["shownCoverUrl"] = diagnosticString(shownUrl_);
-        root["preloadedCoverUrl"] = diagnosticString(nextUrl_);
-        root["shownCoverBytes"] = diagnosticNumber(static_cast<double>(shownBytes_.size()));
+        ssc::platform::LockGuard lock(mutex_);
+        diagnosticSetString(root, "shownCoverUrl", shownUrl_);
+        diagnosticSetString(root, "preloadedCoverUrl", nextUrl_);
+        diagnosticSetNumber(root, "shownCoverBytes", static_cast<double>(shownBytes_.size()));
     }
-    return diagnosticJson(diagnosticSanitize(out));
+    return diagnosticSanitize(std::move(out));
 }
+#endif
 
 // --- monitor callback (background thread) -----------------------------------
 void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& info) {
@@ -1232,7 +1290,7 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
     // the selected station logo. The URL is a project-owned constant, never feed data.
     int station = 0;
     if (media_) {
-        std::lock_guard<std::mutex> lock(media_->mutex);
+        ssc::platform::LockGuard lock(media_->mutex);
         station = media_->settingsSnapshot.station;
     }
     const std::string displayUrl = url.empty() ? ssc::station(station).logoUrl : url;
@@ -1242,7 +1300,7 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
     // is attached below without restarting this request.
     scheduleMedia(info, std::vector<ssc::TrackInfo>());
     if (info.stationIdent) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         info_.settle(toWide(ssc::stationIdentAlbumLabel(info.album, station)),
             toWide(info.artist), false, GetTickCount(), infoFadeMs_);
     }
@@ -1256,7 +1314,7 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
     bool alreadyShown;
     std::string img;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         alreadyShown = (displayUrl == shownUrl_);
         if (displayUrl == nextUrl_ && !nextBytes_.empty()) img = nextBytes_;
     }
@@ -1265,7 +1323,7 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
             loading_.store(true);
             invalidate();
             img = downloadCover(displayUrl, cancelTok);
-            logLine("downloaded current " + std::to_string(img.size()) + " bytes");
+            logLine("downloaded current " + ssc::platform::integerText(img.size()) + " bytes");
         } else {
             logLine("current already preloaded, no download");
         }
@@ -1274,10 +1332,10 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
             if (coverRetryUrl_ != displayUrl) { coverRetryUrl_ = displayUrl; coverRetryFailures_ = 0; }
             const int delay = ssc::coverRetryDelayMs(++coverRetryFailures_);
             coverRetryAt_.store(GetTickCount() + (DWORD)delay);
-            logLine("current cover retry in " + std::to_string(delay) + " ms");
+            logLine("current cover retry in " + ssc::platform::integerText(delay) + " ms");
             invalidate();
         } else {
-            { std::lock_guard<std::mutex> lock(mutex_); coverBytes_ = img; dirty_ = true;
+            { ssc::platform::LockGuard lock(mutex_); coverBytes_ = img; dirty_ = true;
                 shownUrl_ = displayUrl; shownBytes_ = img; shownStation_ = station; }
             coverRetryFailures_ = 0; coverRetryUrl_.clear(); coverRetryAt_.store(0);
             notifyNewCover();
@@ -1289,7 +1347,7 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
     std::vector<ssc::TrackInfo> queue;
     bool haveQueueSnapshot = false;
     if (media_) {
-        std::lock_guard<std::mutex> lock(media_->mutex);
+        ssc::platform::LockGuard lock(media_->mutex);
         haveQueueSnapshot = media_->queueSnapshotReady;
         if (haveQueueSnapshot) queue = media_->queue;
     }
@@ -1302,12 +1360,12 @@ void CoverEngine::onCoverChanged(const std::string& url, const ssc::TrackInfo& i
         const std::string nextUrl = queue[0].coverUrl;
         const int nextLen = queue[0].lengthSeconds;
         bool haveIt;
-        { std::lock_guard<std::mutex> lock(mutex_); haveIt = (nextUrl == nextUrl_ && !nextBytes_.empty()); }
+        { ssc::platform::LockGuard lock(mutex_); haveIt = (nextUrl == nextUrl_ && !nextBytes_.empty()); }
         if (!haveIt) {
             std::string nextImg = downloadCover(nextUrl, cancelTok);
-            logLine("preloaded next " + std::to_string(nextImg.size()) + " bytes, len=" +
-                    std::to_string(nextLen) + "s: " + nextUrl);
-            std::lock_guard<std::mutex> lock(mutex_);
+            logLine("preloaded next " + ssc::platform::integerText(nextImg.size()) + " bytes, len=" +
+                    ssc::platform::integerText(nextLen) + "s: " + nextUrl);
+            ssc::platform::LockGuard lock(mutex_);
             nextUrl_ = nextUrl;
             nextBytes_.swap(nextImg);
         }
@@ -1394,7 +1452,7 @@ void CoverEngine::onPointerLeave(HWND h) {
 
 void CoverEngine::repaint() {
     if (media_) {
-        std::lock_guard<std::mutex> lock(media_->mutex);
+        ssc::platform::LockGuard lock(media_->mutex);
         media_->settingsSnapshot = settings;
         // Snapshot + reschedule are one transaction: a monitor callback cannot
         // insert a newer track between reading current and scheduling it again.
@@ -1413,7 +1471,19 @@ bool CoverEngine::albumToggleHitTest(HWND h, int x, int y) const {
 bool CoverEngine::albumToggleAtCursor(HWND h) const {
     POINT point = {};
     return GetCursorPos(&point) && ScreenToClient(h, &point)
-        && albumToggleHitTest(h, point.x, point.y);
+        && (albumToggleHitTest(h, point.x, point.y) || backdropHitTest(h, point.x, point.y));
+}
+
+bool CoverEngine::fanartHintHitTest(HWND h, int x, int y) const {
+    ssc::platform::LockGuard lock(mutex_);
+    return h == hwnd_.load() && settings.station == 0 && settings.backdrops
+        && fanartKeyRejected_ && d2d::fanartHintHitTest(h, x, y);
+}
+
+bool CoverEngine::fanartHintAtCursor(HWND h) const {
+    POINT point = {};
+    return GetCursorPos(&point) && ScreenToClient(h, &point)
+        && fanartHintHitTest(h, point.x, point.y);
 }
 
 bool CoverEngine::onAlbumClick(HWND h, int x, int y) {
@@ -1423,16 +1493,115 @@ bool CoverEngine::onAlbumClick(HWND h, int x, int y) {
     return true;
 }
 
+bool CoverEngine::cycleBackdrop(HWND h, int direction) {
+    if (h != hwnd_.load() || !media_ || !settings.backdrops || !direction) return false;
+    ssc::platform::LockGuard workLock(media_->mutex);
+    ssc::platform::LockGuard lock(mutex_);
+    const size_t count = cyclingMedia_.backdrops.size();
+    if (cyclingEpoch_ != activeMediaEpoch_ || count < 2) return false;
+    backdropIndex_ = (backdropIndex_ + count + (direction < 0 ? -1 : 1)) % count;
+    MediaWorkerState::Work item;
+    item.kind = MediaWorkerState::Work::Cycle;
+    item.selection = ++backdropSelection_;
+    item.epoch = activeMediaEpoch_;
+    item.current = true;
+    item.cancel = media_->cancel;
+    item.result = std::make_shared<ssc::MediaResult>(cyclingMedia_);
+    item.result->backdropUrl = cyclingMedia_.backdrops[backdropIndex_].url;
+    item.result->source = cyclingMedia_.backdrops[backdropIndex_].source;
+    if (backdropIndex_) item.result->hasTint = false;
+    item.due = MediaWorkerState::Clock::now() - std::chrono::hours(1);
+    item.order = ++media_->order;
+    media_->work.erase(std::remove_if(media_->work.begin(), media_->work.end(),
+        [](const MediaWorkerState::Work& work) { return work.kind == MediaWorkerState::Work::Cycle; }), media_->work.end());
+    media_->work.push_back(std::move(item));
+    mediaDirty_ = false;
+    const bool fade = transitionAnimates() && h && clientAnimationsEnabled();
+    if (!backdropLoading_) {
+        d2d::clearBackdrop(fade);
+        mediaFading_ = mediaFadePending_ = fade;
+    }
+    backdropLoading_ = true;
+    media_->cv.notify_all();
+    invalidate();
+    return true;
+}
+
+void CoverEngine::publishCycledBackdrop(unsigned long long epoch, unsigned long long selection,
+                                       const std::string& bytes, const ssc::MediaResult& result) {
+    ssc::platform::LockGuard lock(mutex_);
+    if (activeMediaEpoch_ != epoch || backdropSelection_ != selection) return;
+    if (!bytes.empty()) {
+        auto& selected = backdropSelections_[backdropPortrait_ ? 1 : 0];
+        selected.result = result;
+        selected.bytes = bytes;
+    }
+    pendingBackdropBytes_ = bytes;
+    pendingMediaEpoch_ = epoch;
+    pendingMediaClear_ = bytes.empty();
+    pendingBackdropChange_ = pendingBackdropAnimate_ = true;
+    pendingRatings_ = ratingBadges(result);
+    pendingMediaHasTint_ = result.hasTint;
+    for (int i = 0; i < 3; ++i) pendingMediaTint_[i] = result.tint[i];
+    mediaImageFailed_ = bytes.empty();
+    mediaDirty_ = true;
+    if (HWND h = hwnd_.load()) PostMessageA(h, SSC_WM_NEWMEDIA, 0, 0);
+}
+
+bool CoverEngine::onBackdropKey(HWND h, unsigned key) {
+    if ((key != VK_LEFT && key != VK_RIGHT) || GetKeyState(VK_CONTROL) < 0
+            || GetKeyState(VK_MENU) < 0 || GetKeyState(VK_SHIFT) < 0
+            || GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0) return false;
+    return cycleBackdrop(h, key == VK_LEFT ? -1 : 1);
+}
+
+int CoverEngine::backdropHitTest(HWND h, int x, int y) const {
+    ssc::platform::LockGuard lock(mutex_);
+    if (!h || h != hwnd_.load() || !settings.backdrops || !ratingPointerInside_
+            || (ratingPointerAutoHide_ && (LONG)(ratingPointerVisibleUntil_ - GetTickCount()) <= 0)
+            || cyclingEpoch_ != activeMediaEpoch_ || cyclingMedia_.backdrops.size() < 2) return 0;
+    return d2d::backdropNavigationHitTest(h, x, y);
+}
+
+bool CoverEngine::onBackdropClick(HWND h, int x, int y) {
+    const int direction = backdropHitTest(h, x, y);
+    return direction && cycleBackdrop(h, direction);
+}
+
+float CoverEngine::backdropNavigationAlpha(DWORD now) {
+    bool available;
+    { ssc::platform::LockGuard lock(mutex_);
+      available = settings.backdrops && cyclingEpoch_ == activeMediaEpoch_ && cyclingMedia_.backdrops.size() > 1; }
+    const bool visible = available && ratingPointerInside_
+        && (!ratingPointerAutoHide_ || (LONG)(ratingPointerVisibleUntil_ - now) > 0);
+    const float target = visible ? 1.0f : 0.0f;
+    const float step = navigationTick_ ? (now - navigationTick_) / 200.0f : 0;
+    navigationTick_ = now;
+    if (!clientAnimationsEnabled()) navigationAlpha_ = target;
+    else if (navigationAlpha_ < target) navigationAlpha_ = (std::min)(target, navigationAlpha_ + step);
+    else navigationAlpha_ = (std::max)(target, navigationAlpha_ - step);
+    return navigationAlpha_;
+}
+
+float CoverEngine::fanartHintOpacity(DWORD now) {
+    ssc::platform::LockGuard lock(mutex_);
+    const bool visible = settings.station == 0 && settings.backdrops && fanartKeyRejected_;
+    const int fadeMs = clientAnimationsEnabled() ? 200 : 0;
+    fanartHint_.begin(visible ? "fanart-key-rejected" : "", now, fadeMs);
+    if (visible) fanartHint_.settle(L"fanart.tv key rejected", L"Check provider settings", false, now, fadeMs);
+    return fanartHintAlpha_ = fanartHint_.advance(now, fadeMs);
+}
+
 void CoverEngine::retryMedia() {
     if (!media_) return;
-    std::lock_guard<std::mutex> lock(media_->mutex);
+    ssc::platform::LockGuard lock(media_->mutex);
     media_->settingsSnapshot = settings;
     if (!media_->current.album.empty())
         scheduleMediaLocked(media_, media_->current, media_->queue, true);
 }
 
 bool CoverEngine::currentCover(std::string& out, int stationIndex) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    ssc::platform::LockGuard lock(mutex_);
     out.clear();
     if (stationIndex < 0 || stationIndex != shownStation_ || shownBytes_.empty()) return false;
     out = shownBytes_;
@@ -1443,7 +1612,7 @@ bool CoverEngine::currentCover(std::string& out, int stationIndex) {
 void CoverEngine::decodePending(HWND h) {
     std::string bytes;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         if (dirty_) { bytes.swap(coverBytes_); dirty_ = false; }
     }
     if (bytes.empty()) return;
@@ -1453,7 +1622,7 @@ void CoverEngine::decodePending(HWND h) {
     if (fade) { fadeStart_ = GetTickCount(); fading_ = true; } // heartbeat drives the fade
     haveCover_ = true;
     loading_.store(false);
-    logLine("cover decoded + shown (" + std::to_string(bytes.size()) + " bytes)");
+    logLine("cover decoded + shown (" + ssc::platform::integerText(bytes.size()) + " bytes)");
     if (h) InvalidateRect(h, nullptr, FALSE);
 }
 
@@ -1462,7 +1631,7 @@ void CoverEngine::onNewCover(HWND h) { if (h == hwnd_.load()) decodePending(h); 
 void CoverEngine::decodePendingMedia(HWND h) {
     // Validate AND commit under the publication lock. Epoch advancement cannot
     // race the renderer after the pending payload has been taken from its mailbox.
-    std::lock_guard<std::mutex> lock(mutex_);
+    ssc::platform::LockGuard lock(mutex_);
     if (titleLogoDirty_) {
         titleLogoDirty_ = false;
         if (pendingTitleLogoEpoch_ == activeMediaEpoch_)
@@ -1495,6 +1664,7 @@ void CoverEngine::decodePendingMedia(HWND h) {
     const bool animate = transitionAnimates() && h && clientAnimationsEnabled();
     const bool backdropFade = animate && animateBackdrop;
     if (backdropChange) {
+        if (!clear) backdropLoading_ = false;
         if (clear) d2d::clearBackdrop(backdropFade);
         else d2d::setBackdrop(bytes.data(), bytes.size(), backdropFade, hasTint ? tint : nullptr);
     }
@@ -1577,7 +1747,7 @@ void CoverEngine::onPaint(HWND h) {
     const wchar_t* status = loading_.load() ? L"Loading cover..." : nullptr; // no "Playing" label
     std::wstring title, artist, album, track;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        ssc::platform::LockGuard lock(mutex_);
         infoAlpha = info_.advance(now, settings.transition != 0 && clientAnimationsEnabled()
             ? settings.fadeMs : 0);
         if (poster) {
@@ -1587,12 +1757,15 @@ void CoverEngine::onPaint(HWND h) {
     }
     d2d::setPosterBlur(settings.posterBlur);
     d2d::setCoverRadius(settings.borderRadius);
+    { ssc::platform::LockGuard lock(mutex_);
+      d2d::setBackdropLoading(backdropLoading_ && settings.hideCoverWithBackdrop); }
+    d2d::setBackdropNavigationOpacity(backdropNavigationAlpha(now));
     d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(),
                 settings.rollDigits && clientAnimationsEnabled(), status,
                 settings.layout, title.c_str(), artist.c_str(), mediaAlpha,
                 settings.hideCoverWithBackdrop, ratingAlpha, ratingOpacity, infoAlpha,
                 album.c_str(), track.c_str(), transitionAnimates() && clientAnimationsEnabled() ? settings.fadeMs : 0,
-                &comingNextFrame_);
+                &comingNextFrame_, fanartHintOpacity(now));
     if (mediaFading_ && mediaFadePending_ && d2d::backdropReady()) {
         mediaFadePending_ = false;
         mediaFadeStart_ = GetTickCount();
@@ -1607,6 +1780,10 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     if (id != kHeartbeat || h != hwnd_.load()) return;
     updateRatingVisibility(GetTickCount());
     const bool comingNextChanged = updateComingNext(GetTickCount());
+    const float oldNavigationAlpha = navigationAlpha_;
+    backdropNavigationAlpha(GetTickCount());
+    const float oldFanartHintAlpha = fanartHintAlpha_;
+    fanartHintOpacity(GetTickCount());
     // Demo auto-advance: when a demo frame's countdown expires, roll to the next cover
     // (which crossfades). Frames with seconds==0 have no countdown, so they stay put.
     if (demoOn_ && demo_.current().seconds > 0 && currentRemaining() == 0) { demoNext(); return; }
@@ -1628,9 +1805,10 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
         if (portrait != mediaPortrait_.load() || resolution != mediaResolutionClass_.load()) repaint();
     }
     bool infoAnimating;
-    { std::lock_guard<std::mutex> lock(mutex_); infoAnimating = info_.animating(); }
+    { ssc::platform::LockGuard lock(mutex_); infoAnimating = info_.animating(); }
     if (fading_ || mediaFading_ || infoAnimating || ratingFading_ || d2d::titleLogoAnimating()
-            || ratingVisibilityAnimating_ || comingNextChanged || loading_.load()
+            || ratingVisibilityAnimating_ || navigationAlpha_ != oldNavigationAlpha
+            || fanartHintAlpha_ != oldFanartHintAlpha || comingNextChanged || loading_.load()
             || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);
 }

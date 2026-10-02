@@ -1,5 +1,8 @@
 #include "image_probe.h"
+#include "debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 #include "diagnostics.h"
+#endif
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -18,7 +21,9 @@ template <class T> void release(T*& value) { if (value) { value->Release(); valu
 namespace ssc {
 
 bool decodableImage(const std::string& bytes, const std::string& sourceUrl) {
+#if SSC_ENABLE_DEBUG_OVERLAY
     const auto started = std::chrono::steady_clock::now();
+#endif
     if (bytes.empty() || bytes.size() > 16u * 1024u * 1024u || bytes.size() > MAXDWORD) return false;
     const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     const bool uninitialize = com == S_OK || com == S_FALSE;
@@ -51,14 +56,10 @@ bool decodableImage(const std::string& bytes, const std::string& sourceUrl) {
     }
     release(converter); release(frame); release(decoder); release(stream); release(factory);
     if (uninitialize) CoUninitialize();
-    JsonValue details = diagnosticObject();
-    details.object["url"] = diagnosticString(sourceUrl);
-    details.object["bytes"] = diagnosticNumber(static_cast<double>(bytes.size()));
-    details.object["width"] = width ? diagnosticNumber(width) : JsonValue();
-    details.object["height"] = height ? diagnosticNumber(height) : JsonValue();
-    details.object["decodeMs"] = diagnosticNumber(diagnosticMilliseconds(started));
-    details.object["valid"] = diagnosticBool(valid);
-    DiagnosticLog::instance().event("image.decode", details);
+#if SSC_ENABLE_DEBUG_OVERLAY
+    DiagnosticLog::instance().image(sourceUrl, bytes.size(), width, height,
+                                    diagnosticMilliseconds(started), valid);
+#endif
     return valid;
 }
 

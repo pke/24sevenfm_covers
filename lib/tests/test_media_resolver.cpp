@@ -2,8 +2,54 @@
 #include "doctest.h"
 
 #include "../media_resolver.h"
+#include "../debug_features.h"
 
 using namespace ssc;
+
+TEST_CASE("native fanart stage hint survives a successful authentication retry") {
+    std::string body;
+    MediaResolverConfig config;
+    config.transport = [&](const std::string&, unsigned short, const std::string&,
+            const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse response; response.status = 200; response.body = body; return response;
+    };
+    MediaRequest request; request.album = "The Bay";
+    for (const char* phase : {"resolution", "logoResolution"}) {
+        for (int status : {401, 403, 429, 500}) {
+            body = std::string(R"({"backdrop":"https://assets.fanart.tv/fanart/the-bay.jpg","source":"fanart","diagnostics":{")")
+                + phase + R"(":{"spans":[{"name":"provider.fanart","status":)" + std::to_string(status)
+                + R"(},{"name":"provider.fanart","status":200}]}}})";
+            const auto result = MediaResolver(config).resolve(request);
+            CHECK(result.hasBackdrop());
+            CHECK(result.fanartKeyRejected == (status == 401 || status == 403));
+        }
+    }
+    for (const char* diagnostics : {
+            "null", R"({"resolution":{"spans":[null,{"name":"provider.tmdb","status":401}]}})",
+            R"({"resolution":{"spans":[{"name":"provider.fanart","status":"401"}]}})" }) {
+        body = std::string(R"({"diagnostics":)") + diagnostics + "}";
+        CHECK_FALSE(MediaResolver(config).resolve(request).fanartKeyRejected);
+    }
+}
+
+TEST_CASE("native backdrop cycling accepts only unique trusted media alternatives") {
+    MediaResolverConfig config;
+    config.transport = [](const std::string&, unsigned short, const std::string&,
+            const std::string&, const std::string&, const std::string&, int) {
+        HttpResponse r; r.status = 200;
+        r.body = R"({"backdrop":"https://image.tmdb.org/t/p/w1280/a.jpg","source":"tmdb",
+            "backdrops":[{"url":"https://image.tmdb.org/t/p/w1280/a.jpg","source":"tmdb"},
+            {"url":"https://evil.test/b.jpg","source":"tmdb"},
+            {"url":"https://image.tmdb.org/t/p/w1280/b.jpg","source":"tmdb"},
+            {"url":"https://image.tmdb.org/t/p/w1280/b.jpg","source":"tmdb"}]})";
+        return r;
+    };
+    MediaRequest request; request.album = "Arrival";
+    const auto result = MediaResolver(config).resolve(request);
+    REQUIRE(result.backdrops.size() == 2);
+    CHECK(result.backdrops[0].url == result.backdropUrl);
+    CHECK(result.backdrops[1].url == "https://image.tmdb.org/t/p/w1280/b.jpg");
+}
 
 TEST_CASE("native resolver validates optional title logos independently and rechecks CDN URLs") {
     std::string body = R"({"logo":{"url":"https://assets.fanart.tv/fanart/title.png","source":"fanart"}})";
@@ -213,13 +259,17 @@ TEST_CASE("fanart personal key is sent only for enabled fanart artwork") {
     request.fanartClientKey = "personal + key";
     MediaResolver(cfg).resolve(request);
     CHECK(requestedPath.find("client_key=personal%20%2B%20key") != std::string::npos);
+    // Key rejection drives a visible settings hint even in compact builds.
+    CHECK(requestedPath.find("diagnostics=1") != std::string::npos);
 
     request.providers = "tmdb,tvmaze";
     MediaResolver(cfg).resolve(request);
     CHECK(requestedPath.find("client_key=") == std::string::npos);
+    CHECK((requestedPath.find("diagnostics=1") != std::string::npos) == bool(SSC_ENABLE_DEBUG_OVERLAY));
     request.includeArt = false;
     MediaResolver(cfg).resolve(request);
     CHECK(requestedPath.find("client_key=") == std::string::npos);
+    CHECK((requestedPath.find("diagnostics=1") != std::string::npos) == bool(SSC_ENABLE_DEBUG_OVERLAY));
 }
 
 TEST_CASE("fanart personal-key check mirrors the web player's direct probe") {

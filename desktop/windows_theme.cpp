@@ -23,6 +23,7 @@ constexpr int kTransientWindowBackdrop = 3;
 constexpr UINT_PTR kThemeSubclass = 0x24711;
 constexpr UINT_PTR kTabSubclass = 0x24712;
 constexpr UINT_PTR kButtonSubclass = 0x24713;
+constexpr UINT_PTR kListSubclass = 0x24714;
 
 // Win32 exposes the user's light/dark choice, but not the immersive dark
 // control palette through GetSysColor/GetThemeSysColor. These are the neutral
@@ -161,6 +162,8 @@ LRESULT CALLBACK tabSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM lp
                                  UINT_PTR id, DWORD_PTR data);
 LRESULT CALLBACK buttonSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM lp,
                                     UINT_PTR id, DWORD_PTR data);
+LRESULT CALLBACK listSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM lp,
+                                  UINT_PTR id, DWORD_PTR data);
 
 bool classIs(HWND window, const wchar_t* expected) {
     wchar_t actual[64] = {};
@@ -357,6 +360,52 @@ void paintDarkButton(HWND window, HDC target) {
     else paintDarkCheckOrRadio(window, target, client);
 }
 
+// A disabled SysListView32 ignores its explicit background/text colours and
+// paints COLOR_3DFACE. Keep the actual control disabled (including accessibility
+// and input), but paint its retained rows with the same dark disabled palette.
+void paintDisabledDarkList(HWND window, HDC target) {
+    RECT client{};
+    GetClientRect(window, &client);
+    const int saved = SaveDC(target);
+    IntersectClipRect(target, client.left, client.top, client.right, client.bottom);
+    FillRect(target, &client, darkControlBrush());
+    HFONT font = reinterpret_cast<HFONT>(SendMessageW(window, WM_GETFONT, 0, 0));
+    SelectObject(target, font ? font : GetStockObject(DEFAULT_GUI_FONT));
+    SetBkMode(target, TRANSPARENT);
+    SetTextColor(target, kDarkDisabledText);
+    HPEN tick = CreatePen(PS_SOLID, 2, kDarkDisabledText);
+    SelectObject(target, tick);
+    int glyphWidth = 16, glyphHeight = 16;
+    if (HIMAGELIST states = ListView_GetImageList(window, LVSIL_STATE))
+        ImageList_GetIconSize(states, &glyphWidth, &glyphHeight);
+    const bool checkboxes = (ListView_GetExtendedListViewStyle(window) & LVS_EX_CHECKBOXES) != 0;
+    for (int row = 0; row < ListView_GetItemCount(window); ++row) {
+        RECT label{};
+        if (!ListView_GetItemRect(window, row, &label, LVIR_LABEL)
+                || label.bottom <= client.top || label.top >= client.bottom) continue;
+        if (checkboxes) {
+            const int top = label.top + (label.bottom - label.top - glyphHeight) / 2;
+            const int left = (std::max)(client.left + 2, label.left - glyphWidth - 2);
+            RECT glyph = {left, top, left + glyphWidth, top + glyphHeight};
+            InflateRect(&glyph, -2, -2);
+            FrameRect(target, &glyph, darkBorderBrush());
+            if (ListView_GetCheckState(window, row)) {
+                const int width = glyph.right - glyph.left, height = glyph.bottom - glyph.top;
+                MoveToEx(target, glyph.left + width / 5, glyph.top + height / 2, nullptr);
+                LineTo(target, glyph.left + width * 2 / 5, glyph.top + height * 4 / 5);
+                LineTo(target, glyph.left + width * 4 / 5, glyph.top + height / 5);
+            }
+        }
+        wchar_t text[256]{};
+        LVITEMW item{}; item.iSubItem = 0; item.pszText = text; item.cchTextMax = ARRAYSIZE(text);
+        SendMessageW(window, LVM_GETITEMTEXTW, row, reinterpret_cast<LPARAM>(&item));
+        label.right = (std::min)(label.right, client.right - 2);
+        DrawTextW(target, text, -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    }
+    RestoreDC(target, saved);
+    DeleteObject(tick);
+}
+
 void themeControl(HWND window) {
     if (!window) return;
     APIs& api = apis();
@@ -391,6 +440,8 @@ void themeControl(HWND window) {
     }
 
     if (classIs(window, WC_LISTVIEWW)) {
+        if (g_dark) SetWindowSubclass(window, listSubclassProc, kListSubclass, 0);
+        else RemoveWindowSubclass(window, listSubclassProc, kListSubclass);
         ListView_SetBkColor(window, g_dark ? kDarkControl : CLR_DEFAULT);
         ListView_SetTextBkColor(window, g_dark ? kDarkControl : CLR_DEFAULT);
         ListView_SetTextColor(window, g_dark ? kDarkText : CLR_DEFAULT);
@@ -520,6 +571,35 @@ LRESULT CALLBACK buttonSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM
         RemoveWindowSubclass(window, buttonSubclassProc, id);
         break;
     }
+    return DefSubclassProc(window, message, wp, lp);
+}
+
+LRESULT CALLBACK listSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM lp,
+                                  UINT_PTR id, DWORD_PTR) {
+    if (g_dark && !IsWindowEnabled(window)) {
+        if (message == WM_PAINT) {
+            PAINTSTRUCT paint{};
+            HDC dc = BeginPaint(window, &paint);
+            paintDisabledDarkList(window, dc);
+            EndPaint(window, &paint);
+            return 0;
+        }
+        if (message == WM_PRINT || message == WM_PRINTCLIENT) {
+            paintDisabledDarkList(window, reinterpret_cast<HDC>(wp));
+            return 0;
+        }
+        if (message == WM_ERASEBKGND) {
+            RECT client{}; GetClientRect(window, &client);
+            FillRect(reinterpret_cast<HDC>(wp), &client, darkControlBrush());
+            return TRUE;
+        }
+    }
+    if (message == WM_ENABLE) {
+        const LRESULT result = DefSubclassProc(window, message, wp, lp);
+        InvalidateRect(window, nullptr, TRUE);
+        return result;
+    }
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, listSubclassProc, id);
     return DefSubclassProc(window, message, wp, lp);
 }
 

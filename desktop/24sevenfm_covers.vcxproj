@@ -40,6 +40,15 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <SSCEnableDebugOverlay Condition="'$(SSCEnableDebugOverlay)'=='' and '$(Configuration)'=='Release'">0</SSCEnableDebugOverlay>
+    <SSCEnableDebugOverlay Condition="'$(SSCEnableDebugOverlay)'==''">1</SSCEnableDebugOverlay>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>SSC_ENABLE_DEBUG_OVERLAY=$(SSCEnableDebugOverlay);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
   <ImportGroup Label="Shared">
@@ -103,6 +112,8 @@
       <OptimizeReferences>true</OptimizeReferences>          <!-- /OPT:REF: strip unreferenced sections -->
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration> <!-- /LTCG (pairs with /GL) -->
       <GenerateDebugInformation>false</GenerateDebugInformation>                <!-- no debug directory in the exe -->
+      <GenerateMapFile Condition="'$(SSCLinkMap)'=='true'">true</GenerateMapFile>
+      <MapFileName Condition="'$(SSCLinkMap)'=='true'">$(OutDir)$(TargetName).map</MapFileName>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -121,7 +132,8 @@
     <ClCompile Include="..\shared\d2d_rolldigits.cpp" />
     <ClCompile Include="..\lib\coverfetch.cpp" />
     <ClCompile Include="..\lib\http_client.cpp" />
-    <ClCompile Include="..\lib\mini_json.cpp" />
+    <ClCompile Include="..\lib\json_view.cpp" />
+    <ClCompile Include="..\lib\diagnostics.cpp" />
     <ClCompile Include="..\lib\media_resolver.cpp" />
     <ClCompile Include="..\lib\media_policy.cpp" />
     <ClCompile Include="..\lib\image_probe.cpp" />

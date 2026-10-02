@@ -3,7 +3,7 @@
 #include "../lib/media_resolver.h"
 #include "../lib/rating_asset_paths.h"
 #include <map>
-#include <mutex>
+#include "../lib/platform_concurrency.h"
 
 namespace ssc {
 
@@ -18,7 +18,7 @@ public:
               const std::atomic<bool>* cancel = nullptr);
 private:
     std::wstring directory_;
-    mutable std::mutex mutex_;
+    mutable ssc::platform::Mutex mutex_;
     std::map<std::string, std::string> pngs_;
 };
 RatingAssetCache& ratingAssets();

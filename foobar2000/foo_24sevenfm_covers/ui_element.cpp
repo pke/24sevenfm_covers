@@ -38,6 +38,7 @@ public:
         MSG_WM_LBUTTONDBLCLK(OnLButtonDblClk)
         MSG_WM_LBUTTONDOWN(OnLButtonDown)
         MSG_WM_KEYDOWN(OnKeyDown)
+        MSG_WM_GETDLGCODE(OnGetDlgCode)
         MSG_WM_MOUSEMOVE(OnMouseMove)
         MESSAGE_HANDLER(WM_SETCURSOR, OnSetCursor)
         MESSAGE_HANDLER(WM_MOUSELEAVE, OnMouseLeave)
@@ -115,21 +116,32 @@ private:
     }
     void OnLButtonDown(UINT, CPoint point) {
         if (m_callback->is_edit_mode_enabled()) { SetMsgHandled(FALSE); return; }
+        SetFocus();
+        if (CoverEngine::instance().fanartHintHitTest(m_hWnd, point.x, point.y)) {
+            ui_control::get()->show_preferences(g_ssc_prefs_guid);
+            return;
+        }
+        if (CoverEngine::instance().onBackdropClick(m_hWnd, point.x, point.y)) return;
         if (CoverEngine::instance().onAlbumClick(m_hWnd, point.x, point.y)) ssccfg::saveFromEngine();
     }
     void OnLButtonDblClk(UINT, CPoint point) { // double-click the cover -> enter fullscreen (Esc there exits)
-        if (CoverEngine::instance().albumToggleHitTest(m_hWnd, point.x, point.y)) return;
+        if (CoverEngine::instance().fanartHintHitTest(m_hWnd, point.x, point.y)) return;
+        if (CoverEngine::instance().backdropHitTest(m_hWnd, point.x, point.y)
+                || CoverEngine::instance().albumToggleHitTest(m_hWnd, point.x, point.y)) return;
         if (!m_callback->is_edit_mode_enabled()) toggleFullscreen();
     }
     void OnKeyDown(TCHAR vk, UINT, UINT) { // demo mode: next cover (no-op otherwise)
+        if (!m_callback->is_edit_mode_enabled() && CoverEngine::instance().onBackdropKey(m_hWnd, vk)) return;
         if (vk == 'N') CoverEngine::instance().demoNext(); else SetMsgHandled(FALSE);
     }
+    UINT OnGetDlgCode(LPMSG) { return DLGC_WANTARROWS; }
     void OnMouseMove(UINT, CPoint) {
         CoverEngine::instance().onPointerMove(m_hWnd, /*fullscreenAutoHide=*/false);
     }
     LRESULT OnSetCursor(UINT, WPARAM, LPARAM lp, BOOL& handled) {
         if (LOWORD(lp) == HTCLIENT
-                && CoverEngine::instance().albumToggleAtCursor(m_hWnd)) {
+                && (CoverEngine::instance().albumToggleAtCursor(m_hWnd)
+                    || CoverEngine::instance().fanartHintAtCursor(m_hWnd))) {
             SetCursor(LoadCursor(nullptr, IDC_HAND));
             return TRUE;
         }

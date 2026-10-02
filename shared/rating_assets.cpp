@@ -64,7 +64,7 @@ std::wstring RatingAssetCache::defaultDirectory() {
 }
 std::string RatingAssetCache::find(const Certification& certification) const {
     const auto path = ratingAssetPath(certification.country, certification.system, certification.rating);
-    std::lock_guard<std::mutex> lock(mutex_);
+    ssc::platform::LockGuard lock(mutex_);
     const auto found = pngs_.find(path);
     return found == pngs_.end() ? std::string() : found->second;
 }
@@ -89,7 +89,7 @@ bool RatingAssetCache::load(const Certification& certification, const MediaResol
 #endif
     }
     if (cancel && cancel->load()) return false;
-    std::lock_guard<std::mutex> lock(mutex_);
+    ssc::platform::LockGuard lock(mutex_);
     pngs_[path] = bytes;
     return true;
 }

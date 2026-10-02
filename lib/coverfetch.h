@@ -16,11 +16,9 @@
 #pragma once
 
 #include <atomic>
-#include <condition_variable>
 #include <functional>
-#include <mutex>
+#include "platform_concurrency.h"
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "http_client.h" // HttpResponse (used by the injectable transport)
@@ -178,11 +176,11 @@ private:
     ErrorCallback onError_;
     TickCallback onTick_;
 
-    std::thread thread_;
+    ssc::platform::Thread thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> cancelled_{false}; // set by stop() so in-flight callbacks can bail
-    mutable std::mutex mutex_;
-    std::condition_variable cv_;
+    mutable ssc::platform::Mutex mutex_;
+    ssc::platform::ConditionVariable cv_;
     bool stopRequested_ = false;
     bool refreshRequested_ = false;
     std::string lastTrackToken_;

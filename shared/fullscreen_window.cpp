@@ -97,15 +97,24 @@ LRESULT CALLBACK FullscreenWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
             }
             break;
         case WM_LBUTTONDOWN:
+            SetFocus(hwnd);
+            if (self && CoverEngine::instance().fanartHintHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) {
+                if (self->menu_.openOptions) self->menu_.openOptions();
+                return 0;
+            }
+            if (CoverEngine::instance().onBackdropClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             if (self && CoverEngine::instance().onAlbumClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))
                     && self->menu_.persist) self->menu_.persist();
             return 0;
         case WM_LBUTTONDBLCLK:
+            if (CoverEngine::instance().fanartHintHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
+            if (CoverEngine::instance().backdropHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             if (CoverEngine::instance().albumToggleHitTest(
                     hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             if (self) self->exit();
             return 0;
         case WM_KEYDOWN:
+            if (CoverEngine::instance().onBackdropKey(hwnd, (unsigned)wp)) return 0;
             if (wp == VK_ESCAPE && self) { self->exit(); return 0; }
             if (wp == 'N') { CoverEngine::instance().demoNext(); return 0; } // demo mode: next cover
             break;
@@ -139,7 +148,8 @@ LRESULT CALLBACK FullscreenWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
         }
         case WM_SETCURSOR:
             if (self && LOWORD(lp) == HTCLIENT) {
-                const LPCTSTR cursor = CoverEngine::instance().albumToggleAtCursor(hwnd)
+                const LPCTSTR cursor = (CoverEngine::instance().albumToggleAtCursor(hwnd)
+                    || CoverEngine::instance().fanartHintAtCursor(hwnd))
                     ? IDC_HAND : IDC_ARROW;
                 SetCursor(self->cursorHidden_ ? nullptr : LoadCursor(nullptr, cursor));
                 return TRUE;

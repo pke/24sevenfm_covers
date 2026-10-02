@@ -1,4 +1,5 @@
 // demo.cpp - see demo.h. Win32 file IO (Windows-only, like the rest of shared/).
+#include "../lib/platform_text.h"
 #include "demo.h"
 
 #include <windows.h>
@@ -34,9 +35,9 @@ std::string readFile(const std::string& path) {
 }
 
 std::string trim(const std::string& s) {
-    const size_t a = s.find_first_not_of(" \t\r\n");
+    const size_t a = ssc::platform::firstNotOf(s, " \t\r\n");
     if (a == std::string::npos) return std::string();
-    return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
+    return s.substr(a, ssc::platform::lastNotOf(s, " \t\r\n") - a + 1);
 }
 
 // Split on a delimiter into up to `max` trimmed fields.

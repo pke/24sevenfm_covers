@@ -1,7 +1,20 @@
 # Stage diagnostics
 
-`D` toggles the stage panel in the web player and the shared Windows renderer
-(viewer, Winamp, foobar2000), including fullscreen. Give the native stage keyboard
+Native Release builds omit the panel and its supporting code by default. The
+`SSC_ENABLE_DEBUG_OVERLAY` preprocessor flag controls the overlay, snapshots,
+timeline/history, HTTP/image timing and capture, and sentinel file logging. A
+disabled build does not register the `D` shortcut or retain diagnostic responses.
+The web panel is independent of this native build setting.
+
+For a native troubleshooting Release build, configure Winamp with
+`cmake -S winamp -B winamp/build -A Win32 -DSSC_ENABLE_DEBUG_OVERLAY=ON` and pass
+`/p:SSCEnableDebugOverlay=1` to MSBuild for DV and foobar. Use `OFF` and `0` to
+restore compact builds. Native Debug configurations enable diagnostics; the
+library/test CMake project also defaults to enabled and accepts the same option
+to exercise the compact code path. All translation units must use the same flag.
+
+`D` toggles the stage panel in the web player and diagnostic-enabled Windows
+builds (viewer, Winamp, foobar2000), including fullscreen. Give the native stage keyboard
 focus by clicking it. Typing in an input does not toggle diagnostics. `Esc`, Close,
 or a click outside dismisses the panel. Entry/exit and geometry changes animate;
 the web reduced-motion preference and Windows client-area animation setting are
@@ -11,6 +24,15 @@ The panel presents labelled fields in sections, with selectable values rather
 than a JSON editor. The web view also provides individual Copy buttons. Native
 players offer a section selector and standard text selection / Ctrl+C.
 
+If fanart.tv returns HTTP 401/403, the current track also shows a small stage hint:
+"fanart.tv key rejected / Check provider settings". It remains visible even when
+the keyless retry succeeds, and fades away when a fresh result clears the rejection
+or backdrops are disabled. Queued tracks do not trigger it. The web and shared
+native renderer support the hint in windowed and fullscreen modes and respect
+reduced motion.
+Click the hint to open settings. In the web player it selects the station settings
+and focuses the fanart.tv personal key field; the hint also supports keyboard activation.
+
 The report contains current/raw and resolved metadata, current/requested artwork,
 image dimensions, layout/viewport, enabled features, queue/cache state, and the
 last 30 requests and 30 events. The native renderer also reports decoded-cache
@@ -19,10 +41,12 @@ and dimensions without decoding an additional time for the report.
 
 **Freeze** retains an exact snapshot; **Resume** resumes updates. Selecting text
 also pauses updates. **Copy snapshot** copies the complete frozen/displayed report
-as JSON, including responses; the web panel initially collapses API response
-bodies for readability. URL query credentials and credential fields are redacted
-before retention. Non-JSON bodies are omitted; JSON bodies over 64 KiB are marked
-as truncated. No credentials, disk history or additional diagnostic image
+as JSON, including responses; native responses are retained as bounded raw JSON text
+with credential redaction, without building or parsing a response tree. The web
+panel initially collapses API response bodies for readability. URL query credentials and credential fields are redacted
+before retention. Native logging omits binary and plain text bodies, but retains
+JSON-shaped text even when malformed so response failures remain inspectable.
+JSON bodies over 64 KiB are marked as truncated. No credentials, disk history or additional diagnostic image
 downloads are needed. Closing the panel does not clear the bounded session log.
 
 ## Playback and cache timeline
@@ -56,8 +80,8 @@ latency, and do not add parallel phases to obtain total elapsed time.
   separate DNS/TLS measurement). Unknown transports expose `null`.
 - `downloadMs`: from request start through the complete response body, including
   `headersMs`. Byte counts measure the received/decoded body, not TLS or HTTP
-  framing overhead. The web `parseMs` measures JSON parsing; native
-  `diagnosticParseMs` measures the diagnostic copy's parse, not production parsing.
+  framing overhead. The web `parseMs` measures JSON parsing. Native logging
+  does not parse responses and no longer reports `diagnosticParseMs`.
 - API `totalMs`: handler work through construction of the response, excluding
   serialization, platform startup/queueing and the client's network transit.
 - Tint `analysisMs`: image metadata/decode and colour analysis. The actual preview

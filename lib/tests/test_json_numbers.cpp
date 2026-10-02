@@ -10,9 +10,49 @@
 #include <cstring>
 #include <limits>
 
+TEST_CASE("JSON objects preserve value ownership order and stable references") {
+    ssc::JsonValue value;
+    REQUIRE(ssc::parseJson("{\"z\":[1,{\"name\":\"a long string beyond inline storage\"}],\"a\":true}", value));
+    auto* first = &value.object["a"];
+    value.object["b"].type = ssc::JsonValue::Null;
+    CHECK(first == value.get("a"));
+    ssc::JsonValue copy = value;
+    copy.object["z"].array[1].object["name"].string = "changed";
+    CHECK(value.get("z")->array[1].get("name")->string == "a long string beyond inline storage");
+    CHECK(copy.get("z")->array[1].get("name")->string == "changed");
+    ssc::JsonValue moved = std::move(copy);
+    copy = moved;
+    copy = copy;
+    CHECK(copy.object.size() == 3);
+    CHECK(copy.object.begin()->first == "a");
+    CHECK(copy.object.erase("a") == 1);
+    CHECK(copy.object.erase("a") == 0);
+    CHECK(copy.get("a") == nullptr);
+    CHECK(moved.get("a")->boolean);
+}
+
+TEST_CASE("JSON readers enforce strict structure escapes duplicates and nesting") {
+    for (const char* input : {"{\"a\":1,\"a\":2}", "{\"a\":1,\"\\u0061\":2}",
+            "[1,]", "{\"a\":1,}", "[,1]", "{\"a\" 1}", "{1:2}", "[1 2]",
+            "{}[]", "null null", "\"a\nb\"", "\"\\x\"", "\"\\uD800\"", "\"\\uDC00\"",
+            "{\"a\":}", "truefalse", "//comment\n1"}) {
+        CAPTURE(std::string(input));
+        ssc::JsonValue value;
+        CHECK_FALSE(ssc::parseJson(input, value));
+    }
+    ssc::JsonValue value;
+    REQUIRE(ssc::parseJson("{\"text\":\"a\\u0000b\\uD83D\\uDE00\\n\\\\\\\"\",\"array\":[true,false,null]}", value));
+    CHECK(value.get("text")->string == std::string("a\0b", 3) + "\xF0\x9F\x98\x80\n\\\"");
+    CHECK(value.get("array")->array.size() == 3);
+    REQUIRE(ssc::parseJson(std::string(25, '[') + std::string(25, ']'), value));
+    CHECK_FALSE(ssc::parseJson(std::string(26, '[') + std::string(26, ']'), value));
+    CHECK(value.type == ssc::JsonValue::Array);
+    CHECK(value.array.size() == 1);
+}
+
 TEST_CASE("JSON numbers preserve CRT precision and range handling") {
     const auto compare = [](const std::string& text) {
-        CAPTURE(text);
+        CAPTURE(std::string(text));
         errno = 0;
         char* end = nullptr;
         const double expected = std::strtod(text.c_str(), &end);

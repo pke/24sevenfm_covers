@@ -8,11 +8,16 @@ if(MSVC)
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(SSC_ENABLE_DEBUG_OVERLAY "Include native diagnostic capture and overlay" ON)
+add_compile_definitions(SSC_ENABLE_DEBUG_OVERLAY=$<BOOL:${SSC_ENABLE_DEBUG_OVERLAY}>)
+
 add_library(coverfetch STATIC
     coverfetch.cpp
     http_client.cpp
     coverfetch_c.cpp
     mini_json.cpp
+    json_view.cpp
+    diagnostics.cpp
     media_resolver.cpp
     media_policy.cpp
     image_probe.cpp
@@ -43,7 +48,7 @@ endif()
 option(COVERFETCH_BUILD_TESTS "Build the unit tests" OFF)
 if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     enable_testing()
-    add_executable(coverfetch_tests tests/test_coverfetch.cpp mini_json.cpp)
+    add_executable(coverfetch_tests tests/test_coverfetch.cpp mini_json.cpp json_view.cpp diagnostics.cpp)
     target_include_directories(coverfetch_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     if(WIN32)
         target_link_libraries(coverfetch_tests PRIVATE ws2_32)
@@ -54,11 +59,53 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     # doctest.cmake (vendored, ships with doctest) registers every doctest TEST_CASE
     # as its own CTest entry, so ctest reports 26/26 cases instead of one opaque exe.
     include(tests/doctest.cmake)
+    add_executable(platform_concurrency_tests tests/test_platform_concurrency.cpp)
+    target_include_directories(platform_concurrency_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(NOT WIN32)
+        target_link_libraries(platform_concurrency_tests PRIVATE Threads::Threads)
+    endif()
+    doctest_discover_tests(platform_concurrency_tests TEST_PREFIX "platform: ")
+    add_executable(platform_text_tests tests/test_platform_text.cpp)
+    doctest_discover_tests(platform_text_tests TEST_PREFIX "platform: ")
+    add_executable(platform_time_tests tests/test_platform_time.cpp)
+    doctest_discover_tests(platform_time_tests TEST_PREFIX "platform: ")
+
+    # Exercise the portable backend on Windows too. The facade remains C++11;
+    # /std:c++14 is the oldest language mode supported by current MSVC.
+    if(WIN32)
+        add_executable(portable_concurrency_tests tests/test_platform_concurrency.cpp)
+        target_compile_definitions(portable_concurrency_tests PRIVATE SSC_USE_STD_CONCURRENCY)
+        set_target_properties(portable_concurrency_tests PROPERTIES CXX_STANDARD 14)
+        doctest_discover_tests(portable_concurrency_tests TEST_PREFIX "portable: ")
+        add_executable(portable_text_tests tests/test_platform_text.cpp)
+        set_target_properties(portable_text_tests PROPERTIES CXX_STANDARD 14)
+        doctest_discover_tests(portable_text_tests TEST_PREFIX "C++14: ")
+        add_executable(portable_time_tests tests/test_platform_time.cpp)
+        target_compile_definitions(portable_time_tests PRIVATE SSC_USE_CRT_TIME)
+        set_target_properties(portable_time_tests PROPERTIES CXX_STANDARD 14)
+        doctest_discover_tests(portable_time_tests TEST_PREFIX "portable: ")
+    endif()
     doctest_discover_tests(coverfetch_tests)
+
+    add_executable(json_view_tests tests/test_json_view.cpp json_view.cpp mini_json.cpp)
+    target_include_directories(json_view_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    doctest_discover_tests(json_view_tests)
+    if(WIN32)
+        add_executable(portable_json_view_tests tests/test_json_view.cpp json_view.cpp mini_json.cpp)
+        set_target_properties(portable_json_view_tests PROPERTIES CXX_STANDARD 14)
+        target_include_directories(portable_json_view_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        doctest_discover_tests(portable_json_view_tests TEST_PREFIX "portable: ")
+    endif()
 
     add_executable(json_number_tests tests/test_json_numbers.cpp mini_json.cpp)
     target_include_directories(json_number_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     doctest_discover_tests(json_number_tests)
+    if(WIN32)
+        add_executable(portable_json_tests tests/test_json_numbers.cpp mini_json.cpp)
+        set_target_properties(portable_json_tests PROPERTIES CXX_STANDARD 14)
+        target_include_directories(portable_json_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        doctest_discover_tests(portable_json_tests TEST_PREFIX "portable: ")
+    endif()
 
     add_executable(media_resolver_tests tests/test_media_resolver.cpp)
     target_link_libraries(media_resolver_tests PRIVATE coverfetch)
@@ -86,10 +133,12 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         target_link_libraries(native_engine_tests PRIVATE coverfetch d2d1 dwrite)
         doctest_discover_tests(native_engine_tests)
 
-        add_executable(debug_tests tests/test_debug.cpp)
-        target_link_libraries(debug_tests PRIVATE coverfetch comctl32)
-        target_include_directories(debug_tests PRIVATE . ../shared)
-        doctest_discover_tests(debug_tests)
+        if(SSC_ENABLE_DEBUG_OVERLAY)
+            add_executable(debug_tests tests/test_debug.cpp)
+            target_link_libraries(debug_tests PRIVATE coverfetch comctl32)
+            target_include_directories(debug_tests PRIVATE . ../shared)
+            doctest_discover_tests(debug_tests)
+        endif()
 
         add_executable(native_renderer_tests tests/test_native_renderer.cpp
             ../shared/d2d_renderer.cpp ../shared/d2d_transitions.cpp

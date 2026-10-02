@@ -1,4 +1,7 @@
 #pragma once
+#include "../lib/debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
+#include "../lib/platform_text.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <functional>
@@ -108,7 +111,7 @@ private:
             if (current) when = "Now";
             else if (seconds.type == JsonValue::Number) {
                 const int count = static_cast<int>(std::abs(seconds.number));
-                when = (phase == "past" ? "-" : "~ +") + std::to_string(count/60) + ":" + (count%60<10 ? "0" : "") + std::to_string(count%60);
+                when = (phase == "past" ? "-" : "~ +") + ssc::platform::integerText(count/60) + ":" + (count%60<10 ? "0" : "") + ssc::platform::integerText(count%60);
             }
             line(when, 81, RGB(172,191,216));
             const auto& cache = debugValue(item, "cache");
@@ -185,3 +188,5 @@ private:
     }
 };
 }
+
+#endif // SSC_ENABLE_DEBUG_OVERLAY

@@ -1,4 +1,6 @@
 #pragma once
+#include "debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 // Small, bounded session history shared by transports and the stage overlay.
 // Never keep request credentials or arbitrary non-JSON response bodies.
 #include "http_client.h"
@@ -8,7 +10,8 @@
 #include <cmath>
 #include <clocale>
 #include <cstdio>
-#include <mutex>
+#include "platform_concurrency.h"
+#include "platform_text.h"
 
 namespace ssc {
 inline JsonValue diagnosticObject() { JsonValue v; v.type = JsonValue::Object; return v; }
@@ -16,6 +19,19 @@ inline JsonValue diagnosticArray() { JsonValue v; v.type = JsonValue::Array; ret
 inline JsonValue diagnosticString(const std::string& s) { JsonValue v; v.type = JsonValue::String; v.string = s; return v; }
 inline JsonValue diagnosticNumber(double n) { JsonValue v; if (std::isfinite(n)) { v.type = JsonValue::Number; v.number = n; } return v; }
 inline JsonValue diagnosticBool(bool b) { JsonValue v; v.type = JsonValue::Boolean; v.boolean = b; return v; }
+// Keep fixed-schema field writes shared across the native debug builders. Inlining
+// map insertion and JsonValue construction at every field inflated engine code.
+#ifdef _MSC_VER
+#define SSC_DIAGNOSTIC_NOINLINE __declspec(noinline)
+#else
+#define SSC_DIAGNOSTIC_NOINLINE __attribute__((noinline))
+#endif
+SSC_DIAGNOSTIC_NOINLINE JsonValue& diagnosticSet(std::map<std::string, JsonValue>&, const char*, JsonValue);
+SSC_DIAGNOSTIC_NOINLINE JsonValue& diagnosticSetString(std::map<std::string, JsonValue>&, const char*, const std::string&);
+SSC_DIAGNOSTIC_NOINLINE JsonValue& diagnosticSetString(std::map<std::string, JsonValue>&, const char*, const char*);
+SSC_DIAGNOSTIC_NOINLINE JsonValue& diagnosticSetNumber(std::map<std::string, JsonValue>&, const char*, double);
+SSC_DIAGNOSTIC_NOINLINE JsonValue& diagnosticSetBool(std::map<std::string, JsonValue>&, const char*, bool);
+#undef SSC_DIAGNOSTIC_NOINLINE
 inline double diagnosticMilliseconds(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
@@ -50,7 +66,7 @@ inline bool diagnosticSecret(const std::string& key) {
             if (diagnosticMatches(key, pos, name)) return true;
     return false;
 }
-inline std::string diagnosticSafeText(std::string text) {
+inline std::string diagnosticSafeText(std::string text, size_t limit = 4096) {
     std::string safe;
     safe.reserve(text.size());
     for (size_t pos = 0; pos < text.size();) {
@@ -86,37 +102,31 @@ inline std::string diagnosticSafeText(std::string text) {
         if (lastAt != std::string::npos) pos = lastAt + 1;
     }
     text.swap(safe);
-    if (text.size() > 4096) text = text.substr(0, 4096) + "[truncated]";
+    if (text.size() > limit) text = text.substr(0, limit) + "[truncated]";
     return text;
 }
-inline JsonValue diagnosticSanitize(const JsonValue& value, unsigned depth = 0) {
-    if (depth > 12) return diagnosticString("[depth limit]");
-    JsonValue out = value;
+inline void diagnosticSanitizeInPlace(JsonValue& out, unsigned depth = 0) {
+    if (depth > 12) { out = diagnosticString("[depth limit]"); return; }
     if (out.type == JsonValue::String) out.string = diagnosticSafeText(out.string);
     if (out.type == JsonValue::Array) {
         if (out.array.size() > 100) out.array.resize(100);
-        for (auto& item : out.array) item = diagnosticSanitize(item, depth + 1);
+        for (auto& item : out.array) diagnosticSanitizeInPlace(item, depth + 1);
     }
     if (out.type == JsonValue::Object)
-        for (auto& item : out.object) item.second = diagnosticSecret(item.first)
-            ? diagnosticString("[redacted]") : diagnosticSanitize(item.second, depth + 1);
-    return out;
+        for (auto& item : out.object) {
+            if (diagnosticSecret(item.first)) item.second = diagnosticString("[redacted]");
+            // Response text was redacted at capture; keep its complete bounded
+            // contents when exporting instead of applying the short UI limit.
+            else if (item.first == "response" && item.second.type == JsonValue::String)
+                item.second.string = diagnosticSafeText(item.second.string, 65536);
+            else diagnosticSanitizeInPlace(item.second, depth + 1);
+        }
+}
+inline JsonValue diagnosticSanitize(JsonValue value, unsigned depth = 0) {
+    diagnosticSanitizeInPlace(value, depth); return value;
 }
 inline std::string diagnosticFormatNumber(double value, bool fixed) {
-    // A finite double needs at most 309 integer digits, plus sign and decimals.
-    // Reuse printf support already linked by the native hosts; retain C++11.
-    char text[512];
-    const int length = std::snprintf(text, sizeof(text), fixed ? "%.2f" : "%.6g", value);
-    if (length < 0 || static_cast<size_t>(length) >= sizeof(text)) return "null";
-    std::string out(text, static_cast<size_t>(length));
-    // JSON and reports use a dot even when the host's C locale uses a comma.
-    // Do not change the host's process or thread locale just to format a number.
-    const char* decimal = std::localeconv()->decimal_point;
-    if (*decimal && (decimal[0] != '.' || decimal[1] != '\0')) {
-        const auto pos = out.find(decimal);
-        if (pos != std::string::npos) out.replace(pos, std::char_traits<char>::length(decimal), ".");
-    }
-    return out;
+    return platform::numberText(value, fixed);
 }
 inline std::string diagnosticJson(const JsonValue& value, unsigned depth = 0) {
     std::string out;
@@ -154,49 +164,40 @@ inline std::string diagnosticJson(const JsonValue& value, unsigned depth = 0) {
     if (count) { out += '\n'; out.append(depth * 2, ' '); }
     out += object ? '}' : ']'; return out;
 }
+struct TrackInfo;
+// Fixed track schema shared by the scheduler's typed history and event records.
+struct DiagnosticTrack {
+    std::string album, track, artist, coverUrl, occurrence;
+    int lengthSeconds = 0;
+};
+DiagnosticTrack diagnosticTrackRecord(const TrackInfo& track);
+JsonValue diagnosticTrack(const DiagnosticTrack& track);
 class DiagnosticLog {
 public:
-    static DiagnosticLog& instance() { static DiagnosticLog log; return log; }
-    void request(const std::string& url, const HttpResponse& response, double totalMs) {
-        JsonValue entry = diagnosticObject();
-        auto& p = entry.object;
-        p["at"] = diagnosticString(diagnosticTimestamp());
-        p["url"] = diagnosticString(diagnosticSafeText(url));
-        p["status"] = diagnosticNumber(response.status);
-        p["headersMs"] = response.headersMs < 0 ? JsonValue() : diagnosticNumber(response.headersMs);
-        p["downloadMs"] = diagnosticNumber(totalMs);
-        p["totalMs"] = diagnosticNumber(totalMs);
-        p["responseBytes"] = diagnosticNumber(static_cast<double>(response.body.size()));
-        p["httpCache"] = diagnosticString(response.cacheStatus.empty() ? "unknown" : response.cacheStatus);
-        p["cacheControl"] = diagnosticString(response.cacheControl);
-        p["ageSeconds"] = diagnosticString(response.age);
-        p["error"] = diagnosticString(diagnosticSafeText(response.error));
-        const auto parseStart = std::chrono::steady_clock::now();
-        JsonValue body;
-        if (response.body.size() <= 65536 && parseJson(response.body, body))
-            p["response"] = diagnosticSanitize(body);
-        else p["response"] = diagnosticString(response.body.size() > 65536 ? "[body truncated]" : "[non-JSON body omitted]");
-        p["diagnosticParseMs"] = diagnosticNumber(diagnosticMilliseconds(parseStart));
-        std::lock_guard<std::mutex> lock(mutex_);
-        requests_.push_back(entry); if (requests_.size() > 30) requests_.erase(requests_.begin());
-    }
-    void event(const std::string& name, JsonValue details = JsonValue()) {
-        JsonValue entry = diagnosticObject(); entry.object["at"] = diagnosticString(diagnosticTimestamp());
-        entry.object["name"] = diagnosticString(name); entry.object["details"] = diagnosticSanitize(details);
-        std::lock_guard<std::mutex> lock(mutex_);
-        events_.push_back(entry); if (events_.size() > 30) events_.erase(events_.begin());
-    }
-    JsonValue snapshot() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        JsonValue out = diagnosticObject();
-        out.object["capturedAt"] = diagnosticString(diagnosticTimestamp());
-        out.object["schemaVersion"] = diagnosticNumber(1);
-        out.object["requests"] = diagnosticArray(); out.object["requests"].array = requests_;
-        out.object["events"] = diagnosticArray(); out.object["events"].array = events_;
-        return out;
-    }
+    static DiagnosticLog& instance();
+    void request(const std::string& url, const HttpResponse& response, double totalMs);
+    void event(const std::string& name, const std::string& details);
+    void event(const std::string& name, const TrackInfo& track);
+    void image(const std::string& url, size_t bytes, unsigned width, unsigned height, double ms, bool valid);
+    JsonValue snapshot(); // Generic display data is built only when requested.
 private:
-    std::mutex mutex_;
-    std::vector<JsonValue> requests_, events_;
+    struct Request {
+        std::string at, url, response, cacheStatus, cacheControl, age, error;
+        int status = 0; size_t bytes = 0;
+        double headersMs = -1, totalMs = 0;
+    };
+    struct Event {
+        enum Kind { Text, Track, Image } kind = Text;
+        std::string at, name, text;
+        DiagnosticTrack track;
+        size_t bytes = 0; unsigned width = 0, height = 0;
+        double ms = 0; bool valid = false;
+    };
+    void add(Event&& event);
+    platform::Mutex mutex_;
+    std::vector<Request> requests_;
+    std::vector<Event> events_;
 };
 }
+
+#endif // SSC_ENABLE_DEBUG_OVERLAY

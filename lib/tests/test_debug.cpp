@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 #include "../diagnostics.h"
+#include "../coverfetch.h"
 #include "../../shared/debug_overlay.h"
 #include "../diagnostic_timeline.h"
 #include "../../shared/debug_report.h"
@@ -197,14 +198,15 @@ TEST_CASE("diagnostic scanners match the previous regex redaction") {
 
 TEST_CASE("native timeline separates history, current and repeated future tracks with unknown ETAs") {
     ssc::DiagnosticTimeline timeline(2);
-    ssc::JsonValue a = ssc::diagnosticObject(), b = ssc::diagnosticObject();
-    a.object["album"] = ssc::diagnosticString("A"); b.object["album"] = ssc::diagnosticString("B");
+    ssc::DiagnosticTrack a, b;
+    a.album = "A"; b.album = "B";
+    ssc::TrackInfo queued; queued.album = "A";
     timeline.observe("sst", a, 100000);
-    a.object["artist"] = ssc::diagnosticString("Corrected");
+    a.artist = "Corrected";
     timeline.observe("sst", a, 110000);
     CHECK(timeline.entries({}, 20, 120000).array.size() == 1);
     timeline.observe("sst", b, 120000);
-    auto entries = timeline.entries({a, a}, 30, 120000);
+    auto entries = timeline.entries({queued, queued}, 30, 120000);
     REQUIRE(entries.array.size() == 4);
     CHECK(entries.array[0].get("phase")->string == "past");
     CHECK(entries.array[1].get("phase")->string == "current");
@@ -270,12 +272,46 @@ TEST_CASE("debug history is bounded and redacts credentials in nested JSON and U
     CHECK(ssc::diagnosticJson(log.snapshot()).find("private-key") == std::string::npos);
 }
 
+TEST_CASE("response logging retains raw JSON text without parsing or reformatting") {
+    ssc::DiagnosticLog log; ssc::HttpResponse response; response.status = 200;
+    response.body = "{ \n  \"known\" : [1,2], \"extra\" : \"" + std::string(6000, 'x') + "\" }";
+    log.request("https://api.test/media", response, 3);
+    auto snapshot = log.snapshot();
+    auto requests = snapshot.get("requests"); REQUIRE(requests);
+    const auto& entry = requests->array.back();
+    REQUIRE(entry.get("response")); CHECK(entry.get("response")->string == response.body);
+    CHECK(entry.get("response")->type == ssc::JsonValue::String);
+    CHECK(entry.get("diagnosticParseMs") == nullptr);
+    auto exported = ssc::diagnosticSanitize(snapshot);
+    CHECK(exported.get("requests")->array.back().get("response")->string == response.body);
+    response.body = "{ malformed JSON }";
+    log.request("https://api.test/media", response, 3);
+    CHECK(log.snapshot().get("requests")->array.back().get("response")->string == response.body);
+}
+
+TEST_CASE("raw response logging redacts escaped credential names and compound values") {
+    ssc::DiagnosticLog log; ssc::HttpResponse response; response.status = 200;
+    response.body = R"({"client_\u006bey":{"nested":["private","brace } , quote \""]},"TOKEN":42,"album":"Film","url":"https:\/\/user:private@api.test/?api_\u006bey\u003dprivate\u0026x\u003d1"})";
+    log.request("https://api.test/media", response, 3);
+    const auto snapshot = log.snapshot();
+    const auto& body = snapshot.get("requests")->array.back().get("response")->string;
+    CHECK(body.find("private") == std::string::npos);
+    CHECK(body.find("42") == std::string::npos);
+    ssc::JsonValue parsed; REQUIRE(ssc::parseJson(body, parsed));
+    CHECK(parsed.get("client_key")->string == "[redacted]");
+    CHECK(parsed.get("TOKEN")->string == "[redacted]");
+    CHECK(parsed.get("album")->string == "Film");
+    CHECK(parsed.get("url")->string == "[redacted URL]");
+}
+
 TEST_CASE("native debug overlay toggles, retains outgoing content and dismisses on outside click") {
     HWND parent = CreateWindowExW(0, L"STATIC", L"debug fixture", WS_OVERLAPPEDWINDOW,
         0, 0, 640, 480, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     REQUIRE(parent != nullptr);
     ssc::DebugOverlay overlay;
-    overlay.attach(parent, [] { return std::string("{\"track\":{\"album\":\"Debug Album\"}}"); });
+    overlay.attach(parent, [] {
+        ssc::JsonValue value; ssc::parseJson("{\"track\":{\"album\":\"Debug Album\"}}", value); return value;
+    });
     SendMessageW(parent, WM_KEYDOWN, 'D', 0);
     REQUIRE(overlay.isOpen());
     REQUIRE(IsWindowVisible(overlay.window()));
@@ -302,7 +338,7 @@ TEST_CASE("native debug freeze retains the displayed snapshot and resumes update
         0, 0, 640, 480, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     REQUIRE(parent != nullptr);
     std::string value = "{\"track\":{\"album\":\"Before\"}}";
-    ssc::DebugOverlay overlay; overlay.attach(parent, [&] { return value; });
+    ssc::DebugOverlay overlay; overlay.attach(parent, [&] { ssc::JsonValue data; ssc::parseJson(value, data); return data; });
     SendMessageW(parent, WM_KEYDOWN, 'D', 0);
     REQUIRE(overlay.isOpen());
     HWND text = GetDlgItem(overlay.window(), ssc::DebugOverlay::kText);
@@ -336,7 +372,7 @@ TEST_CASE("native debug timeline scrolls to future cards and returns to the curr
         item.object["artwork"].object["coverUrl"] = ssc::diagnosticString("https://images.test/" + std::to_string(i) + ".jpg");
         snapshot.object["timeline"].array.push_back(item);
     }
-    ssc::DebugOverlay overlay; overlay.attach(parent, [&] { return ssc::diagnosticJson(snapshot); });
+    ssc::DebugOverlay overlay; overlay.attach(parent, [&] { return snapshot; });
     SendMessageW(parent, WM_KEYDOWN, 'D', 0);
     const HWND rail = GetDlgItem(overlay.window(), ssc::DebugOverlay::kTimeline);
     REQUIRE(rail != nullptr);

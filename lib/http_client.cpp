@@ -1,5 +1,9 @@
+#include "platform_text.h"
 #include "http_client.h"
+#include "debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 #include "diagnostics.h"
+#endif
 
 #include <cctype>
 #include <cstdio>
@@ -51,10 +55,9 @@ std::string osPlatform() {
             std::memset(&vi, 0, sizeof(vi));
             vi.dwOSVersionInfoSize = sizeof(vi);
             if (fn(&vi) == 0) {
-                char buf[64];
-                std::snprintf(buf, sizeof(buf), "Windows NT %lu.%lu.%lu",
-                              vi.dwMajorVersion, vi.dwMinorVersion, vi.dwBuildNumber);
-                ver = buf;
+                ver = "Windows NT " + platform::unsignedText(vi.dwMajorVersion) + "."
+                    + platform::unsignedText(vi.dwMinorVersion) + "."
+                    + platform::unsignedText(vi.dwBuildNumber);
             }
         }
     }
@@ -196,7 +199,9 @@ static HttpResponse httpRequestImpl(const std::string& host,
                          int timeoutSeconds,
                          const std::atomic<bool>* cancel) {
     HttpResponse resp;
+#if SSC_ENABLE_DEBUG_OVERLAY
     const auto started = std::chrono::steady_clock::now();
+#endif
     if (cancel && cancel->load()) { resp.error = "cancelled"; return resp; }
 
     const bool secure = (port == 443); // 443 -> TLS via WINHTTP_FLAG_SECURE
@@ -251,7 +256,7 @@ static HttpResponse httpRequestImpl(const std::string& host,
         0);
     if (ok) ok = WinHttpReceiveResponse(req, nullptr);
     if (!ok) {
-        resp.error = "WinHTTP request failed (error " + std::to_string(GetLastError()) + ")";
+        resp.error = "WinHTTP request failed (error " + ssc::platform::integerText(GetLastError()) + ")";
         return resp;
     }
 
@@ -261,6 +266,7 @@ static HttpResponse httpRequestImpl(const std::string& host,
                         WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusLen,
                         WINHTTP_NO_HEADER_INDEX);
     resp.status = static_cast<int>(status);
+#if SSC_ENABLE_DEBUG_OVERLAY
     resp.headersMs = diagnosticMilliseconds(started);
     auto header = [&](const wchar_t* name) {
         wchar_t value[4096] = {}; DWORD size = sizeof(value);
@@ -272,6 +278,7 @@ static HttpResponse httpRequestImpl(const std::string& host,
     };
     resp.cacheControl = header(L"Cache-Control"); resp.age = header(L"Age");
     resp.cacheStatus = header(L"X-Vercel-Cache");
+#endif
 
     // Body (WinHTTP de-chunks transparently), capped at kMaxResponseBytes.
     std::string out;
@@ -349,7 +356,7 @@ static HttpResponse httpRequestImpl(const std::string& host,
         if (!contentType.empty()) {
             request += "Content-Type: "; request += contentType; request += "\r\n";
         }
-        request += "Content-Length: "; request += std::to_string(body.size()); request += "\r\n";
+        request += "Content-Length: "; request += ssc::platform::integerText(body.size()); request += "\r\n";
     }
     request += "\r\n";
     request += body;
@@ -396,10 +403,14 @@ static HttpResponse httpRequestImpl(const std::string& host,
 HttpResponse httpRequest(const std::string& host, unsigned short port, const std::string& path,
         const std::string& method, const std::string& body, const std::string& contentType,
         int timeoutSeconds, const std::atomic<bool>* cancel) {
+#if SSC_ENABLE_DEBUG_OVERLAY
     const auto start = std::chrono::steady_clock::now();
+#endif
     HttpResponse response = httpRequestImpl(host, port, path, method, body, contentType, timeoutSeconds, cancel);
+#if SSC_ENABLE_DEBUG_OVERLAY
     DiagnosticLog::instance().request(std::string(port == 443 ? "https://" : "http://") + host + path,
         response, diagnosticMilliseconds(start));
+#endif
     return response;
 }
 

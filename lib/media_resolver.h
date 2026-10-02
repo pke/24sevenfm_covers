@@ -50,6 +50,8 @@ struct FanartKeyCheckResult {
 };
 
 struct MediaResult {
+    struct Backdrop { std::string url, source; };
+    std::vector<Backdrop> backdrops;
     enum Status { Hit, Miss, Failure } status = Failure;
     std::string mediaTitle;
     std::string mediaType;
@@ -62,6 +64,7 @@ struct MediaResult {
     int tint[3] = {255, 255, 255};
     bool hasMetadata = false; // validated canonical fields, not the raw outage fallback
     bool hasTint = false;
+    bool fanartKeyRejected = false; // current resolver work; survives a successful keyless retry
     std::vector<Certification> certifications;
     std::string error;
 
@@ -72,7 +75,7 @@ struct MediaResolverConfig {
     std::string apiHost = "24covers-api.vercel.app";
     // First 12 SHA-256 hex chars of api/_lib/backdrop.js, matching the web
     // renderer's RESOLVER_V cache buster at the time this native build ships.
-    std::string resolverVersion = "ed7c3aa5bfde";
+    std::string resolverVersion = "456ff0ce2977";
     unsigned short apiPort = 443;
     int timeoutSeconds = 20;
     using Transport = std::function<HttpResponse(

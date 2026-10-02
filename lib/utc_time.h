@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include "platform_text.h"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -13,13 +14,13 @@ enum class UtcFormat { Date, Iso8601, Display };
 
 #ifdef _WIN32
 inline std::string formatUtcTime(const SYSTEMTIME& utc, UtcFormat format) {
-    const char* pattern = format == UtcFormat::Date ? "%04u-%02u-%02u" :
-        format == UtcFormat::Iso8601 ? "%04u-%02u-%02uT%02u:%02u:%02uZ" :
-        "%04u-%02u-%02u %02u:%02u:%02u UTC";
-    char text[32];
-    std::snprintf(text, sizeof(text), pattern, unsigned(utc.wYear), unsigned(utc.wMonth),
-        unsigned(utc.wDay), unsigned(utc.wHour), unsigned(utc.wMinute), unsigned(utc.wSecond));
-    return text;
+    const std::string date = platform::unsignedText(utc.wYear, 4) + "-"
+        + platform::unsignedText(utc.wMonth, 2) + "-" + platform::unsignedText(utc.wDay, 2);
+    if (format == UtcFormat::Date) return date;
+    return date + (format == UtcFormat::Iso8601 ? "T" : " ")
+        + platform::unsignedText(utc.wHour, 2) + ":" + platform::unsignedText(utc.wMinute, 2)
+        + ":" + platform::unsignedText(utc.wSecond, 2)
+        + (format == UtcFormat::Iso8601 ? "Z" : " UTC");
 }
 #endif
 

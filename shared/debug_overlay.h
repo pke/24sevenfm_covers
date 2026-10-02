@@ -1,4 +1,6 @@
 #pragma once
+#include "../lib/debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 #include <windows.h>
 #include <commctrl.h>
 #include <richedit.h>
@@ -18,7 +20,7 @@ public:
     ~DebugOverlay() { attach(nullptr, {}); if (font_) DeleteObject(font_); if (brush_) DeleteObject(brush_); }
     HWND window() const { return panel_; }
     bool isOpen() const { return open_; }
-    void attach(HWND parent, std::function<std::string()> snapshot) {
+    void attach(HWND parent, std::function<JsonValue()> snapshot) {
         if (parent_ == parent) { snapshot_ = snapshot; return; }
         if (parent_ && IsWindow(parent_)) RemoveWindowSubclass(parent_, parentProc, subclassId());
         parent_ = nullptr; open_ = false;
@@ -54,7 +56,7 @@ private:
     float alpha_ = 0, fromAlpha_ = 0, targetAlpha_ = 0;
     DWORD started_ = 0, refreshed_ = 0, geometryStarted_ = 0, copiedAt_ = 0;
     RECT geometry_ = {}, fromGeometry_ = {}, targetGeometry_ = {};
-    std::function<std::string()> snapshot_;
+    std::function<JsonValue()> snapshot_;
     std::wstring displayed_;
     DebugTimeline timeline_;
     JsonValue snapshotData_, selectedData_;
@@ -76,8 +78,7 @@ private:
         CHARRANGE selection = {}; SendMessageW(text_, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
         if (!force && selection.cpMin != selection.cpMax) return;
         POINT scroll = {}; SendMessageW(text_, EM_GETSCROLLPOS, 0, reinterpret_cast<LPARAM>(&scroll));
-        const auto raw = snapshot_();
-        if (!parseJson(raw, snapshotData_)) return;
+        snapshotData_ = snapshot_();
         if (debugValue(snapshotData_, "timeline").array.empty()) selectedData_ = JsonValue();
         timeline_.setItems(debugValue(snapshotData_, "timeline"), force);
         renderReport();
@@ -300,3 +301,5 @@ private:
     }
 };
 }
+
+#endif // SSC_ENABLE_DEBUG_OVERLAY

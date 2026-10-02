@@ -307,9 +307,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_LBUTTONDOWN:
+            SetFocus(hwnd);
+            if (eng().fanartHintHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) {
+                if (g_winamp) SendMessageA(g_winamp, WM_WA_IPC, (WPARAM)&g_prefsRec, IPC_OPENPREFSTOPAGE);
+                return 0;
+            }
+            if (eng().onBackdropClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             if (eng().onAlbumClick(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) saveSettings();
             return 0;
         case WM_LBUTTONDBLCLK: // double-click the cover -> enter fullscreen (Esc/dbl-click there exits)
+            if (eng().fanartHintHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
+            if (eng().backdropHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             if (eng().albumToggleHitTest(hwnd, GET_X_LPARAM(lp), GET_Y_LPARAM(lp))) return 0;
             setFullscreen(!g_fsWin.active());
             return 0;
@@ -320,12 +328,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             eng().onPointerLeave(hwnd);
             return 0;
         case WM_SETCURSOR:
-            if (LOWORD(lp) == HTCLIENT && eng().albumToggleAtCursor(hwnd)) {
+            if (LOWORD(lp) == HTCLIENT && (eng().albumToggleAtCursor(hwnd) || eng().fanartHintAtCursor(hwnd))) {
                 SetCursor(LoadCursor(nullptr, IDC_HAND));
                 return TRUE;
             }
             break;
         case WM_KEYDOWN:
+            if (eng().onBackdropKey(hwnd, (unsigned)wp)) return 0;
             if (wp == 'N') { eng().demoNext(); return 0; } // demo mode: next cover (no-op otherwise)
             break;
         case WM_SIZE: // gen_ff resized our child - just repaint at the new size

@@ -15,6 +15,7 @@
 #include "config_store.h" // ssccfg::ConfigStore + clampInt (Win32-free, so tests can fake it)
 #include "cover_engine.h" // CoverEngine::Settings (pulls <windows.h>)
 #include "stations.h"     // station id <-> index
+#include "../lib/platform_text.h"
 
 namespace ssccfg {
 
@@ -34,9 +35,9 @@ inline bool validProviderList(const std::string& csv) {
 }
 
 inline std::string cleanFanartClientKey(std::string value) {
-    const size_t first = value.find_first_not_of(" \t\r\n");
+    const size_t first = ssc::platform::firstNotOf(value, " \t\r\n");
     if (first == std::string::npos) return std::string();
-    const size_t last = value.find_last_not_of(" \t\r\n");
+    const size_t last = ssc::platform::lastNotOf(value, " \t\r\n");
     value = value.substr(first, last - first + 1);
     if (value.size() > 128) return std::string();
     for (unsigned char c : value) if (c < 0x20 || c == 0x7f) return std::string();
@@ -103,10 +104,9 @@ inline void save(const CoverEngine::Settings& s, ConfigStore& store) {
     store.writeStr("mediaProviders", s.mediaProviders.c_str());
     const std::string fanartKey = cleanFanartClientKey(s.fanartClientKey);
     store.writeStr("fanartClientKey", fanartKey.c_str());
-    char verifiedAt[32] = {0};
-    std::snprintf(verifiedAt, sizeof(verifiedAt), "%llu",
+    const std::string verifiedAt = ssc::platform::unsignedText(
         fanartKey.empty() ? 0ULL : s.fanartClientKeyVerifiedAt);
-    store.writeStr("fanartClientKeyVerifiedAt", verifiedAt);
+    store.writeStr("fanartClientKeyVerifiedAt", verifiedAt.c_str());
     store.writeStr("station",       ssc::station(s.station).id);
 }
 

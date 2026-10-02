@@ -21,7 +21,7 @@
 
 #include <windows.h>
 #include <atomic>
-#include <mutex>
+#include "../lib/platform_concurrency.h"
 #include <string>
 #include <vector>
 
@@ -29,7 +29,11 @@
 #include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
 #include "info_presentation.h"
 #include "coming_next.h"
+#include "../lib/debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
 #include "debug_overlay.h"
+#endif
+#include "../lib/media_resolver.h"
 
 namespace ssc { class CoverMonitor; }
 namespace ssc { struct TrackInfo; }
@@ -107,7 +111,13 @@ public:
     void onPointerLeave(HWND h);
     bool albumToggleHitTest(HWND h, int x, int y) const;
     bool albumToggleAtCursor(HWND h) const;
+    bool fanartHintHitTest(HWND h, int x, int y) const;
+    bool fanartHintAtCursor(HWND h) const;
     bool onAlbumClick(HWND h, int x, int y); // true when toggled; host persists settings
+    bool cycleBackdrop(HWND h, int direction);
+    bool onBackdropKey(HWND h, unsigned key);
+    bool onBackdropClick(HWND h, int x, int y);
+    int backdropHitTest(HWND h, int x, int y) const;
     void resetTitle();       // playback stopped -> next tune-in reloads
     void repaint();          // request a redraw (e.g. after a settings change)
     void retryMedia();       // manual retry after resolver/image failure
@@ -128,7 +138,9 @@ public:
     void onTimer(HWND h, UINT_PTR id);
     void onNewCover(HWND h); // SSC_WM_NEWCOVER: decode the pending cover
     void onNewMedia(HWND h); // SSC_WM_NEWMEDIA: decode/commit backdrop + ratings
-    std::string debugSnapshot(); // UI thread, credentials removed before serialization
+#if SSC_ENABLE_DEBUG_OVERLAY
+    ssc::JsonValue debugSnapshot(); // UI thread, typed snapshot; credentials removed
+#endif
 
     // Engine-owned repaint heartbeat (~30fps); the engine sets it on the window and
     // the host just forwards WM_TIMER to onTimer. Drives the crossfade + countdown.
@@ -145,6 +157,7 @@ private:
     void decodePending(HWND h);
     void onCoverChanged(const std::string& url, const ssc::TrackInfo& info); // monitor callback
     void startMediaWorker();
+    void runMediaWorker(MediaWorkerState* state);
     void stopMediaWorker();
     void scheduleMedia(const ssc::TrackInfo& current,
                        const std::vector<ssc::TrackInfo>& queue, bool forceReload = false,
@@ -169,6 +182,10 @@ private:
     void publishTitleLogo(unsigned long long epoch, const std::string& bytes,
                           const std::string& album, bool immediate = false);
     void decodePendingMedia(HWND h);
+    void publishCycledBackdrop(unsigned long long epoch, unsigned long long selection,
+                              const std::string& bytes, const ssc::MediaResult& result);
+    float backdropNavigationAlpha(DWORD now);
+    float fanartHintOpacity(DWORD now);
     float ratingVisibilityAlpha(DWORD now);
     void setRatingVisibility(bool visible, DWORD now);
     void updateRatingVisibility(DWORD now);
@@ -185,7 +202,19 @@ private:
     void setRemaining(int secs);
     int  currentRemaining() const;
 
-    std::mutex  mutex_;
+    mutable ssc::platform::Mutex mutex_;
+    ssc::MediaResult cyclingMedia_;
+    struct BackdropSelection { ssc::MediaResult result; std::string bytes; };
+    BackdropSelection backdropSelections_[2]; // current track's landscape / portrait choices
+    bool backdropPortrait_ = false;
+    unsigned long long cyclingEpoch_ = 0, backdropSelection_ = 0;
+    size_t backdropIndex_ = 0;
+    bool backdropLoading_ = false;
+    float navigationAlpha_ = 0;
+    DWORD navigationTick_ = 0;
+    bool fanartKeyRejected_ = false; // guarded; only current-track publications can set it
+    ssc::InfoPresentation fanartHint_; // guarded; keeps the outgoing hint through its fade
+    float fanartHintAlpha_ = 0; // UI thread only
     std::string coverBytes_;             // pending cover to decode (guarded)
     bool        dirty_ = false;
     std::string shownUrl_, nextUrl_, nextBytes_; // preload state (guarded)
@@ -234,7 +263,7 @@ private:
     unsigned long long ratingIntroEpoch_ = 0;
 
     ssc::CoverMonitor* monitor_ = nullptr;
-    std::mutex  monitorLifecycle_;       // serializes start()/stop()/setStation() monitor_ transitions
+    ssc::platform::Mutex  monitorLifecycle_;       // serializes start()/stop()/setStation() monitor_ transitions
     bool autoAdvance_ = false;           // run mode remembered from start(), for setStation() rebuilds
     ssc::Demo demo_;                     // demo cover source (loaded iff demoOn_)
     bool demoOn_ = false;                // demo mode active: play demo_ instead of the monitor
@@ -247,7 +276,9 @@ private:
     unsigned coverRetryFailures_ = 0;
 
     MediaWorkerState* media_ = nullptr;
+#if SSC_ENABLE_DEBUG_OVERLAY
     ssc::DebugOverlay debugOverlay_;
+#endif
 };
 
 #endif // SSC_COVER_ENGINE_H

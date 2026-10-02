@@ -12,7 +12,7 @@ namespace ssc {
 namespace {
 
 void appendUtf8(std::string& out, unsigned cp) {
-    if (cp == 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return;
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return;
     if (cp <= 0x7F) out += static_cast<char>(cp);
     else if (cp <= 0x7FF) {
         out += static_cast<char>(0xC0 | (cp >> 6));
@@ -216,7 +216,9 @@ private:
 
 bool parseJson(const std::string& text, JsonValue& out, std::string* error) {
     Parser parser(text);
-    if (parser.parse(out)) return true;
+    // Commit the owned result only after the entire document is valid.
+    JsonValue parsed;
+    if (parser.parse(parsed)) { out = std::move(parsed); return true; }
     if (error) *error = parser.error();
     return false;
 }

@@ -3,7 +3,8 @@ cmake_policy(SET CMP0091 NEW)   # MSVC_RUNTIME_LIBRARY controls /MT vs /MD
 project(gen_24sevenfm_covers CXX)
 
 # Winamp 5.x is 32-bit: configure with  -A Win32
-set(CMAKE_CXX_STANDARD 11)
+# Select the shared in-place, locale-independent JSON number parser.
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Self-contained + small: statically link the C runtime (no vcruntime140/msvcp140/
@@ -23,7 +24,17 @@ if(MSVC)
         $<$<CONFIG:Release>:/OPT:ICF>       # fold identical COMDATs
         $<$<CONFIG:Release>:/INCREMENTAL:NO>
     )
+    option(SSC_LINK_MAP "Write a linker map beside the release plugin" OFF)
+    if(SSC_LINK_MAP)
+        add_link_options($<$<CONFIG:Release>:/MAP>)
+    endif()
 endif()
+
+option(SSC_ENABLE_DEBUG_OVERLAY "Include native diagnostics in Release builds" OFF)
+add_compile_definitions(
+    $<$<CONFIG:Release>:SSC_ENABLE_DEBUG_OVERLAY=$<BOOL:${SSC_ENABLE_DEBUG_OVERLAY}>>
+    $<$<NOT:$<CONFIG:Release>>:SSC_ENABLE_DEBUG_OVERLAY=1>
+)
 
 set(LIBDIR "${CMAKE_CURRENT_SOURCE_DIR}/../lib")
 
@@ -44,7 +55,8 @@ add_library(gen_24sevenfm_covers SHARED
     "${SHAREDDIR}/rating_assets.cpp"
     "${LIBDIR}/coverfetch.cpp"
     "${LIBDIR}/http_client.cpp"
-    "${LIBDIR}/mini_json.cpp"
+    "${LIBDIR}/json_view.cpp"
+    "${LIBDIR}/diagnostics.cpp"
     "${LIBDIR}/media_resolver.cpp"
     "${LIBDIR}/media_policy.cpp"
     "${LIBDIR}/image_probe.cpp"
@@ -61,6 +73,7 @@ set_target_properties(gen_24sevenfm_covers PROPERTIES
     PREFIX ""
     OUTPUT_NAME "gen_24sevenfm_covers"
 )
+
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(WARNING "Building ${CMAKE_SIZEOF_VOID_P}-byte pointers - Winamp 5.x needs a 32-bit DLL. Reconfigure with: cmake -A Win32")

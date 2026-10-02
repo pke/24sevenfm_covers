@@ -1,4 +1,9 @@
 #pragma once
+#include "debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
+#include "json_view.h"
+#include <map>
+#include "platform_text.h"
 #include "diagnostic_timeline.h"
 #include <set>
 
@@ -23,7 +28,7 @@ inline std::map<std::string, std::string> diagnosticQuery(const std::string& url
     const auto query = url.find('?'); if (query == std::string::npos) return params;
     size_t start = query + 1;
     while (start < url.size()) {
-        const auto end = url.find_first_of("&#", start);
+        const auto end = ssc::platform::firstOf(url, "&#", start);
         const auto part = url.substr(start, end == std::string::npos ? end : end - start);
         const auto equal = part.find('=');
         if (equal != std::string::npos)
@@ -62,7 +67,7 @@ inline JsonValue diagnosticSelection(const JsonValue& snapshot, const JsonValue&
     for (const auto& pair : { std::make_pair("localCache", "cache"), std::make_pair("resolved", "artwork") }) {
         auto value = debugValue(item, pair.second);
         if (value.type == JsonValue::Null) {
-            value = diagnosticObject(); value.object["status"] = diagnosticString("Not available for this track");
+            value = diagnosticObject(); diagnosticSetString(value.object, "status", "Not available for this track");
         }
         out.object[pair.first] = value;
     }
@@ -80,8 +85,17 @@ inline JsonValue diagnosticSelection(const JsonValue& snapshot, const JsonValue&
     auto requests = diagnosticArray(), events = diagnosticArray();
     for (const auto& request : debugValue(snapshot, "requests").array) {
         const auto& body = debugValue(request, "response");
+        std::string album = debugValue(body, "Album").string, title = debugValue(body, "Track").string;
+        // Only the explicitly opened debug view needs feed association. Logging
+        // itself retains response text and never parses it.
+        if (body.type == JsonValue::String) {
+            JsonView feed;
+            if (readJsonView(body.string, feed)) {
+                feed.get("Album").scalarText(album); feed.get("Track").scalarText(title);
+            }
+        }
         if (matchesUrl(debugValue(request, "url").string)
-                || same(debugValue(body, "Album").string, debugValue(body, "Track").string)) requests.array.push_back(request);
+                || same(album, title)) requests.array.push_back(request);
     }
     for (const auto& event : debugValue(snapshot, "events").array) {
         const auto& details = debugValue(event, "details");
@@ -93,3 +107,5 @@ inline JsonValue diagnosticSelection(const JsonValue& snapshot, const JsonValue&
     return out;
 }
 }
+
+#endif // SSC_ENABLE_DEBUG_OVERLAY

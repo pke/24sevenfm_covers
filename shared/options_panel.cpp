@@ -13,9 +13,9 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
-#include <mutex>
+#include "../lib/platform_concurrency.h"
+#include "../lib/platform_time.h"
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace optpanel {
@@ -72,8 +72,8 @@ struct PanelState {
     unsigned long long verifiedAt = 0;
     unsigned long long previousVerifiedAt = 0;
     std::shared_ptr<std::atomic<bool> > cancel;
-    std::thread worker;
-    std::mutex resultMutex;
+    ssc::platform::Thread worker;
+    ssc::platform::Mutex resultMutex;
     ssc::FanartKeyCheckResult result;
 };
 
@@ -151,13 +151,11 @@ void finishFanartCheck(PanelState* state, unsigned generation) {
     }
     ssc::FanartKeyCheckResult result;
     {
-        std::lock_guard<std::mutex> lock(state->resultMutex);
+        ssc::platform::LockGuard lock(state->resultMutex);
         result = state->result;
     }
     if (result.status == ssc::FanartKeyCheckStatus::Accepted) {
-        state->verifiedAt = static_cast<unsigned long long>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
+        state->verifiedAt = static_cast<unsigned long long>(ssc::platform::utcNowMilliseconds());
         const std::string date = verificationDate(state->verifiedAt);
         SetDlgItemTextA(state->details, IDC_OPT_FANART_KEY_STATUS,
             date.empty() ? "Personal key accepted."
@@ -196,13 +194,13 @@ void beginFanartCheck(PanelState* state) {
     state->cancel = std::make_shared<std::atomic<bool> >(false);
     SetDlgItemTextA(state->details, IDC_OPT_FANART_KEY_STATUS, "");
     refreshKeyButton(state);
-    state->worker = std::thread([state, key, generation] {
+    state->worker = ssc::platform::Thread([state, key, generation] {
         ssc::MediaResolverConfig config;
         config.timeoutSeconds = 10;
         const ssc::FanartKeyCheckResult result =
             ssc::MediaResolver(config).checkFanartClientKey(key, state->cancel.get());
         {
-            std::lock_guard<std::mutex> lock(state->resultMutex);
+            ssc::platform::LockGuard lock(state->resultMutex);
             state->result = result;
             state->completedGeneration = generation;
         }

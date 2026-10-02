@@ -68,6 +68,121 @@ struct CoverEngineTestAccess {
     }
     ~CoverEngineTestAccess() { engine.stopMediaWorker(); }
     CoverEngine::MediaWorkerState& state() { return *engine.media_; }
+    void fanartStageHint() {
+        engine.settings.backdrops = true;
+        ssc::TrackInfo track; track.album = "The Bay";
+        engine.scheduleMedia(track, {});
+        ssc::MediaResult rejected; rejected.album = track.album; rejected.fanartKeyRejected = true;
+        const auto epoch = state().epoch;
+        engine.publishQueuedMetadata(epoch, track, rejected);
+        CHECK(engine.fanartHintOpacity(100) == 0);
+        engine.publishMetadata(epoch, rejected, 60);
+        const bool animate = clientAnimationsEnabled();
+        CHECK(engine.fanartHintOpacity(200) == (animate ? 0 : 1));
+        CHECK(engine.fanartHintOpacity(300) == doctest::Approx(animate ? .5f : 1.0f));
+        CHECK(engine.fanartHintOpacity(400) == 1);
+        engine.settings.backdrops = false;
+        CHECK(engine.fanartHintOpacity(500) == (animate ? 1 : 0));
+        if (animate) CHECK(engine.fanartHint_.title() == L"fanart.tv key rejected");
+        CHECK(engine.fanartHintOpacity(600) == doctest::Approx(animate ? .5f : 0.0f));
+        CHECK(engine.fanartHintOpacity(700) == 0);
+        engine.settings.backdrops = true;
+        engine.fanartHintOpacity(800);
+        CHECK(engine.fanartHintOpacity(1000) == 1);
+        track.album = "New album";
+        engine.scheduleMedia(track, {});
+        engine.publishMetadata(epoch, rejected, 60); // stale response cannot restore the hint
+        engine.fanartHintOpacity(1100);
+        CHECK(engine.fanartHintOpacity(1300) == 0);
+    }
+    void backdropCycling() {
+        engine.settings.backdrops = true;
+        ssc::TrackInfo track; track.album = "Arrival";
+        engine.scheduleMedia(track, {});
+        CHECK_FALSE(engine.cycleBackdrop(nullptr, 1));
+        ssc::MediaResult result; result.status = ssc::MediaResult::Hit;
+        result.backdropUrl = "https://image.tmdb.org/t/p/w1280/a.jpg"; result.source = "tmdb";
+        result.backdrops = {{result.backdropUrl, "tmdb"}, {"https://image.tmdb.org/t/p/w1280/b.jpg", "tmdb"}};
+        engine.publishMedia(state().epoch, "first image", {}, false, &result);
+        engine.decodePendingMedia(nullptr);
+        REQUIRE(engine.cycleBackdrop(nullptr, 1));
+        auto first = state().work.back();
+        CHECK(first.result->backdropUrl == result.backdrops[1].url);
+        CHECK(engine.backdropLoading_);
+        CHECK(engine.haveBackdrop_); // hide-cover remains in force during the fallback
+        REQUIRE(engine.cycleBackdrop(nullptr, 1));
+        auto second = state().work.back();
+        CHECK(second.result->backdropUrl == result.backdrops[0].url);
+        engine.publishCycledBackdrop(first.epoch, first.selection, "stale", *first.result);
+        CHECK_FALSE(engine.mediaDirty_);
+        engine.publishCycledBackdrop(second.epoch, second.selection, "selected", *second.result);
+        engine.decodePendingMedia(nullptr);
+        CHECK_FALSE(engine.backdropLoading_);
+        REQUIRE(engine.cycleBackdrop(nullptr, -1));
+        CHECK(state().work.back().result->backdropUrl == result.backdrops[1].url);
+        track.album = "New track";
+        engine.scheduleMedia(track, {});
+        CHECK_FALSE(engine.cycleBackdrop(nullptr, 1));
+        engine.publishCycledBackdrop(second.epoch, second.selection, "old track", *second.result);
+        CHECK(engine.pendingBackdropBytes_ != "old track");
+    }
+    void backdropOrientationSelection() {
+        struct Window {
+            HWND value = CreateWindowExW(0, L"STATIC", L"Backdrop selection test", WS_POPUP,
+                0, 0, 1280, 720, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            ~Window() { DestroyWindow(value); }
+        } window;
+        REQUIRE(window.value);
+        engine.hwnd_.store(window.value);
+        engine.settings.backdrops = true;
+        state().settingsSnapshot = engine.settings;
+        ssc::TrackInfo track; track.album = "Arrival";
+        const auto resize = [&](bool portrait) {
+            REQUIRE(SetWindowPos(window.value, nullptr, 0, 0, portrait ? 600 : 1280,
+                portrait ? 900 : 720, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE));
+            engine.scheduleMedia(track, {});
+        };
+        const auto result = [](const std::string& name) {
+            ssc::MediaResult art; art.status = ssc::MediaResult::Hit; art.source = "tmdb";
+            art.backdropUrl = "https://image.tmdb.org/t/p/w1280/" + name + "-a.jpg";
+            art.backdrops = {{art.backdropUrl, "tmdb"},
+                {"https://image.tmdb.org/t/p/w1280/" + name + "-b.jpg", "tmdb"}};
+            return art;
+        };
+        const auto landscape = result("landscape"), portrait = result("portrait");
+        const auto select = [&](const ssc::MediaResult& art, const std::string& bytes) {
+            engine.publishMedia(state().epoch, "default", {}, false, &art);
+            REQUIRE(engine.cycleBackdrop(window.value, 1));
+            const auto work = state().work.back();
+            engine.publishCycledBackdrop(work.epoch, work.selection, bytes, *work.result);
+            engine.decodePendingMedia(window.value);
+        };
+        resize(false); select(landscape, "selected landscape");
+        resize(true); select(portrait, "selected portrait");
+        resize(false);
+        engine.publishMedia(state().epoch, "default landscape", {}, false, &landscape);
+        CHECK(engine.pendingBackdropBytes_ == "selected landscape");
+        CHECK(engine.backdropIndex_ == 1);
+        resize(true);
+        engine.publishMedia(state().epoch, "default portrait", {}, false, &portrait);
+        CHECK(engine.pendingBackdropBytes_ == "selected portrait");
+        CHECK(engine.backdropIndex_ == 1);
+        // Cycling resumes from the restored selection, including an explicit default.
+        REQUIRE(engine.cycleBackdrop(window.value, 1));
+        const auto work = state().work.back();
+        CHECK(work.result->backdropUrl == portrait.backdropUrl);
+        engine.publishCycledBackdrop(work.epoch, work.selection, "chosen default", *work.result);
+        resize(false); resize(true);
+        engine.publishMedia(state().epoch, "default portrait", {}, false, &portrait);
+        CHECK(engine.backdropIndex_ == 0);
+        // A selection must never leak to the next track, even with the same URLs.
+        track.track = "Another cue"; resize(false);
+        engine.publishMedia(state().epoch, "new track default", {}, false, &landscape);
+        CHECK(engine.pendingBackdropBytes_ == "new track default");
+        CHECK(engine.backdropIndex_ == 0);
+        engine.hwnd_.store(nullptr);
+    }
+#if SSC_ENABLE_DEBUG_OVERLAY
     void diagnosticCards() {
         ssc::TrackInfo past, current, future;
         past.album = "Past album"; past.track = "Old cue";
@@ -82,7 +197,7 @@ struct CoverEngineTestAccess {
             cacheMedia(&state(), track.album, track, state().request, result, "image bytes");
         }
         ssc::JsonValue snapshot;
-        REQUIRE(ssc::parseJson(engine.debugSnapshot(), snapshot));
+        snapshot = engine.debugSnapshot();
         const auto& timeline = ssc::debugValue(snapshot, "timeline").array;
         REQUIRE(timeline.size() == 3);
         for (const auto& card : timeline) {
@@ -92,10 +207,11 @@ struct CoverEngineTestAccess {
             CHECK(ssc::debugValue(variants[0], "imageBytes").number == 11);
         }
         state().cache.clear();
-        REQUIRE(ssc::parseJson(engine.debugSnapshot(), snapshot));
+        snapshot = engine.debugSnapshot();
         for (const auto& card : ssc::debugValue(snapshot, "timeline").array)
             CHECK(ssc::debugValue(ssc::debugValue(card, "artwork"), "variants").array.empty());
     }
+#endif
     void comingNextQueue() {
         ssc::TrackInfo current, first, second;
         current.album = "Current"; first.album = "Crown, The"; second.album = "Next album";
@@ -269,7 +385,7 @@ struct CoverEngineTestAccess {
     unsigned long long schedule(const char* album, bool reload = false) {
         ssc::TrackInfo info; info.album = album; info.track = "Cue";
         engine.scheduleMedia(info, std::vector<ssc::TrackInfo>(), reload);
-        std::lock_guard<std::mutex> lock(state().mutex);
+        ssc::platform::LockGuard lock(state().mutex);
         return state().epoch;
     }
     void publish(unsigned long long epoch) {
@@ -290,7 +406,7 @@ struct CoverEngineTestAccess {
     }
     void blockedPublication(int kind) {
         const auto epoch = schedule("Old album");
-        std::unique_lock<std::mutex> lock(engine.mutex_);
+        ssc::platform::UniqueLock lock(engine.mutex_);
         std::promise<void> entered;
         auto ready = entered.get_future();
         auto worker = std::async(std::launch::async, [&] {
@@ -406,7 +522,7 @@ struct CoverEngineTestAccess {
             }
             return response;
         };
-        { std::lock_guard<std::mutex> lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
+        { ssc::platform::LockGuard lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
         struct JoinWorker { std::function<void()> stop; ~JoinWorker() { stop(); } };
         JoinWorker join{[&] { engine.stopMediaWorker(); }};
         ssc::TrackInfo current, queued;
@@ -416,7 +532,7 @@ struct CoverEngineTestAccess {
         const auto waitFor = [&](size_t metadataCount, size_t logoCount) {
             for (unsigned i = 0; i < 1000; ++i) {
                 {
-                    std::lock_guard<std::mutex> lock(state().mutex);
+                    ssc::platform::LockGuard lock(state().mutex);
                     if (state().cache.size() == metadataCount && state().titleLogoCache.size() == logoCount)
                         return true;
                 }
@@ -428,7 +544,7 @@ struct CoverEngineTestAccess {
         CHECK(downloads == 0); CHECK(resolutions == 2);
         engine.settings.comingNext = true; engine.repaint();
         {
-            std::lock_guard<std::mutex> lock(engine.mutex_);
+            ssc::platform::LockGuard lock(engine.mutex_);
             const auto frame = engine.comingNext_.advance(true, 10, 100, 0);
             CHECK(frame.album == L"Queued");
         }
@@ -444,7 +560,7 @@ struct CoverEngineTestAccess {
         engine.repaint();
         REQUIRE(waitFor(6, 2));
         {
-            std::lock_guard<std::mutex> lock(engine.mutex_);
+            ssc::platform::LockGuard lock(engine.mutex_);
             CHECK(engine.pendingTitleLogoAlbum_ == "Current");
             CHECK(engine.pendingTitleLogoImmediate_);
         }
@@ -456,12 +572,12 @@ struct CoverEngineTestAccess {
         engine.scheduleMedia(queued, {}); // promote the prepared queue item
         for (unsigned i = 0; i < 1000; ++i) {
             bool ready;
-            { std::lock_guard<std::mutex> lock(engine.mutex_);
+            { ssc::platform::LockGuard lock(engine.mutex_);
               ready = engine.pendingTitleLogoAlbum_ == "Queued" && !engine.pendingTitleLogoBytes_.empty(); }
             if (ready) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        { std::lock_guard<std::mutex> lock(engine.mutex_);
+        { ssc::platform::LockGuard lock(engine.mutex_);
           CHECK(engine.pendingTitleLogoAlbum_ == "Queued"); }
         engine.stopMediaWorker(); // join before captured fixtures leave scope
         CHECK(downloads == 2); CHECK(resolutions == 6);
@@ -495,13 +611,13 @@ struct CoverEngineTestAccess {
             else response.body = "{}";
             return response;
         };
-        { std::lock_guard<std::mutex> lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
+        { ssc::platform::LockGuard lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
         struct JoinWorker { std::function<void()> stop; ~JoinWorker() { stop(); } };
         JoinWorker join{[&] { engine.stopMediaWorker(); }};
         const auto settleBackdrop = [&] {
             for (unsigned i = 0; i < 1000; ++i) {
                 bool ready;
-                { std::lock_guard<std::mutex> lock(engine.mutex_);
+                { ssc::platform::LockGuard lock(engine.mutex_);
                   ready = engine.mediaDirty_ && engine.pendingBackdropChange_
                       && engine.pendingMediaEpoch_ == engine.activeMediaEpoch_; }
                 if (ready) { engine.decodePendingMedia(nullptr); return true; }
@@ -522,7 +638,7 @@ struct CoverEngineTestAccess {
             REQUIRE(settleBackdrop());
             CHECK(engine.settings.backdrops);
             CHECK(engine.haveBackdrop_);
-            { std::lock_guard<std::mutex> lock(engine.mutex_);
+            { ssc::platform::LockGuard lock(engine.mutex_);
               CHECK(engine.pendingTitleLogoBytes_.empty()); }
             engine.settings.titleLogos = true; engine.repaint();
             REQUIRE(settleBackdrop());
@@ -618,7 +734,7 @@ struct CoverEngineTestAccess {
         current.album = "Cached movie"; current.track = "Cue";
         queued.album = "Blocked queue request";
         {
-            std::lock_guard<std::mutex> lock(state().mutex);
+            ssc::platform::LockGuard lock(state().mutex);
             state().resolver = ssc::MediaResolver(config);
             for (bool portrait : {true, false}) {
                 ssc::MediaRequest request;
@@ -672,7 +788,7 @@ struct CoverEngineTestAccess {
             CHECK(engine.haveBackdrop_ == expectBackdrop);
             CHECK(requests == 1);
         }
-        { std::lock_guard<std::mutex> lock(state().mutex); CHECK(state().cache.size() == 2); }
+        { ssc::platform::LockGuard lock(state().mutex); CHECK(state().cache.size() == 2); }
     }
     void viewportMissUsesDefault(bool portraitArt) {
         struct Window {
@@ -719,11 +835,11 @@ struct CoverEngineTestAccess {
             }
             return response;
         };
-        { std::lock_guard<std::mutex> lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
+        { ssc::platform::LockGuard lock(state().mutex); state().resolver = ssc::MediaResolver(config); }
         const auto settled = [&] {
             for (unsigned i = 0; i < 1000; ++i) {
                 bool ready;
-                { std::lock_guard<std::mutex> lock(engine.mutex_);
+                { ssc::platform::LockGuard lock(engine.mutex_);
                   ready = engine.mediaDirty_ && engine.pendingMediaEpoch_ == engine.activeMediaEpoch_
                       && engine.pendingBackdropChange_; }
                 if (ready) { engine.decodePendingMedia(nullptr); return true; }
@@ -743,7 +859,7 @@ struct CoverEngineTestAccess {
                 CHECK(engine.haveBackdrop_); // keep outgoing art only while the variant is unresolved
                 release.set_value(); released = true;
             } else {
-                std::lock_guard<std::mutex> lock(engine.mutex_);
+                ssc::platform::LockGuard lock(engine.mutex_);
                 CHECK(engine.mediaDirty_); // a cached miss is published synchronously too
                 CHECK(engine.pendingMediaClear_);
             }
@@ -825,9 +941,11 @@ TEST_CASE("native coming next preserves scheduled music across short and repeate
 TEST_CASE("native provider reordering refreshes the portrait backdrop and rejects old results") {
     CoverEngineTestAccess test; test.portraitProviderReorder();
 }
+#if SSC_ENABLE_DEBUG_OVERLAY
 TEST_CASE("native diagnostic cards expose only their own cached artwork, including history and eviction") {
     CoverEngineTestAccess test; test.diagnosticCards();
 }
+#endif
 TEST_CASE("native resize updates current and queue resolution without downgrading metadata") {
     CoverEngineTestAccess test; test.artworkResize();
 }
@@ -953,7 +1071,7 @@ TEST_CASE("native settings edits and monitor scheduling use coherent snapshots")
         started.set_value();
         while (!done.load()) {
             test.schedule("Current");
-            std::lock_guard<std::mutex> lock(test.state().mutex);
+            ssc::platform::LockGuard lock(test.state().mutex);
             const auto& r = test.state().request;
             if (r.providers.substr(7) != std::string(2048, r.fanartClientKey[0])
                     || r.fanartClientKey != std::string(4096, r.fanartClientKey[0])) coherent = false;
@@ -990,3 +1108,9 @@ TEST_CASE("native repaint preserves the latest current track and its queued work
     CHECK(test.state().work[0].reload);
     CHECK_FALSE(test.state().work[1].reload);
 }
+
+TEST_CASE("native backdrop cycling wraps and rejects stale selections") { CoverEngineTestAccess().backdropCycling(); }
+TEST_CASE("native fanart hint fades, ignores queued and stale responses, and respects disabled backdrops") {
+    CoverEngineTestAccess().fanartStageHint();
+}
+TEST_CASE("native backdrop selection survives orientation changes") { CoverEngineTestAccess().backdropOrientationSelection(); }

@@ -8,6 +8,7 @@
 #ifndef SSC_STATIONS_H
 #define SSC_STATIONS_H
 
+#include "../lib/platform_text.h"
 #include <cctype>
 #include <cstddef>
 #include <cstring>
@@ -44,9 +45,9 @@ inline const StationInfo& station(int i) { return kStations[validStationIndex(i)
 // Presentation-only label for a confirmed station ident. Keep feed metadata raw
 // and preserve genuine album names on unregistered tracks that also lack a cover.
 inline std::string stationIdentAlbumLabel(const std::string& album, int stationIndex) {
-    const size_t first = album.find_first_not_of(" \t\r\n");
+    const size_t first = ssc::platform::firstNotOf(album, " \t\r\n");
     if (first == std::string::npos) return album;
-    std::string marker = album.substr(first, album.find_last_not_of(" \t\r\n") - first + 1);
+    std::string marker = album.substr(first, ssc::platform::lastNotOf(album, " \t\r\n") - first + 1);
     for (char& c : marker) c = (char)std::tolower((unsigned char)c);
     return marker == "stationid" || marker == "station id"
         ? station(stationIndex).displayName : album;

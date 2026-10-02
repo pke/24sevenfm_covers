@@ -10,6 +10,7 @@
 #include "../../winamp/gen_resource.h"
 #include "../../shared/about_links.h"
 #include "../../shared/config.h"
+#include "../../desktop/windows_theme.cpp"
 #include <map>
 
 TEST_CASE("verification dates preserve UTC days and reject invalid persisted timestamps") {
@@ -119,6 +120,42 @@ TEST_CASE("native title-logo option defaults off and follows the backdrop depend
     CHECK_FALSE(IsWindowEnabled(GetDlgItem(dialogs.options, IDC_OPT_TITLELOGOS)));
     optpanel::read(dialogs.options, settings);
     CHECK(settings.titleLogos); // parent switch retains the preference
+}
+
+TEST_CASE("desktop disabled provider list retains the dark surface when backdrops are switched off") {
+    Dialogs dialogs;
+    HWND list = GetDlgItem(dialogs.options, IDC_OPT_PROVIDERS);
+    const bool previous = dvtheme::g_dark;
+    dvtheme::g_dark = true; // deterministic without changing the user's system theme
+    dvtheme::themeControl(list);
+    RECT rect{}; GetClientRect(list, &rect);
+    HDC screen = GetDC(list), dc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, rect.right, rect.bottom);
+    HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
+    for (bool enabled : {false, true, false}) {
+        EnableWindow(list, enabled);
+        SendMessageW(list, WM_PRINT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT | PRF_ERASEBKGND);
+        CHECK(GetPixel(dc, rect.right - 8, rect.bottom - 8) == dvtheme::kDarkControl);
+        RECT row{}; ListView_GetItemRect(list, 0, &row, LVIR_BOUNDS);
+        if (!enabled) {
+            CHECK(GetPixel(dc, rect.right - 8, (row.top + row.bottom) / 2) == dvtheme::kDarkControl);
+            unsigned mutedPixels = 0;
+            for (int y = row.top; y < row.bottom; ++y)
+                for (int x = row.left; x < (std::min)(row.right, rect.right); ++x)
+                    if (GetPixel(dc, x, y) == dvtheme::kDarkDisabledText) ++mutedPixels;
+            CHECK(mutedPixels > 10); // text and checked glyph remain legible
+        }
+        CHECK(!!IsWindowEnabled(list) == enabled);
+        CHECK(ListView_GetCheckState(list, 0));
+        CHECK(ListView_GetItemCount(list) == 4);
+    }
+    SelectObject(dc, oldBitmap); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(list, screen);
+    dvtheme::g_dark = false; // light/high-contrast paths return to native painting
+    dvtheme::themeControl(list);
+    DWORD_PTR data = 0;
+    CHECK_FALSE(GetWindowSubclass(list, dvtheme::listSubclassProc, dvtheme::kListSubclass, &data));
+    CHECK(ListView_GetBkColor(list) == CLR_DEFAULT);
+    dvtheme::g_dark = previous;
 }
 
 TEST_CASE("native About URLs are rendered as interactive links") {

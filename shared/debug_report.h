@@ -1,4 +1,7 @@
 #pragma once
+#include "../lib/debug_features.h"
+#if SSC_ENABLE_DEBUG_OVERLAY
+#include "../lib/platform_text.h"
 #include "../lib/diagnostic_timeline.h"
 #include <cctype>
 
@@ -41,7 +44,7 @@ inline void debugReportFields(std::string& out, const JsonValue& value, unsigned
     else if (value.type == JsonValue::Array) {
         if (value.array.empty()) out += indent + "None\r\n";
         for (size_t i = 0; i < value.array.size(); ++i) {
-            out += indent + "#" + std::to_string(i+1) + "\r\n";
+            out += indent + "#" + ssc::platform::integerText(i+1) + "\r\n";
             debugReportFields(out, value.array[i], depth + 1);
         }
     } else out += indent + debugDisplayValue(value) + "\r\n";
@@ -59,3 +62,5 @@ inline std::string debugReport(const JsonValue& snapshot) {
     return out;
 }
 }
+
+#endif // SSC_ENABLE_DEBUG_OVERLAY

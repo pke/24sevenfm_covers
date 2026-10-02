@@ -29,6 +29,15 @@
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <SSCEnableDebugOverlay Condition="'$(SSCEnableDebugOverlay)'=='' and '$(Configuration)'=='Release'">0</SSCEnableDebugOverlay>
+    <SSCEnableDebugOverlay Condition="'$(SSCEnableDebugOverlay)'==''">1</SSCEnableDebugOverlay>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>SSC_ENABLE_DEBUG_OVERLAY=$(SSCEnableDebugOverlay);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
@@ -43,6 +52,9 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
+      <Optimization>MinSpace</Optimization>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
@@ -54,6 +66,8 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <GenerateMapFile Condition="'$(SSCLinkMap)'=='true'">true</GenerateMapFile>
+      <MapFileName Condition="'$(SSCLinkMap)'=='true'">$(OutDir)$(TargetName).map</MapFileName>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <AdditionalDependencies>..\sdk\foobar2000\shared\shared-$(Platform).lib;d2d1.lib;windowscodecs.lib;dwrite.lib;ole32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -95,7 +109,8 @@
     <ClCompile Include="..\..\shared\d2d_rolldigits.cpp" />
     <ClCompile Include="..\..\lib\coverfetch.cpp" />
     <ClCompile Include="..\..\lib\http_client.cpp" />
-    <ClCompile Include="..\..\lib\mini_json.cpp" />
+    <ClCompile Include="..\..\lib\json_view.cpp" />
+    <ClCompile Include="..\..\lib\diagnostics.cpp" />
     <ClCompile Include="..\..\lib\media_resolver.cpp" />
     <ClCompile Include="..\..\lib\media_policy.cpp" />
     <ClCompile Include="..\..\lib\image_probe.cpp" />

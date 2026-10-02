@@ -113,6 +113,8 @@ std::vector<BYTE> g_blurPixels; // current cover/strength only; independent of H
 // fallback must continue to receive g_curBytes, and a failed hero can fade away
 // independently. Ratings use the same double-buffered visibility transaction.
 std::string     g_backdropCurBytes, g_backdropPrevBytes;
+bool g_backdropLoading = false;
+float g_backdropNavigationOpacity = 0;
 ID2D1Bitmap*    g_backdropCurBmp = nullptr;
 ID2D1Bitmap*    g_backdropPrevBmp = nullptr;
 D2D1_COLOR_F    g_backdropCurTint = D2D1::ColorF(1, 1, 1, 1);
@@ -129,6 +131,8 @@ std::string g_titleLogoDecodedBytes;
 D2D1_RECT_F g_albumHitRect = {}, g_logoHitRect = {};
 HWND g_albumHitWindow = nullptr;
 bool g_albumHitVisible = false;
+D2D1_RECT_F g_fanartHintHitRect = {};
+HWND g_fanartHintHitWindow = nullptr;
 
 // A legible tint derived from the current cover's average colour, used for the poster
 // info box's title/artist and the countdown text so they read as part of the artwork.
@@ -143,6 +147,7 @@ void discardDeviceResources() {
     SafeRelease(g_titleLogoBmp);
     g_titleLogoDecodedBytes.clear();
     g_albumHitVisible = false;
+    g_fanartHintHitRect = {};
     for (size_t i = 0; i < g_ratingBitmaps.size(); ++i) SafeRelease(g_ratingBitmaps[i].bitmap);
     g_ratingBitmaps.clear();
     SafeRelease(g_bgBrush);
@@ -353,6 +358,34 @@ IDWriteTextFormat* makeFormat(float size, DWRITE_FONT_WEIGHT weight, bool center
         fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     }
     return fmt;
+}
+
+void drawFanartHint(float cw, float ch, float dpi, float opacity) {
+    if (opacity <= 0.0f || !g_dwrite || !g_bgBrush || !g_fgBrush) return;
+    const wchar_t* text = L"fanart.tv key rejected\nCheck provider settings";
+    const float margin = 11.2f * dpi, pad = 8.0f * dpi;
+    IDWriteTextFormat* format = makeFormat(12.0f * dpi, DWRITE_FONT_WEIGHT_NORMAL, false);
+    if (!format) return;
+    IDWriteTextLayout* layout = nullptr;
+    const float width = (std::max)(1.0f, (std::min)(250.0f * dpi, cw * .45f - pad * 2));
+    if (SUCCEEDED(g_dwrite->CreateTextLayout(text, (UINT32)lstrlenW(text), format,
+            width, (std::max)(1.0f, ch - margin * 2 - pad * 2), &layout))) {
+        DWRITE_TEXT_METRICS metrics = {}; layout->GetMetrics(&metrics);
+        const auto bgColor = g_bgBrush->GetColor(), fgColor = g_fgBrush->GetColor();
+        const float bgOpacity = g_bgBrush->GetOpacity(), fgOpacity = g_fgBrush->GetOpacity();
+        g_bgBrush->SetColor(D2D1::ColorF(0, 0, 0, .62f));
+        g_bgBrush->SetOpacity(opacity);
+        g_fanartHintHitRect = D2D1::RectF(margin, margin,
+            margin + metrics.width + pad * 2, margin + metrics.height + pad * 2);
+        g_rt->FillRoundedRectangle(D2D1::RoundedRect(g_fanartHintHitRect, 8 * dpi, 8 * dpi), g_bgBrush);
+        g_fgBrush->SetColor(D2D1::ColorF(1, .86f, .62f));
+        g_fgBrush->SetOpacity(opacity);
+        g_rt->DrawTextLayout(D2D1::Point2F(margin + pad, margin + pad), layout, g_fgBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        g_bgBrush->SetColor(bgColor); g_bgBrush->SetOpacity(bgOpacity);
+        g_fgBrush->SetColor(fgColor); g_fgBrush->SetOpacity(fgOpacity);
+        SafeRelease(layout);
+    }
+    SafeRelease(format);
 }
 
 void drawComingNext(float cw, float ch, float dpi, float top,
@@ -661,6 +694,7 @@ float windowDpiScale(HWND hwnd) {
 // fill mode passes the whole client area (square corners); poster mode passes the
 // centered cover rect (rounded).
 void drawCover(const D2D1_RECT_F& dest, Transition transition, float progress, float cornerRadius) {
+    SSC_COUNT(coverDraws);
     bool pushed = false;
     ID2D1RoundedRectangleGeometry* geo = nullptr;
     if (cornerRadius > 0.0f && g_layer && g_factory &&
@@ -803,7 +837,7 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
 
     // Cover (rounded), with the active transition. The radius is per mille of the cover's
     // side so it tracks the window size; 45 (4.5%) is the default look.
-    if (!mediaVisible || !hideCoverWithBackdrop)
+    if ((!mediaVisible || !hideCoverWithBackdrop) && !g_backdropLoading)
         drawCover(D2D1::RectF(coverX, coverY, coverX + coverS, coverY + coverS),
                   transition, progress, coverS * (g_coverRadius / 1000.0f));
 
@@ -889,7 +923,8 @@ bool renderCover(float cw, float ch, Transition transition, float progress,
                  const wchar_t* status, float mediaProgress, bool hideCoverWithBackdrop) {
     // The square cover is the stable fallback under a hero fade. It therefore
     // remains rendered until a new backdrop is actually decoded and opaque.
-    drawCover(D2D1::RectF(0, 0, cw, ch), transition, progress, 0.0f);
+    if (g_backdropLoading || (hideCoverWithBackdrop && (g_backdropCurBmp || g_backdropPrevBmp))) drawBlurredBackground(cw, ch);
+    else drawCover(D2D1::RectF(0, 0, cw, ch), transition, progress, 0.0f);
     const bool mediaVisible = drawBackdrop(cw, ch, mediaProgress);
     if (mediaVisible && !hideCoverWithBackdrop) {
         // Keep the backdrop legible while retaining the cover: a centered square
@@ -914,6 +949,7 @@ bool renderCover(float cw, float ch, Transition transition, float progress,
 
 } // namespace
 
+#if SSC_ENABLE_DEBUG_OVERLAY
 LiveDiagnostics liveDiagnostics() {
     LiveDiagnostics stats;
     stats.cacheBytes = g_decodedBytes; stats.cacheEntries = g_decodedImages.size();
@@ -922,6 +958,7 @@ LiveDiagnostics liveDiagnostics() {
     if (g_backdropCurBmp) { const auto size = g_backdropCurBmp->GetPixelSize(); stats.backdropWidth = size.width; stats.backdropHeight = size.height; }
     return stats;
 }
+#endif
 
 #ifdef SSC_RENDERER_DIAGNOSTICS
 RendererDiagnostics rendererDiagnostics() {
@@ -984,6 +1021,8 @@ void shutdown() {
     g_backdropCurBytes.clear();
     g_backdropPrevBytes.clear();
     g_titleLogo = ssc::TitleLogoPresentation();
+    g_backdropLoading = false;
+    g_backdropNavigationOpacity = 0;
     g_titleLogoLayout = ssc::TitleLogoLayout();
     g_backdropCurHasTint = g_backdropPrevHasTint = false;
     g_ratingsCur.clear();
@@ -1051,6 +1090,18 @@ void clearBackdrop(bool fadeFromCurrent) {
 }
 
 bool backdropReady() { return g_backdropCurBytes.empty() || g_backdropCurBmp != nullptr; }
+void setBackdropLoading(bool hideCover) { g_backdropLoading = hideCover; }
+void setBackdropNavigationOpacity(float opacity) { g_backdropNavigationOpacity = opacity; }
+
+int backdropNavigationHitTest(HWND hwnd, int x, int y) {
+    RECT rc{};
+    if (!GetClientRect(hwnd, &rc)) return 0;
+    const float dpi = windowDpiScale(hwnd), size = 44 * dpi, margin = 12 * dpi;
+    if (rc.right < 2 * (size + margin) || abs(y - rc.bottom / 2) > size / 2) return 0;
+    if (x >= margin && x <= margin + size) return -1;
+    if (x >= rc.right - margin - size && x <= rc.right - margin) return 1;
+    return 0;
+}
 
 void setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent) {
     if (fadeFromCurrent) g_ratingsPrev = g_ratingsCur;
@@ -1091,16 +1142,25 @@ bool albumHitTest(HWND hwnd, int x, int y) {
     return inside(g_albumHitRect) || inside(g_logoHitRect);
 }
 
+bool fanartHintHitTest(HWND hwnd, int x, int y) {
+    const auto& r = g_fanartHintHitRect;
+    return hwnd == g_fanartHintHitWindow && r.right > r.left && r.bottom > r.top
+        && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+
 bool render(HWND hwnd, float progress, Transition transition, int remainingSeconds,
             float overlayFontFrac, bool rollDigits, const wchar_t* statusText,
             int layout, const wchar_t* title, const wchar_t* artist,
             float mediaProgress, bool hideCoverWithBackdrop, float ratingProgress,
             float ratingOpacity, float infoOpacity, const wchar_t* album,
-            const wchar_t* track, int logoFadeMs, const ssc::ComingNextFrame* comingNext) {
+            const wchar_t* track, int logoFadeMs, const ssc::ComingNextFrame* comingNext,
+            float fanartHintOpacity) {
     SSC_TIME(frameTimer, frameMs);
     SSC_COUNT(frames);
     g_albumHitWindow = hwnd;
     g_albumHitVisible = false;
+    g_fanartHintHitWindow = hwnd;
+    g_fanartHintHitRect = {};
     if (!g_factory)
         return false;
 
@@ -1169,6 +1229,20 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     const float comingNextTop = layout == 0 && remainingSeconds >= 0
         ? ch * overlayFontFrac * 2.5f + 11.2f * dpi : 11.2f * dpi;
     drawComingNext((float)cw, (float)ch, dpi, comingNextTop, comingNext);
+    drawFanartHint((float)cw, (float)ch, dpi, fanartHintOpacity);
+    if (g_backdropNavigationOpacity > 0 && g_fgBrush && g_bgBrush && cw >= 112 * dpi) {
+        const float alpha = g_backdropNavigationOpacity, half = 22 * dpi;
+        for (int direction : {-1, 1}) {
+            const float x = direction < 0 ? 34 * dpi : cw - 34 * dpi, y = ch * .5f;
+            g_bgBrush->SetOpacity(alpha);
+            g_rt->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(x - half, y - half, x + half, y + half), 8 * dpi, 8 * dpi), g_bgBrush);
+            g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, alpha));
+            g_rt->DrawLine(D2D1::Point2F(x - direction * 4 * dpi, y - 8 * dpi), D2D1::Point2F(x + direction * 4 * dpi, y), g_fgBrush, 2 * dpi);
+            g_rt->DrawLine(D2D1::Point2F(x + direction * 4 * dpi, y), D2D1::Point2F(x - direction * 4 * dpi, y + 8 * dpi), g_fgBrush, 2 * dpi);
+        }
+        g_bgBrush->SetOpacity(1);
+        g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
+    }
     const HRESULT hr = g_rt->EndDraw();
     // Recreate on ANY failure, not just D2DERR_RECREATE_TARGET: a target left in a
     // non-recreate error state (e.g. after a bad resize) would otherwise render

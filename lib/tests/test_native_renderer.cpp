@@ -82,7 +82,25 @@ std::string artwork(UINT width, UINT height, unsigned seed = 0, bool alpha = fal
 }
 }
 
-TEST_CASE("coming next renders in both layouts with ellipsis and optional artist/countdown") {
+TEST_CASE("backdrop cycling keeps the blurred default without drawing a hidden cover in either layout") {
+    RendererFixture fixture;
+    const auto cover = artwork(300, 300);
+    d2d::setCover(cover.data(), cover.size(), false);
+    for (int layout : {0, 1}) for (bool hidden : {true, false}) {
+        d2d::setBackdropLoading(hidden);
+        d2d::setBackdropNavigationOpacity(.5f);
+        d2d::resetRendererDiagnostics();
+        d2d::render(fixture.portrait, 1, d2d::Transition::Crossfade, -1, .08f, false,
+            nullptr, layout, L"Album", L"Artist");
+        CHECK(d2d::rendererDiagnostics().failedFrames == 0);
+        CHECK((d2d::rendererDiagnostics().coverDraws == 0) == hidden);
+    }
+    // Arrow geometry uses the same DPI scale for drawing and pointer hit tests.
+    CHECK(d2d::backdropNavigationHitTest(fixture.portrait, 0, 0) == 0);
+    CHECK(d2d::backdropNavigationHitTest(fixture.portrait, 300, 450) == 0);
+}
+
+TEST_CASE("coming next and fanart hints render together in both layouts") {
     RendererFixture fixture;
     const std::string cover = artwork(300, 300);
     d2d::setCover(cover.data(), cover.size(), false);
@@ -97,8 +115,12 @@ TEST_CASE("coming next renders in both layouts with ellipsis and optional artist
             next.artist = seconds < 0 ? L"" : L"Composer";
             d2d::render(window, 1, d2d::Transition::Crossfade, seconds, .08f, false,
                 nullptr, layout, L"Current album", L"Current artist", 1, true, 1, 1, 1,
-                L"Current album", L"Cue", 0, &next);
+                L"Current album", L"Cue", 0, &next, opacity);
             CHECK(d2d::rendererDiagnostics().failedFrames == 0);
+            CHECK(d2d::fanartHintHitTest(window, 25, 25) == (opacity > 0));
+            CHECK_FALSE(d2d::fanartHintHitTest(window, 0, 0));
+            CHECK_FALSE(d2d::fanartHintHitTest(window, client.right - 1, client.bottom - 1));
+            CHECK_FALSE(d2d::fanartHintHitTest(window == fixture.portrait ? fixture.landscape : fixture.portrait, 25, 25));
             if (opacity == .5f) {
                 // A half-entered card extends beyond the stage, rather than
                 // fading in at its resting position. Both edges move together.
@@ -109,6 +131,8 @@ TEST_CASE("coming next renders in both layouts with ellipsis and optional artist
                 CHECK(d2d::rendererDiagnostics().comingNextLeft >= 0);
             }
         }
+        d2d::resetTarget();
+        CHECK_FALSE(d2d::fanartHintHitTest(window, 25, 25));
     }
 }
 

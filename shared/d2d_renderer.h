@@ -10,21 +10,24 @@
 #include <string>
 #include <vector>
 
+#include "../lib/debug_features.h"
 #include "d2d_transitions.h" // Transition enum
 #include "coming_next.h"
 
 namespace d2d {
 
+#if SSC_ENABLE_DEBUG_OVERLAY
 struct LiveDiagnostics {
     size_t cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
     unsigned coverWidth = 0, coverHeight = 0, backdropWidth = 0, backdropHeight = 0;
 };
 LiveDiagnostics liveDiagnostics(); // UI thread; reads retained state without decoding
+#endif
 
 #ifdef SSC_RENDERER_DIAGNOSTICS
 // Test-only measurements; no counters or timing work in shipped clients.
 struct RendererDiagnostics {
-    size_t decodes = 0, blurGenerations = 0, frames = 0, failedFrames = 0;
+    size_t decodes = 0, blurGenerations = 0, frames = 0, failedFrames = 0, coverDraws = 0;
     size_t cacheHits = 0, cacheEvictions = 0, cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
     double targetMs = 0, imageMs = 0, blurMs = 0, frameMs = 0;
     float comingNextLeft = 0, comingNextRight = 0;
@@ -73,11 +76,15 @@ void setBackdrop(const void* data, size_t len, bool fadeFromCurrent,
 void clearBackdrop(bool fadeFromCurrent);
 // The replacement is uploaded to this target, or an intentional clear needs no upload.
 bool backdropReady();
+void setBackdropLoading(bool hideCover);
+void setBackdropNavigationOpacity(float opacity);
+int backdropNavigationHitTest(HWND hwnd, int x, int y);
 void setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent);
 void endMediaFade();
 void setTitleLogo(const std::string& bytes, const std::wstring& album, int fadeMs);
 bool titleLogoAnimating();
 bool albumHitTest(HWND hwnd, int x, int y);
+bool fanartHintHitTest(HWND hwnd, int x, int y);
 
 // Poster-background Gaussian blur strength (standard deviation, in the blur's ~240px
 // working resolution). Persisted in the INI as "posterBlur" but not exposed in the UI.
@@ -114,7 +121,7 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             float ratingProgress = 1.0f, float ratingOpacity = 1.0f,
             float infoOpacity = 1.0f, const wchar_t* album = nullptr,
             const wchar_t* track = nullptr, int logoFadeMs = 0,
-            const ssc::ComingNextFrame* comingNext = nullptr);
+            const ssc::ComingNextFrame* comingNext = nullptr, float fanartHintOpacity = 0.0f);
 
 } // namespace d2d
 
