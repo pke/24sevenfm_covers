@@ -76,6 +76,13 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        // Disney Records identifies this follow-up album as music inspired by
+        // the 1994 original, rather than a film bearing its full album title.
+        album: "Lion King, The: Hakuna Matata ...Rhythm Of The Pride Lands",
+        title: "The Lion King (1994)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "Naked Gun 2 1/2, The",
         artist: "Ira Newborn",
         title: "The Naked Gun 2½: The Smell of Fear (1991)",
