@@ -216,15 +216,17 @@ requested or downloaded speculatively.
 
 When TMDB has no exact title match, the resolver may use `Artist` as a conservative
 composer fallback: it requires one exact TMDB person-name match, then considers only
-that person's `Original Music Composer` crew credits. A work is accepted only when
+that person's explicit soundtrack writing credits (`Original Music Composer`,
+`Songs`, or `Lyricist`). A work is accepted only when
 its complete title occurs on word boundaries in `Album` and exactly one credit
-matches. Cast credits, other music jobs, partial words, short one-word titles, and
-ambiguous results remain misses.
+matches. Duplicate writing jobs for one film count as one work. Cast credits,
+support roles such as music editor or music supervisor, partial words, short
+one-word titles, and ambiguous results remain misses.
 
 For an otherwise unmarked album with an exact TMDB title match, an exact `Artist`
 person whose known department is Sound also supplies negative evidence. The resolver
 loads the matched work's credits and rejects it only when TMDB lists at least one
-`Original Music Composer` but not that person. Missing people, empty or unavailable
+soundtrack writer but not that person. Missing people, empty or unavailable
 credits, performers from other departments, and explicitly classified soundtrack
 metadata leave the title match intact. This prevents a standalone artist album such
 as Thomas Bergersen's `Illusions` from inheriting artwork and ratings from an

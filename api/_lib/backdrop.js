@@ -998,13 +998,20 @@ function equalsComposerBaseTitle(albumWords, sequence) {
     return albumSequences.some((words) => words.join("") === compactSequence);
 }
 
+function isSoundtrackWriterJob(job) {
+    // Musical soundtracks can name a songwriter rather than the underscore
+    // composer (Cinderella credits Mack David for Songs and Lyricist). Keep
+    // this limited to explicit writing jobs, rather than any music/sound crew.
+    return job === "Original Music Composer" || job === "Songs" || job === "Lyricist";
+}
+
 function pickComposerCredit(combinedCredits, album) {
     const albumWords = titleWords(album);
     const matches = new Map();
     for (const credit of Array.isArray(combinedCredits && combinedCredits.crew)
         ? combinedCredits.crew : []) {
         const id = Number(credit && credit.id);
-        if (!credit || credit.job !== "Original Music Composer"
+        if (!credit || !isSoundtrackWriterJob(credit.job)
                 || (credit.media_type !== "movie" && credit.media_type !== "tv")
                 || !Number.isSafeInteger(id) || id <= 0) continue;
         const title = mediaTitle(credit);
@@ -1349,9 +1356,9 @@ async function screenComposerIds(fetchImpl, media, env) {
         + encodeURIComponent(media.id) + (type === "tv" ? "/aggregate_credits" : "/credits"));
     const body = await fetchJson(fetchImpl, url, tmdbRequest(url, env), "tmdb");
     return new Set((Array.isArray(body && body.crew) ? body.crew : [])
-        .filter((credit) => credit && (credit.job === "Original Music Composer"
+        .filter((credit) => credit && (isSoundtrackWriterJob(credit.job)
             || (Array.isArray(credit.jobs) && credit.jobs.some((job) =>
-                job && job.job === "Original Music Composer"))))
+                job && isSoundtrackWriterJob(job.job)))))
         .map((credit) => Number(credit.id))
         .filter((id) => Number.isSafeInteger(id) && id > 0));
 }
@@ -2394,7 +2401,7 @@ async function resolveBackdrop(query, providers, clientKey, dependencies, reques
             // A rejected exact title is precisely where the artist's unique composer
             // credit can recover another release with the same title. This is still
             // an exact lookup: the credit matcher requires one exact Sound person,
-            // one whole title sequence, and an Original Music Composer job.
+            // one whole title sequence, and an explicit soundtrack writing job.
             if ((!match || !match.exact) && personLookup
                     && (!requireExactScreenMatch || rejectedComposerMismatch)) {
                 const personResult = await personLookup;
