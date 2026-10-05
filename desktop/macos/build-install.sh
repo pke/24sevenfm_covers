@@ -21,12 +21,12 @@ if [ -d "$destination" ]; then
     mkdir -p "$HOME/Library/Application Support/24seven.fm Covers/Backups"
     ditto "$destination" "$HOME/Library/Application Support/24seven.fm Covers/Backups/$(date +%Y%m%d-%H%M%S).app"
 fi
-if pgrep -f '^.*/24sevenfm_covers.app/Contents/MacOS/24sevenfm_covers$|^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers$' >/dev/null; then
+if pgrep -f '^.*/24sevenfm_covers.app/Contents/MacOS/24sevenfm_covers( |$)|^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers( |$)' >/dev/null; then
     # The app defers its first Quit to finish fading, so AppleScript can return
     # -128 while the scheduled exit is already underway. Verify process exit below.
     osascript -e 'tell application id "app.dudesoft.24sevenfm.covers" to quit' || true
     count=0
-    while pgrep -f '^.*/24sevenfm_covers.app/Contents/MacOS/24sevenfm_covers$|^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers$' >/dev/null; do
+    while pgrep -f '^.*/24sevenfm_covers.app/Contents/MacOS/24sevenfm_covers( |$)|^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers( |$)' >/dev/null; do
         count=$((count + 1)); [ "$count" -lt 30 ] || { echo 'Viewer did not quit; installation left untouched' >&2; exit 1; }
         sleep 1
     done

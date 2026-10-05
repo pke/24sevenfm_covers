@@ -6,7 +6,7 @@ output="$HOME/dev/24sevenfm-ui-check"
 mkdir -p "$output"
 osascript -e 'tell application id "app.dudesoft.24sevenfm.covers" to quit' || true
 count=0
-while pgrep -f '^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers$' >/dev/null; do
+while pgrep -f '^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers( |$)' >/dev/null; do
     count=$((count + 1)); [ "$count" -lt 15 ] || { echo 'Graceful exit failed' >&2; exit 1; }
     sleep 1
 done

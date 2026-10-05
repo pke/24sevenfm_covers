@@ -6,10 +6,10 @@
    OR the shared code (lib/, shared/); edit by hand only to pin. RC-safe: SSC_VER_STR is a
    pre-built literal. */
 #define SSC_VER_MAJOR 1
-#define SSC_VER_MINOR 27
+#define SSC_VER_MINOR 28
 #define SSC_VER_PATCH 0
-#define SSC_VER_NUM   1, 27, 0, 0
-#define SSC_VER_STR   "1.27.0"
+#define SSC_VER_NUM   1, 28, 0, 0
+#define SSC_VER_STR   "1.28.0"
 
 #include "../shared/version.h" /* SSC_COMPANY / SSC_COPYRIGHT / SSC_WEB (shared) */
 #endif /* VIEWER_VERSION_H */

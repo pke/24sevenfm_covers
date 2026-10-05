@@ -1,9 +1,10 @@
 #include "stage-kit.mm.inc"
+#import "hover_titlebar.h"
 
 #include "session.h"
 
 @interface SSCApp : NSObject <NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate> {
-    NSWindow* _window;
+    SSCViewerWindow* _window;
     NSPanel* _settings;
     SSCStage* _stage;
     NSStackView* _stationButtons;
@@ -135,6 +136,26 @@
         NSLog(@"FAIL: first-run settings differ from Windows reference"); exit(30);
     }
     NSLog(@"PASS: first-run settings match Windows reference");
+    NSRect hoverWindowFrame=_window.frame,hoverCanvas=_stage.frame;
+    [_window setPointerInsideWindow:YES];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,350*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+        if(_window.hoverTitlebarView.hidden || _window.hoverTitlebarView.alphaValue<.99
+            || [_window standardWindowButton:NSWindowCloseButton].alphaValue<.99
+            || !NSEqualRects(hoverWindowFrame,_window.frame) || !NSEqualRects(hoverCanvas,_stage.frame)) {
+            NSLog(@"FAIL: titlebar hover did not reveal fixed overlay chrome");exit(32);
+        }
+        [self captureView:((NSView*)_window.contentView).superview name:@"titlebar-hover.png"];
+        [_window setPointerInsideWindow:NO];
+        if(_window.titlebarAnimationDuration>0 && _window.hoverTitlebarView.hidden){NSLog(@"FAIL: outgoing titlebar removed before its fade");exit(32);}
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,350*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
+            if(!_window.hoverTitlebarView.hidden || [_window standardWindowButton:NSWindowCloseButton].alphaValue>.01
+                || !NSEqualRects(hoverWindowFrame,_window.frame) || !NSEqualRects(hoverCanvas,_stage.frame)) {
+                NSLog(@"FAIL: titlebar exit changed geometry or left chrome visible");exit(32);
+            }
+            [self captureView:((NSView*)_window.contentView).superview name:@"titlebar-hidden.png"];
+            NSLog(@"PASS: hover titlebar and native traffic-light fades with fixed window/canvas geometry");
+        });
+    });
     _stage.poster = YES; // explicit fixture; first-run default is Fill on every host
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         [self captureView:_stage name:@"poster.png"];
@@ -364,7 +385,7 @@
     }
     _artworkQueue = dispatch_queue_create("app.dudesoft.covers.artwork", DISPATCH_QUEUE_SERIAL);
     [self menu];
-    _window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 680, 760)
+    _window = [[SSCViewerWindow alloc] initWithContentRect:NSMakeRect(0, 0, 680, 760)
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
     _window.title = @"24seven.fm Covers"; _window.releasedWhenClosed = NO;
@@ -379,8 +400,10 @@
     _stage.showCountdown = [preferences() boolForKey:@"countdown"];
     [self applyDisplaySettings];
     _window.contentView = _stage;
+    _window.hoverTrackingEnabled=!NSProcessInfo.processInfo.environment[@"SSC_UI_CHECK_DIR"].length;
+    [_window installHoverTitlebar];
     NSButton* settings = [NSButton buttonWithTitle:@"Settings" target:self action:@selector(showSettings:)];
-    settings.frame = NSMakeRect(14, _stage.bounds.size.height - 40, 85, 26);
+    settings.frame = NSMakeRect(14, _stage.bounds.size.height - 72, 85, 26);
     settings.autoresizingMask = NSViewMinYMargin; [_stage addSubview:settings];
     _stage.settingsButton = settings; settings.alphaValue = 0; settings.enabled = NO;
     _window.acceptsMouseMovedEvents = YES;

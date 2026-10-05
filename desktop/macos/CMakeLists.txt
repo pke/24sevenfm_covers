@@ -21,8 +21,12 @@ set_source_files_properties("${app_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION Res
 set(station_logos ../../shared/resources/stations/sst.png ../../shared/resources/stations/1980s.png
     ../../shared/resources/stations/adagio.png ../../shared/resources/stations/death.png ../../shared/resources/stations/entranced.png)
 set_source_files_properties(${station_logos} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Stations)
-add_executable(24sevenfm_covers MACOSX_BUNDLE main.mm player_bridge.mm ../../shared/player_follow.cpp "${app_icon}" ${station_logos})
+add_executable(24sevenfm_covers MACOSX_BUNDLE main.mm hover_titlebar.mm player_bridge.mm ../../shared/player_follow.cpp "${app_icon}" ${station_logos})
 if(COVERFETCH_BUILD_TESTS)
+    add_executable(hover_titlebar_tests hover_titlebar_tests.mm hover_titlebar.mm)
+    target_compile_options(hover_titlebar_tests PRIVATE -fobjc-arc)
+    target_link_libraries(hover_titlebar_tests PRIVATE "-framework AppKit")
+    add_test(NAME "Mac hover titlebar" COMMAND hover_titlebar_tests)
     add_executable(player_bridge_tests player_bridge_tests.mm player_bridge.mm ../../shared/player_follow.cpp)
     target_compile_options(player_bridge_tests PRIVATE -fobjc-arc)
     target_link_libraries(player_bridge_tests PRIVATE "-framework AppKit")

@@ -12,6 +12,12 @@ configuration, using native radio buttons and checkboxes. Window geometry
 and preferences persist in `app.dudesoft.24sevenfm.covers`. macOS Reduce Motion is
 respected. Like the Windows DV, this is a cover viewer, not an audio player.
 
+The viewer uses a full-size artwork canvas with a hover titlebar. Moving the
+pointer into the window fades in its title and native traffic-light controls;
+leaving fades them out without changing the canvas or window geometry. Native
+window dragging, close/minimize shortcuts and fullscreen remain available.
+macOS owns the fullscreen controls, and Reduce Motion disables the hover fade.
+
 The portable `PresentationPipeline` prepares complete media frames, preloads the
 queue and owns a bounded cache. The AppKit adapter decodes and renders each frame.
 Both native paths use `MediaPreparation` for request construction, credits and
