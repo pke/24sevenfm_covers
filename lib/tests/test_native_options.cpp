@@ -11,6 +11,7 @@
 #include "../../shared/about_links.h"
 #include "../../shared/config.h"
 #include "../../desktop/windows_theme.cpp"
+#include "../../shared/station_logos.h"
 #include <map>
 
 TEST_CASE("verification dates preserve UTC days and reject invalid persisted timestamps") {
@@ -156,6 +157,98 @@ TEST_CASE("desktop disabled provider list retains the dark surface when backdrop
     CHECK_FALSE(GetWindowSubclass(list, dvtheme::listSubclassProc, dvtheme::kListSubclass, &data));
     CHECK(ListView_GetBkColor(list) == CLR_DEFAULT);
     dvtheme::g_dark = previous;
+}
+
+TEST_CASE("station selection uses system highlight colours in light and dark settings") {
+    Dialogs dialogs;
+    HWND radio = CreateWindowExW(0, L"BUTTON", L"Station", WS_CHILD | BS_AUTORADIOBUTTON,
+        0, 0, 240, 28, dialogs.parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    REQUIRE(radio != nullptr);
+    dvtheme::highlightSelection(radio);
+    HDC screen = GetDC(radio), dc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, 240, 28);
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    const bool previous = dvtheme::g_dark;
+    for (bool dark : {false, true}) {
+        dvtheme::g_dark = dark; dvtheme::themeControl(radio);
+        for (int checked : {BST_CHECKED, BST_UNCHECKED}) {
+            SendMessageW(radio, BM_SETCHECK, checked, 0);
+            REQUIRE(dvtheme::selection(radio) != nullptr);
+            dvtheme::selection(radio)->started = GetTickCount() - 300;
+            SendMessageW(radio, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+            CHECK(GetPixel(dc, 230, 14) == (checked == BST_CHECKED ? GetSysColor(COLOR_HIGHLIGHT)
+                : dark ? dvtheme::kDarkBackground : GetSysColor(COLOR_BTNFACE)));
+            CHECK(SendMessageW(radio, BM_GETCHECK, 0, 0) == checked);
+        }
+    }
+    dvtheme::g_dark = previous;
+    SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(radio, screen); DestroyWindow(radio);
+}
+TEST_CASE("station buttons decode all bundled logos and keep a padded background") {
+    Dialogs dialogs;
+    HWND radio = CreateWindowExW(0, L"BUTTON", L"Station", WS_CHILD | BS_AUTORADIOBUTTON,
+        0, 0, 300, 64, dialogs.parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    REQUIRE(radio != nullptr);
+    HDC screen = GetDC(radio), dc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, 300, 64);
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    for (int index = 0; index < 5; ++index) {
+        CAPTURE(index);
+        REQUIRE(dvtheme::setStationLogo(radio, GetModuleHandleW(nullptr), IDR_STATION_LOGO_FIRST + index));
+        SendMessageW(radio, BM_SETCHECK, BST_CHECKED, 0);
+        dvtheme::selection(radio)->started = GetTickCount() - 300;
+        SendMessageW(radio, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+        CHECK(GetPixel(dc, 2, 32) == GetSysColor(COLOR_HIGHLIGHT));
+        CHECK(dvtheme::selection(radio)->logoWidth == 200);
+        CHECK(dvtheme::selection(radio)->logoHeight == 200);
+        CHECK(SendMessageW(radio, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    }
+    SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(radio, screen); DestroyWindow(radio);
+}
+
+TEST_CASE("station logo downscaling preserves fine lines and transparent coverage") {
+    bool transparent = false;
+    SUBCASE("opaque fine lettering") {}
+    SUBCASE("transparent fine lettering") { transparent = true; }
+    Dialogs dialogs;
+    HWND radio = CreateWindowExW(0, L"BUTTON", L"Station", WS_CHILD | BS_AUTORADIOBUTTON,
+        0, 0, 300, 64, dialogs.parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    REQUIRE(radio != nullptr);
+    dvtheme::highlightSelection(radio);
+    auto* station = dvtheme::selection(radio);
+    REQUIRE(station != nullptr);
+    BITMAPINFO info = {}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = 112; info.bmiHeader.biHeight = -112;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
+    DWORD* pixels = nullptr;
+    station->logo = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS,
+        reinterpret_cast<void**>(&pixels), nullptr, 0);
+    REQUIRE(station->logo != nullptr);
+    station->logoWidth = station->logoHeight = 112;
+    // One-pixel strokes must cover half a pixel after the 2:1 reduction,
+    // rather than disappearing or becoming solid white through point sampling.
+    for (int y = 0; y < 112; ++y)
+        for (int x = 0; x < 112; ++x)
+            pixels[y * 112 + x] = x % 2 ? 0xffffffff : transparent ? 0 : 0xff000000;
+    SendMessageW(radio, BM_SETCHECK, BST_CHECKED, 0);
+    station->started = GetTickCount() - 300;
+    HDC screen = GetDC(radio), dc = CreateCompatibleDC(screen);
+    HBITMAP bitmap = CreateCompatibleBitmap(screen, 300, 64);
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    SendMessageW(radio, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+    const COLORREF background = GetSysColor(COLOR_HIGHLIGHT);
+    for (int x : {24, 33, 47, 61}) {
+        CAPTURE(transparent);
+        CAPTURE(x);
+        const COLORREF rendered = GetPixel(dc, x, 32);
+        const int expectedR = transparent ? 128 + GetRValue(background) * 127 / 255 : 128;
+        const int expectedG = transparent ? 128 + GetGValue(background) * 127 / 255 : 128;
+        const int expectedB = transparent ? 128 + GetBValue(background) * 127 / 255 : 128;
+        CHECK(std::abs(GetRValue(rendered) - expectedR) <= 2);
+        CHECK(std::abs(GetGValue(rendered) - expectedG) <= 2);
+        CHECK(std::abs(GetBValue(rendered) - expectedB) <= 2);
+    }
+    SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(radio, screen); DestroyWindow(radio);
 }
 
 TEST_CASE("native About URLs are rendered as interactive links") {

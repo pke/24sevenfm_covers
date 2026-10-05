@@ -5,8 +5,10 @@
 #include <cwchar>
 #include <uxtheme.h>
 #include <vssym32.h>
+#include <wincodec.h>
 
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "msimg32.lib")
 
 namespace dvtheme {
 namespace {
@@ -39,6 +41,7 @@ using SetWindowThemeFn = HRESULT(WINAPI*)(HWND, LPCWSTR, LPCWSTR);
 using AllowDarkModeForWindowFn = bool(WINAPI*)(HWND, bool);
 using SetPreferredAppModeFn = int(WINAPI*)(int);
 using FlushMenuThemesFn = void(WINAPI*)();
+using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
 using RegGetValueWFn = LSTATUS(WINAPI*)(HKEY, LPCWSTR, LPCWSTR, DWORD,
                                        LPDWORD, PVOID, LPDWORD);
 
@@ -51,9 +54,12 @@ struct APIs {
     AllowDarkModeForWindowFn allowDarkModeForWindow = nullptr;
     SetPreferredAppModeFn setPreferredAppMode = nullptr;
     FlushMenuThemesFn flushMenuThemes = nullptr;
+    GetDpiForWindowFn getWindowDpi = nullptr;
     RegGetValueWFn getRegistryValue = nullptr;
 
     APIs() {
+        getWindowDpi = reinterpret_cast<GetDpiForWindowFn>(
+            GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
         dwm = LoadLibraryW(L"dwmapi.dll");
         if (dwm)
             setDwmAttribute = reinterpret_cast<DwmSetWindowAttributeFn>(
@@ -99,6 +105,71 @@ APIs& apis() {
 }
 
 bool g_dark = false;
+constexpr wchar_t kSelectionProperty[] = L"24sevenfm.selection";
+constexpr UINT_PTR kSelectionTimer = 0x24715;
+struct Selection {
+    float from = 0, target = 0; DWORD started = 0;
+    HBITMAP logo = nullptr; UINT logoWidth = 0, logoHeight = 0;
+    HBITMAP scaledLogo = nullptr; UINT scaledWidth = 0, scaledHeight = 0;
+    void clearScaledLogo() {
+        if (scaledLogo) DeleteObject(scaledLogo);
+        scaledLogo = nullptr; scaledWidth = scaledHeight = 0;
+    }
+    ~Selection() { clearScaledLogo(); if (logo) DeleteObject(logo); }
+};
+Selection* selection(HWND window) { return reinterpret_cast<Selection*>(GetPropW(window, kSelectionProperty)); }
+float windowScale(HWND window, HDC target) {
+    const UINT dpi = apis().getWindowDpi ? apis().getWindowDpi(window) : 0;
+    return (dpi ? dpi : GetDeviceCaps(target, LOGPIXELSY)) / 96.0f;
+}
+HBITMAP bitmapFromWic(IWICBitmapSource* source, UINT width, UINT height) {
+    BITMAPINFO info = {}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = width; info.bmiHeader.biHeight = -(LONG)height;
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
+    void* pixels = nullptr;
+    HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    if (bitmap && FAILED(source->CopyPixels(nullptr, width * 4, width * height * 4, (BYTE*)pixels))) {
+        DeleteObject(bitmap); bitmap = nullptr;
+    }
+    return bitmap;
+}
+HBITMAP scaledStationLogo(Selection* value, UINT width, UINT height) {
+    if (!width || !height) return nullptr;
+    if (value->scaledLogo && value->scaledWidth == width && value->scaledHeight == height)
+        return value->scaledLogo;
+
+    // AlphaBlend only point-samples when stretching. Filter the original in
+    // premultiplied alpha once per physical size, then composite it at 1:1.
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IWICImagingFactory* factory = nullptr; IWICBitmap* source = nullptr;
+    IWICBitmapScaler* scaler = nullptr; IWICFormatConverter* converter = nullptr;
+    HBITMAP bitmap = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))
+        && SUCCEEDED(factory->CreateBitmapFromHBITMAP(value->logo, nullptr, WICBitmapUsePremultipliedAlpha, &source))
+        && SUCCEEDED(factory->CreateBitmapScaler(&scaler))
+        && SUCCEEDED(scaler->Initialize(source, width, height, WICBitmapInterpolationModeFant))
+        && SUCCEEDED(factory->CreateFormatConverter(&converter))
+        && SUCCEEDED(converter->Initialize(scaler, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+            nullptr, 0, WICBitmapPaletteTypeCustom)))
+        bitmap = bitmapFromWic(converter, width, height);
+    if (converter) converter->Release(); if (scaler) scaler->Release();
+    if (source) source->Release(); if (factory) factory->Release();
+    if (com == S_OK || com == S_FALSE) CoUninitialize();
+    if (!bitmap) return nullptr;
+    value->clearScaledLogo();
+    value->scaledLogo = bitmap; value->scaledWidth = width; value->scaledHeight = height;
+    return bitmap;
+}
+float selectionAlpha(Selection* value) {
+    if (!value) return 0;
+    float t = (std::min)(1.0f, (GetTickCount() - value->started) / 250.0f);
+    return value->from + (value->target - value->from) * t * t * (3 - 2 * t);
+}
+COLORREF selectionColor(COLORREF from, COLORREF to, float t) {
+    return RGB(GetRValue(from) + (GetRValue(to) - GetRValue(from)) * t,
+        GetGValue(from) + (GetGValue(to) - GetGValue(from)) * t,
+        GetBValue(from) + (GetBValue(to) - GetBValue(from)) * t);
+}
 thread_local bool g_applying = false;
 
 bool systemUsesDarkApps() {
@@ -304,14 +375,30 @@ void paintDarkCheckOrRadio(HWND window, HDC target, const RECT& client) {
         themeState = (checkState == BST_CHECKED ? CBS_CHECKEDNORMAL
                                                 : CBS_UNCHECKEDNORMAL) + stateOffset;
 
+    Selection* station = selection(window);
+    const bool haveLogo = station && station->logo;
+    const float dpi = windowScale(window, target);
+    const int padding = haveLogo ? (int)(12 * dpi) : 0;
     SIZE glyph = { 13, 13 };
     HTHEME theme = OpenThemeData(window, L"Button");
     if (theme)
         GetThemePartSize(theme, target, part, themeState, nullptr, TS_TRUE, &glyph);
-    RECT glyphRect = { client.left, client.top + (client.bottom - client.top - glyph.cy) / 2,
-                       client.left + glyph.cx,
+    if (haveLogo) glyph.cx = glyph.cy = (std::max)(0,
+        (std::min)((int)(56 * dpi), (int)(client.bottom - client.top) - (int)(8 * dpi)));
+    RECT glyphRect = { client.left + padding, client.top + (client.bottom - client.top - glyph.cy) / 2,
+                       client.left + padding + glyph.cx,
                        client.top + (client.bottom - client.top - glyph.cy) / 2 + glyph.cy };
-    if (theme) {
+    if (haveLogo && glyph.cx && glyph.cy) {
+        HBITMAP bitmap = scaledStationLogo(station, glyph.cx, glyph.cy);
+        HDC source = CreateCompatibleDC(target);
+        const HGDIOBJ old = SelectObject(source, bitmap ? bitmap : station->logo);
+        BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        AlphaBlend(target, glyphRect.left, glyphRect.top, glyph.cx, glyph.cy,
+            source, 0, 0, bitmap ? glyph.cx : station->logoWidth,
+            bitmap ? glyph.cy : station->logoHeight, blend);
+        SelectObject(source, old); DeleteDC(source);
+        if (theme) CloseThemeData(theme);
+    } else if (theme) {
         DrawThemeBackground(theme, target, part, themeState, &glyphRect, nullptr);
         CloseThemeData(theme);
     } else {
@@ -328,10 +415,13 @@ void paintDarkCheckOrRadio(HWND window, HDC target, const RECT& client) {
     if (!font) font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
     const HGDIOBJ oldFont = SelectObject(target, font);
     const int oldMode = SetBkMode(target, TRANSPARENT);
-    const COLORREF oldText = SetTextColor(target,
-        IsWindowEnabled(window) ? kDarkText : kDarkDisabledText);
+    COLORREF textColor = IsWindowEnabled(window) ? (g_dark ? kDarkText : GetSysColor(COLOR_BTNTEXT))
+        : (g_dark ? kDarkDisabledText : GetSysColor(COLOR_GRAYTEXT));
+    if (auto value = selection(window)) textColor = selectionColor(textColor, GetSysColor(COLOR_HIGHLIGHTTEXT), selectionAlpha(value));
+    const COLORREF oldText = SetTextColor(target, textColor);
     RECT text = client;
-    text.left = glyphRect.right + 4;
+    text.left = glyphRect.right + (haveLogo ? (int)(12 * dpi) : 4);
+    text.right -= padding;
     UINT format = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
     if (SendMessageW(window, WM_QUERYUISTATE, 0, 0) & UISF_HIDEACCEL)
         format |= DT_HIDEPREFIX;
@@ -354,7 +444,9 @@ void paintDarkCheckOrRadio(HWND window, HDC target, const RECT& client) {
 void paintDarkButton(HWND window, HDC target) {
     RECT client = {};
     GetClientRect(window, &client);
-    FillRect(target, &client, darkBackgroundBrush());
+    COLORREF background = g_dark ? kDarkBackground : GetSysColor(COLOR_BTNFACE);
+    if (auto value = selection(window)) background = selectionColor(background, GetSysColor(COLOR_HIGHLIGHT), selectionAlpha(value));
+    HBRUSH brush = CreateSolidBrush(background); FillRect(target, &client, brush); DeleteObject(brush);
     const LONG_PTR type = GetWindowLongPtrW(window, GWL_STYLE) & BS_TYPEMASK;
     if (type == BS_GROUPBOX) paintDarkGroupBox(window, target, client);
     else paintDarkCheckOrRadio(window, target, client);
@@ -419,7 +511,7 @@ void themeControl(HWND window) {
 
     const bool themedButton = customDarkButton(window);
     if (themedButton) {
-        if (g_dark)
+        if (g_dark || selection(window))
             SetWindowSubclass(window, buttonSubclassProc, kButtonSubclass, 0);
         else
             RemoveWindowSubclass(window, buttonSubclassProc, kButtonSubclass);
@@ -534,9 +626,29 @@ LRESULT CALLBACK tabSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM lp
 
 LRESULT CALLBACK buttonSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM lp,
                                     UINT_PTR id, DWORD_PTR) {
+    Selection* selected = selection(window);
     switch (message) {
+    case BM_SETCHECK: {
+        const LRESULT result = DefSubclassProc(window, message, wp, lp);
+        if (selected) {
+            selected->from = selectionAlpha(selected); selected->target = wp == BST_CHECKED ? 1.0f : 0.0f;
+            selected->started = GetTickCount();
+            BOOL motion = TRUE; SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &motion, 0);
+            if (!motion) selected->from = selected->target;
+            else SetTimer(window, kSelectionTimer, 16, nullptr);
+            InvalidateRect(window, nullptr, FALSE);
+        }
+        return result;
+    }
+    case WM_TIMER:
+        if (wp == kSelectionTimer && selected) {
+            InvalidateRect(window, nullptr, FALSE);
+            if (GetTickCount() - selected->started >= 250) KillTimer(window, kSelectionTimer);
+            return 0;
+        }
+        break;
     case WM_ERASEBKGND:
-        if (g_dark) {
+        if (g_dark || selected) {
             RECT client = {};
             GetClientRect(window, &client);
             FillRect(reinterpret_cast<HDC>(wp), &client, darkBackgroundBrush());
@@ -544,7 +656,7 @@ LRESULT CALLBACK buttonSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM
         }
         break;
     case WM_PAINT:
-        if (g_dark) {
+        if (g_dark || selected) {
             PAINTSTRUCT paint = {};
             HDC dc = BeginPaint(window, &paint);
             paintDarkButton(window, dc);
@@ -553,7 +665,7 @@ LRESULT CALLBACK buttonSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM
         }
         break;
     case WM_PRINTCLIENT:
-        if (g_dark) {
+        if (g_dark || selected) {
             paintDarkButton(window, reinterpret_cast<HDC>(wp));
             return 0;
         }
@@ -564,10 +676,12 @@ LRESULT CALLBACK buttonSubclassProc(HWND window, UINT message, WPARAM wp, LPARAM
     case WM_KILLFOCUS:
     case WM_UPDATEUISTATE: {
         const LRESULT result = DefSubclassProc(window, message, wp, lp);
-        if (g_dark) InvalidateRect(window, nullptr, TRUE);
+        if (g_dark || selected) InvalidateRect(window, nullptr, TRUE);
         return result;
     }
     case WM_NCDESTROY:
+        KillTimer(window, kSelectionTimer);
+        delete reinterpret_cast<Selection*>(RemovePropW(window, kSelectionProperty));
         RemoveWindowSubclass(window, buttonSubclassProc, id);
         break;
     }
@@ -662,6 +776,45 @@ void initialize() {
     // user selected the light Windows app theme.
     if (apis().setPreferredAppMode) apis().setPreferredAppMode(1);
     if (apis().flushMenuThemes) apis().flushMenuThemes();
+}
+void highlightSelection(HWND radio) {
+    if (!radio || selection(radio)) return;
+    auto value = new Selection;
+    value->from = value->target = SendMessageW(radio, BM_GETCHECK, 0, 0) == BST_CHECKED ? 1.0f : 0.0f;
+    SetPropW(radio, kSelectionProperty, reinterpret_cast<HANDLE>(value));
+    SetWindowSubclass(radio, buttonSubclassProc, kButtonSubclass, 0);
+}
+bool setStationLogo(HWND radio, HINSTANCE resourceOwner, UINT resourceId) {
+    highlightSelection(radio);
+    Selection* value = selection(radio); if (!value) return false;
+    HRSRC resource = FindResourceW(resourceOwner, MAKEINTRESOURCEW(resourceId), MAKEINTRESOURCEW(10));
+    const DWORD size = resource ? SizeofResource(resourceOwner, resource) : 0;
+    const void* bytes = resource ? LockResource(LoadResource(resourceOwner, resource)) : nullptr;
+    if (!bytes || !size) return false;
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IWICImagingFactory* factory = nullptr; IWICStream* stream = nullptr;
+    IWICBitmapDecoder* decoder = nullptr; IWICBitmapFrameDecode* frame = nullptr;
+    IWICFormatConverter* converter = nullptr; HBITMAP bitmap = nullptr;
+    UINT width = 0, height = 0;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))
+        && SUCCEEDED(factory->CreateStream(&stream))
+        && SUCCEEDED(stream->InitializeFromMemory((BYTE*)bytes, size))
+        && SUCCEEDED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder))
+        && SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(frame->GetSize(&width, &height))
+        && width && height && width <= 512 && height <= 512
+        && SUCCEEDED(factory->CreateFormatConverter(&converter))
+        && SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone,
+            nullptr, 0, WICBitmapPaletteTypeCustom))) {
+        bitmap = bitmapFromWic(converter, width, height);
+    }
+    if (converter) converter->Release(); if (frame) frame->Release(); if (decoder) decoder->Release();
+    if (stream) stream->Release(); if (factory) factory->Release();
+    if (com == S_OK || com == S_FALSE) CoUninitialize();
+    if (!bitmap) return false;
+    value->clearScaledLogo();
+    if (value->logo) DeleteObject(value->logo);
+    value->logo = bitmap; value->logoWidth = width; value->logoHeight = height;
+    InvalidateRect(radio, nullptr, FALSE); return true;
 }
 
 void install(HWND window, Surface surface) {

@@ -19,5 +19,9 @@ void initialize();
 // colours. Every newer API is resolved at runtime; unsupported systems retain
 // the ordinary Win32 appearance.
 void install(HWND window, Surface surface);
+// Native radio semantics, with the system selection palette behind the row.
+void highlightSelection(HWND radio);
+// The control owns the decoded resource and keeps native radio keyboard behavior.
+bool setStationLogo(HWND radio, HINSTANCE resourceOwner, UINT resourceId);
 
 } // namespace dvtheme

@@ -30,6 +30,7 @@
 #include "caption_drag.h"
 #include "options_panel.h"  // shared options page (dialog + control logic)
 #include "stations.h"       // 24seven.fm station table (viewer station picker)
+#include "station_logos.h"
 #include "config.h"         // shared option schema + INI adapter
 #include "window_rect.h"    // remember the window's position/size across runs
 #include "windows_theme.h"  // optional Windows 11 frame + system dark settings
@@ -244,7 +245,7 @@ static INT_PTR CALLBACK StationPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp
             HFONT font = (HFONT)SendMessageA(dlg, WM_GETFONT, 0, 0);
             const int cur = ssc::validStationIndex(eng().settings.station);
             for (int i = 0; i < ssc::kStationCount; ++i) {
-                RECT r = { 14, 18 + i * 14, 14 + 176, 18 + i * 14 + 12 }; // dialog units
+                RECT r = { 8, 8 + i * 44, 222, 8 + i * 44 + 40 }; // dialog units
                 MapDialogRect(dlg, &r);
                 HWND rb = CreateWindowExA(
                     0, "BUTTON", ssc::kStations[i].displayName,
@@ -253,6 +254,8 @@ static INT_PTR CALLBACK StationPageProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp
                     dlg, (HMENU)(INT_PTR)(IDC_VIEW_STATION_FIRST + i), g_hInst, nullptr);
                 if (font) SendMessageA(rb, WM_SETFONT, (WPARAM)font, TRUE);
                 if (i == cur) SendMessageA(rb, BM_SETCHECK, BST_CHECKED, 0);
+                dvtheme::highlightSelection(rb);
+                dvtheme::setStationLogo(rb, g_hInst, IDR_STATION_LOGO_FIRST + i);
             }
             SetDlgItemTextA(dlg, IDC_VIEW_STATION_DESC, ssc::kStations[cur].desc);
             dvtheme::install(dlg, dvtheme::Surface::settingsPage);

@@ -1,0 +1,7 @@
+// Bundled station picker assets, shared by native hosts.
+#include "station_logos.h"
+IDR_STATION_LOGO_FIRST RCDATA "resources/stations/sst.png"
+IDR_STATION_LOGO_1980S RCDATA "resources/stations/1980s.png"
+IDR_STATION_LOGO_ADAGIO RCDATA "resources/stations/adagio.png"
+IDR_STATION_LOGO_DEATH RCDATA "resources/stations/death.png"
+IDR_STATION_LOGO_ENTRANCED RCDATA "resources/stations/entranced.png"

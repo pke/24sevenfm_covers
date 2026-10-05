@@ -1,1 +1,2 @@
 #include "../../winamp/gen_24sevenfm_covers.rc"
+#include "../../shared/station_logos.rc"
