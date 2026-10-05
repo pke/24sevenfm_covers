@@ -15,5 +15,6 @@
 
 - After native changes, build and update both the desktop viewer (DV) and the installed Winamp plugin; completing only source edits or separate build outputs is insufficient.
 - Update the viewer at `desktop/build/Release/24sevenfm_covers.exe` and the Winamp plugin at `C:/Users/philk/OneDrive/tools/Winamp/Plugins/gen_24sevenfm_covers.dll`. If a running app uses another installation, update that actual installation too.
-- Running apps must also receive the update. Close them gracefully when their executable or plugin is locked, replace the files, and restart apps that were running, restoring Winamp playback when applicable. The user has authorized these restarts; do not ask again.
+- Running apps must also receive the update. Stop or terminate their processes directly when their executable or plugin is locked, replace the files, and restart apps that were running, restoring Winamp playback when applicable. The user has authorized these process-based restarts; do not ask again.
+- Never use computer-use tools, mouse/keyboard automation, or desktop/window control for these updates without asking the user beforehand and receiving explicit permission. Use command-line/API process management instead; the DV may be terminated directly by its verified process ID and executable path.
 - Preserve settings, retain a recoverable copy of replaced binaries, and verify the installed file hashes and restarted process/plugin paths.
