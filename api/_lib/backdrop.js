@@ -76,6 +76,14 @@ const METADATA_RESOLUTIONS = Object.freeze([
         hint: "movie",
     }),
     Object.freeze({
+        // The composer's filmography confirms this English soundtrack title
+        // belongs to the film catalogued under its Spanish original title.
+        album: "Passage To Dawn",
+        artist: "Diego Navarro",
+        title: "Pasaje al amanecer",
+        hint: "movie",
+    }),
+    Object.freeze({
         // Disney Records identifies this follow-up album as music inspired by
         // the 1994 original, rather than a film bearing its full album title.
         album: "Lion King, The: Hakuna Matata ...Rhythm Of The Pride Lands",
