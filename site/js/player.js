@@ -15,6 +15,7 @@
 "use strict";
 (function () {
 
+var playerHost = PlayerHost.create(window);
 var PLAYER_SCRIPT_URL = new URL(document.currentScript.src, document.baseURI);
 var debug = PlayerDiagnostics.create();
 
@@ -74,7 +75,7 @@ var STATIONS = [
 // Keys and defaults mirror shared/config.h so the player behaves like the apps.
 // Persisted in localStorage (documented in the privacy policy); posterBlur and
 // borderRadius stay hidden here too - URL parameters instead of UI, like the INI.
-var STORE_KEY = "24sevenfm-covers.player.v2";
+var STORE_KEY = playerHost.hosted ? "24sevenfm-covers.player.iina.v1" : "24sevenfm-covers.player.v2";
 function clampInt(v, lo, hi) {
     v = parseInt(v, 10);
     return isNaN(v) ? lo : Math.min(hi, Math.max(lo, v));
@@ -366,6 +367,11 @@ function applyPresetOptions(options, params) {
 
 function loadOpts() {
     var o = defaultOptions();
+    if (playerHost.hosted) {
+        o.sstBackdrops.enabled = true;
+        o.sstTitleLogos = true;
+        o.remainingTime.enabled = true;
+    }
     var p = new URLSearchParams(location.search);
     var preset = p.get("preset") === "1";
     var saved = {};
@@ -1892,6 +1898,7 @@ function scheduleRetry(seconds) {
 async function poll() {
     clearTimeout(pollTimer);
     pollTimer = null;
+    if (!playerHost.running) return;
     var wasRetry = retryAt > 0;
     retryAt = 0;
     if (wasRetry) setStatus("Contacting station…", "station");
@@ -3138,6 +3145,7 @@ async function resolveMovieBackdrop(generation, signal, cacheMode, prefetchedArt
 var cells = [];
 function currentRemaining() {
     if (remAnchor < 0) return -1;
+    if (playerHost.hosted && playerHost.state.activity === "pause") return remAnchor;
     return Math.max(0, remAnchor - Math.floor((Date.now() - remAnchorAt) / 1000));
 }
 function fmt(s) { return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
@@ -3425,6 +3433,7 @@ function startAudio(stopOnPlayFailure) {
     });
 }
 function setAudio(on) {
+    on = !!on && playerHost.allowAudio();
     var wasWanted = audioWanted;
     audioWanted = on;
     if (on) {
@@ -4751,6 +4760,7 @@ function scheduleUpdateCheck() {
 }
 
 async function checkForPlayerUpdate() {
+    if (playerHost.hosted) return;
     if (updateCheckInFlight || document.hidden || updateNoticeMode) return;
     updateCheckInFlight = true;
     clearTimeout(updateCheckTimer);
@@ -4847,8 +4857,36 @@ debug.mount(stage, function () {
     };
 });
 applyLayout();
-enableLocalBackchannel();
+if (!playerHost.hosted) enableLocalBackchannel();
 beginCurrentInfoResolution(null);
+
+playerHost.onState(function (state, previous) {
+    if (state.activity === previous.activity && state.station === previous.station && state.mode === previous.mode) return;
+    setAudio(false);
+    clearTimeout(pollTimer);pollTimer = null;nextPollAt = 0;
+    if (inflight) inflight.abort();
+    if (state.activity === "pause") {
+        // Freeze the displayed remaining time while retaining the rendered scene.
+        if (previous.activity !== "pause") remAnchor = remAnchor < 0 ? -1 : Math.max(0, remAnchor - Math.floor((Date.now() - remAnchorAt) / 1000));
+        remAnchorAt = Date.now();resetQueuedTracks();return;
+    }
+    if (!playerHost.running) { resetQueuedTracks();return; }
+    if (state.station !== opts.station) {
+        opts.station = state.station;applyStation();
+        document.querySelectorAll('#stations input').forEach(function (input) { input.checked = input.value === state.station; });
+    } else if (previous.activity !== "play" || previous.mode === "hidden") poll();
+});
+if (playerHost.hosted) {
+    var surfaceMeta = document.querySelector('meta[name="iina-surface"]');
+    playerHost.post("covers-ready", { surface: surfaceMeta ? surfaceMeta.content : "sidebar" });
+    setInterval(function () {
+        playerHost.post("covers-status", { station: opts.station, activity: playerHost.state.activity,
+            mode: playerHost.state.mode, album: currentAlbum, artist: currentArtist, track: currentTrack,
+            audioPaused: audioEl.paused, audioSource: audioEl.getAttribute("src"),
+            cover: shownUrl, images: Array.from(stage.querySelectorAll("img")).filter(function (img) { return img.complete && img.naturalWidth > 0; }).length,
+            width: stage.clientWidth, height: stage.clientHeight });
+    }, 1000);
+}
 document.addEventListener("visibilitychange", function () {
     if (!document.hidden) {
         resynchronizeStationIfStale();
@@ -4864,7 +4902,9 @@ tickTimer = setInterval(function () {
     renderRetryStatus();
 }, 1000);
 poll();
-if (consumeFullscreenRestoreRequest()) showUpdateNotice("restore");
-else checkForPlayerUpdate();
+if (!playerHost.hosted) {
+    if (consumeFullscreenRestoreRequest()) showUpdateNotice("restore");
+    else checkForPlayerUpdate();
+}
 
 })();

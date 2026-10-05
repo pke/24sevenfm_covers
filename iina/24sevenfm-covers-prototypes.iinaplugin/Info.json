@@ -1,0 +1,10 @@
+{
+  "name": "24seven.fm Covers – Prototypes",
+  "identifier": "app.dudesoft.24sevenfm.covers.prototypes",
+  "version": "1.0.0",
+  "description": "Compare the existing web player in an IINA sidebar and video overlay. IINA owns audio playback.",
+  "author": { "name": "DudeSoft" },
+  "entry": "main.js",
+  "sidebarTab": { "name": "24seven.fm Covers" },
+  "permissions": ["video-overlay", "file-system"]
+}
