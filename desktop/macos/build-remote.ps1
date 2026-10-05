@@ -17,7 +17,7 @@ $list = Join-Path $staging 'files.txt'
 Push-Location $root
 try {
     # Include current edits/new source, never local build trees, keys or environment files.
-    $files = @(git ls-files --cached --others --exclude-standard -- lib shared desktop/macos desktop/24sevenfm_covers.ico)
+    $files = @(git ls-files --cached --others --exclude-standard -- lib shared desktop/macos desktop/24sevenfm_covers.ico iina foobar2000/macos foobar2000/sdk)
     if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate source files' }
     $files = $files | Sort-Object -Unique | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
     [IO.File]::WriteAllLines($list, $files, [Text.UTF8Encoding]::new($false))

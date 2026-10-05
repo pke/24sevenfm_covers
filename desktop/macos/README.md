@@ -79,13 +79,63 @@ Connect once interactively to verify/trust the Mac's host key. Then:
 ./desktop/macos/build-remote.ps1 -MacHost <host-or-IP> -MacUser <short-account-name> -IdentityFile <private-key-path>
 ```
 
-Only tracked or non-ignored source files from `lib`, `shared`, and `desktop/macos`
-are uploaded, including current uncommitted changes. Each invocation uses a separate
+Tracked or non-ignored viewer, shared library, player integration and vendored SDK
+sources are uploaded, including current uncommitted changes. Each invocation uses a separate
 directory under `~/dev/24sevenfm-covers-builds/`; it never resets a remote checkout.
 It uses non-interactive, identity-only SSH with strict host-key checking. Keys and
 host-specific credentials are not stored in this repository.
 
 ## Verification
+
+### Player integrations and E2E tests
+
+The [IINA plugin](../../iina/README.md) automatically follows a station in this
+viewer through the validated `x24sevenfm-covers://follow` protocol, updates on
+stream metadata, retains artwork on pause and fades the viewer out on stop.
+It launches the viewer without activating it. Selecting a station manually disables **View → Follow IINA /
+foobar2000**; re-enable it, then start or resume playback to follow again. The
+standalone station remains saved.
+
+The [native foobar2000 visualisation](../../foobar2000/macos/README.md) now renders
+inside foobar2000, from **View → Visualisations → 24seven.fm Covers** or the
+`24sevenfm-covers` layout element. It reuses this viewer's AppKit renderer and
+portable pipeline; it does not launch a separate viewer. Both integrations use
+the shared, bounded `PlayerFollow` controller.
+
+Build/install both integrations with:
+
+```sh
+sh desktop/macos/build-install.sh
+sh foobar2000/macos/build.sh
+sh desktop/macos/install-player-integrations.sh
+```
+
+`build-remote.ps1` uploads the integration sources and vendored foobar2000 SDK as
+well as the viewer. Player applications must be installed separately. The
+integration installer requires both players to be closed and preserves backups.
+
+For E2E tests, quit the viewer and both players. Build a separate test component:
+
+```sh
+cmake -G Ninja -S foobar2000/macos -B desktop/build/foobar-e2e \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+  -DFOOBAR_SDK_LIB_DIR="$PWD/desktop/build/foobar-sdk" -DSSC_PLAYER_E2E=ON
+cmake --build desktop/build/foobar-e2e
+ditto desktop/build/foobar-e2e/foo_24sevenfm_covers.component \
+  "$HOME/Library/foobar2000-v2/user-components/foo_24sevenfm_covers/foo_24sevenfm_covers.component"
+python3 desktop/macos/check-player-e2e.py --cold --iina --foobar
+sh desktop/macos/install-player-integrations.sh
+```
+
+The final install restores the production component without its test driver.
+The E2E suite exercises LaunchServices, the real IINA JavaScript runtime and mpv
+IPC, actual foobar2000 SDK playback callbacks, registered menu/layout services,
+real HTTPS feeds and rendered cover pixels. It uses isolated viewer preferences,
+muted audio, and a temporary foobar
+playlist. No mouse/keyboard or Accessibility automation is involved. Logs and
+test-only status files are retained in `desktop/build/player-e2e`. Existing player
+instances must be closed so tests do not interfere with their playback.
 
 ```sh
 "$HOME/Applications/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers" --smoke-test

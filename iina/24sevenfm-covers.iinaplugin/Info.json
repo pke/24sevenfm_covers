@@ -1,0 +1,9 @@
+{
+  "name": "24seven.fm Covers",
+  "identifier": "app.dudesoft.24sevenfm.covers.iina",
+  "version": "1.0.0",
+  "description": "Follow 24seven.fm radio playback in the native Covers viewer.",
+  "author": {"name": "DudeSoft"},
+  "entry": "main.js",
+  "permissions": ["file-system"]
+}

@@ -7,6 +7,7 @@
     "node": "24.x"
   },
   "scripts": {
+    "test:players": "node --test iina/24sevenfm-covers.iinaplugin/main.test.cjs",
     "test:api": "node --test api/*.test.js installer/local_api_server.test.js"
   },
   "dependencies": {
