@@ -264,7 +264,7 @@ INT_PTR CALLBACK ProviderDetailsProc(HWND details, UINT msg, WPARAM wp, LPARAM l
     if (msg == WM_INITDIALOG) {
         state = reinterpret_cast<PanelState*>(lp);
         SetWindowLongPtrA(details, DWLP_USER, reinterpret_cast<LONG_PTR>(state));
-        SendDlgItemMessageA(details, IDC_OPT_FANART_KEY, EM_SETLIMITTEXT, 128, 0);
+        SendDlgItemMessageA(details, IDC_OPT_FANART_KEY, EM_SETLIMITTEXT, ssccfg::fanartKeyMaxLength, 0);
         HFONT base = (HFONT)SendMessageA(state->parent, WM_GETFONT, 0, 0);
         LOGFONTA font = {};
         if (base && GetObjectA(base, sizeof(font), &font)) {
@@ -414,10 +414,11 @@ void moveProvider(HWND dlg, int delta) {
 
 void init(HWND dlg, const CoverEngine::Settings& s) {
     // The radio labels are static in the .rc; only the slider needs setup here.
-    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETRANGE, TRUE, MAKELONG(500, 2000));
-    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETLINESIZE, 0, 100);
-    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPAGESIZE, 0, 100);
-    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETTICFREQ, 100, 0);
+    const auto& duration = *ssccfg::findSetting("fadeMs");
+    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETRANGE, TRUE, MAKELONG(duration.minimum, duration.maximum));
+    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETLINESIZE, 0, duration.step);
+    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPAGESIZE, 0, duration.step);
+    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETTICFREQ, duration.step, 0);
     HWND list = GetDlgItem(dlg, IDC_OPT_PROVIDERS);
     ListView_SetUnicodeFormat(list, FALSE); // shared code supplies stable ASCII provider names
     ListView_SetExtendedListViewStyle(list,
@@ -437,7 +438,7 @@ void setValues(HWND dlg, const CoverEngine::Settings& s) {
     setRadio(dlg, IDC_OPT_SIZE, 3, s.remainingSize);
     CheckDlgButton(dlg, IDC_OPT_ROLL, s.rollDigits ? BST_CHECKED : BST_UNCHECKED);
     setRadio(dlg, IDC_OPT_TRANS, 4, s.transition);
-    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPOS, TRUE, clampi(s.fadeMs, 500, 2000));
+    SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPOS, TRUE, ssccfg::clampSetting("fadeMs", s.fadeMs));
     CheckDlgButton(dlg, IDC_OPT_BACKDROPS, s.backdrops ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, IDC_OPT_TITLELOGOS, s.titleLogos ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(dlg, IDC_OPT_RATINGS, s.ratings ? BST_CHECKED : BST_UNCHECKED);
@@ -467,7 +468,7 @@ void read(HWND dlg, CoverEngine::Settings& s) {
     s.rollDigits  = IsDlgButtonChecked(dlg, IDC_OPT_ROLL) == BST_CHECKED;
     s.transition  = getRadio(dlg, IDC_OPT_TRANS, 4);
     const int fade = (int)SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_GETPOS, 0, 0);
-    s.fadeMs = clampi(((fade + 50) / 100) * 100, 500, 2000); // snap to 100 ms
+    s.fadeMs = ssccfg::snapDuration(fade); // snap to 100 ms
     s.backdrops = IsDlgButtonChecked(dlg, IDC_OPT_BACKDROPS) == BST_CHECKED;
     s.titleLogos = IsDlgButtonChecked(dlg, IDC_OPT_TITLELOGOS) == BST_CHECKED;
     s.ratings = IsDlgButtonChecked(dlg, IDC_OPT_RATINGS) == BST_CHECKED;
@@ -509,7 +510,7 @@ void updateEnabled(HWND dlg) {
 
 void onHScroll(HWND dlg) {
     const int pos = (int)SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_GETPOS, 0, 0);
-    const int snapped = ((pos + 50) / 100) * 100;
+    const int snapped = ssccfg::snapDuration(pos);
     if (snapped != pos)
         SendDlgItemMessageA(dlg, IDC_OPT_FADE, TBM_SETPOS, TRUE, snapped);
     updateFadeLabel(dlg);

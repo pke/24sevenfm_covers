@@ -296,6 +296,11 @@ static HttpResponse httpRequestImpl(const std::string& host,
     return resp;
 }
 
+#elif defined(__APPLE__) || defined(SSC_LINUX_NATIVE)
+// Implemented in Objective-C++ so C++ consumers keep a framework-free header.
+HttpResponse httpRequestImpl(const std::string&, unsigned short, const std::string&,
+    const std::string&, const std::string&, const std::string&, int, const std::atomic<bool>*);
+
 #else // POSIX socket transport
 
 static HttpResponse httpRequestImpl(const std::string& host,

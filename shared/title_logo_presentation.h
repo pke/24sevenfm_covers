@@ -45,6 +45,13 @@ public:
     }
 
     float advance(std::uint32_t now, int fadeMs) {
+        if (animating() && fadeMs != duration_) {
+            const auto elapsed = now - started_;
+            const float p = duration_ > 0 && elapsed < static_cast<std::uint32_t>(duration_)
+                ? static_cast<float>(elapsed) / duration_ : 1.f;
+            from_ = phase_ == Exiting ? from_*(1-p) : from_+(1-from_)*p;
+            started_ = now; duration_ = fadeMs;
+        }
         const auto elapsed = now - started_;
         const float progress = fadeMs > 0 && elapsed < static_cast<std::uint32_t>(fadeMs)
             ? static_cast<float>(elapsed) / fadeMs : 1.0f;
@@ -62,6 +69,7 @@ public:
 private:
     enum Phase { Hidden, Entering, Visible, Exiting } phase_ = Hidden;
     void reveal(std::uint32_t now, int fadeMs) {
+        duration_ = fadeMs;
         bytes_ = nextBytes_; album_ = nextAlbum_; started_ = now; from_ = 0;
         phase_ = bytes_.empty() ? Hidden : fadeMs > 0 ? Entering : Visible;
     }
@@ -69,5 +77,6 @@ private:
     std::wstring album_, nextAlbum_;
     std::uint32_t started_ = 0;
     float from_ = 0;
+    int duration_ = 0;
 };
 }

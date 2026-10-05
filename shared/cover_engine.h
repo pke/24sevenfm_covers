@@ -24,11 +24,14 @@
 #include "../lib/platform_concurrency.h"
 #include <string>
 #include <vector>
+#include <map>
 
+#include "engine_settings.h"
 #include "d2d_renderer.h" // d2d::Transition + render/setCover/...
 #include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
 #include "info_presentation.h"
 #include "coming_next.h"
+#include "presentation_controller.h"
 #include "../lib/debug_features.h"
 #if SSC_ENABLE_DEBUG_OVERLAY
 #include "debug_overlay.h"
@@ -49,29 +52,7 @@ public:
     // Options the host loads from / saves to its own storage (Winamp INI,
     // foobar cfg_var). UI-thread-only: call repaint() after changing them. The
     // monitor/media threads use a mutex-protected copy, never this mutable object.
-    struct Settings {
-        bool showRemaining = false; // show the remaining-time countdown
-        bool comingNext = false;    // show the next queued album in the last ten seconds
-        int  remainingSize = 0;     // 0 small, 1 medium, 2 large
-        int  transition  = 1;     // 0 none, 1 crossfade, 2 flip-h, 3 flip-v
-        bool rollDigits  = false; // animate the countdown (rolling)
-        int  fadeMs      = 1000;  // transition duration, 500..2000
-        int  station     = 0;     // index into ssc::kStations (see stations.h); 0 = SST
-        int  layout      = 0;     // 0 = fill screen, 1 = poster (blurred bg + centered cover + info box)
-        int  posterBlur  = 24;    // poster background blur strength (INI "posterBlur"; not in the UI)
-        int  borderRadius = 45;   // poster cover + info box corner radius, per mille of the
-                                  // cover's side (INI "borderRadius"; not in the UI).
-                                  // 0 = square, 500 = circle.
-        bool backdrops = false;   // SST movie/TV/game artwork; deliberately opt-in
-        bool titleLogos = false;  // replace album text; independent opt-in within backdrops
-        bool ratings = false;     // DE/US age classifications, independent of art
-        bool hideCoverWithBackdrop = true;
-        std::string mediaProviders = "fanart,tmdb,tvmaze,steamgriddb";
-        std::string fanartClientKey; // optional listener-owned fanart.tv client_key
-        unsigned long long fanartClientKeyVerifiedAt = 0; // Unix epoch milliseconds
-        bool ratingDE = true;
-        bool ratingUS = true;
-    };
+    using Settings = ssccfg::EngineSettings;
     Settings settings;
 
     static CoverEngine& instance();
@@ -189,6 +170,7 @@ private:
     float ratingVisibilityAlpha(DWORD now);
     void setRatingVisibility(bool visible, DWORD now);
     void updateRatingVisibility(DWORD now);
+    void updatePresentation(HWND h);
     // hwnd_ is written on the UI thread (setWindow) and read on the monitor thread
     // (cover/error callbacks), so it is atomic and snapshotted before every use.
     void invalidate() const;      // InvalidateRect(hwnd_) if still attached
@@ -220,8 +202,11 @@ private:
     std::string shownUrl_, nextUrl_, nextBytes_; // preload state (guarded)
     std::string shownBytes_;             // bytes of the cover currently shown (guarded)
     int shownStation_ = -1;              // identity belongs to these bytes, not UI settings
-    ssc::InfoPresentation info_;         // guarded, including animation state
-    ssc::ComingNextPresentation comingNext_; // guarded queue + retained presentation
+    ssc::PresentationController presentation_{[] { return GetTickCount64(); }};
+    ssc::InfoPresentation& info_ = presentation_.info;
+    ssc::ComingNextPresentation& comingNext_ = presentation_.comingNext;
+    ssc::FrameState frame_; // immutable between serialized UI updates
+    std::map<HWND, ssc::PresentationController> retainedViews_;
     ssc::ComingNextFrame comingNextFrame_;   // UI thread only
     int infoFadeMs_ = 0;                 // coherent settings snapshot for publishers
     std::string pendingBackdropBytes_;

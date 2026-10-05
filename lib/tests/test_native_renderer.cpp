@@ -40,7 +40,7 @@ struct RendererFixture {
 };
 
 // Deterministic compressed artwork; fixture construction is outside all timings.
-std::string artwork(UINT width, UINT height, unsigned seed = 0, bool alpha = false) {
+std::string artwork(UINT width, UINT height, unsigned seed = 0, bool alpha = false, bool tail = false) {
     ComPtr<IWICImagingFactory> factory;
     REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.GetAddressOf()))));
@@ -66,6 +66,8 @@ std::string artwork(UINT width, UINT height, unsigned seed = 0, bool alpha = fal
         pixels[at + 2] = static_cast<BYTE>((y / 7 + seed * 17) % 256);
         if (alpha) pixels[at + 3] = x > width / 4 && x < width * 3 / 4
             && y > height / 4 && y < height * 3 / 4 ? 192 : 0;
+        if (alpha && tail) pixels[at + 3] = x >= 20 && x < 220 && y >= 10 && y < 70
+            && (x < 180 || (y >= 38 && y < 42)) ? 255 : 0;
     }
     REQUIRE(SUCCEEDED(frame->WritePixels(height, stride, static_cast<UINT>(pixels.size()), pixels.data())));
     REQUIRE(SUCCEEDED(frame->Commit()));
@@ -105,6 +107,8 @@ TEST_CASE("coming next and fanart hints render together in both layouts") {
     const std::string cover = artwork(300, 300);
     d2d::setCover(cover.data(), cover.size(), false);
     ssc::ComingNextFrame next;
+    next.cover = std::make_shared<const std::string>(cover);
+    next.coverOpacity = 1;
     next.album = std::wstring(200, L'W') + L" \u00c4\u00d6\u00dc";
     for (HWND window : {fixture.portrait, fixture.landscape}) {
         RECT client{};
@@ -133,6 +137,38 @@ TEST_CASE("coming next and fanart hints render together in both layouts") {
         }
         d2d::resetTarget();
         CHECK_FALSE(d2d::fanartHintHitTest(window, 25, 25));
+    }
+}
+
+TEST_CASE("coming next only trims text after growing to half of the window") {
+    RendererFixture fixture;
+    const auto cover = std::make_shared<const std::string>(artwork(300, 300));
+    ssc::ComingNextFrame next; next.opacity = next.coverOpacity = 1;
+    for (HWND window : {fixture.portrait, fixture.landscape}) {
+        RECT client{}; REQUIRE(GetClientRect(window, &client));
+        for (bool rtl : {false, true}) for (bool preview : {false, true}) {
+            SetWindowLongPtrW(window, GWL_EXSTYLE, rtl ? WS_EX_LAYOUTRTL : 0);
+            d2d::resetTarget();
+            next.cover = preview ? cover : nullptr;
+            for (const auto& album : {L"Super 8", L"Die Hard 2: Die Harder", L"Star Trek: First Contact", L"\u00c5ngstr\u00f6m: gjpqy"}) {
+                next.album = album; next.artist = L"John Williams";
+                d2d::render(window, 1, d2d::Transition::Crossfade, 9, .08f, false,
+                    nullptr, 1, L"Current album", L"Current artist", 1, true, 1, 1, 1,
+                    L"Current album", L"Cue", 0, &next);
+                const auto stats = d2d::rendererDiagnostics();
+                CHECK(stats.failedFrames == 0);
+                CHECK(stats.comingNextTrimmedLines == 0);
+                CHECK(stats.comingNextTextWidth >= stats.comingNextNaturalTextWidth);
+                CHECK(stats.comingNextRight - stats.comingNextLeft < client.right * .5f);
+            }
+            next.album = std::wstring(200, L'W');
+            d2d::render(window, 1, d2d::Transition::Crossfade, 9, .08f, false,
+                nullptr, 1, L"Current album", L"Current artist", 1, true, 1, 1, 1,
+                L"Current album", L"Cue", 0, &next);
+            const auto stats = d2d::rendererDiagnostics();
+            CHECK(stats.comingNextTrimmedLines > 0);
+            CHECK(stats.comingNextRight - stats.comingNextLeft == doctest::Approx(client.right * .5f));
+        }
     }
 }
 
@@ -253,6 +289,22 @@ TEST_CASE("native decoded cache distinguishes cropped logos and preserves alpha 
     fixture.paint(fixture.landscape);
     CHECK(d2d::rendererDiagnostics().decodes == 0);
     CHECK(d2d::rendererDiagnostics().cacheEntries == 2);
+}
+
+TEST_CASE("native logo alignment survives cached decoding and target recreation") {
+    RendererFixture fixture;
+    const auto cover = artwork(200, 200);
+    d2d::setCover(cover.data(), cover.size(), false);
+    const auto logo = artwork(240, 80, 0, true, true);
+    d2d::setTitleLogo(logo, L"Benchmark album", 0);
+    fixture.paint(fixture.portrait);
+    CHECK(d2d::rendererDiagnostics().logoHorizontalAnchor == doctest::Approx(.4f));
+    d2d::resetTarget();
+    fixture.paint(fixture.landscape);
+    CHECK(d2d::rendererDiagnostics().logoHorizontalAnchor == doctest::Approx(.4f));
+    d2d::setTitleLogo(artwork(100, 80, 0, true), L"Benchmark album", 0);
+    fixture.paint(fixture.portrait);
+    CHECK(d2d::rendererDiagnostics().logoHorizontalAnchor == .5f);
 }
 
 TEST_CASE("native decoded cache bounds both memory and retained image count") {

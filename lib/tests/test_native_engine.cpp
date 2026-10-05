@@ -27,6 +27,7 @@ TEST_CASE("downloaded rating bytes preserve the outgoing text snapshot") {
 TEST_CASE("coming next retains outgoing content, handles rapid queue changes and reduced motion") {
     ssc::ComingNextPresentation next;
     next.setQueue("a", L"Album A", L"Artist A");
+    next.setCover("a", "cover-a");
     CHECK(next.advance(false, 10, 0, 250).album.empty());
     CHECK(next.advance(true, -1, 0, 250).album.empty());
     CHECK(next.advance(true, 11, 0, 250).album.empty());
@@ -34,6 +35,8 @@ TEST_CASE("coming next retains outgoing content, handles rapid queue changes and
     auto frame = next.advance(true, 9, 225, 250);
     CHECK(frame.opacity == doctest::Approx(.802403).epsilon(.0001)); // CSS ease halfway in
     CHECK(frame.album == L"Album A");
+    REQUIRE(frame.cover);
+    CHECK(*frame.cover == "cover-a");
     CHECK(next.advance(true, 0, 350, 250).opacity == 1);
     frame = next.advance(false, 0, 400, 250);
     CHECK(frame.opacity == 1);
@@ -42,11 +45,16 @@ TEST_CASE("coming next retains outgoing content, handles rapid queue changes and
     CHECK(frame.opacity == doctest::Approx(.197597).epsilon(.0001)); // CSS ease halfway out
     CHECK(frame.artist == L"Artist A");
     next.setQueue("b", L"Album B", L"");
+    next.setCover("a", "stale-cover");
+    next.setCover("b", "cover-b");
     next.advance(true, 5, 550, 250);
     next.setQueue("c", L"Album C", L"Artist C");
+    next.setCover("c", "cover-c");
+    CHECK(*next.advance(true, 5, 600, 250).cover == "cover-a");
     CHECK(next.advance(true, 5, 600, 250).album == L"Album A");
     frame = next.advance(true, 5, 850, 250);
     CHECK(frame.album == L"Album C");
+    CHECK(*frame.cover == "cover-c");
     CHECK(frame.opacity == 0);
     CHECK(next.advance(true, 4, 1100, 250).opacity == 1);
     next.setQueue("", L"", L"");
@@ -68,6 +76,27 @@ struct CoverEngineTestAccess {
     }
     ~CoverEngineTestAccess() { engine.stopMediaWorker(); }
     CoverEngine::MediaWorkerState& state() { return *engine.media_; }
+    void countdownScale() {
+        REQUIRE(d2d::init());
+        HWND window = CreateWindowExW(0, L"STATIC", L"Countdown sizing regression", WS_POPUP,
+            0, 0, 3840, 2160, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        REQUIRE(window);
+        ssc::PresentationTime now = 0;
+        engine.presentation_ = ssc::PresentationController([&] { return now; });
+        engine.hwnd_.store(window); engine.haveCover_ = true; engine.settings.showRemaining = true;
+        engine.setRemaining(90);
+        RECT rect{}; GetClientRect(window, &rect);
+        const float fractions[] = {.048f,.062f,.080f};
+        for (int size = 0; size < 3; ++size) {
+            engine.settings.remainingSize = size; engine.updatePresentation(window);
+            now += 350; engine.updatePresentation(window);
+            CHECK(engine.frame_.countdown.fontSize == doctest::Approx(rect.bottom * fractions[size]));
+        }
+        engine.settings.layout = 1; engine.updatePresentation(window);
+        now += 350; engine.updatePresentation(window);
+        CHECK(engine.frame_.countdown.fontSize == doctest::Approx(rect.bottom*.58f*.080f));
+        engine.hwnd_.store(nullptr); DestroyWindow(window); d2d::shutdown();
+    }
     void fanartStageHint() {
         engine.settings.backdrops = true;
         ssc::TrackInfo track; track.album = "The Bay";
@@ -448,7 +477,7 @@ struct CoverEngineTestAccess {
         publish(old);
         checkNoOldData();
         publish(fresh);
-        CHECK(engine.info_.title() == L"Old album (1:00)");
+        CHECK(engine.info_.title() == L"Old album");
         CHECK(engine.mediaDirty_);
         engine.decodePendingMedia(nullptr);
         CHECK(engine.ratingHasContent_);
@@ -477,19 +506,19 @@ struct CoverEngineTestAccess {
         epoch = schedule("Crown, The", true);
         ssc::MediaResult raw; raw.album = "Crown, The"; raw.artist = "Raw artist";
         engine.publishMetadata(epoch, raw, 60);
-        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        CHECK(engine.info_.title() == L"The Crown");
         CHECK(engine.info_.artist() == L"Composer");
         // A settled older endpoint response (Miss) has the same fallback policy.
         raw.status = ssc::MediaResult::Miss;
         engine.publishMetadata(epoch, raw, 60);
-        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        CHECK(engine.info_.title() == L"The Crown");
         const auto next = schedule("Next track");
         CHECK(engine.info_.title().empty());
         engine.publishMetadata(epoch, canonical, 60); // late previous-track response
         CHECK(engine.info_.title().empty());
         raw.album = "Next track";
         engine.publishMetadata(next, raw, 60);
-        CHECK(engine.info_.title() == L"Next track (1:00)");
+        CHECK(engine.info_.title() == L"Next track");
     }
     void coverStation() {
         engine.shownBytes_ = "SST image"; engine.shownStation_ = 0;
@@ -766,7 +795,10 @@ struct CoverEngineTestAccess {
             CHECK(engine.pendingMediaHasTint_ == expectBackdrop);
             if (expectBackdrop)
                 CHECK(engine.pendingMediaTint_[0] == (target == windows.portrait ? 1 : 2));
-            CHECK(engine.mediaFading_ == clientAnimationsEnabled());
+            // Identical cached bytes deduplicate even across viewport classes.
+            // A returning view owns its timeline; drawing may not restart it.
+            const auto beforePaint = engine.frame_.backdrop;
+            if (expectBackdrop) REQUIRE_FALSE(beforePaint.empty());
             // The host's retained portrait pixels must already be replaced when
             // setWindow returns, before the covering fullscreen window is removed.
             CHECK_FALSE(engine.mediaFadePending_);
@@ -775,7 +807,11 @@ struct CoverEngineTestAccess {
             engine.onPaint(target);
             CHECK(d2d::backdropReady());
             CHECK_FALSE(engine.mediaFadePending_);
-            CHECK(engine.mediaFading_ == clientAnimationsEnabled()); // upload time did not consume the fade
+            REQUIRE(engine.frame_.backdrop.size() == beforePaint.size());
+            for (size_t i=0; i<beforePaint.size(); ++i) {
+                CHECK(engine.frame_.backdrop[i].image == beforePaint[i].image);
+                CHECK(engine.frame_.backdrop[i].opacity == beforePaint[i].opacity);
+            }
             const auto epoch = state().epoch;
             const HWND old = target == windows.portrait ? windows.landscape : windows.portrait;
             engine.onTimer(old, CoverEngine::kHeartbeat);
@@ -912,10 +948,10 @@ struct CoverEngineTestAccess {
             CHECK(ssc::wants4kArtwork(work.request));
             if (work.current) CHECK(work.animateBackdrop);
         }
-        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        CHECK(engine.info_.title() == L"The Crown");
         ssc::MediaResult fallback; fallback.album = "Crown, The";
         engine.publishMetadata(uhdEpoch, fallback, 60);
-        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        CHECK(engine.info_.title() == L"The Crown");
 
         SetWindowPos(window.value, nullptr, 0, 0, 2560, 1440, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         engine.onTimer(window.value, CoverEngine::kHeartbeat);
@@ -927,7 +963,7 @@ struct CoverEngineTestAccess {
         CHECK(ssc::wants4kArtwork(state().request));
         for (const auto& work : state().work)
             if (work.current) CHECK(work.animateBackdrop);
-        CHECK(engine.info_.title() == L"The Crown (1:00)");
+        CHECK(engine.info_.title() == L"The Crown");
         engine.hwnd_.store(nullptr);
     }
 };
@@ -1114,3 +1150,8 @@ TEST_CASE("native fanart hint fades, ignores queued and stale responses, and res
     CoverEngineTestAccess().fanartStageHint();
 }
 TEST_CASE("native backdrop selection survives orientation changes") { CoverEngineTestAccess().backdropOrientationSelection(); }
+
+TEST_CASE("Windows host forwards viewport-relative countdown settings to the common controller") {
+    CoverEngineTestAccess test;
+    test.countdownScale();
+}

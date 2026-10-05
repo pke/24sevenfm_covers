@@ -13,6 +13,7 @@
 #include "../lib/debug_features.h"
 #include "d2d_transitions.h" // Transition enum
 #include "coming_next.h"
+#include "presentation_controller.h"
 
 namespace d2d {
 
@@ -27,10 +28,13 @@ LiveDiagnostics liveDiagnostics(); // UI thread; reads retained state without de
 #ifdef SSC_RENDERER_DIAGNOSTICS
 // Test-only measurements; no counters or timing work in shipped clients.
 struct RendererDiagnostics {
+    float logoHorizontalAnchor = .5f;
     size_t decodes = 0, blurGenerations = 0, frames = 0, failedFrames = 0, coverDraws = 0;
     size_t cacheHits = 0, cacheEvictions = 0, cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
     double targetMs = 0, imageMs = 0, blurMs = 0, frameMs = 0;
     float comingNextLeft = 0, comingNextRight = 0;
+    float comingNextNaturalTextWidth = 0, comingNextTextWidth = 0;
+    unsigned comingNextTrimmedLines = 0;
 };
 RendererDiagnostics rendererDiagnostics();
 void resetRendererDiagnostics();
@@ -79,7 +83,7 @@ bool backdropReady();
 void setBackdropLoading(bool hideCover);
 void setBackdropNavigationOpacity(float opacity);
 int backdropNavigationHitTest(HWND hwnd, int x, int y);
-void setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent);
+ssc::ImageReference setRatings(const std::vector<RatingBadge>& ratings, bool fadeFromCurrent);
 void endMediaFade();
 void setTitleLogo(const std::string& bytes, const std::wstring& album, int fadeMs);
 bool titleLogoAnimating();
@@ -99,6 +103,8 @@ void setPosterBlur(int standardDeviation);
 // but not exposed in the UI. Fill layout is always square - there the cover IS the window,
 // so rounding it would just expose the backdrop at the corners.
 void setCoverRadius(int perMille);
+// Native metrics are fed back during UI updates, never by the drawing pass.
+void measurePresentation(HWND hwnd, ssc::PresentationController& presentation);
 
 // Renders hwnd's client area. `progress` in [0,1] drives the active transition
 // between the outgoing and incoming covers (1 = settled on the incoming one);
@@ -121,7 +127,8 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             float ratingProgress = 1.0f, float ratingOpacity = 1.0f,
             float infoOpacity = 1.0f, const wchar_t* album = nullptr,
             const wchar_t* track = nullptr, int logoFadeMs = 0,
-            const ssc::ComingNextFrame* comingNext = nullptr, float fanartHintOpacity = 0.0f);
+            const ssc::ComingNextFrame* comingNext = nullptr, float fanartHintOpacity = 0.0f,
+            const ssc::FrameState* frame = nullptr);
 
 } // namespace d2d
 

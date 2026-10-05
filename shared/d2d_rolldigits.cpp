@@ -113,11 +113,33 @@ bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dw,
                      ID2D1SolidColorBrush* bg, ID2D1SolidColorBrush* fg,
                      int remainingSeconds, float cw, float ch, float fontSize,
                      bool animate, bool atBottom, bool drawBackground,
-                     bool horizontalCenter) {
+                     bool horizontalCenter, const ssc::CountdownFrame* frame) {
     if (!rt || !dw || !bg || !fg) return false;
     if (fontSize < 10.0f) fontSize = 10.0f;
     if (!ensureFormat(dw, fontSize)) return false;
 
+    if (frame) {
+        float totalW = 0;
+        for (const auto& column : frame->columns) totalW += column.colon ? g_colonW : g_digitW;
+        const float padX = fontSize * .5f, padY = fontSize * .25f, margin = fontSize * .4f;
+        const float boxW = totalW + padX * 2, boxH = g_cellH + padY * 2;
+        const float boxX = (cw-boxW)*.5f;
+        const float boxY = (ch-boxH)*.5f;
+        const float fgOpacity = fg->GetOpacity(), bgOpacity = bg->GetOpacity();
+        bg->SetOpacity(bgOpacity * frame->opacity);
+        if (drawBackground) rt->FillRectangle(D2D1::RectF(boxX,boxY,boxX+boxW,boxY+boxH),bg);
+        float x = boxX+padX;
+        for (const auto& column : frame->columns) {
+            const float width = column.colon ? g_colonW : g_digitW, top = boxY+padY;
+            rt->PushAxisAlignedClip(D2D1::RectF(x,top,x+width,top+g_cellH),D2D1_ANTIALIAS_MODE_ALIASED);
+            for (const auto& layer : column.layers) {
+                fg->SetOpacity(fgOpacity * frame->opacity * layer.opacity);
+                drawGlyph(rt,layer.digit,x,top+layer.offset*g_cellH,fg);
+            }
+            rt->PopAxisAlignedClip(); x += width;
+        }
+        fg->SetOpacity(fgOpacity); bg->SetOpacity(bgOpacity); return false;
+    }
     // Detect a value change and (re)start the roll. With animation off, or on the
     // first appearance, the value just snaps in with no roll.
     if (remainingSeconds != s_lastValue) {

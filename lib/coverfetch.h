@@ -71,8 +71,8 @@ struct Config {
     std::string host = "streamingsoundtracks.com";
     std::string path = "/soap/FM24sevenJSON.php";
     std::string action = "GetCurrentlyPlaying"; // query: ?action=<action>&_t=<cachebuster>
-#if defined(_WIN32)
-    unsigned short port = 443; // Windows: HTTPS via WinHTTP (native TLS + cert validation)
+#if defined(_WIN32) || defined(__APPLE__) || defined(SSC_LINUX_NATIVE)
+    unsigned short port = 443; // Native TLS with OS certificate validation
 #else
     unsigned short port = 80;  // other platforms: plain-socket path until a TLS lib is wired in
 #endif

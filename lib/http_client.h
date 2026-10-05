@@ -1,9 +1,5 @@
-// http_client.h - minimal dependency-free HTTP/1.1 client (plain HTTP, port 80)
-//
-// Works on Windows (Winsock2), iOS and Android (POSIX sockets). It only speaks
-// unencrypted HTTP, which is all the 24seven.fm SOAP endpoint and cover images
-// require. It reads the whole response (Connection: close), de-chunks the body
-// if the server uses Transfer-Encoding: chunked, and returns status + body.
+// Bounded HTTP client: native TLS on Windows (WinHTTP), Apple (NSURLSession),
+// and Linux (libcurl); plain HTTP on other POSIX platforms.
 #pragma once
 
 #include <atomic>

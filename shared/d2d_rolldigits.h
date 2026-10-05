@@ -6,6 +6,7 @@
 // rolls those digits too.
 #ifndef SSC_D2D_ROLLDIGITS_H
 #define SSC_D2D_ROLLDIGITS_H
+#include "presentation_controller.h"
 
 struct ID2D1RenderTarget;
 struct ID2D1SolidColorBrush;
@@ -25,7 +26,7 @@ bool drawRollingTime(ID2D1RenderTarget* rt, IDWriteFactory* dwrite,
                      ID2D1SolidColorBrush* bgBrush, ID2D1SolidColorBrush* fgBrush,
                      int remainingSeconds, float cw, float ch, float fontSize,
                      bool animate, bool atBottom, bool drawBackground,
-                     bool horizontalCenter = false);
+                     bool horizontalCenter = false, const ssc::CountdownFrame* frame = nullptr);
 
 // Forgets the last value so the next draw shows instantly (no roll from a stale
 // value). Call while the overlay is hidden (remaining unknown / overlay off).

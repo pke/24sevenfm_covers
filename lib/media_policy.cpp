@@ -1,4 +1,5 @@
 #include "media_policy.h"
+#include "../shared/presentation_style.h"
 
 namespace ssc {
 
@@ -19,7 +20,19 @@ TitleLogoSize titleLogoSize(float pixelWidth, float pixelHeight, float stageWidt
     float row = titleSize * 1.3f;
     if (row < 40 * dpiScale) row = 40 * dpiScale;
     if (row > 72 * dpiScale) row = 72 * dpiScale;
+    if (row < pixelHeight * scale * .5f) row = pixelHeight * scale * .5f;
+    // The logo straddles the panel edge. Padding and the artist's line gap
+    // also contribute to its clearance; halve the complete gap, not the logo.
+    const auto typography = posterTypography(stageWidth, stageHeight);
+    const float clearance = typography.padY + row + typography.lineGap - pixelHeight * scale * .5f;
+    row -= clearance * .5f;
     return {pixelWidth * scale, pixelHeight * scale, row};
+}
+TitleLogoRect titleLogoRect(float centreX, float panelTopEdge, const TitleLogoSize& size,
+                           float horizontalAnchor) {
+    const float left = centreX - size.width * horizontalAnchor;
+    return {left, panelTopEdge - size.height * .5f,
+        left + size.width, panelTopEdge + size.height * .5f};
 }
 
 float ratingLogoHeight(float stageHeight, float dpiScale) {
@@ -40,7 +53,8 @@ RatingLogoSize containRatingLogo(float pixelWidth, float pixelHeight, float slot
 }
 
 float posterInfoWidth(float stageWidth, float contentWidth,
-                      float horizontalPadding, float dpiScale) {
+                      float horizontalPadding, float dpiScale, float titleLogoWidth) {
+    if (titleLogoWidth > contentWidth) contentWidth = titleLogoWidth;
     if (stageWidth < 1.0f) stageWidth = 1.0f;
     if (contentWidth < 0.0f) contentWidth = 0.0f;
     if (horizontalPadding < 0.0f) horizontalPadding = 0.0f;

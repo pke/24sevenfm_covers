@@ -2,23 +2,140 @@
 #include "doctest.h"
 
 #include "media_policy.h"
-#include "../../shared/image_limits.h"
-#include "../../shared/title_logo_presentation.h"
+#include "../../shared/queue_prefetch.h"
+#include "../../shared/presentation_style.h"
+#include <map>
 
-TEST_CASE("title logos share generous aspect-preserving bounds without enlarging their row") {
+TEST_CASE("coming next reserves full text before applying its half-window limit") {
+    for (float stage : {320.0f, 640.0f, 1280.0f})
+        for (float dpi : {1.0f, 1.5f, 2.0f})
+            for (float natural : {48.25f, 160.5f, 1500.0f})
+                for (float cover : {0.0f, 1.0f}) {
+                    const auto font = ssc::nextTypography(stage, dpi);
+                    const auto card = ssc::nextCardSize(stage, font, natural, 40 * dpi, cover, dpi);
+                    CHECK(card.width <= stage * .5f);
+                    CHECK(card.height >= 40 * dpi + font.padY * 2);
+                    const float extra = font.padX * 2 + (font.cover + font.gap) * cover;
+                    if (natural + 3 * dpi + extra <= stage * .5f) {
+                        CHECK(card.textWidth > natural);
+                        CHECK(card.width < stage * .5f);
+                    } else if (natural + extra > stage * .5f) {
+                        CHECK(card.width == doctest::Approx(stage * .5f));
+                        CHECK(card.textWidth < natural);
+                    }
+                }
+}
+
+TEST_CASE("native queue planning carries options and bounds staggered prefetch") {
+    std::vector<ssc::TrackInfo> queue(70);
+    for (auto& track : queue) { track.album = "Album"; track.artist = "Composer"; track.track = "Cue"; }
+    queue[1].stationIdent = true;
+    ssc::MediaRequest options; options.includeTitleLogo = true; options.providers = "tmdb,fanart";
+    const auto plan = ssc::planQueueMedia(queue, options);
+    REQUIRE(plan.size() == ssc::kQueuedTrackStoreLimit - 1);
+    CHECK(plan.front().delayMs == 0);
+    CHECK(plan[1].delayMs == ssc::queuePrefetchDelayMs(2));
+    CHECK(plan.front().request.album == "Album");
+    CHECK(plan.front().request.includeTitleLogo);
+    CHECK(plan.front().request.providers == options.providers);
+    CHECK(plan.front().key == ssc::mediaCacheKey(queue.front(), plan.front().request));
+}
+TEST_CASE("native cache eviction keeps recently used prepared tracks") {
+    struct Entry { unsigned used; };
+    std::map<int, Entry> cache;
+    cache[1].used = 4; cache[2].used = 2; cache[3].used = 3;
+    ssc::trimMediaCache(cache, 2);
+    CHECK(cache.size() == 2); CHECK(cache.count(1) == 1); CHECK(cache.count(2) == 0);
+    ssc::trimMediaCache(cache, 0); CHECK(cache.empty());
+}
+#include "../../shared/image_limits.h"
+#include "../../shared/image_alpha_bounds.h"
+#include "../../shared/title_logo_presentation.h"
+TEST_CASE("title logo crop excludes transparent padding with shared alpha threshold") {
+    std::vector<unsigned char> pixels(10 * 8 * 4);
+    pixels[3] = 15;
+    pixels[(2 * 10 + 3) * 4 + 3] = 16;
+    pixels[(5 * 10 + 8) * 4 + 3] = 255;
+    auto bounds = ssc::visibleAlphaBounds(pixels.data(), 10, 8, 40);
+    CHECK(bounds.left == 3); CHECK(bounds.top == 2); CHECK(bounds.right == 9); CHECK(bounds.bottom == 6);
+    std::fill(pixels.begin(), pixels.end(), 0);
+    bounds = ssc::visibleAlphaBounds(pixels.data(), 10, 8, 40);
+    CHECK(bounds.right <= bounds.left); CHECK(bounds.bottom <= bounds.top);
+}
+
+TEST_CASE("title logos preserve aspect bounds and clear the composer") {
     for (const float width : {390.0f, 1280.0f}) {
         const auto logo = ssc::titleLogoSize(704, 290, width, 844, 24, 1);
         CHECK(logo.width / logo.height == doctest::Approx(704.0f / 290));
-        CHECK(logo.height > logo.rowHeight * 2);
+        const auto font = ssc::posterTypography(width, 844);
+        CHECK(font.padY + logo.rowHeight + font.lineGap > logo.height * .5f);
         CHECK(logo.width <= width * .72f);
         CHECK(logo.height <= 844 * .24f);
     }
     const auto tall = ssc::titleLogoSize(120, 280, 390, 844, 24, 1);
     CHECK(tall.height > tall.width);
-    CHECK(tall.height > tall.rowHeight * 2);
+    const auto font = ssc::posterTypography(390, 844);
+    CHECK(font.padY + tall.rowHeight + font.lineGap > tall.height * .5f);
     const auto wide = ssc::titleLogoSize(1600, 80, 390, 844, 24, 1);
     CHECK(wide.width <= 390 * .72f);
     CHECK(wide.width / wide.height == doctest::Approx(20));
+}
+
+TEST_CASE("title lettering is centred without clipping an asymmetric decorative tail") {
+    for (bool mirror : {false, true}) for (unsigned scale : {1u, 2u}) {
+        const unsigned width = 240 * scale, height = 80 * scale, stride = width * 4 + 16;
+        std::vector<unsigned char> pixels(stride * height, 0);
+        for (unsigned y = 10 * scale; y < 70 * scale; ++y)
+            for (unsigned x = 20 * scale; x < 220 * scale; ++x) {
+                if (x >= 180 * scale && (y < 38 * scale || y >= 42 * scale)) continue;
+                const auto column = mirror ? width - x - 1 : x;
+                pixels[y * stride + column * 4 + 3] = 255;
+            }
+        const auto bounds = ssc::visibleAlphaBounds(pixels.data(), width, height, stride);
+        const auto anchor = ssc::titleLogoHorizontalAnchor(pixels.data(), width, height, stride, bounds);
+        CHECK(anchor == doctest::Approx(mirror ? .6f : .4f));
+        const ssc::TitleLogoSize size{200, 60, 40};
+        const auto rect = ssc::titleLogoRect(340, 500, size, anchor);
+        // The main 160px title, not the 40px flare, is centred on the panel.
+        const float letteringCentre = mirror ? 120 : 80;
+        CHECK(rect.left + letteringCentre == doctest::Approx(340));
+        CHECK(rect.right - rect.left == 200); // complete artwork retained, no rescaling
+        CHECK(rect.top == 470); CHECK(rect.bottom == 530);
+        CHECK(bounds.right - bounds.left == 200 * scale);
+    }
+}
+
+TEST_CASE("balanced and uniformly thin logos retain ordinary geometric centring") {
+    for (unsigned thickness : {2u, 50u}) {
+        std::vector<unsigned char> pixels(200 * 60 * 4, 0);
+        for (unsigned y = 0; y < thickness; ++y)
+            for (unsigned x = 10; x < 190; ++x) pixels[(y * 200 + x) * 4 + 3] = 255;
+        pixels[3] = 15; // nearly transparent noise remains excluded
+        const auto bounds = ssc::visibleAlphaBounds(pixels.data(), 200, 60, 800);
+        CHECK(ssc::titleLogoHorizontalAnchor(pixels.data(), 200, 60, 800, bounds) == .5f);
+    }
+    CHECK(ssc::titleLogoHorizontalAnchor(nullptr, 0, 0, 0, {0,0,0,0}) == .5f);
+}
+TEST_CASE("title logo composer clearance is halved at every viewport and DPI") {
+    for (const float dpi : {1.f, 1.5f, 2.f}) for (const float width : {320.f, 680.f, 1280.f})
+        for (const auto pixels : {std::pair<float,float>{1600,80}, {704,290}, {120,280}}) {
+            const auto font = ssc::posterTypography(width*dpi, 820*dpi);
+            const auto logo = ssc::titleLogoSize(pixels.first,pixels.second,width*dpi,820*dpi,font.title,dpi);
+            const float oldRow = std::max(logo.height*.5f,std::clamp(font.title*1.3f,40*dpi,72*dpi));
+            const float oldGap = font.padY + oldRow + font.lineGap - logo.height*.5f;
+            const float gap = font.padY + logo.rowHeight + font.lineGap - logo.height*.5f;
+            CHECK(gap == doctest::Approx(oldGap*.5f));
+            CHECK(gap > 0);
+        }
+}
+TEST_CASE("title logos protrude halfway over the panel for every aspect ratio") {
+    for (const auto dimensions : {std::pair<float, float>{1200, 160}, {700, 290}, {120, 280}}) {
+        const auto size = ssc::titleLogoSize(dimensions.first, dimensions.second, 680, 760, 28, 1);
+        const auto rect = ssc::titleLogoRect(340, 500, size);
+        CHECK(500 - rect.top == doctest::Approx(size.height * .5f));
+        CHECK(rect.bottom - 500 == doctest::Approx(size.height * .5f));
+        CHECK((rect.left + rect.right) * .5f == doctest::Approx(340));
+    }
 }
 
 TEST_CASE("title logo fades retain outgoing bytes and reverse rapid toggles without snapping") {
@@ -218,6 +335,8 @@ TEST_CASE("poster info box retains a bottom margin after wrapped titles grow") {
 }
 
 TEST_CASE("poster info box follows content width independently of the cover") {
+    CHECK(ssc::posterInfoWidth(1000, 100, 24, 1, 512) == doctest::Approx(562));
+    CHECK(ssc::posterInfoWidth(500, 100, 24, 1, 500) == doctest::Approx(430));
     // A 1374 x 808 window has a roughly 469 px cover. Long metadata may use more
     // horizontal room just like the web player instead of wrapping at that cover edge.
     CHECK(ssc::posterInfoWidth(1374.0f, 720.0f, 24.0f, 1.0f)

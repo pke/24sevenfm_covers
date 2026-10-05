@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.15)
 project(coverfetch LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
-if(MSVC)
-    # Match the native hosts and exercise their locale-free JSON number parser.
+if(MSVC OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Match the native desktop hosts and their C++14+ aggregate-based tests.
     set(CMAKE_CXX_STANDARD 17)
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,11 +21,33 @@ add_library(coverfetch STATIC
     media_resolver.cpp
     media_policy.cpp
     image_probe.cpp
+    ../shared/presentation_pipeline.cpp
+    ../shared/media_preparation.cpp
+    ../shared/media_worker.cpp
+    ../shared/rating_assets.cpp
 )
 
 target_include_directories(coverfetch
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
 )
+
+if(APPLE)
+    enable_language(OBJCXX)
+    target_sources(coverfetch PRIVATE http_client_apple.mm)
+    set_source_files_properties(http_client_apple.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(coverfetch PUBLIC "-framework Foundation" "-framework ImageIO" "-framework CoreGraphics")
+endif()
+
+# Linux uses system TLS trust and a bounded native decoder. Keep these dependencies
+# out of the Windows, Apple and mobile build graphs.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(CURL REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GDK_PIXBUF REQUIRED IMPORTED_TARGET gdk-pixbuf-2.0)
+    target_sources(coverfetch PRIVATE http_client_curl.cpp image_probe_linux.cpp)
+    target_link_libraries(coverfetch PUBLIC CURL::libcurl PkgConfig::GDK_PIXBUF)
+    target_compile_definitions(coverfetch PUBLIC SSC_LINUX_NATIVE=1)
+endif()
 
 # Platform sockets / threads.
 if(WIN32)
@@ -42,6 +64,13 @@ if(COVERFETCH_BUILD_EXAMPLE AND NOT ANDROID AND NOT IOS)
     target_link_libraries(coverfetch_example PRIVATE coverfetch)
 endif()
 
+# Standalone metadata export: no engine instance, GUI, networking, or user preferences.
+option(COVERFETCH_BUILD_SETTINGS_SCHEMA "Build the static settings schema exporter" ON)
+if(COVERFETCH_BUILD_SETTINGS_SCHEMA AND NOT ANDROID AND NOT IOS)
+    add_executable(settings_schema_export example/settings_schema.cpp)
+    set_target_properties(settings_schema_export PROPERTIES CXX_STANDARD 17)
+endif()
+
 # Unit tests (desktop only; OFF by default). Enable with -DCOVERFETCH_BUILD_TESTS=ON,
 # then run via CTest. The test compiles the sources directly (to reach the anonymous-
 # namespace helpers), so it does NOT link the coverfetch library.
@@ -49,6 +78,15 @@ option(COVERFETCH_BUILD_TESTS "Build the unit tests" OFF)
 if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     enable_testing()
     add_executable(coverfetch_tests tests/test_coverfetch.cpp mini_json.cpp json_view.cpp diagnostics.cpp)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(coverfetch_tests PRIVATE http_client_curl.cpp)
+        target_compile_definitions(coverfetch_tests PRIVATE SSC_LINUX_NATIVE=1)
+        target_link_libraries(coverfetch_tests PRIVATE CURL::libcurl)
+    endif()
+    if(APPLE)
+        target_sources(coverfetch_tests PRIVATE http_client_apple.mm)
+        target_link_libraries(coverfetch_tests PRIVATE "-framework Foundation")
+    endif()
     target_include_directories(coverfetch_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     if(WIN32)
         target_link_libraries(coverfetch_tests PRIVATE ws2_32)
@@ -59,12 +97,20 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     # doctest.cmake (vendored, ships with doctest) registers every doctest TEST_CASE
     # as its own CTest entry, so ctest reports 26/26 cases instead of one opaque exe.
     include(tests/doctest.cmake)
+    if(APPLE)
+        add_executable(apple_platform_tests tests/test_apple_platform.cpp)
+        target_link_libraries(apple_platform_tests PRIVATE coverfetch)
+        doctest_discover_tests(apple_platform_tests TEST_PREFIX "Apple: ")
+    endif()
     add_executable(platform_concurrency_tests tests/test_platform_concurrency.cpp)
     target_include_directories(platform_concurrency_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     if(NOT WIN32)
         target_link_libraries(platform_concurrency_tests PRIVATE Threads::Threads)
     endif()
     doctest_discover_tests(platform_concurrency_tests TEST_PREFIX "platform: ")
+    add_executable(settings_schema_tests tests/test_settings_schema.cpp mini_json.cpp)
+    set_target_properties(settings_schema_tests PROPERTIES CXX_STANDARD 17)
+    doctest_discover_tests(settings_schema_tests TEST_PREFIX "settings: ")
     add_executable(platform_text_tests tests/test_platform_text.cpp)
     doctest_discover_tests(platform_text_tests TEST_PREFIX "platform: ")
     add_executable(platform_time_tests tests/test_platform_time.cpp)
@@ -117,9 +163,20 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     target_include_directories(media_policy_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     doctest_discover_tests(media_policy_tests)
 
-    add_executable(rating_assets_tests
-        tests/test_rating_assets.cpp
-        "${CMAKE_CURRENT_SOURCE_DIR}/../shared/rating_assets.cpp")
+    add_executable(presentation_pipeline_tests tests/test_presentation_pipeline.cpp)
+    target_link_libraries(presentation_pipeline_tests PRIVATE coverfetch)
+    doctest_discover_tests(presentation_pipeline_tests)
+
+    add_executable(media_preparation_tests tests/test_media_preparation.cpp)
+    target_link_libraries(media_preparation_tests PRIVATE coverfetch)
+    set_target_properties(media_preparation_tests PROPERTIES CXX_STANDARD 17)
+    doctest_discover_tests(media_preparation_tests)
+
+    add_executable(presentation_controller_tests tests/test_presentation_controller.cpp)
+    target_link_libraries(presentation_controller_tests PRIVATE coverfetch)
+    doctest_discover_tests(presentation_controller_tests)
+
+    add_executable(rating_assets_tests tests/test_rating_assets.cpp)
     target_link_libraries(rating_assets_tests PRIVATE coverfetch)
     target_include_directories(rating_assets_tests PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../shared")
@@ -128,7 +185,7 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     if(WIN32)
         add_executable(native_engine_tests tests/test_native_engine.cpp
             ../shared/d2d_renderer.cpp ../shared/d2d_transitions.cpp
-            ../shared/d2d_rolldigits.cpp ../shared/rating_assets.cpp ../shared/demo.cpp)
+            ../shared/d2d_rolldigits.cpp ../shared/demo.cpp)
         target_include_directories(native_engine_tests PRIVATE . ../shared)
         target_link_libraries(native_engine_tests PRIVATE coverfetch d2d1 dwrite)
         doctest_discover_tests(native_engine_tests)
@@ -142,7 +199,7 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
 
         add_executable(native_renderer_tests tests/test_native_renderer.cpp
             ../shared/d2d_renderer.cpp ../shared/d2d_transitions.cpp
-            ../shared/d2d_rolldigits.cpp ../shared/rating_assets.cpp)
+            ../shared/d2d_rolldigits.cpp)
         target_compile_definitions(native_renderer_tests PRIVATE SSC_RENDERER_DIAGNOSTICS)
         target_include_directories(native_renderer_tests PRIVATE . ../shared)
         target_link_libraries(native_renderer_tests PRIVATE coverfetch d2d1 dwrite)

@@ -16,14 +16,22 @@ static const size_t kQueuedTrackStoreLimit = 64;
 static const std::uint32_t kRatingTrackVisibleMs = 10000;
 static const std::uint32_t kStageIdleMs = 2000;
 static const std::uint32_t kRatingVisibilityFadeMs = 350;
+static const std::uint32_t kComingNextTransitionMs = 250;
+static const int kComingNextVisibleSeconds = 10;
 
 // Native drawing coordinates are physical client pixels. Scale the web player's
 // logical rating range by the target window DPI before deriving the logo height.
 float ratingLogoHeight(float stageHeight, float dpiScale);
 
+// rowHeight starts after the panel's top padding; the following artist gap
+// completes the clearance below the logo's lower half.
 struct TitleLogoSize { float width, height, rowHeight; };
 TitleLogoSize titleLogoSize(float pixelWidth, float pixelHeight, float stageWidth,
                            float stageHeight, float titleSize, float dpiScale);
+struct TitleLogoRect { float left, top, right, bottom; };
+// Coordinate-origin independent: the logo centre sits on the panel's top edge.
+TitleLogoRect titleLogoRect(float centreX, float panelTopEdge, const TitleLogoSize&,
+                           float horizontalAnchor = .5f);
 
 struct RatingLogoSize {
     float width;
@@ -39,7 +47,7 @@ struct PosterCoverFit {
 // width, but the panel may use up to 86% of the complete stage independently of
 // the square cover. Padding is the inset on one side.
 float posterInfoWidth(float stageWidth, float contentWidth,
-                      float horizontalPadding, float dpiScale);
+                      float horizontalPadding, float dpiScale, float titleLogoWidth = 0);
 
 // Fits a square cover into the portrait space above the info box. The normal
 // case preserves both the stage's top margin and the cover/info gap; when the

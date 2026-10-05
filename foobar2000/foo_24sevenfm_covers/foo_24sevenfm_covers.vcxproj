@@ -98,6 +98,8 @@
     <ClCompile Include="preferences.cpp" />
     <ClCompile Include="foobar_settings.cpp" />
     <ClCompile Include="..\..\shared\cover_engine.cpp" />
+    <ClCompile Include="..\..\shared\media_preparation.cpp" />
+    <ClCompile Include="..\..\shared\media_worker.cpp" />
     <ClCompile Include="..\..\shared\demo.cpp" />
     <ClCompile Include="..\..\shared\cover_menu.cpp" />
     <ClCompile Include="..\..\shared\fullscreen_window.cpp" />

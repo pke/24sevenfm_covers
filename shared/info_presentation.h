@@ -14,6 +14,7 @@ public:
     const std::wstring& track() const { return track_; }
     bool animating() const { return phase_ == Exiting || phase_ == Entering; }
     bool canonical() const { return canonical_; }
+    const std::string& displayedIdentity() const { return displayedIdentity_; }
 
     void begin(const std::string& identity, std::uint32_t now, int fadeMs) {
         if (identity == identity_) return; // artwork retries/layout do not reset metadata
@@ -34,11 +35,19 @@ public:
         nextTitle_ = title; nextArtist_ = artist; settled_ = true;
         nextAlbum_ = album; nextTrack_ = track;
         if ((phase_ == Visible || phase_ == Entering)
-                && (title_ != title || artist_ != artist)) exit(alpha, now, fadeMs);
+                && (title_ != title || artist_ != artist || album_ != album || track_ != track)) exit(alpha, now, fadeMs);
         if (phase_ == Waiting) reveal(now, fadeMs);
     }
 
     float advance(std::uint32_t now, int fadeMs) {
+        if (animating() && fadeMs != duration_) {
+            const auto elapsed = now - started_;
+            const float p = duration_ > 0 && elapsed < static_cast<std::uint32_t>(duration_)
+                ? interpolate(static_cast<float>(elapsed) / duration_) : 1.f;
+            if (phase_ == Exiting) exitFrom_ *= 1-p;
+            else enterFrom_ += (1-enterFrom_)*p;
+            started_ = now; duration_ = fadeMs;
+        }
         if (phase_ == Exiting) {
             const auto elapsed = now - started_;
             if (fadeMs > 0 && elapsed < static_cast<std::uint32_t>(fadeMs))
@@ -49,7 +58,7 @@ public:
         if (phase_ == Entering) {
             const auto elapsed = now - started_;
             if (fadeMs > 0 && elapsed < static_cast<std::uint32_t>(fadeMs))
-                return interpolate(static_cast<float>(elapsed) / fadeMs);
+                return enterFrom_ + (1-enterFrom_) * interpolate(static_cast<float>(elapsed) / fadeMs);
             phase_ = Visible;
         }
         return phase_ == Visible ? 1.0f : 0.0f;
@@ -60,6 +69,7 @@ private:
     TimingFunction timing_;
     enum Phase { Waiting, Exiting, Entering, Visible } phase_ = Waiting;
     void exit(float alpha, std::uint32_t now, int fadeMs) {
+        duration_ = fadeMs;
         if (!title_.empty() && alpha > 0.0f && fadeMs > 0) {
             phase_ = Exiting; started_ = now; exitFrom_ = alpha;
         } else {
@@ -67,15 +77,19 @@ private:
         }
     }
     void reveal(std::uint32_t now, int fadeMs) {
+        duration_ = fadeMs; enterFrom_ = 0;
+        displayedIdentity_ = identity_;
         title_ = nextTitle_; artist_ = nextArtist_;
         album_ = nextAlbum_; track_ = nextTrack_;
         started_ = now; phase_ = fadeMs > 0 ? Entering : Visible;
     }
-    std::string identity_;
+    std::string identity_, displayedIdentity_;
     std::wstring title_, artist_, nextTitle_, nextArtist_;
     std::wstring album_, track_, nextAlbum_, nextTrack_;
     bool canonical_ = false, settled_ = false;
     std::uint32_t started_ = 0;
     float exitFrom_ = 1.0f;
+    float enterFrom_ = 0;
+    int duration_ = 0;
 };
 } // namespace ssc

@@ -1,7 +1,4 @@
-// config_store.h - the storage adapter, split out from config.h so units that only need
-// "somewhere to put a key/value pair" don't have to drag in the whole option schema (and
-// through it cover_engine.h -> windows.h -> Direct2D). That keeps window_rect.h, and its
-// unit tests, free of Win32.
+// Platform-free key/value storage adapter; metadata lives in settings_schema.h.
 #ifndef SSC_CONFIG_STORE_H
 #define SSC_CONFIG_STORE_H
 
@@ -9,7 +6,7 @@
 
 namespace ssccfg {
 
-// Read/write a named value. The schema in config.h owns the keys, defaults and clamping;
+// Read/write a named value. The shared settings schema owns keys, defaults and clamping;
 // an implementation only has to persist a key/value pair however it likes (INI entry,
 // cfg_var, registry, an in-memory map in a test, ...).
 struct ConfigStore {

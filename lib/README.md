@@ -29,9 +29,11 @@ It returns the same data model the SOAP service used to, as flat JSON:
 
 It is served over both **HTTP:80 and HTTPS:443**. On Windows the client uses
 **WinHTTP**, so requests go over **TLS (443)** with certificate validation from
-the OS store and no extra dependency. Other platforms use the dependency-free
-plain-socket client (HTTP:80) until a native TLS path (NSURLSession / OkHttp) is
-wired in.
+the OS store and no extra dependency. macOS uses **NSURLSession over TLS (443)**
+with system certificate validation, cancellation and bounded responses. Linux
+uses **libcurl over TLS (443)** and GdkPixbuf for bounded image validation;
+install their development packages before configuring CMake. Other platforms
+retain the dependency-free plain-socket client (HTTP:80).
 
 **All 24seven.fm stations expose this same endpoint**, each on its own host —
 `streamingsoundtracks.com`, `1980s.fm`, `adagio.fm`, `death.fm`, `entranced.fm`
@@ -123,6 +125,11 @@ cmake --build build
   CMake toolchain. Import `coverfetch_c.h` via a bridging header for Swift.
 
 ## Verification notes (2026-07-08)
+
+For native acquisition and prepared media, see
+[ADR 0010](../docs/adr/0010-shared-media-preparation.md). `media_preparation` and
+`media_worker` are portable C++ and carry no renderer types; their regression tests
+run on Windows and Apple Silicon.
 
 - Host must be `streamingsoundtracks.com` (**no `www`**): `www.` 301-redirects.
 - `GET /soap/FM24sevenJSON.php?action=GetCurrentlyPlaying` returns 200 JSON over
