@@ -760,6 +760,7 @@ var imgA = $("coverA"), imgB = $("coverB");
 var cdEl = $("countdown"), statusEl = $("status"), stageStatusEl = $("stage-status");
 var fanartStageHintEl = $("fanart-stage-hint");
 var comingNextEl = $("coming-next");
+var comingNextCoverEl = $("coming-next-cover"), comingNextCoverUrl = "";
 var comingNextAlbumEl = $("coming-next-album"), comingNextArtistEl = $("coming-next-artist");
 var backdropErrorEl = $("backdrop-error"), backdropErrorTextEl = $("backdrop-error-text");
 var backdropRetryEl = $("backdrop-retry");
@@ -988,12 +989,6 @@ var infoHandoffGeneration = 0, infoExitTimer = null;
 function infoLinesFor(metadata) {
     var album = metadata && metadata.album || "";
     var track = metadata && metadata.track || "";
-    if ((album || track) && currentTrackLengthSeconds > 0) {
-        var duration = " (" + Math.floor(currentTrackLengthSeconds / 60) + ":"
-            + String(currentTrackLengthSeconds % 60).padStart(2, "0") + ")";
-        if (track) track += duration;
-        else album += duration;
-    }
     if (!album && !track) album = "—";
     return { album: album, track: track };
 }
@@ -1777,6 +1772,18 @@ function setComingNextContent() {
     comingNextArtistEl.textContent = nextTrack
         ? (nextTrack.displayArtist || nextTrack.artist) : "";
     comingNextDisplayedVersion = nextTrack ? nextTrack.version : 0;
+    var url = nextTrack ? nextTrack.coverUrl : "";
+    if (url !== comingNextCoverUrl) {
+        comingNextCoverUrl = url;
+        comingNextEl.classList.remove("has-cover");
+        // Reuse the queue's trusted URL and browser cache. Late loads cannot
+        // attach an old station/queue cover to the currently displayed card.
+        if (url) preloadImage(url, function () {
+            if (comingNextCoverUrl !== url) return;
+            comingNextCoverEl.src = url;
+            comingNextEl.classList.add("has-cover");
+        });
+    }
 }
 
 function clearComingNextContent() {
@@ -1786,6 +1793,9 @@ function clearComingNextContent() {
     comingNextAlbumEl.textContent = "";
     comingNextArtistEl.textContent = "";
     comingNextDisplayedVersion = 0;
+    comingNextCoverUrl = "";
+    comingNextEl.classList.remove("has-cover");
+    comingNextCoverEl.removeAttribute("src");
     renderComingNext();
 }
 
@@ -1804,6 +1814,8 @@ function renderComingNext() {
     var shouldShow = !!opts.comingNext && !!nextTrack
         && remaining >= 0 && remaining <= COMING_NEXT_SECONDS;
     if (!shouldShow) return hideComingNext();
+    if (comingNextEl.classList.contains("show") && comingNextDisplayedVersion !== nextTrack.version)
+        return hideComingNext();
     // If the queued track changed while the old card is exiting, let the old text
     // finish its fade before mounting the replacement.
     if (comingNextClearTimer && comingNextDisplayedVersion !== nextTrack.version) return;

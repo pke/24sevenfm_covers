@@ -24,6 +24,16 @@ const JSON_URL =
 // Playwright's virtual clock prevents browser teardown on Windows; CI runs on Ubuntu.
 const virtualClockTest = process.platform === "win32" ? test.skip : test;
 
+// Metadata-normalization assertions concern album/track; the composer now sits
+// between those rows visually and is verified independently.
+function expectInfoTitle(page) {
+    return expect.poll(() => page.locator("#info-title").evaluate(element => {
+        const copy = element.cloneNode(true);
+        copy.querySelector("#info-artist")?.remove();
+        return copy.textContent.replace(/\s+/g, " ").trim();
+    }));
+}
+
 async function stableElementRects(page, selectors, options = {}) {
     return page.evaluate(async ({ selectors, stableFrames, maxFrames, tolerance }) => {
         const elements = Object.fromEntries(Object.entries(selectors).map(([name, selector]) => {
@@ -486,12 +496,14 @@ test.describe("the deployed player page", () => {
             await page.setViewportSize(viewport);
             const rects = await stableElementRects(page, {
                 info: ".info", logo: "#media-logo canvas", row: "#media-logo",
-                track: "#info-track", stage: "#stage",
+                track: "#info-track", artist: "#info-artist", stage: "#stage",
             });
             // Most of the extra artwork height belongs above the glass, not in its row.
             expect(rects.info.top - rects.logo.top).toBeGreaterThan(rects.logo.height * .4);
             expect(rects.logo.height).toBeGreaterThan(rects.row.height * 2);
             expect(rects.logo.bottom).toBeLessThanOrEqual(rects.track.top);
+            const rem = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+            expect(rects.artist.top - rects.logo.bottom).toBeCloseTo(rem * .25, 0);
             expect(rects.logo.top).toBeGreaterThanOrEqual(rects.stage.top);
             expect(rects.logo.left).toBeGreaterThanOrEqual(rects.stage.left);
             expect(rects.logo.right).toBeLessThanOrEqual(rects.stage.right);
@@ -1758,21 +1770,24 @@ test.describe("the deployed player page", () => {
                 + "&previewTrack=Main%20Title&previewArtist=Walter%20Murphy&previewLength=884631",
             { waitUntil: "domcontentloaded" });
 
-            await expect(page.locator("#info-title")).toHaveText("Family Guy - Main Title (14:44)");
+            await expectInfoTitle(page).toBe("Family Guy - Main Title");
             await expect(page.locator("#info-album")).toHaveText("Family Guy");
-            await expect(page.locator("#info-track")).toHaveText("Main Title (14:44)");
+            await expect(page.locator("#info-track")).toHaveText("Main Title");
             await expect(page.locator("#info-title-separator")).toBeHidden();
             const titleLines = await page.locator("#info-title").evaluate((title) => {
                 const album = title.querySelector("#info-album").getBoundingClientRect();
                 const track = title.querySelector("#info-track").getBoundingClientRect();
                 return {
                     albumTop: album.top,
+                    artistTop: title.querySelector("#info-artist").getBoundingClientRect().top,
                     trackTop: track.top,
                     albumSize: parseFloat(getComputedStyle(title.querySelector("#info-album")).fontSize),
                     trackSize: parseFloat(getComputedStyle(title.querySelector("#info-track")).fontSize),
                 };
             });
             expect(titleLines.trackTop).toBeGreaterThan(titleLines.albumTop);
+            expect(titleLines.artistTop).toBeGreaterThan(titleLines.albumTop);
+            expect(titleLines.trackTop).toBeGreaterThan(titleLines.artistTop);
             expect(titleLines.trackSize).toBeLessThan(titleLines.albumSize);
             await expect(page.locator("#info-artist")).toHaveText("Walter Murphy");
             await expect.poll(() => resolverQuery).toEqual({
@@ -1873,7 +1888,7 @@ test.describe("the deployed player page", () => {
                 album: "La Mula",
                 track: "El Tocadiscos",
                 artist: "Oscar Navarro",
-                displayedTitle: "La Mula - El Tocadiscos (2:03)",
+                displayedTitle: "La Mula - El Tocadiscos",
                 settings: {
                     backdropsEnabled: true,
                     ratingsEnabled: false,
@@ -2041,8 +2056,8 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => secondResolverRequested).toBe(true);
         await expect(page.locator("#stage .info")).toHaveClass(/metadata-pending/);
         await expect(page.locator("#stage .info")).toBeHidden();
-        await expect(page.locator("#info-title"))
-            .not.toContainText("Next Rating Movie - Second Cue");
+        await expectInfoTitle(page)
+            .not.toContain("Next Rating Movie - Second Cue");
         await expect(badges).toHaveClass(/track-handoff/);
         await expect(page.locator("#rating-de")).not.toHaveClass(/show/);
         await page.mouse.move(fullscreenBox.x + fullscreenBox.width / 4,
@@ -2052,8 +2067,8 @@ test.describe("the deployed player page", () => {
         await expect(badges).toBeHidden();
 
         releaseSecondResolver();
-        await expect(page.locator("#info-title"))
-            .toContainText("Next Rating Movie - Second Cue");
+        await expectInfoTitle(page)
+            .toContain("Next Rating Movie - Second Cue");
         await expect(page.locator("#rating-de")).toHaveAttribute("aria-label", "Germany: FSK 16");
         await expect(badges).not.toHaveClass(/track-handoff/);
         await expect(badges).toHaveClass(/track-intro/);
@@ -2147,7 +2162,7 @@ test.describe("the deployed player page", () => {
                 const action = new URL(route.request().url()).searchParams.get("action");
                 if (action === "GetQueue") return route.fulfill({ json: [{
                     Album: album, Track: "Next Cue", Artist: artist,
-                    CoverLink: "", SiteLink: "",
+                    CoverLink: "https://streamingsoundtracks.com/images/cover/next-preview.svg", SiteLink: "",
                 }] });
                 return route.fulfill({ json: {
                     Album: "Current Album", Track: "Current Cue", Artist: "Current Composer",
@@ -2159,6 +2174,9 @@ test.describe("the deployed player page", () => {
             await page.route("https://streamingsoundtracks.com/images/logos/*", (route) =>
                 route.fulfill({ status: 200, contentType: "image/svg+xml",
                     body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
+            await page.route("https://streamingsoundtracks.com/images/cover/**/next-preview.svg*", (route) =>
+                route.fulfill({ contentType: "image/svg+xml",
+                    body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>' }));
             await page.route("https://24covers-api.vercel.app/api/credit?*", (route) => {
                 creditRequests++;
                 return route.fulfill({ json: { artist: "Wrong fallback" } });
@@ -2171,6 +2189,9 @@ test.describe("the deployed player page", () => {
             await expect(page.locator("#coming-next-album")).toHaveText(album);
             await expect(page.locator("#coming-next-artist")).toHaveText(artist);
             expect(creditRequests).toBe(0);
+            await expect(announcement).toHaveClass(/has-cover/);
+            await expect.poll(() => page.locator("#coming-next-cover").evaluate(image =>
+                image.complete && image.naturalWidth > 0)).toBe(true);
 
             await stableElementRects(page, {
                 stage: "#stage", announcement: "#coming-next", button: "#fullscreen",
@@ -2218,6 +2239,10 @@ test.describe("the deployed player page", () => {
             expect(fullscreenRightGap).toBeGreaterThan(5);
             expect(fullscreenRightGap).toBeLessThan(20);
             await page.evaluate(() => document.exitFullscreen());
+            await page.locator("#stage").evaluate(stage => stage.dir = "rtl");
+            const rtl = await stableElementRects(page, { stage: "#stage", announcement: "#coming-next" });
+            expect(rtl.announcement.left - rtl.stage.left).toBeGreaterThan(5);
+            expect(rtl.announcement.left - rtl.stage.left).toBeLessThan(20);
         });
     test("keeps the Coming next header complete for a short queued album", async ({ page }) => {
         await page.addInitScript(() => {
@@ -3783,7 +3808,7 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => pollRequests, { timeout: 10000 }).toBe(2);
         await expect(page.locator("#stage .info")).toHaveAttribute("aria-hidden", "true");
         await expect(page.locator("#stage .info")).not.toBeVisible();
-        await expect(page.locator("#info-title")).toHaveText("");
+        await expectInfoTitle(page).toBe("");
         expect(logoRequested).toBe(true);
     });
     test("rejects a CoverLink outside the selected station", async ({ page }) => {
@@ -3908,7 +3933,7 @@ test.describe("the deployed player page", () => {
         }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect(page.locator("#info-title")).toHaveText("2026 - false");
+        await expectInfoTitle(page).toBe("2026 - false");
         await expect(page.locator("#info-artist")).toHaveText("24");
         await expect(page.locator("#status")).toHaveText("");
         const front = page.locator(
@@ -4104,7 +4129,7 @@ test.describe("the deployed player page", () => {
 
         await page.emulateMedia({ reducedMotion: "reduce" });
         await page.locator("label.seg", { hasText: "Death.FM" }).click();
-        await expect(page.locator("#info-title")).toContainText("Death motion");
+        await expectInfoTitle(page).toContain("Death motion");
         await expect(coverBox).toHaveAttribute("data-fx", "none");
     });
     test("ignores a cover that finishes after a station switch", async ({ page }) => {
@@ -4254,7 +4279,7 @@ test.describe("the deployed player page", () => {
             };
             await page.waitForTimeout(2100);
             await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-            await expect(page.locator("#info-title")).toContainText("Next without backdrop");
+            await expectInfoTitle(page).toContain("Next without backdrop");
             await expect(page.locator("#movieA.show, #movieB.show")).toHaveCount(0);
             await expect(stage).toHaveClass(/no-cover/);
             await expect(front).toHaveAttribute("src", oldSized);
@@ -4666,11 +4691,11 @@ test.describe("the deployed player page", () => {
             await expect.poll(()=>requests.some(r=>r.album==="Queued 4K"&&r.resolution==="4k")).toBe(true);
             expect(requests.find(r=>r.album==="Interstellar"&&r.resolution==="4k"))
                 .toMatchObject({width:3840,height:2160});
-            await expect(page.locator("#info-title")).toContainText("Canonical Interstellar");
+            await expectInfoTitle(page).toContain("Canonical Interstellar");
             await resize(1800,1000);
             await resize(800,450);
             await expect(shown).toHaveAttribute("src",/current-hd\.jpg/);
-            await expect(page.locator("#info-title")).toContainText("Canonical Interstellar");
+            await expectInfoTitle(page).toContain("Canonical Interstellar");
             // Moving between monitors can change only DPI, not stage CSS dimensions.
             // CDP changes DPR and query.matches but does not emit the native change
             // event. Deliver it to the real query registered by the production code.
@@ -4874,7 +4899,7 @@ test.describe("the deployed player page", () => {
         await expect(info).toHaveClass(/metadata-pending/);
         await expect(info).toHaveAttribute("aria-hidden", "true");
         await expect(info).toBeHidden();
-        await expect(page.locator("#info-title")).not.toContainText("Fallback, The");
+        await expectInfoTitle(page).not.toContain("Fallback, The");
         expect(await info.evaluate((element) =>
             getComputedStyle(element).transitionProperty.split(", ")))
             .toContain("opacity");
@@ -4884,8 +4909,8 @@ test.describe("the deployed player page", () => {
         await expect(info).not.toHaveClass(/metadata-pending/);
         await expect(info).toHaveAttribute("aria-hidden", "false");
         await expect(info).toBeVisible();
-        await expect(page.locator("#info-title"))
-            .toHaveText("Fallback, The - Main Title (2:12)");
+        await expectInfoTitle(page)
+            .toBe("Fallback, The - Main Title");
     });
     test("never paints a rotated Naked Gun title before a metadata-only resolver miss settles",
         async ({ page }) => {
@@ -4922,8 +4947,8 @@ test.describe("the deployed player page", () => {
                     artist: "Ira Newborn",
                 },
             } });
-            await expect(page.locator("#info-title"))
-                .toHaveText("The Naked Gun 2 1/2 - Drebin - Hero! (1:03)");
+            await expectInfoTitle(page)
+                .toBe("The Naked Gun 2 1/2 - Drebin - Hero!");
             await expect(page.locator(".info")).not.toHaveClass(/metadata-pending/);
             await expect(page.locator(".info")).toBeVisible();
         });
@@ -5117,8 +5142,8 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#info-title"))
-            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await expectInfoTitle(page)
+            .toBe("The Crown: Season 2 - Your Majesty");
         await expect(page.locator("#info-artist"))
             .toHaveText("Rupert Gregson-Williams & Lorne Balfe");
     });
@@ -5161,8 +5186,8 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#info-title"))
-            .toContainText("The Good, The Bad & The Ugly - The Trio (Main Title)");
+        await expectInfoTitle(page)
+            .toContain("The Good, The Bad & The Ugly - The Trio (Main Title)");
         await expect.poll(() => resolverQuery).toBe("Good, The Bad & The Ugly, The");
         expect(personalKey).toBe("fanart-history-key");
         await expect(page.locator("#movieA.show, #movieB.show"))
@@ -5200,8 +5225,8 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#info-title")).toContainText(
-            "Princess Mononoke: Symphonic Suite - The Journey To The West (4:51)");
+        await expectInfoTitle(page).toContain(
+            "Princess Mononoke: Symphonic Suite - The Journey To The West");
         await expect.poll(() => resolverQuery).toBe("Princess Mononoke: Symphonic Suite");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /princess-mononoke\.jpg/);
@@ -5244,9 +5269,9 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#info-title")).toContainText(
+        await expectInfoTitle(page).toContain(
             "The Thomas Crown Affair (1968) - Theme From The Thomas Crown Affair "
-            + "(The Windmills Of Your Mind) (Perf. By Noel Harrison) (2:18)");
+            + "(The Windmills Of Your Mind) (Perf. By Noel Harrison)");
         await expect.poll(() => resolverQuery).toBe("Thomas Crown Affair, The (1968)");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /thomas-crown\.jpg/);
@@ -5294,26 +5319,26 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#info-title"))
-            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await expectInfoTitle(page)
+            .toBe("The Crown: Season 2 - Your Majesty");
         await expect.poll(() => resolverAlbum).toBe("Crown, The: Season 2");
 
         // A same-track station refresh must not restore the raw `, The` spelling.
         await page.waitForTimeout(2100);
         await page.evaluate(() => window.dispatchEvent(new Event("focus")));
         await expect.poll(() => pollRequests).toBeGreaterThanOrEqual(2);
-        await expect(page.locator("#info-title"))
-            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await expectInfoTitle(page)
+            .toBe("The Crown: Season 2 - Your Majesty");
 
         // Portrait art has a separate cache/request, but title metadata does not.
         await page.setViewportSize({ width: 390, height: 844 });
         await expect.poll(() => portraitRoute !== null).toBe(true);
         await expect(page.locator("#stage .info")).toBeVisible();
-        await expect(page.locator("#info-title"))
-            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await expectInfoTitle(page)
+            .toBe("The Crown: Season 2 - Your Majesty");
         await portraitRoute.fulfill({ json: resolvedBody });
-        await expect(page.locator("#info-title"))
-            .toHaveText("The Crown: Season 2 - Your Majesty (4:14)");
+        await expectInfoTitle(page)
+            .toBe("The Crown: Season 2 - Your Majesty");
     });
     test("maps a compilation album to its canonical TV series title", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/inspector-morse.svg";
@@ -5347,8 +5372,8 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#info-title"))
-            .toContainText("The Magic Of Inspector Morse - Irish Connection (3:03)");
+        await expectInfoTitle(page)
+            .toContain("The Magic Of Inspector Morse - Irish Connection");
         await expect.poll(() => resolverQuery).toBe("The Magic Of Inspector Morse");
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", /inspector-morse\.jpg/);
@@ -5387,8 +5412,8 @@ test.describe("the deployed player page", () => {
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
 
-        await expect(page.locator("#info-title")).toContainText(
-            "The Wings Of A Film - The Thin Red Line: Journey To The Line (9:50)");
+        await expectInfoTitle(page).toContain(
+            "The Wings Of A Film - The Thin Red Line: Journey To The Line");
         await expect.poll(() => resolverAlbum).toBe("The Wings Of A Film");
         expect(resolverTrack).toBe("The Thin Red Line: Journey To The Line");
         await expect(page.locator("#movieA.show, #movieB.show"))
@@ -5523,7 +5548,7 @@ test.describe("the deployed player page", () => {
             await expect(info).toHaveClass(/metadata-pending/);
             await expect(info).toHaveAttribute("aria-hidden", "true");
             await expect(info).toHaveCSS("opacity", "0");
-            await expect(page.locator("#info-title")).not.toContainText("New Boundary Movie");
+            await expectInfoTitle(page).not.toContain("New Boundary Movie");
             await expect(oldImage).not.toHaveClass(/show/);
             await expect(oldImage).toHaveAttribute("src", oldBackdrop);
             expect(queueRequests).toBe(2);
@@ -5532,8 +5557,8 @@ test.describe("the deployed player page", () => {
             await expect(info).not.toHaveClass(/metadata-pending/);
             await expect(info).toHaveAttribute("aria-hidden", "false");
             await expect(info).toHaveCSS("opacity", "1");
-            await expect(page.locator("#info-title"))
-                .toHaveText("The New Boundary Movie - New Cue (3:00)");
+            await expectInfoTitle(page)
+                .toBe("The New Boundary Movie - New Cue");
             await expect(page.locator("#movieA.show, #movieB.show"))
                 .toHaveAttribute("src", newBackdrop);
         });
@@ -5554,13 +5579,13 @@ test.describe("the deployed player page", () => {
                 body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' }));
 
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect(page.locator("#info-title")).toContainText("Before Backgrounding");
+        await expectInfoTitle(page).toContain("Before Backgrounding");
         album = "After Backgrounding";
         await page.waitForTimeout(2100);
         await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 
         await expect.poll(() => nowRequests).toBe(2);
-        await expect(page.locator("#info-title")).toContainText("After Backgrounding");
+        await expectInfoTitle(page).toContain("After Backgrounding");
     });
     test("offers an explanatory cache-bypassing retry after a backdrop outage", async ({ page }) => {
         const cover = "https://streamingsoundtracks.com/images/cover/retry.svg";
@@ -6127,7 +6152,7 @@ test.describe("the deployed player page", () => {
         await page.locator('input[name="station"][value="sst"]').evaluate((input) =>
             input.dispatchEvent(new Event("change", { bubbles: true })));
 
-        await expect(page.locator("#info-title")).toContainText("The Land Before Time");
+        await expectInfoTitle(page).toContain("The Land Before Time");
         await expect.poll(() => artists).toEqual([null, "James Horner"]);
         await expect(page.locator("#movieA.show, #movieB.show"))
             .toHaveAttribute("src", definitiveBackdrop);
@@ -6899,7 +6924,7 @@ test.describe("the deployed player page", () => {
             await page.setViewportSize({ width: 390, height: 844 });
             await mockLayoutTestFeed(page);
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            await expect(page.locator("#info-title")).toContainText("Layout Test");
+            await expectInfoTitle(page).toContain("Layout Test");
             await expect(page.locator("#stage")).toHaveClass(/stage-portrait/);
 
             const selectors = { stage: "#stage", cover: "#coverbox", info: ".info" };
@@ -6933,7 +6958,7 @@ test.describe("the deployed player page", () => {
             await page.emulateMedia({ reducedMotion: "no-preference" });
             await mockLayoutTestFeed(page);
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            await expect(page.locator("#info-title")).toContainText("Layout Test");
+            await expectInfoTitle(page).toContain("Layout Test");
 
             const selectors = {
                 stage: "#stage", cover: "#coverbox", info: ".info",
@@ -6970,7 +6995,7 @@ test.describe("the deployed player page", () => {
             await page.emulateMedia({ reducedMotion: "no-preference" });
             await mockLayoutTestFeed(page);
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            await expect(page.locator("#info-title")).toContainText("Layout Test");
+            await expectInfoTitle(page).toContain("Layout Test");
 
             const timeline = await page.evaluate(async () => {
                 const stage = document.querySelector("#stage");
@@ -7098,7 +7123,7 @@ test.describe("the deployed player page", () => {
         await page.emulateMedia({ reducedMotion: "no-preference" });
         await mockLayoutTestFeed(page);
         await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-        await expect(page.locator("#info-title")).toContainText("Layout Test");
+        await expectInfoTitle(page).toContain("Layout Test");
         await page.locator("#remaining-time-enabled").check();
 
         const embedded = await expectBalancedPoster(page);
@@ -7130,7 +7155,7 @@ test.describe("the deployed player page", () => {
             await page.emulateMedia({ reducedMotion: "reduce" });
             await mockLayoutTestFeed(page);
             await page.goto("/player.html", { waitUntil: "domcontentloaded" });
-            await expect(page.locator("#info-title")).toContainText("Layout Test");
+            await expectInfoTitle(page).toContain("Layout Test");
 
             const result = await page.evaluate(async () => {
                 const cover = document.querySelector("#coverbox");
