@@ -357,3 +357,48 @@ TEST_CASE("native decoded cache never admits malformed or oversized images") {
     CHECK(d2d::rendererDiagnostics().cacheEntries == 0);
     CHECK(d2d::rendererDiagnostics().cacheBytes == 0);
 }
+
+TEST_CASE("presentation frames share artwork uploads with legacy readiness state") {
+    RendererFixture fixture;
+    const auto cover = std::make_shared<const std::string>(artwork(1200, 1200));
+    const auto hero = std::make_shared<const std::string>(artwork(3840, 2160, 1));
+    const auto nextHero = std::make_shared<const std::string>(artwork(2160, 3840, 2));
+    d2d::setCover(cover->data(), cover->size(), false);
+    d2d::setBackdrop(hero->data(), hero->size(), false);
+    ssc::FrameState frame;
+    frame.cover = {{cover, 1, 1, 1}};
+    frame.backdrop = {{hero, 1, 1, 1}};
+    frame.coverOpacity = 1;
+    frame.coverRect = {20, 20, 200, 200};
+    const auto paint = [&] {
+        d2d::render(fixture.portrait, 1, d2d::Transition::Crossfade, -1, .08f,
+            false, nullptr, 1, L"Album", L"Artist", 1, false, 1, 1, 1,
+            L"Album", L"Track", 0, nullptr, 0, &frame);
+        CHECK(d2d::backdropReady());
+        CHECK(d2d::rendererDiagnostics().failedFrames == 0);
+    };
+    paint();
+    auto stats = d2d::rendererDiagnostics();
+    std::printf("FRAME_ARTWORK initial: count=%zu bytes=%zu\n", stats.artworkBitmapCount, stats.artworkBitmapBytes);
+    CHECK(stats.artworkBitmapCount == 2);
+    CHECK(stats.artworkBitmapBytes == (size_t(1200) * 1200 + size_t(3840) * 2160) * 4);
+    // A repeated publication must reuse the same allocation, including after
+    // switching to an outgoing/incoming mixture and recreating the render target.
+    d2d::setCover(cover->data(), cover->size(), false);
+    d2d::setBackdrop(hero->data(), hero->size(), false);
+    paint();
+    CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 2);
+    d2d::setBackdrop(nextHero->data(), nextHero->size(), true);
+    frame.backdrop = {{hero, 1, 1, 1}, {nextHero, .5f, 1, 1}};
+    paint();
+    CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 3);
+    d2d::resetTarget();
+    paint();
+    CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 3);
+    d2d::endMediaFade();
+    frame.backdrop = {{nextHero, 1, 1, 1}};
+    paint();
+    CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 2);
+    d2d::shutdown();
+    CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 0);
+}

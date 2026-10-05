@@ -31,6 +31,7 @@ struct RendererDiagnostics {
     float logoHorizontalAnchor = .5f;
     size_t decodes = 0, blurGenerations = 0, frames = 0, failedFrames = 0, coverDraws = 0;
     size_t cacheHits = 0, cacheEvictions = 0, cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
+    size_t artworkBitmapCount = 0, artworkBitmapBytes = 0;
     double targetMs = 0, imageMs = 0, blurMs = 0, frameMs = 0;
     float comingNextLeft = 0, comingNextRight = 0;
     float comingNextNaturalTextWidth = 0, comingNextTextWidth = 0;

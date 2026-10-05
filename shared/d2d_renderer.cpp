@@ -17,6 +17,7 @@
 #include <wincodec.h>
 #include <dwrite.h>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <list>
 #include <map>
@@ -294,6 +295,20 @@ std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, bool trimAl
     return image;
 }
 
+D2D1_COLOR_F decodedTint(const std::shared_ptr<DecodedImage>& image) {
+    if (!image->hasTint) {
+        IWICBitmap* source = nullptr;
+        if (SUCCEEDED(g_wic->CreateBitmapFromMemory(image->width, image->height,
+                GUID_WICPixelFormat32bppPBGRA, image->width * 4,
+                static_cast<UINT>(image->pixels.size()), image->pixels.data(), &source))) {
+            image->tint = overlayTintFrom(source);
+            image->hasTint = true;
+        }
+        SafeRelease(source);
+    }
+    return image->tint;
+}
+
 // Upload to this target's resource domain, reusing CPU pixels and cover tint
 // across window changes/device loss. Cropped logos have a distinct cache key.
 ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_COLOR_F* tintOut,
@@ -308,23 +323,31 @@ ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_
             image->pixels.data(), image->width * 4,
             D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
                 D2D1_ALPHA_MODE_PREMULTIPLIED)), &bmp)) && tintOut) {
-        if (!image->hasTint) {
-            IWICBitmap* source = nullptr;
-            if (SUCCEEDED(g_wic->CreateBitmapFromMemory(image->width, image->height,
-                    GUID_WICPixelFormat32bppPBGRA, image->width * 4,
-                    static_cast<UINT>(image->pixels.size()), image->pixels.data(), &source))) {
-                image->tint = overlayTintFrom(source);
-                image->hasTint = true;
-            }
-            SafeRelease(source);
-        }
-        *tintOut = image->tint;
+        *tintOut = decodedTint(image);
     }
     return bmp;
 }
 
 // Decodes into the main render target; refreshes g_curTint when isCurrent.
 ID2D1Bitmap* createBitmap(const std::string& bytes, bool isCurrent) {
+    // The presentation layers and legacy readiness/tint state share one upload
+    // in the main target's resource domain. Each owner retains its own COM ref.
+    // Never share these with the separate blur device's decodeBitmap() uploads.
+    ID2D1Bitmap* existing = nullptr;
+    const auto found = g_frameBitmaps.find(bytes);
+    if (found != g_frameBitmaps.end()) existing = found->second;
+    if (!existing && g_curBmp && bytes == g_curBytes) existing = g_curBmp;
+    if (!existing && g_prevBmp && bytes == g_prevBytes) existing = g_prevBmp;
+    if (!existing && g_backdropCurBmp && bytes == g_backdropCurBytes) existing = g_backdropCurBmp;
+    if (!existing && g_backdropPrevBmp && bytes == g_backdropPrevBytes) existing = g_backdropPrevBmp;
+    if (existing) {
+        existing->AddRef();
+        if (isCurrent) {
+            const auto image = decodedImage(bytes, false);
+            if (image) g_curTint = decodedTint(image);
+        }
+        return existing;
+    }
     return decodeBitmap(g_rt, bytes, isCurrent ? &g_curTint : nullptr);
 }
 
@@ -1084,6 +1107,16 @@ RendererDiagnostics rendererDiagnostics() {
     stats.cacheBytes = g_decodedBytes;
     stats.cacheEntries = g_decodedImages.size();
     stats.blurBytes = g_blurPixels.size();
+    std::set<ID2D1Bitmap*> artwork;
+    for (auto* bitmap : {g_curBmp, g_prevBmp, g_backdropCurBmp, g_backdropPrevBmp})
+        if (bitmap) artwork.insert(bitmap);
+    for (const auto& entry : g_frameBitmaps)
+        if (entry.second) artwork.insert(entry.second);
+    stats.artworkBitmapCount = artwork.size();
+    for (auto* bitmap : artwork) {
+        const auto size = bitmap->GetPixelSize();
+        stats.artworkBitmapBytes += static_cast<size_t>(size.width) * size.height * 4;
+    }
     return stats;
 }
 void resetRendererDiagnostics() { g_diagnostics = RendererDiagnostics(); }
@@ -1288,7 +1321,9 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
             float fanartHintOpacity, const ssc::FrameState* frame) {
     g_frame = frame;
     if (frame) {
-        std::set<std::string> visible, blurred, ratingSets;
+        // FrameState owns these bytes for this synchronous render. Avoid copying
+        // every compressed image merely to retire resources on every paint.
+        std::set<std::string_view> visible, blurred, ratingSets;
         for (const auto& layer:frame->ratings) ratingSets.insert(*layer.image);
         for (auto it=g_ratingSets.begin();it!=g_ratingSets.end();) {
             if (!ratingSets.count(it->first)) it=g_ratingSets.erase(it); else ++it;
