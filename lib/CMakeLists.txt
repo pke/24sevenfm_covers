@@ -97,6 +97,8 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     # doctest.cmake (vendored, ships with doctest) registers every doctest TEST_CASE
     # as its own CTest entry, so ctest reports 26/26 cases instead of one opaque exe.
     include(tests/doctest.cmake)
+    add_executable(player_follow_tests tests/test_player_follow.cpp ../shared/player_follow.cpp)
+    doctest_discover_tests(player_follow_tests TEST_PREFIX "players: ")
     if(APPLE)
         add_executable(apple_platform_tests tests/test_apple_platform.cpp)
         target_link_libraries(apple_platform_tests PRIVATE coverfetch)
