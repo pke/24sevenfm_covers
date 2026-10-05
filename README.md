@@ -15,6 +15,7 @@ the viewer's feature set to the browser, with optional audio streamed straight f
 | Component | Directory | Output | Build system |
 |-----------|-----------|--------|--------------|
 | **Desktop viewer** | `desktop/` | `24sevenfm_covers.exe` (x64, self-contained) | MSBuild (`.vcxproj` / `.sln`) |
+| **Linux viewer** | [`desktop/linux/`](desktop/linux/README.md) | `24sevenfm_covers` (Qt 6, x86-64) | CMake / Ninja |
 | **Winamp plugin** | `winamp/` | `gen_24sevenfm_covers.dll` (x86 / 32-bit) | CMake |
 | **foobar2000 component** | `foobar2000/foo_24sevenfm_covers/` | `foo_24sevenfm_covers.dll` (x64) | MSBuild (`.vcxproj`) |
 | **Core library** | `lib/` | `coverfetch` static lib (cross-platform) | CMake |
@@ -48,6 +49,15 @@ copy the complete report with **Copy snapshot**. Credentials are redacted and th
 history stays in memory. See [diagnostics](docs/debugging.md) for timing semantics.
 
 ## Repository layout
+
+The **Linux viewer** and reproducible build/package instructions are in
+[`desktop/linux`](desktop/linux/README.md). It uses Qt 6 for native drawing and
+windows, libcurl for TLS, and the shared C++ media/presentation pipeline.
+
+The native **Apple Silicon macOS viewer** and remote build/install instructions are
+in [`desktop/macos`](desktop/macos/README.md). It reuses the C++ core with AppKit,
+native Apple TLS and ImageIO. See that README for the initial feature set and gaps
+relative to the Windows viewer.
 
 ```
 ├─ desktop/          Standalone desktop viewer (24sevenfm_covers.{cpp,rc,vcxproj,sln}, viewer_*)

@@ -1,0 +1,7 @@
+<RCC><qresource prefix="/stations">
+<file alias="sst.png">../../shared/resources/stations/sst.png</file>
+<file alias="1980s.png">../../shared/resources/stations/1980s.png</file>
+<file alias="adagio.png">../../shared/resources/stations/adagio.png</file>
+<file alias="death.png">../../shared/resources/stations/death.png</file>
+<file alias="entranced.png">../../shared/resources/stations/entranced.png</file>
+</qresource><qresource prefix="/"><file alias="icon.ico">../24sevenfm_covers.ico</file></qresource></RCC>

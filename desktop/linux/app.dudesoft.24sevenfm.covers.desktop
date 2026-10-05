@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=24seven.fm Covers
+Comment=Live cover artwork and metadata for the five 24seven.fm stations
+Exec=24sevenfm_covers
+Icon=app.dudesoft.24sevenfm.covers
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupWMClass=24sevenfm_covers
