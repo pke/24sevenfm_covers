@@ -52,7 +52,7 @@ try {
     })).Substring(0, 12)
     Assert-Test ($renderedPlayer.Contains("resolver_version=$resolverVersion")) `
         'the renderer should derive the resolver cache key from the resolver source'
-    Assert-Test (-not $renderedPlayer.Contains('resolver_version=1')) `
+    Assert-Test (-not ($renderedPlayer -match 'resolver_version=1(?:[&#"''\s]|$)')) `
         'the rendered player should not retain a manually maintained resolver version'
     Assert-Test (-not $renderedPlayer.Contains('https://24covers-api.vercel.app')) `
         'the local render should not expose an intermediate production API origin'
