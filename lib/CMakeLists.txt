@@ -75,6 +75,14 @@ endif()
 # then run via CTest. The test compiles the sources directly (to reach the anonymous-
 # namespace helpers), so it does NOT link the coverfetch library.
 option(COVERFETCH_BUILD_TESTS "Build the unit tests" OFF)
+if(COVERFETCH_BUILD_TESTS)
+    # Compile even on mobile toolchains, where runtime tests cannot be executed.
+    add_library(cover_engine_header_check OBJECT tests/test_cover_engine_header.cpp)
+    set_target_properties(cover_engine_header_check PROPERTIES CXX_STANDARD 17)
+    if(NOT WIN32)
+        target_sources(cover_engine_header_check PRIVATE ../shared/cover_engine.cpp)
+    endif()
+endif()
 if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     enable_testing()
     add_executable(coverfetch_tests tests/test_coverfetch.cpp mini_json.cpp json_view.cpp diagnostics.cpp)

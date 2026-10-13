@@ -1,6 +1,9 @@
-// cover_engine.h - host-agnostic cover engine shared by the Winamp and foobar2000
-// plugins. Owns everything that is NOT host-specific: the CoverMonitor (+ next-cover
-// preload/reconcile), cover download/decode, the crossfade + rolling-countdown
+// cover_engine.h - portable engine interfaces, plus the Windows host adapter.
+// Mobile/custom-renderer hosts use EngineSettings, PresentationPipeline and
+// PresentationController (link the coverfetch library, not cover_engine.cpp).
+// CoverEngine below is Windows-only, shared by the Windows viewer and plugins.
+// It owns the CoverMonitor (+ next-cover preload/reconcile), cover download/decode,
+// the crossfade + rolling-countdown
 // animation state, and the current settings. It draws into an HWND the host gives
 // it via the shared Direct2D renderer.
 //
@@ -19,6 +22,14 @@
 #ifndef SSC_COVER_ENGINE_H
 #define SSC_COVER_ENGINE_H
 
+#include "engine_settings.h"
+#include "presentation_controller.h"
+#include "presentation_pipeline.h"
+
+// HWND/message dispatch, Direct2D, demo loading and the debug overlay belong to
+// the Windows adapter. Do not expose SDK headers or substitute Win32 types in
+// portable hosts such as React Native Nitro modules on Android/iOS.
+#if defined(_WIN32)
 #include <windows.h>
 #include <atomic>
 #include "../lib/platform_concurrency.h"
@@ -26,12 +37,10 @@
 #include <vector>
 #include <map>
 
-#include "engine_settings.h"
 #include "d2d_renderer.h" // d2d::Transition + render/setCover/...
 #include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
 #include "info_presentation.h"
 #include "coming_next.h"
-#include "presentation_controller.h"
 #include "../lib/debug_features.h"
 #if SSC_ENABLE_DEBUG_OVERLAY
 #include "debug_overlay.h"
@@ -267,4 +276,5 @@ private:
 #endif
 };
 
+#endif // _WIN32
 #endif // SSC_COVER_ENGINE_H

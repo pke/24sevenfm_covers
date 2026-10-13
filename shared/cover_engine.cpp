@@ -1,8 +1,9 @@
-#include "../lib/platform_text.h"
-// cover_engine.cpp - see header. Host-agnostic; talks only to the shared Direct2D
+// cover_engine.cpp - Windows host adapter; talks to the shared Direct2D
 // renderer, the CoverMonitor library, and an HWND. Ported from the Winamp plugin so
 // both hosts share identical cover/preload/animation behaviour.
 #include "cover_engine.h"
+#if defined(_WIN32)
+#include "../lib/platform_text.h"
 #include "media_worker.h"
 
 #include <algorithm>
@@ -1399,3 +1400,5 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
             || (settings.showRemaining && haveCover_))
         InvalidateRect(h, nullptr, FALSE);
 }
+
+#endif // _WIN32
