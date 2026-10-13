@@ -4092,6 +4092,9 @@ test.describe("the deployed player page", () => {
         await expect.poll(() => queueRequests).toBe(1);
 
         for (let i = 1; i <= 10; i++) {
+            // A routed request is counted before its response schedules the next poll.
+            // Let response handlers finish before advancing through another interval.
+            await page.clock.runFor(50);
             await page.clock.fastForward(6001);
             await expect.poll(() => pollRequests).toBe(i + 1);
             // Boundary/watchdog polls only refresh queue order after a confirmed
@@ -6929,10 +6932,11 @@ test.describe("the deployed player page", () => {
 
             const selectors = { stage: "#stage", cover: "#coverbox", info: ".info" };
             const compact = await stableElementRects(page, selectors);
-            await page.locator("#info-title").evaluate((title) => {
+            await page.locator("#info-album").evaluate((title) => {
                 title.textContent = "A deliberately long portrait title with enough words "
                     + "to wrap across many lines while artist, status, and countdown rows "
                     + "make the information panel substantially taller than its grid row";
+                window.dispatchEvent(new Event("resize"));
             });
             const tall = await stableElementRects(page, selectors);
             const marginBottom = await page.locator(".info").evaluate((info) =>

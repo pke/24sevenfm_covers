@@ -124,6 +124,8 @@ test("debug snapshot can be frozen and copied with response timings and redacted
     await expect(snapshot).toContainText("Debug Album");
     await expect(page.locator("#debug-requests-list")).toContainText("Headers");
     await expect(page.locator("#debug-requests-list")).toContainText("Server");
+    // Wait for the resolver response before text selection pauses live updates.
+    await expect(page.locator("#debug-requests-list")).toContainText("12 ms");
     await page.getByRole("button", { name: "Copy Album", exact: true }).first().click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("Debug Album");
     const albumValue = page.locator("#debug-selection .debug-value")
