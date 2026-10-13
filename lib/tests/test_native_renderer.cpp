@@ -404,6 +404,38 @@ TEST_CASE("presentation frames share artwork uploads with legacy readiness state
     CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 0);
 }
 
+TEST_CASE("native infobox text stays centered during startup and retained size transitions") {
+    RendererFixture fixture;
+    const auto cover=artwork(300,300);
+    d2d::setCover(cover.data(),cover.size(),false);
+    for(HWND window:{fixture.portrait,fixture.landscape}) {
+        d2d::resetTarget();
+        ssc::PresentationTime now=0; ssc::PresentationController view([&]{return now;});
+        ssc::PresentationSettings settings; settings.poster=true;
+        view.settingsChanged(settings);
+        auto token=view.trackChanged("a");
+        view.resolverCompleted(token,L"Long album title for the logo",L"Composer",L"Long album title for the logo",L"Cue",true);
+        view.setLogo(artwork(800,80,1,true),L"Long album title for the logo");
+        const auto sample=[&] {
+            view.advance(); d2d::measurePresentation(window,view); const auto f=view.advance();
+            d2d::render(window,1,d2d::Transition::Crossfade,-1,.08f,false,nullptr,1,
+                f.title.c_str(),f.artist.c_str(),1,true,1,1,f.infoOpacity,f.album.c_str(),f.track.c_str(),0,nullptr,0,&f);
+            const auto stats=d2d::rendererDiagnostics();
+            CHECK(stats.failedFrames==0);
+            if(f.title.empty()) return;
+            const float center=f.infoRect.x+f.infoRect.width*.5f;
+            CHECK(stats.infoTitleCenter==doctest::Approx(center));
+            CHECK(stats.infoArtistCenter==doctest::Approx(center));
+            CHECK(stats.infoTrackCenter==doctest::Approx(center));
+        };
+        for(now=0;now<=1500;now+=100) sample();
+        token=view.trackChanged("b");
+        view.resolverCompleted(token,L"B",L"Different composer",L"B",L"Another cue",true);
+        view.setLogo("",L"B");
+        for(const auto end=now+2000;now<=end;now+=100) sample();
+    }
+}
+
 TEST_CASE("native infobox measures one final size throughout the track and title logo fades") {
     RendererFixture fixture;
     for(HWND window:{fixture.portrait,fixture.landscape}) {

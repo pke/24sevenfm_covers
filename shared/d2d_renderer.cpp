@@ -876,10 +876,6 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     const float measuredContentW = fullW + (contentW - fullW) * logoLayoutMix;
     boxW = ssc::posterInfoWidth(cw, measuredContentW, padX, dpiScale, logoSize.width * logoLayoutMix);
     boxX = (cw - boxW) * .5f;
-    const float fittedTextW = boxW > 2 * padX ? boxW - 2 * padX : 1.0f;
-    if (tl) tl->SetMaxWidth(fittedTextW);
-    if (cl) cl->SetMaxWidth(fittedTextW);
-    if (al) al->SetMaxWidth(fittedTextW);
     const float albumRowH = titleH + (logoSize.rowHeight - titleH) * logoLayoutMix;
     float boxH = showInfo ? padY + albumRowH + trackH + (artistH > 0 ? lineGap + artistH : 0)
                      + (statusH > 0 ? 6.4f + statusH : 0) + padY : 0.0f;
@@ -930,6 +926,18 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
         boxX=g_frame->infoRect.x; boxY=g_frame->infoRect.y; boxW=g_frame->infoRect.width; boxH=g_frame->infoRect.height;
         coverX=g_frame->coverRect.x; coverY=g_frame->coverRect.y; coverS=g_frame->coverRect.width;
     }
+    // Text and its retained card must share the same center. The legacy logo
+    // measurement above changes during the fade, while FrameState already owns
+    // the complete card width; mixing them makes the text slide sideways.
+    const float fittedTextW = boxW > 2 * padX ? boxW - 2 * padX : 1.0f;
+    if (tl) tl->SetMaxWidth(fittedTextW);
+    if (cl) cl->SetMaxWidth(fittedTextW);
+    if (al) al->SetMaxWidth(fittedTextW);
+#ifdef SSC_RENDERER_DIAGNOSTICS
+    g_diagnostics.infoTitleCenter = tl ? boxX+padX+tl->GetMaxWidth()*.5f : 0;
+    g_diagnostics.infoArtistCenter = al ? boxX+padX+al->GetMaxWidth()*.5f : 0;
+    g_diagnostics.infoTrackCenter = cl ? boxX+padX+cl->GetMaxWidth()*.5f : 0;
+#endif
 
     // Cover (rounded), with the active transition. The radius is per mille of the cover's
     // side so it tracks the window size; 45 (4.5%) is the default look.

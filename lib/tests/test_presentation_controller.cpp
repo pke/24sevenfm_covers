@@ -242,6 +242,32 @@ TEST_CASE("hidden countdown ticks never request animation but its exit fade stil
     view.remainingChanged(42);CHECK_FALSE(view.advance().animating);
 }
 
+TEST_CASE("first infobox stays hidden until measured then fades at its final centered geometry") {
+    for(bool reducedMotion:{false,true}) {
+        PresentationTime now=0; PresentationController view([&]{return now;});
+        PresentationSettings settings; settings.poster=true; settings.reducedMotion=reducedMotion;
+        view.settingsChanged(settings); view.viewportChanged(600,900);
+        const auto token=view.trackChanged("a"); view.infoAssetsPending(true);
+        view.resolverCompleted(token,L"Album",L"Composer",L"Album",L"Cue",true);
+        for(now=0;now<=2000;now+=100) {
+            view.advance(); view.measuredInfo(100,40);
+            CHECK(view.advance().infoOpacity==0); CHECK(view.frame().infoWidth==0);
+        }
+        view.setLogo("logo",L"Album"); view.infoAssetsPending(false);
+        view.advance();
+        CHECK(view.frame().infoOpacity==0); // ready metadata alone has no native metrics yet
+        view.measuredInfo(300,120);
+        const auto start=now;
+        for(now=start;now<=start+1000;now+=100) {
+            view.advance(); view.measuredInfo(300,120); const auto f=view.advance();
+            CHECK(f.infoOpacity==doctest::Approx(reducedMotion?1.f:float(now-start)/1000));
+            CHECK(f.infoRect.x==150); CHECK(f.infoRect.width==300);
+            CHECK(f.infoRect.y==744); CHECK(f.infoRect.height==120);
+            if(!reducedMotion&&now<start+1000) CHECK(f.animating);
+        }
+    }
+}
+
 TEST_CASE("info geometry retains its outgoing size and resizes once to the final logo content") {
     PresentationTime now=0; PresentationController view([&]{return now;});
     PresentationSettings settings; settings.poster=true;

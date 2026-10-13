@@ -169,7 +169,7 @@ struct PresentationSettings {
 };
 struct PresentationRect { float x = 0, y = 0, width = 0, height = 0; };
 enum class VisualChannel { Poster, CountdownOpacity, CountdownSize, CoverOpacity,
-    RatingOpacity, RatingContent, Controls, InfoWidth, InfoHeight, InfoCountdownHeight, NextWidth, NextHeight, NextCover, Count };
+    RatingOpacity, RatingContent, Controls, InfoEntrance, InfoWidth, InfoHeight, InfoCountdownHeight, NextWidth, NextHeight, NextCover, Count };
 struct FrameState {
     std::vector<ImageLayer> cover, backdrop, blurredCover, ratings;
     std::wstring title, artist, album, track, logoAlbum;
@@ -246,7 +246,11 @@ public:
     void settingsChanged(const PresentationSettings& settings) {
         const auto now = time(); const unsigned oldDuration = duration();
         const bool changedMotion = settings.reducedMotion != settings_.reducedMotion; settings_ = settings;
-        if (duration() != oldDuration) { cover_.retime(now, duration()); backdrop_.retime(now, duration()); backgroundCover_.retime(now,duration()); }
+        if (duration() != oldDuration) {
+            cover_.retime(now, duration()); backdrop_.retime(now, duration()); backgroundCover_.retime(now,duration());
+            auto& entrance = channel(VisualChannel::InfoEntrance);
+            if (entrance.active(now)) entrance.set(1, now, duration());
+        }
         if (changedMotion) ratingContent_.retime(now,motion(kRatingVisibilityFadeMs));
         channel(VisualChannel::Poster).set(settings.poster ? 1.f : 0.f, now, motion(350));
         updateCountdownSize();
@@ -278,6 +282,11 @@ public:
         if (!frame_.infoMeasureReady) return;
         measured(VisualChannel::InfoWidth, width);
         measured(VisualChannel::InfoHeight, height);
+        // The first card has no outgoing geometry. Prepare it while invisible,
+        // then fade at its resting position even if metadata arrived long before
+        // the logo/native metrics. Subsequent track handoffs keep their own fade.
+        auto& entrance = channel(VisualChannel::InfoEntrance);
+        if (entrance.target() == 0) entrance.set(1, time(), duration());
         // Unknown remaining time during a track handoff only fades the digits.
         // Reserve the configured row, rather than shrinking and growing the box.
         const float countdownHeight = settings_.countdown
@@ -314,7 +323,8 @@ public:
         frame_.blurredCover = backgroundCover_.sample(now);
         frame_.ratings = ratingContent_.sample(now);
         const auto tick = std::uint32_t(now);
-        frame_.infoOpacity = info.advance(tick, duration());
+        frame_.infoOpacity = (std::min)(info.advance(tick, duration()),
+            channel(VisualChannel::InfoEntrance).value(now));
         frame_.title = info.title(); frame_.artist = info.artist(); frame_.album = info.album(); frame_.track = info.track();
         frame_.logoOpacity = logo.advance(tick, duration()); frame_.logo = logo.bytes(); frame_.logoAlbum = logo.album();
         frame_.infoMeasureReady = info.layoutReady() && !infoAssetsPending_;

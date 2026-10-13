@@ -36,6 +36,7 @@ struct RendererDiagnostics {
     float comingNextLeft = 0, comingNextRight = 0;
     float comingNextNaturalTextWidth = 0, comingNextTextWidth = 0;
     unsigned comingNextTrimmedLines = 0;
+    float infoTitleCenter = 0, infoArtistCenter = 0, infoTrackCenter = 0;
 };
 RendererDiagnostics rendererDiagnostics();
 void resetRendererDiagnostics();
