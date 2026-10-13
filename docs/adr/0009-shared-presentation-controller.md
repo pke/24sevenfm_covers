@@ -100,9 +100,20 @@ replacement. Linux builds succeeded with system Qt 6.4 (raster/OpenGL) and Qt 6.
 (raster/OpenGL/RHI plus renderer comparison tools); each configuration passed all
 156 CTest entries. Packages and binary hashes are retained under
 `desktop/build/infobox-all/`, with build/test logs in `desktop/build/infobox-all-*`.
-The existing Linux installation uses the updated Qt 6.4 binaries. AppKit's
-measurement adapter is updated in source; macOS builds are deferred at the user's
-request because the configured SSH build host was unavailable.
+The existing Linux installation uses the updated Qt 6.4 binaries.
+
+macOS verification completed later on 2026-10-13 after the SSH host became
+available: the arm64 DV and foobar2000 component built successfully, all 159
+CTest entries and the live feed/image/TLS/cancellation smoke test passed, and
+both ad-hoc signatures verified. Both installed binaries match their builds;
+the running DV and foobar2000 processes were restarted at their original paths
+and the new foobar2000 component was confirmed loaded. Viewer preferences and
+the component's SQLite settings remained unchanged; IINA kept running. Replaced
+bundles and preferences are retained under
+`~/Library/Application Support/24seven.fm Covers/Backups/infobox-20261013-232457/`.
+Local evidence is in `desktop/build/infobox-macos-build.log` and
+`desktop/build/infobox-macos-install.log`; packages are in
+`desktop/build/infobox-all/macos/`.
 
 Title-logo alignment follow-up: a transparent crop can still contain an asymmetric
 decorative flare, such as the long line to the right of the Dune: Part Two lettering.
