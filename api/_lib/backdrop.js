@@ -891,6 +891,15 @@ function decodeMetadataText(value) {
     return he.decode(String(value), { isAttributeValue: false, strict: false }).trim();
 }
 
+function normalizeArtistDisplay(artist) {
+    const value = unrotateTitleArticle(artist);
+    // A simple catalogued surname/given-name pair is one person's credit.
+    // Keep comma-separated full names, aliases and combined credits intact.
+    return value.replace(
+        /^((?:\p{Ll}[\p{L}\p{M}'’.-]*\s+)*\p{Lu}[\p{L}\p{M}'’.-]*),\s*(\p{Lu}[\p{L}\p{M}'’.-]*)$/u,
+        "$2 $1");
+}
+
 function normalizedTrackMetadata(album, track, artist) {
     const decodedAlbum = decodeMetadataText(album);
     const decodedTrack = decodeMetadataText(track);
@@ -902,7 +911,7 @@ function normalizedTrackMetadata(album, track, artist) {
     return {
         album: unrotateTitleArticle(decodedAlbum),
         track: correction && correction.canonicalTrack || decodedTrack,
-        artist: correction && correction.canonicalArtist || decodedArtist,
+        artist: normalizeArtistDisplay(correction && correction.canonicalArtist || decodedArtist),
     };
 }
 

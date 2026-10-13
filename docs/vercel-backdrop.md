@@ -13,7 +13,10 @@ ADR 0001 is implemented by `api/media.js` and `api/tint.js`; the web player's
 queued-credit fallback is `api/credit.js`. Vercel discovers all three as Node.js
 Functions and installs the root `package.json`. The media API always returns
 separate canonical Album, Track and Artist strings (HTML5 entities decoded exactly
-once and the Album article rotated), plus an optional selected CDN URL, RGB tint and
+once and trailing Album/Artist articles rotated, such as `Steeldrivers, The` to
+`The Steeldrivers`, and simple surname/given-name credits restored to given-name
+order, such as `Williams, John` to `John Williams`), plus an optional selected CDN
+URL, RGB tint and
 DE/US media certifications; the tint API downloads a bounded station
 cover on cache miss and returns only its RGB tint. The credit API reads the public
 Open Graph title of an allowlisted station album page only when `GetQueue` omits

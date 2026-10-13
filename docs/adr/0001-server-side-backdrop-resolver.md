@@ -62,7 +62,10 @@ The legacy `title` and optional `media_hint` parameters remain accepted for dire
 callers; the player uses `album` and `track` so normalization stays server-side.
 `metadata` is returned independently of a media match. It HTML5-decodes Album, Track
 and Artist exactly once and applies the trailing `, The/A/An` display transformation
-to Album. An `art=0` request without rating countries exits before provider matching,
+to Album and Artist (for example, `Steeldrivers, The` becomes `The Steeldrivers`).
+Simple inverted person credits such as `Williams, John` become `John Williams`;
+comma-separated full names and combined artist credits remain intact.
+An `art=0` request without rating countries exits before provider matching,
 which lets every client obtain canonical display fields without contacting TMDB,
 fanart.tv, TVmaze or SteamGridDB.
 

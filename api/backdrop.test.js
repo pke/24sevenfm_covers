@@ -69,6 +69,55 @@ test("returns normalized album, track and composer metadata for every client", (
     });
 });
 
+test("restores composer articles and surname/given-name order while preserving combined credits", () => {
+    for (const [artist, expected] of [
+        ["Steeldrivers, The", "The Steeldrivers"],
+        ["Crystal Method, The", "The Crystal Method"],
+        [" HU, the ", "the HU"],
+        ["Example, A", "A Example"],
+        ["Example, An", "An Example"],
+        ["Band &amp; Friends&#44; The", "The Band & Friends"],
+        ["The Steeldrivers", "The Steeldrivers"],
+        ["Williams, John", "John Williams"],
+        ["Zimmer, Hans", "Hans Zimmer"],
+        ["G&ouml;ransson&#44; Ludwig", "Ludwig Göransson"],
+        ["van Beethoven, Ludwig", "Ludwig van Beethoven"],
+        ["Williams, J.", "J. Williams"],
+        ["John Williams", "John Williams"],
+        ["Krzysztof Komeda, Leszek Mozdzer", "Krzysztof Komeda, Leszek Mozdzer"],
+        ["Hemophiliac, Christian Pacaud", "Hemophiliac, Christian Pacaud"],
+        ["sephfire, sgx", "sephfire, sgx"],
+        ["Earth, Wind &amp; Fire", "Earth, Wind & Fire"],
+        ["Tyler, The Creator", "Tyler, The Creator"],
+        ["Hans Zimmer &amp; Lisa Gerrard", "Hans Zimmer & Lisa Gerrard"],
+        ["", ""],
+    ]) {
+        assert.deepEqual(normalizedTrackMetadata("Album", "Track", artist), {
+            album: "Album", track: "Track", artist: expected,
+        });
+    }
+});
+
+test("returns canonical composer names with and without artwork resolution", async () => {
+    const handler = createHandler({
+        env: { TMDB_API_KEY: "test-key" },
+        fetchImpl: async () => response(200, { results: [] }),
+    });
+    for (const [artist, expected] of [["Steeldrivers, The", "The Steeldrivers"],
+        ["Williams, John", "John Williams"]]) for (const art of ["0", "1"]) {
+        const res = mockResponse();
+        await handler(mockRequest({
+            album: "Album", track: "Track", artist, art, providers: "tmdb",
+        }), res);
+        assert.equal(res.statusCode, 200);
+        const result = JSON.parse(res.body);
+        assert.equal(result.media, null);
+        assert.deepEqual(result.metadata, {
+            album: "Album", track: "Track", artist: expected,
+        });
+    }
+});
+
 test("corrects the malformed Jurassic World end-credits track separator", () => {
     assert.deepEqual(normalizedTrackMetadata(
         "Jurassic World: Fallen Kingdom",
