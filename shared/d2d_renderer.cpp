@@ -1066,20 +1066,19 @@ void measurePresentation(HWND hwnd, ssc::PresentationController& presentation) {
     auto c=measure(frame.track,font.track,DWRITE_FONT_WEIGHT_MEDIUM,maxWidth,true);
     // WIC's bounded decoded cache provides dimensions without a render-target upload.
     auto logo=ssc::TitleLogoSize{0,0,0};
-    if (!frame.logo.empty()) {
-        const auto pixels=decodedImage(frame.logo, true);
+    if (!frame.infoLogo.empty()) {
+        const auto pixels=decodedImage(frame.infoLogo, true);
         if (pixels) logo=ssc::titleLogoSize(float(pixels->width),float(pixels->height),w,h,font.title,dpi);
     }
     const float content=(std::max)((std::max)(b.width,c.width),
-        (std::max)(a.width*(1-frame.logoLayout),frame.countdown.fontSize*4.5f*frame.countdown.opacity));
-    const float width=ssc::posterInfoWidth(w,content,font.padX,dpi,logo.width*frame.logoLayout);
-    presentation.measured(ssc::VisualChannel::InfoWidth,width);
+        (std::max)(a.width*(1-frame.infoLogoLayout),frame.infoCountdownWidth));
+    const float width=ssc::posterInfoWidth(w,content,font.padX,dpi,logo.width*frame.infoLogoLayout);
     const float textWidth=(std::max)(1.f,width-font.padX*2);
     a=measure(album,font.title,DWRITE_FONT_WEIGHT_SEMI_BOLD,textWidth,true);
     b=measure(frame.artist,font.artist,DWRITE_FONT_WEIGHT_NORMAL,textWidth,true);
     c=measure(frame.track,font.track,DWRITE_FONT_WEIGHT_MEDIUM,textWidth,true);
-    presentation.measured(ssc::VisualChannel::InfoHeight,font.padY*2+a.height+(logo.rowHeight-a.height)*frame.logoLayout
-        +b.height+c.height+font.lineGap+font.title*.12f);
+    presentation.measuredInfo(width,font.padY*2+a.height+(logo.rowHeight-a.height)*frame.infoLogoLayout
+        +b.height+c.height+(b.height>0?font.lineGap:0)+(c.height>0?font.title*.12f:0));
     const auto nf=ssc::nextTypography(w,dpi);
     const auto nl=measure(L"COMING NEXT",nf.label,DWRITE_FONT_WEIGHT_BOLD,100000,false);
     const auto na=measure(frame.next.album,nf.album,DWRITE_FONT_WEIGHT_SEMI_BOLD,100000,false);

@@ -348,6 +348,8 @@ void CoverEngine::scheduleMediaLocked(MediaWorkerState* state, const ssc::TrackI
             if (!sameTrackIdentity && !retainQueue) comingNext_.setQueue("", L"", L"");
             mediaDirty_ = false; // discard an old result waiting in the UI mailbox
             titleLogoDirty_ = false;
+            pendingTitleLogoReady_ = false;
+            presentation_.infoAssetsPending(request.includeTitleLogo && !current.stationIdent && !current.album.empty());
             if (!request.includeTitleLogo || state->current.album != current.album
                     || state->current.track != current.track || state->current.artist != current.artist
                     || current.stationIdent) {
@@ -548,6 +550,7 @@ void CoverEngine::publishTitleLogo(unsigned long long epoch, const std::string& 
         if (!epoch || epoch != activeMediaEpoch_) return;
         pendingTitleLogoBytes_ = bytes; pendingTitleLogoAlbum_ = album;
         pendingTitleLogoEpoch_ = epoch; pendingTitleLogoImmediate_ = immediate;
+        pendingTitleLogoReady_ = true;
         titleLogoDirty_ = true;
     }
     if (HWND w = hwnd_.load()) PostMessageA(w, SSC_WM_NEWMEDIA, 0, 0);
@@ -1239,6 +1242,7 @@ void CoverEngine::decodePendingMedia(HWND h) {
         titleLogoDirty_ = false;
         if (pendingTitleLogoEpoch_ == activeMediaEpoch_) {
             presentation_.setLogo(settings.titleLogos && settings.backdrops ? pendingTitleLogoBytes_ : std::string(), toWide(pendingTitleLogoAlbum_));
+            if (pendingTitleLogoReady_) presentation_.infoAssetsPending(false);
 
         }
         if (h) InvalidateRect(h, nullptr, FALSE);

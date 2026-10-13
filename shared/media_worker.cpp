@@ -223,9 +223,10 @@ void runMediaWorker(MediaWorkerState* state, const MediaWorkerCallbacks& callbac
                         queueRatingAssets(fallback.result);
                         if (sameResolverConfig(fallback.request, item.request))
                             prepareTitleLogo(fallback.result);
+                        else prepareTitleLogo(resolved);
                         callbacks.publishMedia(item.epoch, fallback.bytes, cachedRatings(fallback.result), false,
                                      &fallback.result, item.animateBackdrop);
-                    }
+                    } else prepareTitleLogo(resolved);
                 }
                 const unsigned failure = item.attempt + 1;
                 item.attempt = failure;

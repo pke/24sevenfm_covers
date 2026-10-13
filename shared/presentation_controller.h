@@ -169,12 +169,16 @@ struct PresentationSettings {
 };
 struct PresentationRect { float x = 0, y = 0, width = 0, height = 0; };
 enum class VisualChannel { Poster, CountdownOpacity, CountdownSize, CoverOpacity,
-    RatingOpacity, RatingContent, Controls, InfoWidth, InfoHeight, NextWidth, NextHeight, NextCover, Count };
+    RatingOpacity, RatingContent, Controls, InfoWidth, InfoHeight, InfoCountdownHeight, NextWidth, NextHeight, NextCover, Count };
 struct FrameState {
     std::vector<ImageLayer> cover, backdrop, blurredCover, ratings;
     std::wstring title, artist, album, track, logoAlbum;
     std::string logo;
     float infoOpacity = 0, logoOpacity = 0, logoLayout = 0;
+    // Measurement inputs are final content, independent of the visible fades.
+    bool infoMeasureReady = false;
+    std::string infoLogo;
+    float infoLogoLayout = 0, infoCountdownWidth = 0, infoCountdownHeight = 0;
     float poster = 0, coverOpacity = 1, ratingOpacity = 0, ratingContent = 1, controlsOpacity = 0;
     float infoWidth = 0, infoHeight = 0, nextWidth = 0, nextHeight = 0;
     float nextCoverLayout = 0;
@@ -238,6 +242,7 @@ public:
     void setLogo(const std::string& bytes, const std::wstring& album) {
         logo.set(bytes, album, std::uint32_t(time()), duration());
     }
+    void infoAssetsPending(bool pending) { infoAssetsPending_ = pending; }
     void settingsChanged(const PresentationSettings& settings) {
         const auto now = time(); const unsigned oldDuration = duration();
         const bool changedMotion = settings.reducedMotion != settings_.reducedMotion; settings_ = settings;
@@ -265,6 +270,21 @@ public:
         auto& c = channel(dimension);
         if (c.target() == 0) c.reset(target);
         else c.set(target, time(), motion(ms));
+    }
+    void measuredInfo(float width, float height) {
+        // Keep the outgoing geometry through the exit and resolver/logo wait.
+        // The next complete content starts one transition, never an empty card
+        // or a succession of sizes derived from logo opacity/layout samples.
+        if (!frame_.infoMeasureReady) return;
+        measured(VisualChannel::InfoWidth, width);
+        measured(VisualChannel::InfoHeight, height);
+        // Unknown remaining time during a track handoff only fades the digits.
+        // Reserve the configured row, rather than shrinking and growing the box.
+        const float countdownHeight = settings_.countdown
+            ? channel(VisualChannel::CountdownSize).target()*1.4f+8*dpi_ : 0;
+        auto& countdown = channel(VisualChannel::InfoCountdownHeight);
+        if (frame_.infoWidth == 0) countdown.reset(countdownHeight);
+        else countdown.set(countdownHeight, time(), motion(350));
     }
     // Native adapters supply untrimmed text metrics only. Measure the final
     // content, never a sampled opacity: a moving target continually restarts the
@@ -297,8 +317,13 @@ public:
         frame_.infoOpacity = info.advance(tick, duration());
         frame_.title = info.title(); frame_.artist = info.artist(); frame_.album = info.album(); frame_.track = info.track();
         frame_.logoOpacity = logo.advance(tick, duration()); frame_.logo = logo.bytes(); frame_.logoAlbum = logo.album();
-        frame_.logoLayout = logoLayout_.advance(settings_.poster && !frame_.logo.empty()
-            && frame_.logoAlbum == frame_.album && frame_.logoOpacity >= 1, tick, motion(350));
+        frame_.infoMeasureReady = info.layoutReady() && !infoAssetsPending_;
+        frame_.infoLogo = logo.targetAlbum() == frame_.album ? logo.targetBytes() : std::string();
+        frame_.infoLogoLayout = settings_.poster && !frame_.infoLogo.empty() ? 1.f : 0.f;
+        if (frame_.infoMeasureReady) infoLogoTarget_ = frame_.infoLogoLayout > 0;
+        frame_.logoLayout = logoLayout_.advance(infoLogoTarget_, tick, motion(350));
+        frame_.infoCountdownWidth = settings_.countdown
+            ? channel(VisualChannel::CountdownSize).target()*4.5f : 0;
         frame_.next = comingNext.advance(settings_.next, remaining_, tick, motion(kComingNextTransitionMs));
         countdown_.set(remaining_, settings_.rolling, now, motion(350));
         channel(VisualChannel::CountdownOpacity).set(settings_.countdown && remaining_ >= 0 ? 1.f : 0.f, now, motion(350));
@@ -315,6 +340,7 @@ public:
         frame_.ratingContent = channel(VisualChannel::RatingContent).value(now);
         frame_.controlsOpacity = channel(VisualChannel::Controls).value(now);
         frame_.infoWidth = channel(VisualChannel::InfoWidth).value(now); frame_.infoHeight = channel(VisualChannel::InfoHeight).value(now);
+        frame_.infoCountdownHeight = channel(VisualChannel::InfoCountdownHeight).value(now);
         frame_.nextWidth = channel(VisualChannel::NextWidth).value(now); frame_.nextHeight = channel(VisualChannel::NextHeight).value(now);
         frame_.nextCoverLayout = channel(VisualChannel::NextCover).value(now);
         frame_.blur = float(settings_.blur); frame_.radius = float(settings_.radius);
@@ -338,8 +364,7 @@ private:
         const auto font = posterTypography(width_,height_);
         const float margin = (std::max)(12.f*dpi_, minSide*.06f);
         const float gap = (std::max)(4.f*dpi_, minSide*.016f);
-        const float countHeight = (frame_.countdown.fontSize*1.4f+8*dpi_)*frame_.countdown.opacity;
-        const float boxH = frame_.infoHeight+countHeight;
+        const float boxH = frame_.infoHeight+frame_.infoCountdownHeight;
         const float boxW = (std::min)(width_*.86f,frame_.infoWidth);
         const float boxY = (std::max)(0.f,height_-margin-boxH);
         frame_.infoRect = {(width_-boxW)*.5f,boxY,boxW,boxH};
@@ -370,5 +395,6 @@ private:
     float width_ = 1, height_ = 1, dpi_ = 1;
     bool rtl_ = false;
     bool inside_ = false, fullscreen_ = false, hasRatings_ = false, hasBackdrop_ = false;
+    bool infoAssetsPending_ = false, infoLogoTarget_ = false;
 };
 } // namespace ssc

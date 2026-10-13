@@ -96,18 +96,17 @@ static NSString* native(const std::wstring& value) {
         NSRect measured = [strings[i] boundingRectWithSize:NSMakeSize(maxWidth,CGFLOAT_MAX)
             options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
             attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:sizes[i] weight:weights[i]]}];
-        width = std::max(width, std::ceil(measured.size.width)*(i == 0 ? 1-_frame.logoLayout : 1));
+        width = std::max(width, std::ceil(measured.size.width)*(i == 0 ? 1-_frame.infoLogoLayout : 1));
     }
-    width = std::max(width, _frame.countdown.fontSize*4.5*_frame.countdown.opacity);
-    const auto logo = [self logoSize:[self imageForKey:_frame.logo]];
-    const CGFloat targetWidth = ssc::posterInfoWidth(self.bounds.size.width,width,font.padX,1,logo.width*_frame.logoLayout);
-    _presentation.measured(ssc::VisualChannel::InfoWidth,targetWidth);
+    width = std::max(width, CGFloat(_frame.infoCountdownWidth));
+    const auto logo = [self logoSize:[self imageForKey:_frame.infoLogo]];
+    const CGFloat targetWidth = ssc::posterInfoWidth(self.bounds.size.width,width,font.padX,1,logo.width*_frame.infoLogoLayout);
     const CGFloat textWidth = std::max(1.0,targetWidth-font.padX*2);
     const CGFloat albumHeight = textHeight(album,textWidth,font.title,NSFontWeightSemibold);
-    const CGFloat row = albumHeight+(logo.rowHeight-albumHeight)*_frame.logoLayout;
+    const CGFloat row = albumHeight+(logo.rowHeight-albumHeight)*_frame.infoLogoLayout;
     const CGFloat target = font.padY*2 + row + textHeight(strings[1],textWidth,font.artist,NSFontWeightRegular)
         + textHeight(strings[2],textWidth,font.track,NSFontWeightMedium) + font.lineGap + font.title*.12;
-    _presentation.measured(ssc::VisualChannel::InfoHeight,target);
+    _presentation.measuredInfo(targetWidth,target);
     SSCScene* next = [SSCScene new]; next.album = native(_frame.next.album); next.artist = native(_frame.next.artist);
     const auto nextFont = ssc::nextTypography(self.bounds.size.width);
     const auto textSize = nextTextSize(nextTextCells(next,nextFont));

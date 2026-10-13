@@ -30,6 +30,8 @@ class TitleLogoPresentation {
 public:
     const std::string& bytes() const { return bytes_; }
     const std::wstring& album() const { return album_; }
+    const std::string& targetBytes() const { return nextBytes_; }
+    const std::wstring& targetAlbum() const { return nextAlbum_; }
     bool animating() const { return phase_ == Entering || phase_ == Exiting; }
 
     void set(const std::string& bytes, const std::wstring& album, std::uint32_t now, int fadeMs) {

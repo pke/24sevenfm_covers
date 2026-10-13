@@ -14,6 +14,7 @@ public:
     const std::wstring& track() const { return track_; }
     bool animating() const { return phase_ == Exiting || phase_ == Entering; }
     bool canonical() const { return canonical_; }
+    bool layoutReady() const { return phase_ == Entering || phase_ == Visible; }
     const std::string& displayedIdentity() const { return displayedIdentity_; }
 
     void begin(const std::string& identity, std::uint32_t now, int fadeMs) {

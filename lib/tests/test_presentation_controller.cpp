@@ -241,3 +241,100 @@ TEST_CASE("hidden countdown ticks never request animation but its exit fade stil
     now+=1000;CHECK_FALSE(view.advance().animating);CHECK(view.frame().countdown.opacity==0);
     view.remainingChanged(42);CHECK_FALSE(view.advance().animating);
 }
+
+TEST_CASE("info geometry retains its outgoing size and resizes once to the final logo content") {
+    PresentationTime now=0; PresentationController view([&]{return now;});
+    PresentationSettings settings; settings.poster=true;
+    view.settingsChanged(settings); view.viewportChanged(600,900);
+    auto token=view.trackChanged("old");
+    view.resolverCompleted(token,L"Old album",L"Composer",L"Old album",L"Cue",true);
+    view.setLogo("old logo",L"Old album");
+    view.advance(); view.measuredInfo(400,180);
+    now=2000; view.advance();
+    REQUIRE(view.frame().logoLayout==1);
+    token=view.trackChanged("new"); view.infoAssetsPending(true);
+    view.setLogo("",L""); // Windows' early clear is not a final logo miss.
+    for(now=2000;now<=4000;now+=20) {
+        view.advance(); view.measuredInfo(100,40); const auto f=view.advance();
+        CHECK(f.infoWidth==400); CHECK(f.infoHeight==180);
+        CHECK(f.infoRect.x==100); CHECK(f.logoLayout==1);
+        CHECK_FALSE(f.infoMeasureReady);
+    }
+    view.resolverCompleted(token,L"New album",L"Composer",L"New album",L"Cue",true);
+    view.advance(); view.measuredInfo(500,240); view.advance();
+    CHECK(view.frame().infoWidth==400); // metadata alone must not resize to text first
+    view.setLogo("new logo",L"New album"); view.infoAssetsPending(false);
+    view.advance();
+    REQUIRE(view.frame().infoMeasureReady);
+    REQUIRE(view.frame().infoLogo=="new logo");
+    REQUIRE(view.frame().infoLogoLayout==1); CHECK(view.frame().logoOpacity==0);
+    const auto start=now; view.measuredInfo(300,120);
+    for(now=start;now<=start+1400;now+=10) {
+        view.advance(); view.measuredInfo(300,120); const auto f=view.advance();
+        const float fraction=std::min(1.f,float(now-start)/350);
+        CHECK(f.infoWidth==doctest::Approx(400-100*fraction));
+        CHECK(f.infoHeight==doctest::Approx(180-60*fraction));
+        CHECK(f.infoRect.x+f.infoRect.width*.5f==300);
+        CHECK(f.infoLogoLayout==1);
+    }
+    CHECK_FALSE(view.channel(VisualChannel::InfoWidth).active(now));
+    CHECK_FALSE(view.channel(VisualChannel::InfoHeight).active(now));
+}
+
+TEST_CASE("info measurement uses the incoming logo during an outgoing logo fade and a final miss uses text") {
+    PresentationTime now=0; PresentationController view([&]{return now;});
+    PresentationSettings settings; settings.poster=true; settings.countdown=true;
+    view.settingsChanged(settings); view.viewportChanged(600,900); view.remainingChanged(180);
+    auto token=view.trackChanged("a");
+    view.resolverCompleted(token,L"A",L"",L"A",L"",true); view.setLogo("wide",L"A");
+    view.advance(); view.measuredInfo(400,180); now=2000; view.advance();
+    token=view.trackChanged("b"); view.infoAssetsPending(true);
+    now=3000; view.advance();
+    view.resolverCompleted(token,L"B",L"",L"B",L"",true); view.setLogo("narrow",L"B");
+    view.infoAssetsPending(false); auto f=view.advance();
+    REQUIRE(f.logo=="wide"); REQUIRE(f.logoAlbum==L"A");
+    CHECK(f.infoLogo=="narrow"); CHECK(f.infoLogoLayout==1);
+    CHECK(f.infoCountdownWidth==view.channel(VisualChannel::CountdownSize).target()*4.5f);
+    view.measuredInfo(250,100); now+=350; view.advance();
+    CHECK(view.frame().infoWidth==250); CHECK(view.frame().infoHeight==100);
+    // A confirmed miss selects the final text geometry immediately, not a
+    // continuously measured interpolation from the retiring logo to the text.
+    token=view.trackChanged("c"); now+=1000; view.advance();
+    view.resolverCompleted(token,L"C",L"",L"C",L"",true); view.setLogo("",L"C");
+    CHECK(view.advance().infoLogoLayout==0); view.measuredInfo(350,140);
+    for(int i=0;i<35;++i) { now+=10; view.advance(); view.measuredInfo(350,140); }
+    CHECK(view.advance().infoWidth==350); CHECK(view.frame().infoHeight==140);
+    // Viewport changes and reduced motion still accept new final metrics.
+    settings.reducedMotion=true; view.settingsChanged(settings); view.viewportChanged(900,600);
+    view.advance(); view.measuredInfo(450,160);
+    CHECK(view.advance().infoWidth==450); CHECK(view.frame().infoHeight==160);
+}
+
+TEST_CASE("a track countdown reset never changes the reserved infobox geometry") {
+    PresentationTime now=0; PresentationController view([&]{return now;});
+    PresentationSettings settings; settings.poster=true; settings.countdown=true;
+    view.settingsChanged(settings); view.viewportChanged(600,900); view.remainingChanged(180);
+    auto token=view.trackChanged("a"); view.resolverCompleted(token,L"A",L"",L"A",L"",true);
+    view.advance(); view.measuredInfo(300,120); now=2000; const auto old=view.advance();
+    REQUIRE(old.countdown.opacity==1); REQUIRE(old.infoCountdownHeight>0);
+    token=view.trackChanged("b"); view.remainingChanged(-1);
+    for(now=2000;now<=3000;now+=10) {
+        view.advance(); view.measuredInfo(80,20); const auto f=view.advance();
+        CHECK(f.infoRect.height==old.infoRect.height); CHECK(f.infoRect.y==old.infoRect.y);
+    }
+    view.resolverCompleted(token,L"B",L"",L"B",L"",true);
+    view.advance(); view.measuredInfo(300,120); view.advance();
+    view.remainingChanged(240);
+    for(const auto end=now+1000;now<=end;now+=10) {
+        view.advance(); view.measuredInfo(300,120); const auto f=view.advance();
+        CHECK(f.infoRect.height==old.infoRect.height); CHECK(f.infoRect.y==old.infoRect.y);
+    }
+    // Explicitly disabling the countdown still animates the reserved row once.
+    settings.countdown=false; view.settingsChanged(settings); view.advance(); view.measuredInfo(300,120);
+    const auto start=now;
+    for(now=start;now<=start+350;now+=10) {
+        view.advance(); view.measuredInfo(300,120); const auto f=view.advance();
+        CHECK(f.infoRect.height==doctest::Approx(120+old.infoCountdownHeight*(1-float(now-start)/350)));
+    }
+    CHECK(view.frame().infoCountdownHeight==0);
+}

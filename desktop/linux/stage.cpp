@@ -141,19 +141,19 @@ void Stage::measure() {
         const auto weight=row.second==t.title?QFont::DemiBold:row.second==t.track?QFont::Medium:QFont::Normal;
         QFontMetricsF metric(nativeFont(row.second,weight));
         const float rowWidth=metric.boundingRect(QRectF(0,0,width()*.86f-2*t.padX,10000),Qt::TextWordWrap,row.first).width();
-        w = qMax(w,rowWidth*(row.second==t.title?1-f.logoLayout:1));
+        w = qMax(w,rowWidth*(row.second==t.title?1-f.infoLogoLayout:1));
     }
-    const auto logo=logoSize();
-    w=qMax(w,f.countdown.fontSize*4.5f*f.countdown.opacity);
-    const float targetWidth=ssc::posterInfoWidth(width(),w,t.padX,1,logo.width*f.logoLayout);
+    const auto pixels=image(f.infoLogo,false,true);
+    const auto logo=ssc::titleLogoSize(pixels.width(),pixels.height(),width(),height(),t.title,1);
+    w=qMax(w,f.infoCountdownWidth);
+    const float targetWidth=ssc::posterInfoWidth(width(),w,t.padX,1,logo.width*f.infoLogoLayout);
     const float textWidth=qMax(1.f,targetWidth-2*t.padX);
     const float albumHeight=posterLineHeight(text(f.title),textWidth,t.title,QFont::DemiBold);
     const float artistHeight=posterLineHeight(text(f.artist),textWidth,t.artist,QFont::Normal);
     const float trackHeight=posterLineHeight(text(f.track),textWidth,t.track,QFont::Medium);
-    const float h=2*t.padY+albumHeight+(logo.rowHeight-albumHeight)*f.logoLayout
+    const float h=2*t.padY+albumHeight+(logo.rowHeight-albumHeight)*f.infoLogoLayout
         +artistHeight+trackHeight+(artistHeight>0?t.lineGap:0)+(trackHeight>0?t.title*.12f:0);
-    controller.measured(ssc::VisualChannel::InfoWidth,targetWidth);
-    controller.measured(ssc::VisualChannel::InfoHeight, h);
+    controller.measuredInfo(targetWidth,h);
     const auto n = ssc::nextTypography(width());
     // Always untrimmed final text metrics. Never feed cover opacity into layout.
     const auto album = QFontMetricsF(nativeFont(n.album, QFont::DemiBold)), artist = QFontMetricsF(nativeFont(n.artist));

@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 #include "d2d_renderer.h"
+#include "../../shared/presentation_controller.h"
 #include "rating_assets.h"
 #include "rating_fixture.h"
 #include <wincodec.h>
@@ -401,4 +402,43 @@ TEST_CASE("presentation frames share artwork uploads with legacy readiness state
     CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 2);
     d2d::shutdown();
     CHECK(d2d::rendererDiagnostics().artworkBitmapCount == 0);
+}
+
+TEST_CASE("native infobox measures one final size throughout the track and title logo fades") {
+    RendererFixture fixture;
+    for(HWND window:{fixture.portrait,fixture.landscape}) {
+        ssc::PresentationTime now=0; ssc::PresentationController view([&]{return now;});
+        ssc::PresentationSettings settings; settings.poster=true; settings.countdown=true;
+        view.settingsChanged(settings); view.remainingChanged(180);
+        auto token=view.trackChanged("a");
+        view.resolverCompleted(token,L"An exceptionally long outgoing album title",L"Composer",L"An exceptionally long outgoing album title",L"Cue",true);
+        view.setLogo(artwork(800,80,0,true),L"An exceptionally long outgoing album title");
+        const auto sample=[&] { view.advance(); d2d::measurePresentation(window,view); return view.advance(); };
+        sample(); now=2000; const auto outgoing=sample();
+        token=view.trackChanged("b"); view.infoAssetsPending(true); view.setLogo("",L"");
+        for(now=2000;now<=3400;now+=20) {
+            const auto f=sample(); CHECK(f.infoWidth==outgoing.infoWidth); CHECK(f.infoHeight==outgoing.infoHeight);
+        }
+        const auto album=std::wstring(70,L'W');
+        view.resolverCompleted(token,album,L"Composer",album,L"Cue",true);
+        for(const auto end=now+500;now<end;now+=20) {
+            const auto f=sample(); CHECK(f.infoWidth==outgoing.infoWidth); CHECK(f.infoHeight==outgoing.infoHeight);
+        }
+        view.setLogo(artwork(160,120,1,true),album); view.infoAssetsPending(false);
+        const auto start=now; sample();
+        const float targetW=view.channel(ssc::VisualChannel::InfoWidth).target();
+        const float targetH=view.channel(ssc::VisualChannel::InfoHeight).target();
+        REQUIRE(targetW!=outgoing.infoWidth);
+        for(now=start;now<=start+2400;now+=10) {
+            const auto f=sample();
+            const float p=std::min(1.f,float(now-start)/350);
+            CHECK(view.channel(ssc::VisualChannel::InfoWidth).target()==targetW);
+            CHECK(view.channel(ssc::VisualChannel::InfoHeight).target()==targetH);
+            CHECK(f.infoWidth==doctest::Approx(outgoing.infoWidth+(targetW-outgoing.infoWidth)*p));
+            CHECK(f.infoHeight==doctest::Approx(outgoing.infoHeight+(targetH-outgoing.infoHeight)*p));
+            CHECK(f.infoRect.x+f.infoRect.width*.5f==doctest::Approx(f.clip.width*.5f));
+        }
+        CHECK_FALSE(view.channel(ssc::VisualChannel::InfoWidth).active(now));
+        CHECK_FALSE(view.channel(ssc::VisualChannel::InfoHeight).active(now));
+    }
 }

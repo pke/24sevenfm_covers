@@ -66,6 +66,44 @@ is in `.codex/native-backups/presentation-fix-20261004-052004/`.
 
 ## Verification
 
+### Infobox track-change geometry (2026-10-13)
+
+Infobox measurement uses the incoming title-logo resource and its final layout
+presence, independently of logo opacity and the sampled row transition. Native
+DirectWrite, AppKit and Qt adapters return the complete final width and height
+through `measuredInfo`. Outgoing metadata and empty resolver-wait frames retain
+the previous geometry. Windows also waits for the current epoch's final logo
+publication, including a confirmed miss or failure, before accepting replacement
+measurements. An early mailbox clear or stale logo result cannot release that wait.
+Countdown width and its reserved row use the configured final font size and
+enabled state. An unknown remaining time during a track handoff fades only the
+digits, preserving the row until an explicit countdown setting change.
+
+This avoids resizing to empty content, then text, then chasing every interpolated
+logo frame. A track change starts one 350 ms size transition to the finished
+content, with the infobox centred throughout. Viewport and option changes still
+animate to their new measurements; Reduced Motion completes them immediately.
+Regression coverage includes frame-by-frame controller and real DirectWrite/WIC
+measurements, delayed logos, outgoing logo resources, final misses, resolver
+failure, stale Windows publications and both portrait and landscape viewports.
+
+Windows verification: 68 cases / 7,365 assertions passed across the controller,
+native renderer, native engine and media-preparation suites. DV and Winamp were
+built, UPX-verified, installed and restarted at their existing executable paths.
+Installed hashes and the loaded Winamp plugin path match; viewer/plugin settings
+and Winamp playback state are preserved. Recoverable files and installation
+evidence are in `.codex/native-backups/infobox-fix-20261013-132104/`.
+
+Follow-up builds include Windows DV x86/x64, Winamp x86 and foobar2000 x64. The
+installed Windows foobar2000 component was backed up and hash-verified after its
+replacement. Linux builds succeeded with system Qt 6.4 (raster/OpenGL) and Qt 6.8
+(raster/OpenGL/RHI plus renderer comparison tools); each configuration passed all
+156 CTest entries. Packages and binary hashes are retained under
+`desktop/build/infobox-all/`, with build/test logs in `desktop/build/infobox-all-*`.
+The existing Linux installation uses the updated Qt 6.4 binaries. AppKit's
+measurement adapter is updated in source; macOS builds are deferred at the user's
+request because the configured SSH build host was unavailable.
+
 Title-logo alignment follow-up: a transparent crop can still contain an asymmetric
 decorative flare, such as the long line to the right of the Dune: Part Two lettering.
 `image_alpha_bounds.h` now derives a horizontal lettering anchor from columns with

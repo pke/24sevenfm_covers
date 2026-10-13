@@ -170,3 +170,42 @@ TEST_CASE("portable resolver worker publishes normalized data and reuses prepare
     worker.join();
     REQUIRE(first); CHECK(album == "Canonical film"); CHECK(pixels == ratingFixturePng()); CHECK(requests == 2);
 }
+
+TEST_CASE("resolver failure completes the title logo decision even without a compatible cached logo") {
+    ssc::MediaWorkerState state;
+    std::mutex mutex; std::condition_variable cv; bool logoSettled=false;
+    ssc::MediaResolverConfig config;
+    config.transport=[](const std::string&,unsigned short,const std::string&,
+        const std::string&,const std::string&,const std::string&,int) {
+        ssc::HttpResponse response; response.status=503; return response;
+    };
+    state.resolver=ssc::MediaResolver(config);
+    state.epoch=1; state.cancel=std::make_shared<std::atomic<bool>>(false);
+    ssc::MediaWorkerState::Work work; work.current=true; work.epoch=1; work.cancel=state.cancel;
+    work.track.album="Film"; work.track.artist="Composer"; work.request.includeTitleLogo=true;
+    SUBCASE("no cached backdrop") {}
+    SUBCASE("cached backdrop was prepared without logos") {
+        auto request=work.request; request.includeTitleLogo=false;
+        ssc::MediaResult fallback; fallback.status=ssc::MediaResult::Hit; fallback.album="Film";
+        fallback.backdropUrl="https://image.tmdb.org/t/p/w1280/image.jpg";
+        ssc::cacheMedia(&state,"old variant",work.track,request,fallback,ratingFixturePng());
+    }
+    ssc::MediaWorkerCallbacks callbacks;
+    callbacks.publishRatings=[](auto,const auto&) {};
+    callbacks.publishCycledBackdrop=[](auto,auto,const auto&,const auto&) {};
+    callbacks.publishQueuedMetadata=[](auto,const auto&,const auto&) {};
+    callbacks.selectionCurrent=[](auto,auto) { return true; };
+    callbacks.publishMetadata=[](auto,const auto&,int) {};
+    callbacks.publishMedia=[](auto,const auto&,const auto&,bool,const auto*,bool) {};
+    callbacks.publishTitleLogo=[&](auto epoch,const auto& bytes,const auto& album,bool) {
+        std::lock_guard<std::mutex> lock(mutex);
+        CHECK(epoch==1); CHECK(bytes.empty()); CHECK(album=="Film"); logoSettled=true; cv.notify_all();
+    };
+    work.due=ssc::MediaWorkerState::Clock::now(); state.work.push_back(work);
+    std::thread worker([&] { ssc::runMediaWorker(&state,callbacks); });
+    bool completed;
+    { std::unique_lock<std::mutex> lock(mutex);
+      completed=cv.wait_for(lock,std::chrono::seconds(3),[&]{return logoSettled;}); }
+    { ssc::platform::LockGuard lock(state.mutex); state.stopping=true; state.cancel->store(true); state.cv.notify_all(); }
+    worker.join(); CHECK(completed);
+}

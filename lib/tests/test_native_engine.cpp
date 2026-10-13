@@ -76,6 +76,37 @@ struct CoverEngineTestAccess {
     }
     ~CoverEngineTestAccess() { engine.stopMediaWorker(); }
     CoverEngine::MediaWorkerState& state() { return *engine.media_; }
+    void infoAssetReadiness() {
+        ssc::PresentationTime now=0;
+        engine.presentation_=ssc::PresentationController([&]{return now;});
+        ssc::PresentationSettings settings; settings.poster=true; settings.reducedMotion=true;
+        engine.presentation_.settingsChanged(settings);
+        engine.settings.backdrops=true; engine.settings.titleLogos=true;
+        state().settingsSnapshot=engine.settings;
+        ssc::TrackInfo track; track.album="First"; track.track="Cue";
+        engine.scheduleMedia(track,{}); const auto first=state().epoch;
+        ssc::MediaResult result; result.album=track.album; result.hasMetadata=true;
+        engine.publishMetadata(first,result,60); engine.decodePendingMedia(nullptr);
+        CHECK_FALSE(engine.presentation_.advance().infoMeasureReady);
+        engine.publishTitleLogo(first,ratingFixturePng(),track.album);
+        engine.decodePendingMedia(nullptr);
+        CHECK(engine.presentation_.advance().infoMeasureReady);
+        CHECK_FALSE(engine.presentation_.frame().infoLogo.empty());
+        engine.presentation_.measuredInfo(300,150);
+        track.album="Second"; engine.scheduleMedia(track,{}); const auto second=state().epoch;
+        result.album=track.album; engine.publishMetadata(second,result,60);
+        engine.decodePendingMedia(nullptr);
+        engine.presentation_.advance(); engine.presentation_.measuredInfo(100,50);
+        CHECK(engine.presentation_.advance().infoWidth==300);
+        engine.publishTitleLogo(first,"stale","First"); engine.decodePendingMedia(nullptr);
+        CHECK_FALSE(engine.presentation_.advance().infoMeasureReady);
+        engine.publishTitleLogo(second,"",track.album); // a final miss also releases the wait
+        engine.decodePendingMedia(nullptr);
+        CHECK(engine.presentation_.advance().infoMeasureReady);
+        CHECK(engine.presentation_.frame().infoLogoLayout==0);
+        engine.presentation_.measuredInfo(200,100);
+        CHECK(engine.presentation_.advance().infoWidth==200);
+    }
     void countdownScale() {
         REQUIRE(d2d::init());
         HWND window = CreateWindowExW(0, L"STATIC", L"Countdown sizing regression", WS_POPUP,
@@ -1154,4 +1185,9 @@ TEST_CASE("native backdrop selection survives orientation changes") { CoverEngin
 TEST_CASE("Windows host forwards viewport-relative countdown settings to the common controller") {
     CoverEngineTestAccess test;
     test.countdownScale();
+}
+
+TEST_CASE("Windows info layout waits for the current final logo publication and rejects stale completion") {
+    CoverEngineTestAccess test;
+    test.infoAssetReadiness();
 }

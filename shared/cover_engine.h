@@ -212,6 +212,7 @@ private:
     std::string pendingBackdropBytes_;
     std::string pendingTitleLogoBytes_, pendingTitleLogoAlbum_;
     bool titleLogoDirty_ = false, pendingTitleLogoImmediate_ = false;
+    bool pendingTitleLogoReady_ = false;
     unsigned long long pendingTitleLogoEpoch_ = 0;
     std::vector<d2d::RatingBadge> pendingRatings_;
     bool mediaDirty_ = false, pendingMediaClear_ = false;
