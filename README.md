@@ -50,6 +50,8 @@ history stays in memory. See [diagnostics](docs/debugging.md) for timing semanti
 
 ## Repository layout
 
+For native host integration, see the [shared C++ integration spec for implementation agents](docs/shared-cpp-integration.md).
+
 The **Linux viewer** and reproducible build/package instructions are in
 [`desktop/linux`](desktop/linux/README.md). It uses Qt 6 for native drawing and
 windows, libcurl for TLS, and the shared C++ media/presentation pipeline.

@@ -57,6 +57,10 @@ Windows TLS comes from WinHTTP.
 
 ## C++ usage
 
+For complete native viewer or plugin integration, see the
+[shared C++ integration spec for implementation agents](../docs/shared-cpp-integration.md).
+It covers prepared media, presentation, settings, threading and host lifecycle.
+
 ```cpp
 #include "coverfetch.h"
 
