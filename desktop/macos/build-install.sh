@@ -21,7 +21,9 @@ if [ -d "$destination" ]; then
     mkdir -p "$HOME/Library/Application Support/24seven.fm Covers/Backups"
     ditto "$destination" "$HOME/Library/Application Support/24seven.fm Covers/Backups/$(date +%Y%m%d-%H%M%S).app"
 fi
+viewer_was_running=0
 if pgrep -f '^.*/24sevenfm_covers.app/Contents/MacOS/24sevenfm_covers( |$)|^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers( |$)' >/dev/null; then
+    viewer_was_running=1
     # Restart through process management; updating the app does not authorize
     # AppleScript or other desktop/window control.
     viewer_pids=$(pgrep -f '^.*/24sevenfm_covers.app/Contents/MacOS/24sevenfm_covers( |$)|^.*/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers( |$)' || true)
@@ -44,7 +46,9 @@ codesign --verify --deep --strict "$destination"
 source_hash=$(shasum -a 256 "$binary" | cut -d ' ' -f 1)
 installed_hash=$(shasum -a 256 "$destination/Contents/MacOS/24sevenfm_covers" | cut -d ' ' -f 1)
 [ "$source_hash" = "$installed_hash" ] || { echo 'Installed hash mismatch' >&2; exit 1; }
-open "$destination"
-sleep 3
-pgrep -fl '/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers'
+if [ "$viewer_was_running" = 1 ]; then
+    open "$destination"
+    sleep 3
+    pgrep -fl '/24seven.fm Covers.app/Contents/MacOS/24sevenfm_covers'
+fi
 printf 'Installed arm64 viewer: %s\nSHA256: %s\n' "$destination" "$installed_hash"
