@@ -25,6 +25,14 @@ const DEFAULT_ORIGIN = "https://24sevenfm-covers.dudesoft.app";
 // catalog title. Only the fields present on an entry participate in its match.
 const METADATA_RESOLUTIONS = Object.freeze([
     Object.freeze({
+        // Angela Lansbury sings Mrs. Potts' title song in Disney's 1991 film,
+        // rather than either of the same-title TV series or the 2017 remake.
+        album: "Beauty & The Beast",
+        artist: "Angela Lansbury",
+        title: "Beauty and the Beast (1991)",
+        hint: "movie",
+    }),
+    Object.freeze({
         album: "V",
         artist: "Joe Harnell",
         title: "V (1983)",
