@@ -6,6 +6,7 @@
 #include "media_policy.h"   // DPI-aware rating geometry shared with tests
 #include "title_logo_presentation.h"
 #include "presentation_style.h"
+#include "image_key.h"      // content identity hashed once per image
 
 #include <d2d1.h>
 #include <d2d1_1.h>       // ID2D1Device/DeviceContext + effects (real Gaussian blur)
@@ -92,6 +93,7 @@ ID2D1Layer*            g_layer = nullptr;      // reused for the poster cover's 
 // Cover state: encoded bytes plus target-dependent D2D bitmaps. Decoded CPU
 // pixels below survive target recreation; D2D bitmaps cannot cross HWND targets.
 std::string     g_curBytes, g_prevBytes;
+ssc::ImageKey   g_curKey, g_prevKey; // hashed once when the bytes are assigned
 ID2D1Bitmap*    g_curBmp = nullptr;
 ID2D1Bitmap*    g_prevBmp = nullptr;
 ID2D1Bitmap*    g_blurBmp = nullptr; // tiny downscaled current cover, upscaled as the poster background
@@ -99,14 +101,14 @@ ID2D1Bitmap*    g_nextBmp = nullptr;
 std::shared_ptr<const std::string> g_nextBytes;
 
 struct DecodedImage {
-    std::string bytes;
+    ssc::ImageKey key; // identity of the encoded source; no second copy of its bytes
     bool trimAlpha = false;
     float horizontalAnchor = .5f;
     UINT width = 0, height = 0;
     std::vector<BYTE> pixels; // tightly packed, premultiplied BGRA
     bool hasTint = false;
     D2D1_COLOR_F tint = D2D1::ColorF(1, 1, 1, 1);
-    size_t cost() const { return bytes.size() + pixels.size(); }
+    size_t cost() const { return pixels.size(); }
 };
 // Only images actually rendered are decoded here, never the entire queue. Two
 // 4K orientations plus covers/logos fit without retaining unbounded track history.
@@ -121,6 +123,7 @@ std::vector<BYTE> g_blurPixels; // current cover/strength only; independent of H
 // fallback must continue to receive g_curBytes, and a failed hero can fade away
 // independently. Ratings use the same double-buffered visibility transaction.
 std::string     g_backdropCurBytes, g_backdropPrevBytes;
+ssc::ImageKey   g_backdropCurKey, g_backdropPrevKey;
 bool g_backdropLoading = false;
 float g_backdropNavigationOpacity = 0;
 ID2D1Bitmap*    g_backdropCurBmp = nullptr;
@@ -132,9 +135,13 @@ bool            g_backdropPrevHasTint = false;
 std::vector<RatingBadge> g_ratingsCur, g_ratingsPrev;
 struct RatingBitmap { std::wstring key; ID2D1Bitmap* bitmap = nullptr; };
 std::vector<RatingBitmap> g_ratingBitmaps;
-std::map<std::string, ID2D1Bitmap*> g_frameBitmaps, g_frameBlurs;
-std::map<std::string, std::vector<BYTE>> g_frameBlurPixels;
-std::map<std::string, std::vector<RatingBadge>> g_ratingSets;
+// Keyed by content identity, never by the encoded bytes themselves: comparing
+// multi-megabyte keys on every settled frame dominated the frame's CPU time.
+std::map<ssc::ImageKey, ID2D1Bitmap*> g_frameBitmaps, g_frameBlurs;
+std::map<ssc::ImageKey, std::vector<BYTE>> g_frameBlurPixels;
+std::map<ssc::ImageKey, std::vector<RatingBadge>> g_ratingSets;
+ssc::ImageKeyCache g_imageKeys;
+ssc::ImageKey keyOf(const ssc::ImageReference& image) { return g_imageKeys.get(image); }
 const ssc::FrameState* g_frame = nullptr; // borrowed only for one synchronous draw
 ssc::TitleLogoPresentation g_titleLogo;
 ssc::TitleLogoLayout g_titleLogoLayout;
@@ -208,9 +215,10 @@ D2D1_COLOR_F playerTint(float mediaProgress) {
                         from.b + (to.b - from.b) * mediaProgress, 1.0f);
 }
 
-std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, bool trimAlpha) {
+std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, ssc::ImageKey key, bool trimAlpha) {
+    if (key.empty()) key = ssc::imageKey(bytes);
     for (auto it = g_decodedImages.begin(); it != g_decodedImages.end(); ++it) {
-        if ((*it)->trimAlpha == trimAlpha && (*it)->bytes == bytes) {
+        if ((*it)->trimAlpha == trimAlpha && (*it)->key == key) {
             auto image = *it;
             g_decodedImages.splice(g_decodedImages.begin(), g_decodedImages, it);
             SSC_COUNT(cacheHits);
@@ -279,7 +287,7 @@ std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, bool trimAl
     SafeRelease(decoder);
     SafeRelease(stream);
     if (!image->width || !image->height) return nullptr;
-    image->bytes = bytes;
+    image->key = key;
     image->trimAlpha = trimAlpha;
     const size_t cost = image->cost();
     if (cost <= kDecodedCacheBudget) {
@@ -312,10 +320,11 @@ D2D1_COLOR_F decodedTint(const std::shared_ptr<DecodedImage>& image) {
 // Upload to this target's resource domain, reusing CPU pixels and cover tint
 // across window changes/device loss. Cropped logos have a distinct cache key.
 ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_COLOR_F* tintOut,
-                         bool trimAlpha = false, float* horizontalAnchor = nullptr) {
+                         bool trimAlpha = false, float* horizontalAnchor = nullptr,
+                         ssc::ImageKey key = ssc::ImageKey()) {
     if (!rt || !g_wic || bytes.empty()) return nullptr;
     SSC_TIME(imageTimer, imageMs);
-    const auto image = decodedImage(bytes, trimAlpha);
+    const auto image = decodedImage(bytes, key, trimAlpha);
     if (!image) return nullptr;
     if (horizontalAnchor) *horizontalAnchor = image->horizontalAnchor;
     ID2D1Bitmap* bmp = nullptr;
@@ -329,26 +338,26 @@ ID2D1Bitmap* decodeBitmap(ID2D1RenderTarget* rt, const std::string& bytes, D2D1_
 }
 
 // Decodes into the main render target; refreshes g_curTint when isCurrent.
-ID2D1Bitmap* createBitmap(const std::string& bytes, bool isCurrent) {
+ID2D1Bitmap* createBitmap(const std::string& bytes, ssc::ImageKey key, bool isCurrent) {
     // The presentation layers and legacy readiness/tint state share one upload
     // in the main target's resource domain. Each owner retains its own COM ref.
     // Never share these with the separate blur device's decodeBitmap() uploads.
     ID2D1Bitmap* existing = nullptr;
-    const auto found = g_frameBitmaps.find(bytes);
+    const auto found = g_frameBitmaps.find(key);
     if (found != g_frameBitmaps.end()) existing = found->second;
-    if (!existing && g_curBmp && bytes == g_curBytes) existing = g_curBmp;
-    if (!existing && g_prevBmp && bytes == g_prevBytes) existing = g_prevBmp;
-    if (!existing && g_backdropCurBmp && bytes == g_backdropCurBytes) existing = g_backdropCurBmp;
-    if (!existing && g_backdropPrevBmp && bytes == g_backdropPrevBytes) existing = g_backdropPrevBmp;
+    if (!existing && g_curBmp && key == g_curKey) existing = g_curBmp;
+    if (!existing && g_prevBmp && key == g_prevKey) existing = g_prevBmp;
+    if (!existing && g_backdropCurBmp && key == g_backdropCurKey) existing = g_backdropCurBmp;
+    if (!existing && g_backdropPrevBmp && key == g_backdropPrevKey) existing = g_backdropPrevBmp;
     if (existing) {
         existing->AddRef();
         if (isCurrent) {
-            const auto image = decodedImage(bytes, false);
+            const auto image = decodedImage(bytes, key, false);
             if (image) g_curTint = decodedTint(image);
         }
         return existing;
     }
-    return decodeBitmap(g_rt, bytes, isCurrent ? &g_curTint : nullptr);
+    return decodeBitmap(g_rt, bytes, isCurrent ? &g_curTint : nullptr, false, nullptr, key);
 }
 
 // Small status badge, bottom-right (e.g. "Loading cover...").
@@ -424,7 +433,7 @@ void drawComingNext(float cw, float ch, float dpi, float top, bool rtl,
     const auto typography = ssc::nextTypography(cw, dpi);
     const float margin = 11.2f * dpi, padX = typography.padX, padY = typography.padY;
     if (g_nextBytes != frame->cover) { SafeRelease(g_nextBmp); g_nextBytes = frame->cover; }
-    if (!g_nextBmp && g_nextBytes) g_nextBmp = decodeBitmap(g_rt, *g_nextBytes, nullptr);
+    if (!g_nextBmp && g_nextBytes) g_nextBmp = decodeBitmap(g_rt, *g_nextBytes, nullptr, false, nullptr, keyOf(g_nextBytes));
     const float coverSize = typography.cover;
     const float coverLayout = g_frame ? g_frame->nextCoverLayout : frame->coverOpacity;
     const float coverColumn = g_nextBmp ? (coverSize + typography.gap) * coverLayout : 0;
@@ -544,7 +553,7 @@ bool createBlurGen() {
 // Renders the current cover through the real Gaussian-blur effect at a small working
 // resolution, reads it back, and uploads it to the main render target as g_blurBmp
 // (cached until the cover changes).
-void generateBlurFor(const std::string& bytes, std::vector<BYTE>& pixels, ID2D1Bitmap*& bitmap) {
+void generateBlurFor(const std::string& bytes, ssc::ImageKey key, std::vector<BYTE>& pixels, ID2D1Bitmap*& bitmap) {
     if (bitmap || bytes.empty() || !g_rt) return;
     SSC_TIME(blurTimer, blurMs);
     const D2D1_BITMAP_PROPERTIES bp = D2D1::BitmapProperties(
@@ -556,7 +565,7 @@ void generateBlurFor(const std::string& bytes, std::vector<BYTE>& pixels, ID2D1B
     }
     if (!createBlurGen()) return;
     SSC_COUNT(blurGenerations);
-    ID2D1Bitmap* src = decodeBitmap(g_blurCtx, bytes, nullptr);
+    ID2D1Bitmap* src = decodeBitmap(g_blurCtx, bytes, nullptr, false, nullptr, key);
     if (!src) return;
     const D2D1_SIZE_F ss = src->GetSize();
     const UINT S = kBlurSize;
@@ -612,14 +621,15 @@ void drawBlurredBackground(float cw, float ch) {
     if (g_frame) {
         const float side=(std::max)(cw,ch), dx=(cw-side)*.5f, dy=(ch-side)*.5f;
         for (const auto& layer:g_frame->blurredCover) {
-            auto& bitmap=g_frameBlurs[*layer.image];
-            generateBlurFor(*layer.image,g_frameBlurPixels[*layer.image],bitmap);
+            const auto key=keyOf(layer.image);
+            auto& bitmap=g_frameBlurs[key];
+            generateBlurFor(*layer.image,key,g_frameBlurPixels[key],bitmap);
             if (bitmap) g_rt->DrawBitmap(bitmap,D2D1::RectF(dx,dy,dx+side,dy+side),layer.opacity,D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
         }
         if (g_scrimBrush) g_rt->FillRectangle(D2D1::RectF(0,0,cw,ch),g_scrimBrush);
         return;
     }
-    generateBlurFor(g_curBytes,g_blurPixels,g_blurBmp);
+    generateBlurFor(g_curBytes,g_curKey,g_blurPixels,g_blurBmp);
     if (g_blurBmp) {
         const float side = cw > ch ? cw : ch; // cover-fit the square blur over the window
         const float dx = (cw - side) * 0.5f, dy = (ch - side) * 0.5f;
@@ -654,8 +664,9 @@ void drawBackdropBitmap(ID2D1Bitmap* bmp, float cw, float ch, float opacity) {
 void drawImageLayers(const std::vector<ssc::ImageLayer>& layers, D2D1_RECT_F rect, bool fill, float opacity = 1) {
     for (const auto& layer : layers) {
         if (!layer.image || layer.opacity <= 0) continue;
-        auto& bitmap = g_frameBitmaps[*layer.image];
-        if (!bitmap) bitmap = createBitmap(*layer.image, false);
+        const auto key = keyOf(layer.image);
+        auto& bitmap = g_frameBitmaps[key];
+        if (!bitmap) bitmap = createBitmap(*layer.image, key, false);
         if (!bitmap) continue;
         const auto size = bitmap->GetSize();
         const float w = rect.right - rect.left, h = rect.bottom - rect.top;
@@ -755,7 +766,7 @@ void drawRatingSet(const std::vector<RatingBadge>& ratings, float cw, float ch,
 void drawRatings(float cw, float ch, float progress, float opacity, float dpiScale) {
     if (g_frame) {
         for (const auto& layer:g_frame->ratings) {
-            auto found=g_ratingSets.find(*layer.image);
+            auto found=g_ratingSets.find(keyOf(layer.image));
             if (found!=g_ratingSets.end()) drawRatingSet(found->second,cw,ch,layer.opacity*opacity,dpiScale);
         }
         return;
@@ -1075,7 +1086,7 @@ void measurePresentation(HWND hwnd, ssc::PresentationController& presentation) {
     // WIC's bounded decoded cache provides dimensions without a render-target upload.
     auto logo=ssc::TitleLogoSize{0,0,0};
     if (!frame.infoLogo.empty()) {
-        const auto pixels=decodedImage(frame.infoLogo, true);
+        const auto pixels=decodedImage(frame.infoLogo, ssc::ImageKey(), true);
         if (pixels) logo=ssc::titleLogoSize(float(pixels->width),float(pixels->height),w,h,font.title,dpi);
     }
     const float content=(std::max)((std::max)(b.width,c.width),
@@ -1172,13 +1183,14 @@ void shutdown() {
     discardDeviceResources();
     releaseBlur();
     g_decodedImages.clear();
-    g_frameBlurPixels.clear(); g_ratingSets.clear();
+    g_frameBlurPixels.clear(); g_ratingSets.clear(); g_imageKeys.clear();
     g_decodedBytes = 0;
     std::vector<BYTE>().swap(g_blurPixels);
     g_curBytes.clear();
     g_prevBytes.clear();
     g_backdropCurBytes.clear();
     g_backdropPrevBytes.clear();
+    g_curKey = g_prevKey = g_backdropCurKey = g_backdropPrevKey = ssc::ImageKey();
     g_titleLogo = ssc::TitleLogoPresentation();
     g_backdropLoading = false;
     g_backdropNavigationOpacity = 0;
@@ -1196,36 +1208,38 @@ void setCover(const void* data, size_t len, bool fadeFromCurrent) {
     if (g_curBytes.size() != len || (len && std::memcmp(g_curBytes.data(), data, len) != 0))
         g_blurPixels.clear();
     if (fadeFromCurrent && !g_curBytes.empty()) {
-        g_prevBytes = g_curBytes;
+        g_prevBytes = g_curBytes; g_prevKey = g_curKey;
         SafeRelease(g_prevBmp);
     } else {
-        g_prevBytes.clear();
+        g_prevBytes.clear(); g_prevKey = ssc::ImageKey();
         SafeRelease(g_prevBmp);
     }
     g_curBytes.assign(static_cast<const char*>(data), len);
+    g_curKey = ssc::imageKey(g_curBytes);
     SafeRelease(g_curBmp);  // recreated from bytes on next render
     SafeRelease(g_blurBmp); // poster background is derived from the current cover
 }
 
 void endFade() {
-    g_prevBytes.clear();
+    g_prevBytes.clear(); g_prevKey = ssc::ImageKey();
     SafeRelease(g_prevBmp);
 }
 
 void setBackdrop(const void* data, size_t len, bool fadeFromCurrent, const int* tintRgb) {
     if (fadeFromCurrent && !g_backdropCurBytes.empty()) {
-        g_backdropPrevBytes = g_backdropCurBytes;
+        g_backdropPrevBytes = g_backdropCurBytes; g_backdropPrevKey = g_backdropCurKey;
         g_backdropPrevTint = g_backdropCurTint;
         g_backdropPrevHasTint = g_backdropCurHasTint;
         SafeRelease(g_backdropPrevBmp);
         g_backdropPrevBmp = g_backdropCurBmp;
         g_backdropCurBmp = nullptr; // retain decoded outgoing pixels through the fade
     } else {
-        g_backdropPrevBytes.clear();
+        g_backdropPrevBytes.clear(); g_backdropPrevKey = ssc::ImageKey();
         g_backdropPrevHasTint = false;
         SafeRelease(g_backdropPrevBmp);
     }
     g_backdropCurBytes.assign(static_cast<const char*>(data), len);
+    g_backdropCurKey = ssc::imageKey(g_backdropCurBytes);
     g_backdropCurHasTint = tintRgb != nullptr;
     if (tintRgb) g_backdropCurTint = D2D1::ColorF(
         tintRgb[0] / 255.0f, tintRgb[1] / 255.0f, tintRgb[2] / 255.0f, 1.0f);
@@ -1234,16 +1248,16 @@ void setBackdrop(const void* data, size_t len, bool fadeFromCurrent, const int* 
 
 void clearBackdrop(bool fadeFromCurrent) {
     if (fadeFromCurrent && !g_backdropCurBytes.empty()) {
-        g_backdropPrevBytes = g_backdropCurBytes;
+        g_backdropPrevBytes = g_backdropCurBytes; g_backdropPrevKey = g_backdropCurKey;
         g_backdropPrevTint = g_backdropCurTint;
         g_backdropPrevHasTint = g_backdropCurHasTint;
         SafeRelease(g_backdropPrevBmp);
     } else {
-        g_backdropPrevBytes.clear();
+        g_backdropPrevBytes.clear(); g_backdropPrevKey = ssc::ImageKey();
         g_backdropPrevHasTint = false;
         SafeRelease(g_backdropPrevBmp);
     }
-    g_backdropCurBytes.clear();
+    g_backdropCurBytes.clear(); g_backdropCurKey = ssc::ImageKey();
     g_backdropCurHasTint = false;
     SafeRelease(g_backdropCurBmp);
 }
@@ -1276,11 +1290,12 @@ ssc::ImageReference setRatings(const std::vector<RatingBadge>& ratings, bool fad
         }
         key+=std::to_string(badge.png.size())+":"+badge.png;
     }
-    g_ratingSets[key]=ratings; return std::make_shared<const std::string>(std::move(key));
+    auto image=std::make_shared<const std::string>(std::move(key));
+    g_ratingSets[keyOf(image)]=ratings; return image;
 }
 
 void endMediaFade() {
-    g_backdropPrevBytes.clear();
+    g_backdropPrevBytes.clear(); g_backdropPrevKey = ssc::ImageKey();
     g_backdropPrevHasTint = false;
     SafeRelease(g_backdropPrevBmp);
     g_ratingsPrev.clear();
@@ -1330,14 +1345,14 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
     if (frame) {
         // FrameState owns these bytes for this synchronous render. Avoid copying
         // every compressed image merely to retire resources on every paint.
-        std::set<std::string_view> visible, blurred, ratingSets;
-        for (const auto& layer:frame->ratings) ratingSets.insert(*layer.image);
+        std::set<ssc::ImageKey> visible, blurred, ratingSets;
+        for (const auto& layer:frame->ratings) ratingSets.insert(keyOf(layer.image));
         for (auto it=g_ratingSets.begin();it!=g_ratingSets.end();) {
             if (!ratingSets.count(it->first)) it=g_ratingSets.erase(it); else ++it;
         }
-        for (const auto& layer:frame->cover) visible.insert(*layer.image);
-        for (const auto& layer:frame->backdrop) visible.insert(*layer.image);
-        for (const auto& layer:frame->blurredCover) blurred.insert(*layer.image);
+        for (const auto& layer:frame->cover) visible.insert(keyOf(layer.image));
+        for (const auto& layer:frame->backdrop) visible.insert(keyOf(layer.image));
+        for (const auto& layer:frame->blurredCover) blurred.insert(keyOf(layer.image));
         for (auto it=g_frameBitmaps.begin();it!=g_frameBitmaps.end();) {
             if (!visible.count(it->first)) { SafeRelease(it->second); it=g_frameBitmaps.erase(it); } else ++it;
         }
@@ -1388,12 +1403,12 @@ bool render(HWND hwnd, float progress, Transition transition, int remainingSecon
         }
     }
 
-    if (!g_curBmp && !g_curBytes.empty())   g_curBmp = createBitmap(g_curBytes, true);
-    if (!g_prevBmp && !g_prevBytes.empty()) g_prevBmp = createBitmap(g_prevBytes, false);
+    if (!g_curBmp && !g_curBytes.empty())   g_curBmp = createBitmap(g_curBytes, g_curKey, true);
+    if (!g_prevBmp && !g_prevBytes.empty()) g_prevBmp = createBitmap(g_prevBytes, g_prevKey, false);
     if (!g_backdropCurBmp && !g_backdropCurBytes.empty())
-        g_backdropCurBmp = createBitmap(g_backdropCurBytes, false);
+        g_backdropCurBmp = createBitmap(g_backdropCurBytes, g_backdropCurKey, false);
     if (!g_backdropPrevBmp && !g_backdropPrevBytes.empty())
-        g_backdropPrevBmp = createBitmap(g_backdropPrevBytes, false);
+        g_backdropPrevBmp = createBitmap(g_backdropPrevBytes, g_backdropPrevKey, false);
 
     const DWORD logoNow = GetTickCount();
     const float logoAlpha = frame ? frame->logoOpacity : g_titleLogo.advance(logoNow, logoFadeMs);

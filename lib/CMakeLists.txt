@@ -143,6 +143,9 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     endif()
     doctest_discover_tests(coverfetch_tests)
 
+    add_executable(image_key_tests tests/test_image_key.cpp)
+    doctest_discover_tests(image_key_tests TEST_PREFIX "renderer: ")
+
     add_executable(http_keepalive_tests tests/test_http_keepalive.cpp)
     if(APPLE)
         # The Apple transport only admits ports 80/443; compile a loopback-enabled copy.

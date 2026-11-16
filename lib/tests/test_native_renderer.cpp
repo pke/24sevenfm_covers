@@ -283,8 +283,9 @@ TEST_CASE("native decoded cache distinguishes cropped logos and preserves alpha 
     auto stats = d2d::rendererDiagnostics();
     CHECK(stats.decodes == 2);
     CHECK(stats.cacheEntries == 2);
-    // Original 100x80 cover plus only the 49x39 nontransparent logo rectangle.
-    CHECK(stats.cacheBytes == 2 * png.size() + (100 * 80 + 49 * 39) * 4);
+    // Original 100x80 cover plus only the 49x39 nontransparent logo rectangle;
+    // entries are keyed by content identity and keep no copy of the encoded bytes.
+    CHECK(stats.cacheBytes == (100 * 80 + 49 * 39) * 4);
     d2d::resetRendererDiagnostics();
     d2d::resetTarget();
     fixture.paint(fixture.landscape);
@@ -335,14 +336,15 @@ TEST_CASE("native decoded cache bounds both memory and retained image count") {
         CHECK(d2d::rendererDiagnostics().decodes == 1);
     }
     SUBCASE("large images obey byte budget before reaching entry limit") {
-        for (unsigned i = 0; i < 3; ++i) {
+        // 4096x4096 BGRA is exactly 64 MiB: two fit the 128 MiB budget, a third evicts.
+        for (unsigned i = 0; i < 4; ++i) {
             const std::string bytes = artwork(4096, 4096, i);
             d2d::setBackdrop(bytes.data(), bytes.size(), false);
             fixture.paint(fixture.portrait);
             CHECK(d2d::rendererDiagnostics().cacheBytes <= 128 * 1024 * 1024);
         }
         CHECK(d2d::rendererDiagnostics().cacheEvictions == 2);
-        CHECK(d2d::rendererDiagnostics().cacheEntries == 1);
+        CHECK(d2d::rendererDiagnostics().cacheEntries == 2);
     }
 }
 
@@ -473,4 +475,55 @@ TEST_CASE("native infobox measures one final size throughout the track and title
         CHECK_FALSE(view.channel(ssc::VisualChannel::InfoWidth).active(now));
         CHECK_FALSE(view.channel(ssc::VisualChannel::InfoHeight).active(now));
     }
+}
+
+namespace {
+// Thread CPU cycles: excludes the present/VSync wait inside EndDraw.
+unsigned long long threadCycles() {
+    ULONG64 cycles = 0;
+    QueryThreadCycleTime(GetCurrentThread(), &cycles);
+    return cycles;
+}
+// A tiny decodable JPEG followed by `padding` bytes after its EOI marker: WIC
+// decodes only the image, so per-frame cost differences come from how the
+// renderer handles the encoded bytes, not from pixel work.
+ssc::ImageReference paddedArtwork(unsigned seed, size_t padding) {
+    std::string bytes = artwork(64, 64, seed);
+    bytes.append(padding, static_cast<char>(seed));
+    return std::make_shared<const std::string>(std::move(bytes));
+}
+unsigned long long settledFrameCycles(HWND window, const ssc::ImageReference& cover,
+                                      const ssc::ImageReference& hero, int frames) {
+    d2d::setCover(cover->data(), cover->size(), false);
+    d2d::setBackdrop(hero->data(), hero->size(), false);
+    ssc::FrameState frame;
+    frame.cover = {{cover, 1, 1, 1}};
+    frame.backdrop = {{hero, 1, 1, 1}};
+    frame.blurredCover = {{cover, 1, 1, 1}};
+    frame.coverOpacity = 1;
+    frame.coverRect = {20, 20, 200, 200};
+    const auto paint = [&] {
+        d2d::render(window, 1, d2d::Transition::Crossfade, -1, .08f, false, nullptr, 1,
+            L"Album", L"Artist", 1, false, 1, 1, 1, L"Album", L"Track", 0, nullptr, 0, &frame);
+    };
+    for (int i = 0; i < 5; ++i) paint(); // decode, upload and blur once
+    const auto begin = threadCycles();
+    for (int i = 0; i < frames; ++i) paint();
+    return (threadCycles() - begin) / frames;
+}
+}
+
+TEST_CASE("settled frames do not scale with the encoded size of their artwork") {
+    RendererFixture fixture;
+    const auto smallCover = paddedArtwork(1, 0), smallHero = paddedArtwork(2, 0);
+    const auto largeCover = paddedArtwork(3, 12u * 1024 * 1024), largeHero = paddedArtwork(4, 12u * 1024 * 1024);
+    const auto smallCost = settledFrameCycles(fixture.portrait, smallCover, smallHero, 30);
+    const auto largeCost = settledFrameCycles(fixture.portrait, largeCover, largeHero, 30);
+    CHECK(d2d::rendererDiagnostics().failedFrames == 0);
+    if (std::getenv("SSC_RENDER_BENCHMARK"))
+        std::printf("SETTLED cycles/frame: small=%llu large(2x12MiB)=%llu ratio=%.2f\n",
+            smallCost, largeCost, double(largeCost) / double(smallCost));
+    // Same pixels, same work: identical within noise. Content comparison of two
+    // 12 MiB images per frame costs tens of milliseconds.
+    CHECK(largeCost < smallCost * 2);
 }
