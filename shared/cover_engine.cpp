@@ -122,9 +122,20 @@ std::vector<d2d::RatingBadge> ratingBadges(const ssc::MediaResult& result,
     return ratingBadges(ssc::cachedRatings(result, cache));
 }
 
+// Several calls per heartbeat tick; a system round trip costs ~6 us. A changed
+// "Show animations in Windows" preference applies within half a second.
 bool clientAnimationsEnabled() {
-    BOOL enabled = TRUE;
-    return !SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) || enabled;
+    static std::atomic<DWORD> checkedAt{0};
+    static std::atomic<int> cached{-1}; // -1 unknown, 0 reduced motion, 1 animations on
+    const DWORD now = GetTickCount();
+    int value = cached.load(std::memory_order_relaxed);
+    if (value < 0 || now - checkedAt.load(std::memory_order_relaxed) >= 500) {
+        BOOL enabled = TRUE;
+        value = (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) || enabled) ? 1 : 0;
+        cached.store(value, std::memory_order_relaxed);
+        checkedAt.store(now, std::memory_order_relaxed);
+    }
+    return value != 0;
 }
 
 } // namespace

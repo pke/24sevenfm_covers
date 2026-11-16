@@ -1221,6 +1221,16 @@ TEST_CASE("native fanart hint fades, ignores queued and stale responses, and res
 }
 TEST_CASE("native backdrop selection survives orientation changes") { CoverEngineTestAccess().backdropOrientationSelection(); }
 
+TEST_CASE("the reduced-motion preference is not queried from the system on every call") {
+    clientAnimationsEnabled();
+    const auto begin = std::chrono::steady_clock::now();
+    bool any = false;
+    for (int i = 0; i < 100000; ++i) any = clientAnimationsEnabled() || any;
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    CHECK(ms < 20); // a SystemParametersInfoW round trip costs ~6 us, i.e. ~600 ms here
+    (void)any;
+}
+
 TEST_CASE("Windows heartbeat repaints only on change and idles between countdown seconds") {
     CoverEngineTestAccess test;
     test.settledHeartbeat();
