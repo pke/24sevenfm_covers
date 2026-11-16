@@ -527,3 +527,37 @@ TEST_CASE("settled frames do not scale with the encoded size of their artwork") 
     // 12 MiB images per frame costs tens of milliseconds.
     CHECK(largeCost < smallCost * 2);
 }
+
+TEST_CASE("settled frames reuse text formats, layouts and clip geometry") {
+    RendererFixture fixture;
+    const std::string cover = artwork(300, 300);
+    d2d::setCover(cover.data(), cover.size(), false);
+    d2d::RatingBadge badge; badge.country = L"DE"; badge.system = L"FSK"; badge.rating = L"12";
+    badge.label = L"FSK 12"; badge.descriptors = L"Violence";
+    d2d::setRatings(std::vector<d2d::RatingBadge>(1, badge), false);
+    for (HWND window : {fixture.portrait, fixture.landscape}) for (int layout : {0, 1}) {
+        d2d::resetTarget();
+        ssc::PresentationTime now = 0; ssc::PresentationController view([&] { return now; });
+        ssc::PresentationSettings settings; settings.poster = layout == 1; settings.countdown = true; settings.next = true;
+        view.settingsChanged(settings);
+        const auto token = view.trackChanged("a");
+        view.resolverCompleted(token, L"Album title", L"Composer", L"Album title", L"Main theme", true);
+        view.setArtwork(std::make_shared<const std::string>(cover));
+        view.remainingChanged(95);
+        ssc::ComingNextFrame next; next.album = L"Next album"; next.artist = L"Next composer"; next.opacity = 1;
+        const auto tick = [&] {
+            view.advance(); d2d::measurePresentation(window, view); const auto f = view.advance();
+            d2d::render(window, 1, d2d::Transition::Crossfade, f.countdown.seconds, .08f, false,
+                L"Loading cover...", layout, f.title.c_str(), f.artist.c_str(), 1, true, 1, 1, f.infoOpacity,
+                f.album.c_str(), f.track.c_str(), 0, &next, 1, &f);
+        };
+        for (int i = 0; i < 80; ++i) { now += 50; tick(); } // settle every transition
+        d2d::resetRendererDiagnostics();
+        for (int i = 0; i < 20; ++i) { now += 33; tick(); }
+        const auto stats = d2d::rendererDiagnostics();
+        CHECK(stats.failedFrames == 0);
+        CHECK(stats.textFormats == 0);
+        CHECK(stats.textLayouts == 0);
+        CHECK(stats.geometries == 0);
+    }
+}

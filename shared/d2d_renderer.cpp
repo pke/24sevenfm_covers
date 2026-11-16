@@ -56,6 +56,8 @@ struct DiagnosticTimer {
 #define SSC_TIME(name, field) ((void)0)
 #define SSC_COUNT(field) ((void)0)
 #endif
+// Counts an object creation through `owner` (test diagnostics only).
+#define SSC_COUNTED(field, owner) (SSC_COUNT(field), owner)
 
 template <class T> void SafeRelease(T*& p) { if (p) { p->Release(); p = nullptr; } }
 
@@ -360,55 +362,154 @@ ID2D1Bitmap* createBitmap(const std::string& bytes, ssc::ImageKey key, bool isCu
     return decodeBitmap(g_rt, bytes, isCurrent ? &g_curTint : nullptr, false, nullptr, key);
 }
 
+// --- DirectWrite cache -------------------------------------------------------
+// Formats and layouts are device-independent and immutable once built, so they
+// survive render-target recreation. A settled frame used to create ~17 formats and
+// ~15 layouts per heartbeat tick (paint + measurePresentation); now it creates none.
+struct TextStyle {
+    float size = 0;
+    DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL;
+    bool center = false, wrap = true, rtl = false;
+    TextStyle(float s, DWRITE_FONT_WEIGHT w, bool c = false, bool wr = true, bool r = false)
+        : size(s), weight(w), center(c), wrap(wr), rtl(r) {}
+    bool operator<(const TextStyle& o) const {
+        if (size != o.size) return size < o.size;
+        if (weight != o.weight) return weight < o.weight;
+        if (center != o.center) return center < o.center;
+        if (wrap != o.wrap) return wrap < o.wrap;
+        return rtl < o.rtl;
+    }
+};
+struct LayoutKey {
+    std::wstring text; TextStyle style; float width, height; bool trim;
+    bool operator<(const LayoutKey& o) const {
+        if (width != o.width) return width < o.width;
+        if (height != o.height) return height < o.height;
+        if (trim != o.trim) return trim < o.trim;
+        if (style < o.style) return true;
+        if (o.style < style) return false;
+        return text < o.text;
+    }
+};
+struct CachedLayout { IDWriteTextLayout* layout = nullptr; DWRITE_TEXT_METRICS metrics = {}; unsigned used = 0; };
+const size_t kLayoutCacheEntries = 128; // animated widths churn entries; bound them
+std::map<TextStyle, IDWriteTextFormat*> g_formats;
+std::map<LayoutKey, CachedLayout> g_layouts;
+unsigned g_layoutClock = 0;
+
+// Shared Segoe UI format. Borrowed; the cache owns it.
+IDWriteTextFormat* textFormat(const TextStyle& style) {
+    if (!g_dwrite) return nullptr;
+    auto& format = g_formats[style];
+    if (format) return format;
+    if (SUCCEEDED(SSC_COUNTED(textFormats, g_dwrite)->CreateTextFormat(L"Segoe UI", nullptr, style.weight,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, style.size, L"", &format))) {
+        if (style.center) format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (!style.wrap) format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        if (style.rtl) format->SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT);
+    }
+    return format;
+}
+
+// Shared layout with its metrics, keyed by everything that shapes it. Borrowed.
+const CachedLayout* textLayout(const wchar_t* text, size_t length, const TextStyle& style,
+                               float width, float height, bool trim = false) {
+    if (!text || !length) return nullptr;
+    LayoutKey key{std::wstring(text, length), style, width, height, trim};
+    const auto found = g_layouts.find(key);
+    if (found != g_layouts.end()) { found->second.used = ++g_layoutClock; return &found->second; }
+    IDWriteTextFormat* format = textFormat(style);
+    if (!format) return nullptr;
+    CachedLayout entry;
+    if (FAILED(SSC_COUNTED(textLayouts, g_dwrite)->CreateTextLayout(key.text.c_str(), (UINT32)key.text.size(),
+            format, width, height, &entry.layout)))
+        return nullptr;
+    if (trim) {
+        IDWriteInlineObject* ellipsis = nullptr;
+        if (SUCCEEDED(g_dwrite->CreateEllipsisTrimmingSign(entry.layout, &ellipsis))) {
+            const DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+            entry.layout->SetTrimming(&trimming, ellipsis);
+            SafeRelease(ellipsis);
+        }
+    }
+    entry.layout->GetMetrics(&entry.metrics);
+    entry.used = ++g_layoutClock;
+    if (g_layouts.size() >= kLayoutCacheEntries) {
+        auto oldest = g_layouts.begin();
+        for (auto it = g_layouts.begin(); it != g_layouts.end(); ++it)
+            if (it->second.used < oldest->second.used) oldest = it;
+        SafeRelease(oldest->second.layout);
+        g_layouts.erase(oldest);
+    }
+    return &(g_layouts[std::move(key)] = entry);
+}
+const CachedLayout* textLayout(const std::wstring& text, const TextStyle& style, float width, float height, bool trim = false) {
+    return textLayout(text.c_str(), text.size(), style, width, height, trim);
+}
+const CachedLayout* textLayout(const wchar_t* text, const TextStyle& style, float width, float height, bool trim = false) {
+    return textLayout(text, text ? (size_t)lstrlenW(text) : 0, style, width, height, trim);
+}
+
+void releaseTextCache() {
+    for (auto& entry : g_layouts) SafeRelease(entry.second.layout);
+    g_layouts.clear();
+    for (auto& entry : g_formats) SafeRelease(entry.second);
+    g_formats.clear();
+}
+
+// Rounded cover clips are device-independent too; a few sizes are live at once
+// (poster cover, fill-mode inset, outgoing layout during a transition).
+struct ClipGeometry { D2D1_ROUNDED_RECT shape; ID2D1RoundedRectangleGeometry* geometry; unsigned used; };
+std::vector<ClipGeometry> g_clips;
+unsigned g_clipClock = 0;
+ID2D1RoundedRectangleGeometry* roundedClip(const D2D1_RECT_F& rect, float radius) {
+    const D2D1_ROUNDED_RECT shape = D2D1::RoundedRect(rect, radius, radius);
+    for (auto& clip : g_clips)
+        if (!std::memcmp(&clip.shape, &shape, sizeof(shape))) { clip.used = ++g_clipClock; return clip.geometry; }
+    ClipGeometry clip = {shape, nullptr, ++g_clipClock};
+    if (!g_factory || FAILED(SSC_COUNTED(geometries, g_factory)->CreateRoundedRectangleGeometry(shape, &clip.geometry)))
+        return nullptr;
+    if (g_clips.size() >= 8) {
+        auto oldest = g_clips.begin();
+        for (auto it = g_clips.begin(); it != g_clips.end(); ++it) if (it->used < oldest->used) oldest = it;
+        SafeRelease(oldest->geometry);
+        g_clips.erase(oldest);
+    }
+    g_clips.push_back(clip);
+    return clip.geometry;
+}
+void releaseClips() {
+    for (auto& clip : g_clips) SafeRelease(clip.geometry);
+    g_clips.clear();
+}
+
 // Small status badge, bottom-right (e.g. "Loading cover...").
 void drawStatus(const wchar_t* text, float cw, float ch) {
     if (!text || !*text || !g_dwrite || !g_bgBrush || !g_fgBrush) return;
     float fontSize = ch / 26.0f;
     if (fontSize < 11.0f) fontSize = 11.0f;
-    IDWriteTextFormat* fmt = nullptr;
-    if (FAILED(g_dwrite->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                                          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
-                                          fontSize, L"", &fmt)))
-        return;
-    IDWriteTextLayout* layout = nullptr;
-    if (SUCCEEDED(g_dwrite->CreateTextLayout(text, (UINT32)lstrlenW(text), fmt, 10000, 10000, &layout))) {
-        DWRITE_TEXT_METRICS m = {}; layout->GetMetrics(&m);
+    if (const auto* cached = textLayout(text, TextStyle(fontSize, DWRITE_FONT_WEIGHT_NORMAL), 10000, 10000)) {
+        const DWRITE_TEXT_METRICS& m = cached->metrics;
         const float padX = fontSize * 0.5f, padY = fontSize * 0.25f;
         const float boxW = m.width + padX * 2, boxH = m.height + padY * 2;
         const float margin = fontSize * 0.4f;
         const float boxX = cw - boxW - margin;
         const float boxY = ch - boxH - margin; // bottom-right
         g_rt->FillRectangle(D2D1::RectF(boxX, boxY, boxX + boxW, boxY + boxH), g_bgBrush);
-        g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, boxY + padY), layout, g_fgBrush);
-        SafeRelease(layout);
+        g_rt->DrawTextLayout(D2D1::Point2F(boxX + padX, boxY + padY), cached->layout, g_fgBrush);
     }
-    SafeRelease(fmt);
 }
 
 // --- poster layout ----------------------------------------------------------
-
-// A centered Segoe UI text format. Caller releases.
-IDWriteTextFormat* makeFormat(float size, DWRITE_FONT_WEIGHT weight, bool center) {
-    IDWriteTextFormat* fmt = nullptr;
-    if (SUCCEEDED(g_dwrite->CreateTextFormat(L"Segoe UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
-                                             DWRITE_FONT_STRETCH_NORMAL, size, L"", &fmt)) &&
-        center) {
-        fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    }
-    return fmt;
-}
 
 void drawFanartHint(float cw, float ch, float dpi, float opacity) {
     if (opacity <= 0.0f || !g_dwrite || !g_bgBrush || !g_fgBrush) return;
     const wchar_t* text = L"fanart.tv key rejected\nCheck provider settings";
     const float margin = 11.2f * dpi, pad = 8.0f * dpi;
-    IDWriteTextFormat* format = makeFormat(12.0f * dpi, DWRITE_FONT_WEIGHT_NORMAL, false);
-    if (!format) return;
-    IDWriteTextLayout* layout = nullptr;
     const float width = (std::max)(1.0f, (std::min)(250.0f * dpi, cw * .45f - pad * 2));
-    if (SUCCEEDED(g_dwrite->CreateTextLayout(text, (UINT32)lstrlenW(text), format,
-            width, (std::max)(1.0f, ch - margin * 2 - pad * 2), &layout))) {
-        DWRITE_TEXT_METRICS metrics = {}; layout->GetMetrics(&metrics);
+    if (const auto* cached = textLayout(text, TextStyle(12.0f * dpi, DWRITE_FONT_WEIGHT_NORMAL),
+            width, (std::max)(1.0f, ch - margin * 2 - pad * 2))) {
+        const DWRITE_TEXT_METRICS& metrics = cached->metrics;
         const auto bgColor = g_bgBrush->GetColor(), fgColor = g_fgBrush->GetColor();
         const float bgOpacity = g_bgBrush->GetOpacity(), fgOpacity = g_fgBrush->GetOpacity();
         g_bgBrush->SetColor(D2D1::ColorF(0, 0, 0, .62f));
@@ -418,12 +519,10 @@ void drawFanartHint(float cw, float ch, float dpi, float opacity) {
         g_rt->FillRoundedRectangle(D2D1::RoundedRect(g_fanartHintHitRect, 8 * dpi, 8 * dpi), g_bgBrush);
         g_fgBrush->SetColor(D2D1::ColorF(1, .86f, .62f));
         g_fgBrush->SetOpacity(opacity);
-        g_rt->DrawTextLayout(D2D1::Point2F(margin + pad, margin + pad), layout, g_fgBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        g_rt->DrawTextLayout(D2D1::Point2F(margin + pad, margin + pad), cached->layout, g_fgBrush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
         g_bgBrush->SetColor(bgColor); g_bgBrush->SetOpacity(bgOpacity);
         g_fgBrush->SetColor(fgColor); g_fgBrush->SetOpacity(fgOpacity);
-        SafeRelease(layout);
     }
-    SafeRelease(format);
 }
 
 void drawComingNext(float cw, float ch, float dpi, float top, bool rtl,
@@ -442,37 +541,23 @@ void drawComingNext(float cw, float ch, float dpi, float top, bool rtl,
     IDWriteTextLayout* layouts[3] = {};
     float width = 0.0f, heights[3] = {};
     float textHeight = 0.0f;
+    const DWRITE_FONT_WEIGHT weights[] = {DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_WEIGHT_NORMAL};
     for (int i = 0; i < 3; ++i) {
-        if (lines[i].empty()) continue;
-        IDWriteTextFormat* format = makeFormat(sizes[i],
-            i == 0 ? DWRITE_FONT_WEIGHT_BOLD : i == 1 ? DWRITE_FONT_WEIGHT_SEMI_BOLD
-                                                   : DWRITE_FONT_WEIGHT_NORMAL, false);
-        if (!format) continue;
-        format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-        format->SetReadingDirection(rtl ? DWRITE_READING_DIRECTION_RIGHT_TO_LEFT : DWRITE_READING_DIRECTION_LEFT_TO_RIGHT);
-        if (SUCCEEDED(g_dwrite->CreateTextLayout(lines[i].c_str(), (UINT32)lines[i].size(),
-                format, 100000, 100000, &layouts[i]))) {
-            DWRITE_TEXT_METRICS metrics = {};
-            layouts[i]->GetMetrics(&metrics);
-            width = (std::max)(width, metrics.widthIncludingTrailingWhitespace);
-            heights[i] = std::ceil(metrics.height) + (i == 0 ? 3.0f * dpi : 1.3f * dpi);
+        // Natural (unwrapped) size first; the drawn layout is the trimmed variant below.
+        if (const auto* natural = textLayout(lines[i], TextStyle(sizes[i], weights[i], false, false, rtl), 100000, 100000)) {
+            width = (std::max)(width, natural->metrics.widthIncludingTrailingWhitespace);
+            heights[i] = std::ceil(natural->metrics.height) + (i == 0 ? 3.0f * dpi : 1.3f * dpi);
             textHeight += heights[i];
         }
-        SafeRelease(format);
     }
     const auto card = ssc::nextCardSize(cw, typography, width, textHeight,
         g_nextBmp ? frame->coverOpacity : 0, dpi);
     const float cardWidth = g_frame ? g_frame->nextRect.width : card.width, height = g_frame ? g_frame->nextRect.height : card.height;
-    for (auto* layout : layouts) {
-        if (!layout) continue;
-        layout->SetMaxWidth(g_frame ? (std::max)(1.f,cardWidth-padX*2-coverColumn) : card.textWidth);
-        IDWriteInlineObject* ellipsis = nullptr;
-        if (SUCCEEDED(g_dwrite->CreateEllipsisTrimmingSign(layout, &ellipsis))) {
-            const DWRITE_TRIMMING trim = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-            layout->SetTrimming(&trim, ellipsis);
-            SafeRelease(ellipsis);
-        }
-    }
+    const float textWidth = g_frame ? (std::max)(1.f,cardWidth-padX*2-coverColumn) : card.textWidth;
+    for (int i = 0; i < 3; ++i)
+        if (heights[i] > 0)
+            if (const auto* trimmed = textLayout(lines[i], TextStyle(sizes[i], weights[i], false, false, rtl), textWidth, 100000, true))
+                layouts[i] = trimmed->layout;
     const float restingLeft = ssc::comingNextLeft(cw, cardWidth, margin, rtl);
     // Match .coming-next: translateX(calc(100% + .7rem)) -> translateX(0).
     // The render target clips the outgoing card at the right stage edge.
@@ -516,7 +601,6 @@ void drawComingNext(float cw, float ch, float dpi, float top, bool rtl,
         g_rt->DrawTextLayout(D2D1::Point2F(left + padX + (rtl ? 0 : coverColumn), lineY), layouts[i], g_fgBrush,
                              D2D1_DRAW_TEXT_OPTIONS_NONE);
         lineY += heights[i];
-        SafeRelease(layouts[i]);
     }
     g_bgBrush->SetColor(bgColor); g_bgBrush->SetOpacity(bgOpacity);
     g_fgBrush->SetColor(fgColor); g_fgBrush->SetOpacity(fgOpacity);
@@ -698,8 +782,7 @@ void drawRatingSet(const std::vector<RatingBadge>& ratings, float cw, float ch,
     if (ratings.empty() || opacity <= 0.0f || !g_dwrite || !g_fgBrush || !g_bgBrush) return;
     const float logoHeight = ssc::ratingLogoHeight(ch, dpiScale);
     const float fontSize = logoHeight / 2.35f;
-    IDWriteTextFormat* fmt = makeFormat(fontSize, DWRITE_FONT_WEIGHT_SEMI_BOLD, true);
-    if (!fmt) return;
+    const TextStyle style(fontSize, DWRITE_FONT_WEIGHT_SEMI_BOLD, true);
     g_fgBrush->SetOpacity(opacity);
     g_bgBrush->SetOpacity(0.76f * opacity);
     const float margin = fontSize * 0.45f, padX = fontSize * 0.48f, padY = fontSize * 0.26f;
@@ -719,11 +802,9 @@ void drawRatingSet(const std::vector<RatingBadge>& ratings, float cw, float ch,
         std::wstring text = ratings[i].label.empty() ? ratings[i].rating : ratings[i].label;
         if (logo) text = ratings[i].descriptors;
         else if (!ratings[i].descriptors.empty()) text += L" " + ratings[i].descriptors;
-        IDWriteTextLayout* layout = nullptr;
-        DWRITE_TEXT_METRICS metrics = {};
-        if (!text.empty() && SUCCEEDED(g_dwrite->CreateTextLayout(
-                text.c_str(), (UINT32)text.size(), fmt, cw, ch, &layout)))
-            layout->GetMetrics(&metrics);
+        const auto* cached = textLayout(text, style, cw, ch);
+        IDWriteTextLayout* layout = cached ? cached->layout : nullptr;
+        const DWRITE_TEXT_METRICS metrics = cached ? cached->metrics : DWRITE_TEXT_METRICS{};
 
         float logoW = 0.0f, logoH = 0.0f, logoSlot = 0.0f;
         if (logo) {
@@ -755,12 +836,10 @@ void drawRatingSet(const std::vector<RatingBadge>& ratings, float cw, float ch,
                 fontSize * 0.22f, fontSize * 0.22f), g_bgBrush);
             g_rt->DrawTextLayout(D2D1::Point2F(textX + padX, y + padY), layout, g_fgBrush);
         }
-        SafeRelease(layout);
         cursor = x - margin * 0.7f;
     }
     g_fgBrush->SetOpacity(1.0f);
     g_bgBrush->SetOpacity(1.0f);
-    SafeRelease(fmt);
 }
 
 void drawRatings(float cw, float ch, float progress, float opacity, float dpiScale) {
@@ -781,10 +860,11 @@ void drawRatings(float cw, float ch, float progress, float opacity, float dpiSca
 
 float windowDpiScale(HWND hwnd) {
     typedef UINT (WINAPI *GetDpiForWindowFn)(HWND);
-    GetDpiForWindowFn getDpiForWindow = nullptr;
-    if (HMODULE user32 = GetModuleHandleA("user32.dll"))
-        getDpiForWindow = reinterpret_cast<GetDpiForWindowFn>(
-            GetProcAddress(user32, "GetDpiForWindow"));
+    // Resolved once: this runs several times per frame (Windows 10 1607+ export).
+    static const GetDpiForWindowFn getDpiForWindow = [] {
+        HMODULE user32 = GetModuleHandleA("user32.dll");
+        return user32 ? reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(user32, "GetDpiForWindow")) : nullptr;
+    }();
     if (getDpiForWindow) {
         const UINT dpi = getDpiForWindow(hwnd);
         if (dpi) return static_cast<float>(dpi) / 96.0f;
@@ -802,18 +882,15 @@ float windowDpiScale(HWND hwnd) {
 void drawCover(const D2D1_RECT_F& dest, Transition transition, float progress, float cornerRadius) {
     SSC_COUNT(coverDraws);
     bool pushed = false;
-    ID2D1RoundedRectangleGeometry* geo = nullptr;
-    if (cornerRadius > 0.0f && g_layer && g_factory &&
-        SUCCEEDED(g_factory->CreateRoundedRectangleGeometry(
-            D2D1::RoundedRect(dest, cornerRadius, cornerRadius), &geo))) {
-        g_rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geo), g_layer);
-        pushed = true;
-    }
+    if (cornerRadius > 0.0f && g_layer)
+        if (ID2D1RoundedRectangleGeometry* geo = roundedClip(dest, cornerRadius)) {
+            g_rt->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geo), g_layer);
+            pushed = true;
+        }
     if (g_frame) drawImageLayers(g_frame->cover, dest, false, g_frame->coverOpacity);
     else drawTransition(g_rt, transition, g_prevBmp, g_curBmp,
                    dest.left, dest.top, dest.right - dest.left, dest.bottom - dest.top, progress);
     if (pushed) g_rt->PopLayer();
-    SafeRelease(geo);
 }
 
 // Poster layout: a heavily blurred background, the sharp cover, then the info box
@@ -857,25 +934,20 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     const D2D1_SIZE_F bitmapSize = showLogo ? g_titleLogoBmp->GetSize() : D2D1::SizeF(1, 1);
     const ssc::TitleLogoSize logoSize = ssc::titleLogoSize(bitmapSize.width, bitmapSize.height,
         cw, ch, titleSize, dpiScale);
-    IDWriteTextFormat* tf = g_dwrite ? makeFormat(titleSize, DWRITE_FONT_WEIGHT_SEMI_BOLD, true) : nullptr;
-    IDWriteTextFormat* cf = g_dwrite ? makeFormat(titleSize * .88f, DWRITE_FONT_WEIGHT_MEDIUM, true) : nullptr;
-    IDWriteTextFormat* af = g_dwrite ? makeFormat(artistSize, DWRITE_FONT_WEIGHT_NORMAL, true) : nullptr;
+    const TextStyle titleStyle(titleSize, DWRITE_FONT_WEIGHT_SEMI_BOLD, true);
+    const TextStyle trackStyle(titleSize * .88f, DWRITE_FONT_WEIGHT_MEDIUM, true);
+    const TextStyle artistStyle(artistSize, DWRITE_FONT_WEIGHT_NORMAL, true);
+    // Measured at the provisional width; drawn below at the card's final width.
+    const CachedLayout* measuredTitle = showInfo ? textLayout(albumText, titleStyle, textW, 10000) : nullptr;
+    const CachedLayout* measuredTrack = showInfo ? textLayout(track, trackStyle, textW, 10000) : nullptr;
+    const CachedLayout* measuredArtist = showInfo ? textLayout(artist, artistStyle, textW, 10000) : nullptr;
     IDWriteTextLayout* tl = nullptr; float titleH = 0;
     IDWriteTextLayout* al = nullptr; float artistH = 0;
     IDWriteTextLayout* cl = nullptr; float trackH = 0;
     float albumW = 0, trackW = 0, artistW = 0;
-    if (showInfo && tf &&
-        SUCCEEDED(g_dwrite->CreateTextLayout(albumText, (UINT32)lstrlenW(albumText), tf, textW, 10000, &tl))) {
-        DWRITE_TEXT_METRICS mt = {}; tl->GetMetrics(&mt); titleH = mt.height; albumW = mt.width;
-    }
-    if (showInfo && cf && track && *track &&
-        SUCCEEDED(g_dwrite->CreateTextLayout(track, (UINT32)lstrlenW(track), cf, textW, 10000, &cl))) {
-        DWRITE_TEXT_METRICS mt = {}; cl->GetMetrics(&mt); trackH = mt.height + titleSize * .12f; trackW = mt.width;
-    }
-    if (showInfo && af && artist && *artist &&
-        SUCCEEDED(g_dwrite->CreateTextLayout(artist, (UINT32)lstrlenW(artist), af, textW, 10000, &al))) {
-        DWRITE_TEXT_METRICS ma = {}; al->GetMetrics(&ma); artistH = ma.height; artistW = ma.width;
-    }
+    if (measuredTitle) { titleH = measuredTitle->metrics.height; albumW = measuredTitle->metrics.width; }
+    if (measuredTrack) { trackH = measuredTrack->metrics.height + titleSize * .12f; trackW = measuredTrack->metrics.width; }
+    if (measuredArtist) { artistH = measuredArtist->metrics.height; artistW = measuredArtist->metrics.width; }
     const float lineGap = artistSize * 0.35f;
     float cdFont = baseSide * overlayFontFrac;
     if (cdFont < 12.0f) cdFont = 12.0f;
@@ -941,9 +1013,9 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
     // measurement above changes during the fade, while FrameState already owns
     // the complete card width; mixing them makes the text slide sideways.
     const float fittedTextW = boxW > 2 * padX ? boxW - 2 * padX : 1.0f;
-    if (tl) tl->SetMaxWidth(fittedTextW);
-    if (cl) cl->SetMaxWidth(fittedTextW);
-    if (al) al->SetMaxWidth(fittedTextW);
+    if (measuredTitle) if (const auto* fitted = textLayout(albumText, titleStyle, fittedTextW, 10000)) tl = fitted->layout;
+    if (measuredTrack) if (const auto* fitted = textLayout(track, trackStyle, fittedTextW, 10000)) cl = fitted->layout;
+    if (measuredArtist) if (const auto* fitted = textLayout(artist, artistStyle, fittedTextW, 10000)) al = fitted->layout;
 #ifdef SSC_RENDERER_DIAGNOSTICS
     g_diagnostics.infoTitleCenter = tl ? boxX+padX+tl->GetMaxWidth()*.5f : 0;
     g_diagnostics.infoArtistCenter = al ? boxX+padX+al->GetMaxWidth()*.5f : 0;
@@ -1003,7 +1075,6 @@ bool renderPoster(float cw, float ch, Transition transition, float progress,
         g_fgBrush->SetOpacity(1.0f);
         g_fgBrush->SetColor(D2D1::ColorF(1, 1, 1, 1));
     }
-    SafeRelease(tl); SafeRelease(al); SafeRelease(cl); SafeRelease(tf); SafeRelease(af); SafeRelease(cf);
 
     // Bottom row of the box: "Loading..." while fetching, else the live countdown -
     // the SAME rolling widget the fill overlay uses, translated into the box (no
@@ -1071,12 +1142,8 @@ void measurePresentation(HWND hwnd, ssc::PresentationController& presentation) {
     const auto& frame=presentation.frame(); const auto font=ssc::posterTypography(w,h);
     auto measure=[&](const std::wstring& text,float size,DWRITE_FONT_WEIGHT weight,float width,bool wrap) {
         DWRITE_TEXT_METRICS metrics{};
-        IDWriteTextFormat* format=makeFormat(size,weight,true); IDWriteTextLayout* layout=nullptr;
-        if (format) {
-            format->SetWordWrapping(wrap?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP);
-            if (!text.empty() && SUCCEEDED(g_dwrite->CreateTextLayout(text.c_str(),(UINT32)text.size(),format,width,10000,&layout))) layout->GetMetrics(&metrics);
-        }
-        SafeRelease(layout); SafeRelease(format); return metrics;
+        if (const auto* cached=textLayout(text,TextStyle(size,weight,true,wrap),width,10000)) metrics=cached->metrics;
+        return metrics;
     };
     const auto& album=frame.album.empty()?frame.title:frame.album;
     const float maxWidth=(std::max)(1.f,w*.86f-font.padX*2);
@@ -1198,6 +1265,8 @@ void shutdown() {
     g_backdropCurHasTint = g_backdropPrevHasTint = false;
     g_ratingsCur.clear();
     g_ratingsPrev.clear();
+    releaseTextCache();
+    releaseClips();
     SafeRelease(g_dwrite);
     SafeRelease(g_wic);
     SafeRelease(g_factory);
