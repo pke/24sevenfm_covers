@@ -64,6 +64,20 @@ static constexpr NSUInteger kResponseLimit = 16u * 1024u * 1024u;
 }
 @end
 
+// One process-wide session pools keep-alive connections and TLS sessions; a
+// session per request paid a fresh TCP + TLS handshake for every request.
+// Per-request state lives in a task delegate (NSURLSessionTask.delegate, macOS 12+).
+static NSURLSession* sharedSession() {
+    static NSURLSession* session = [] {
+        NSURLSessionConfiguration* config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
+        config.HTTPCookieStorage = nil;
+        config.URLCredentialStorage = nil;
+        config.URLCache = nil;
+        return [NSURLSession sessionWithConfiguration:config];
+    }();
+    return session;
+}
+
 namespace ssc {
 HttpResponse httpRequestImpl(const std::string& host, unsigned short port, const std::string& path,
     const std::string& method, const std::string& body, const std::string& contentType,
@@ -71,7 +85,12 @@ HttpResponse httpRequestImpl(const std::string& host, unsigned short port, const
     @autoreleasepool {
         HttpResponse failure;
         if (cancel && cancel->load()) { failure.error = "Cancelled"; return failure; }
-        if ((port != 443 && port != 80) || host.empty() || path.empty() || path[0] != '/') {
+#if defined(SSC_HTTP_LOOPBACK_TESTS) // test target only: fixture servers use ephemeral loopback ports
+        const bool allowedPort = port == 443 || port == 80 || host == "127.0.0.1";
+#else
+        const bool allowedPort = port == 443 || port == 80;
+#endif
+        if (!allowedPort || host.empty() || path.empty() || path[0] != '/') {
             failure.error = "Invalid HTTP destination"; return failure;
         }
         NSString* address = [NSString stringWithFormat:@"%s://%s:%u%s", port == 443 ? "https" : "http",
@@ -87,24 +106,19 @@ HttpResponse httpRequestImpl(const std::string& host, unsigned short port, const
         [request setValue:@"24seven.fm-covers/1.0 (macOS; Apple)" forHTTPHeaderField:@"User-Agent"];
         if (!body.empty()) request.HTTPBody = [NSData dataWithBytes:body.data() length:body.size()];
         if (!contentType.empty()) [request setValue:[NSString stringWithUTF8String:contentType.c_str()] forHTTPHeaderField:@"Content-Type"];
-        NSURLSessionConfiguration* config = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-        config.timeoutIntervalForResource = seconds;
-        config.HTTPCookieStorage = nil;
-        config.URLCredentialStorage = nil;
         SSCHttpDelegate* delegate = [SSCHttpDelegate new];
-        NSURLSession* session = [NSURLSession sessionWithConfiguration:config delegate:delegate delegateQueue:nil];
-        NSURLSessionDataTask* task = [session dataTaskWithRequest:request];
+        NSURLSessionDataTask* task = [sharedSession() dataTaskWithRequest:request];
+        task.delegate = delegate; // receives this task's data/redirect/completion callbacks
         [task resume];
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
         while (dispatch_semaphore_wait(delegate.finished, dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC))) {
             if ((cancel && cancel->load()) || std::chrono::steady_clock::now() >= deadline) {
-                [session invalidateAndCancel];
+                [task cancel];
                 // Delegate owns its state until completion; no stack addresses escape.
                 failure.error = cancel && cancel->load() ? "Cancelled" : "Request timed out";
                 return failure;
             }
         }
-        [session finishTasksAndInvalidate];
         return delegate->result;
     }
 }

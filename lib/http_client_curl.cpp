@@ -42,6 +42,27 @@ size_t header(char* data, size_t size, size_t count, void* opaque) {
     }
     return size * count;
 }
+// One process-wide share: easy handles stay per request (thread-safe, isolated
+// options), but they reuse pooled keep-alive connections, DNS answers and TLS
+// sessions instead of paying a TCP + TLS handshake for every request.
+std::mutex shareLocks[CURL_LOCK_DATA_LAST];
+void lockShare(CURL*, curl_lock_data data, curl_lock_access, void*) { shareLocks[data].lock(); }
+void unlockShare(CURL*, curl_lock_data data, void*) { shareLocks[data].unlock(); }
+CURLSH* sharedState() {
+    static CURLSH* const share = [] {
+        CURLSH* created = curl_share_init();
+        if (!created) return created;
+        curl_share_setopt(created, CURLSHOPT_LOCKFUNC, lockShare);
+        curl_share_setopt(created, CURLSHOPT_UNLOCKFUNC, unlockShare);
+        curl_share_setopt(created, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+        curl_share_setopt(created, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+#if LIBCURL_VERSION_NUM >= 0x073900 // 7.57: shared connection cache
+        curl_share_setopt(created, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+#endif
+        return created; // intentionally never freed: process lifetime, no unload-time cleanup
+    }();
+    return share;
+}
 }
 HttpResponse httpRequestImpl(const std::string& host, unsigned short port, const std::string& path,
     const std::string& method, const std::string& body, const std::string& type,
@@ -56,6 +77,7 @@ HttpResponse httpRequestImpl(const std::string& host, unsigned short port, const
     CURL* curl = init == CURLE_OK ? curl_easy_init() : nullptr;
     if (!curl) { t.response.error = "libcurl initialization failed"; return t.response; }
     const std::string url = std::string(port == 443 ? "https://" : "http://") + host + ":" + std::to_string(port) + path;
+    if (CURLSH* share = sharedState()) curl_easy_setopt(curl, CURLOPT_SHARE, share);
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L); // trust/redirect policy belongs to the caller

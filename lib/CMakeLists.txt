@@ -143,6 +143,20 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     endif()
     doctest_discover_tests(coverfetch_tests)
 
+    add_executable(http_keepalive_tests tests/test_http_keepalive.cpp)
+    if(APPLE)
+        # The Apple transport only admits ports 80/443; compile a loopback-enabled copy.
+        # (-fobjc-arc is a directory-scoped source property set above.)
+        target_sources(http_keepalive_tests PRIVATE http_client.cpp http_client_apple.mm
+            diagnostics.cpp mini_json.cpp json_view.cpp)
+        target_compile_definitions(http_keepalive_tests PRIVATE SSC_HTTP_LOOPBACK_TESTS=1)
+        target_include_directories(http_keepalive_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(http_keepalive_tests PRIVATE "-framework Foundation" Threads::Threads)
+    else()
+        target_link_libraries(http_keepalive_tests PRIVATE coverfetch)
+    endif()
+    doctest_discover_tests(http_keepalive_tests TEST_PREFIX "http: ")
+
     add_executable(json_view_tests tests/test_json_view.cpp json_view.cpp mini_json.cpp)
     target_include_directories(json_view_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     doctest_discover_tests(json_view_tests)
