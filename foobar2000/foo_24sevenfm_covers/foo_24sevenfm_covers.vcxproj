@@ -48,6 +48,15 @@
       <WarningLevel>Level3</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <FloatingPointModel>Fast</FloatingPointModel>
+      <!-- Size over speed for the component's own objects (the SDK static libs build
+           with their own projects): /O1 /Os /Gy /GF /Gw, like the desktop viewer and
+           the Winamp plugin build the identical shared code. The MSBuild default here
+           was /O2 with none of the size flags. -->
+      <Optimization>MinSpace</Optimization>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <StringPooling>true</StringPooling>
+      <AdditionalOptions>/Gw %(AdditionalOptions)</AdditionalOptions>
       <AdditionalIncludeDirectories>..\sdk\foobar2000;..\sdk;..\wtl;..\..\shared;..\..\winamp;..\..\lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NDEBUG;WIN32;_WINDOWS;_WINDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
@@ -56,6 +65,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <GenerateMapFile>true</GenerateMapFile>
       <AdditionalDependencies>..\sdk\foobar2000\shared\shared-$(Platform).lib;d2d1.lib;windowscodecs.lib;dwrite.lib;ole32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>

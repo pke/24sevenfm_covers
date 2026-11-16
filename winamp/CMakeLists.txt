@@ -10,6 +10,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ucrtbase dependency) and optimize for size.
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>") # /MT (/MTd for Debug)
+    # CMake's default Release flags carry /O2 (optimize for SPEED); appending /Os
+    # below only modulates whatever /O level is active, so the DLL was still built
+    # for speed. Replace it with /O1 (optimize for size) - the desktop viewer builds
+    # the identical shared code with /O1 /Os already.
+    string(REPLACE "/O2" "/O1" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
     add_compile_options(
         $<$<CONFIG:Release>:/Os>   # favour size over speed
         $<$<CONFIG:Release>:/GL>   # whole-program optimization
@@ -22,6 +27,7 @@ if(MSVC)
         $<$<CONFIG:Release>:/OPT:REF>       # strip unreferenced functions/data
         $<$<CONFIG:Release>:/OPT:ICF>       # fold identical COMDATs
         $<$<CONFIG:Release>:/INCREMENTAL:NO>
+        $<$<CONFIG:Release>:/MAP>           # linker map, so size changes stay verifiable
     )
 endif()
 
