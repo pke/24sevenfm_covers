@@ -42,6 +42,7 @@ struct RendererDiagnostics {
 };
 RendererDiagnostics rendererDiagnostics();
 void resetRendererDiagnostics();
+std::vector<unsigned char> blurPixelsForTesting(); // current cover's finished poster blur (240x240 PBGRA)
 #endif
 
 struct RatingBadge {

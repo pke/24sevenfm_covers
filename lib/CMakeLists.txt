@@ -143,6 +143,9 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     endif()
     doctest_discover_tests(coverfetch_tests)
 
+    add_executable(blur_math_tests tests/test_blur_math.cpp)
+    doctest_discover_tests(blur_math_tests TEST_PREFIX "renderer: ")
+
     add_executable(repaint_policy_tests tests/test_repaint_policy.cpp)
     doctest_discover_tests(repaint_policy_tests TEST_PREFIX "renderer: ")
 

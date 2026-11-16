@@ -7,6 +7,12 @@
 #include "image_probe.h"
 #include <thread>
 #include <wincodec.h>
+#include <d2d1_1.h>
+#include <d2d1_1helper.h>
+#include <d2d1effects.h>
+#include <d3d11.h>
+#include <dxgi.h>
+#include <cstring>
 #include <wrl/client.h>
 #include <chrono>
 #include <cstdio>
@@ -586,4 +592,97 @@ TEST_CASE("artwork validated on a worker thread is not decoded again while paint
     d2d::setCover(other.data(), other.size(), false);
     fixture.paint(fixture.landscape);
     CHECK(d2d::rendererDiagnostics().decodes == 1);
+}
+
+namespace {
+// The poster blur as originally generated: the full-resolution cover through
+// D2D's Gaussian blur (sigma 24) under a scale transform to 240 x 240.
+std::vector<BYTE> referencePosterBlur(const std::string& encoded) {
+    ComPtr<IWICImagingFactory> wic;
+    REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf()))));
+    ComPtr<IWICStream> stream; REQUIRE(SUCCEEDED(wic->CreateStream(&stream)));
+    REQUIRE(SUCCEEDED(stream->InitializeFromMemory((BYTE*)encoded.data(), (DWORD)encoded.size())));
+    ComPtr<IWICBitmapDecoder> decoder; REQUIRE(SUCCEEDED(wic->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder)));
+    ComPtr<IWICBitmapFrameDecode> frame; REQUIRE(SUCCEEDED(decoder->GetFrame(0, &frame)));
+    ComPtr<IWICFormatConverter> converter; REQUIRE(SUCCEEDED(wic->CreateFormatConverter(&converter)));
+    REQUIRE(SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeMedianCut)));
+    UINT w = 0, h = 0; converter->GetSize(&w, &h);
+    std::vector<BYTE> pixels(size_t(w) * h * 4);
+    REQUIRE(SUCCEEDED(converter->CopyPixels(nullptr, w * 4, UINT(pixels.size()), pixels.data())));
+    ComPtr<ID3D11Device> d3d;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr)))
+        REQUIRE(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr)));
+    ComPtr<IDXGIDevice> dxgi; REQUIRE(SUCCEEDED(d3d.As(&dxgi)));
+    ComPtr<ID2D1Factory1> factory; REQUIRE(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())));
+    ComPtr<ID2D1Device> device; REQUIRE(SUCCEEDED(factory->CreateDevice(dxgi.Get(), &device)));
+    ComPtr<ID2D1DeviceContext> dc; REQUIRE(SUCCEEDED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dc)));
+    const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+    ComPtr<ID2D1Bitmap1> source; REQUIRE(SUCCEEDED(dc->CreateBitmap(D2D1::SizeU(w, h), pixels.data(), w * 4, D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE, format), &source)));
+    ComPtr<ID2D1Effect> blur;
+    static const GUID gaussian = { 0x1feb6d69, 0x2fe6, 0x4ac9, { 0x8c, 0x58, 0x1d, 0x7f, 0x93, 0xe7, 0xa6, 0xa5 } };
+    REQUIRE(SUCCEEDED(dc->CreateEffect(gaussian, &blur)));
+    blur->SetInput(0, source.Get());
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, 24.0f);
+    blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
+    const UINT S = 240;
+    ComPtr<ID2D1Bitmap1> target; REQUIRE(SUCCEEDED(dc->CreateBitmap(D2D1::SizeU(S, S), nullptr, 0, D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format), &target)));
+    dc->SetTarget(target.Get()); dc->BeginDraw(); dc->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+    dc->SetTransform(D2D1::Matrix3x2F::Scale(float(S) / w, float(S) / h));
+    dc->DrawImage(blur.Get(), D2D1_INTERPOLATION_MODE_LINEAR);
+    REQUIRE(SUCCEEDED(dc->EndDraw()));
+    ComPtr<ID2D1Bitmap1> cpu; REQUIRE(SUCCEEDED(dc->CreateBitmap(D2D1::SizeU(S, S), nullptr, 0, D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format), &cpu)));
+    D2D1_POINT_2U origin = {0, 0}; D2D1_RECT_U all = {0, 0, S, S};
+    REQUIRE(SUCCEEDED(cpu->CopyFromBitmap(&origin, target.Get(), &all)));
+    D2D1_MAPPED_RECT mapped = {}; REQUIRE(SUCCEEDED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped)));
+    std::vector<BYTE> out(size_t(S) * S * 4);
+    for (UINT y = 0; y < S; ++y) std::memcpy(out.data() + size_t(y) * S * 4, mapped.bits + size_t(y) * mapped.pitch, S * 4);
+    cpu->Unmap();
+    return out;
+}
+// Photo-like test cover: soft structure plus fine detail, so the blur matters.
+std::string photoCover(UINT size, unsigned seed) {
+    std::string bytes = artwork(size, size, seed);
+    return bytes;
+}
+double meanAbsoluteDifference(const std::vector<BYTE>& a, const std::vector<BYTE>& b) {
+    REQUIRE(a.size() == b.size());
+    double total = 0;
+    for (size_t i = 0; i < a.size(); ++i) total += std::abs(int(a[i]) - int(b[i]));
+    return total / double(a.size());
+}
+}
+
+TEST_CASE("poster blur keeps its look when generated from a pre-scaled cover") {
+    RendererFixture fixture;
+    for (UINT size : {600u, 1200u, 3000u}) {
+        const std::string cover = photoCover(size, size);
+        d2d::setCover(cover.data(), cover.size(), false);
+        fixture.paint(fixture.portrait);
+        const auto blurred = d2d::blurPixelsForTesting();
+        REQUIRE(blurred.size() == size_t(240) * 240 * 4);
+        const double difference = meanAbsoluteDifference(blurred, referencePosterBlur(cover));
+        if (std::getenv("SSC_RENDER_BENCHMARK")) std::printf("BLUR parity %ux%u: mean |diff| = %.3f\n", size, size, difference);
+        CHECK(difference < 1.5); // out of 255, averaged over all channels
+    }
+}
+
+TEST_CASE("poster blur generation does not scale with the cover resolution") {
+    RendererFixture fixture;
+    const auto blurMs = [&](UINT size) {
+        double total = 0;
+        for (unsigned i = 0; i < 3; ++i) {
+            const std::string cover = artwork(size, size, 20 + i + size);
+            std::thread([&] { ssc::decodableImage(cover); }).join(); // decode is the worker's job
+            d2d::setCover(cover.data(), cover.size(), false);
+            d2d::resetRendererDiagnostics();
+            fixture.paint(fixture.portrait);
+            total += d2d::rendererDiagnostics().blurMs;
+        }
+        return total / 3;
+    };
+    blurMs(256); // create the offscreen blur device outside the measurement
+    const double smallMs = blurMs(512), largeMs = blurMs(4096);
+    if (std::getenv("SSC_RENDER_BENCHMARK")) std::printf("BLUR generation: 512px %.2f ms, 4096px %.2f ms\n", smallMs, largeMs);
+    // 64x the pixels: the old full-resolution path took ~37x as long.
+    CHECK(largeMs < smallMs * 6);
 }

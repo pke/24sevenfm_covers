@@ -8,6 +8,7 @@
 #include "presentation_style.h"
 #include "image_key.h"      // content identity hashed once per image
 #include "decoded_pixels.h" // pixels already decoded by worker-thread validation
+#include "blur_math.h"      // poster blur pre-scale + equivalent sigma
 
 #include <d2d1.h>
 #include <d2d1_1.h>       // ID2D1Device/DeviceContext + effects (real Gaussian blur)
@@ -82,7 +83,7 @@ ID3D11Device*        g_blurD3D = nullptr;
 ID2D1Device*         g_blurDevice = nullptr;
 ID2D1DeviceContext*  g_blurCtx = nullptr;
 ID2D1Effect*         g_blurEffect = nullptr;
-int                  g_posterBlur = 24; // Gaussian stddev at the blur working res (INI "posterBlur")
+int                  g_posterBlur = 24; // Gaussian stddev in source-cover pixels (INI "posterBlur"), see blur_math.h
 int                  g_coverRadius = 45; // poster cover corner radius, per mille of its side (INI "borderRadius")
 
 // Per-window device-dependent resources (recreated on device loss).
@@ -668,10 +669,31 @@ void generateBlurFor(const std::string& bytes, ssc::ImageKey key, std::vector<BY
     }
     if (!createBlurGen()) return;
     SSC_COUNT(blurGenerations);
-    ID2D1Bitmap* src = decodeBitmap(g_blurCtx, bytes, nullptr, false, nullptr, key);
-    if (!src) return;
-    const D2D1_SIZE_F ss = src->GetSize();
     const UINT S = kBlurSize;
+    // Average the (cached) decoded cover down to the working size on the CPU instead
+    // of uploading full resolution to the blur device and blurring that: the cost no
+    // longer grows with the cover's pixel count. See blur_math.h for the sigma.
+    const auto decoded = decodedImage(bytes, key, false);
+    if (!decoded) return;
+    std::vector<BYTE> scaled;
+    if (decoded->width >= S && decoded->height >= S) {
+        scaled = ssc::boxDownscale4(decoded->pixels.data(), decoded->width, decoded->height, S);
+    } else { // small cover: interpolate up, as the scale transform did
+        scaled.resize(static_cast<size_t>(S) * S * 4);
+        IWICBitmap* full = nullptr;
+        IWICBitmapScaler* scaler = nullptr;
+        const bool ready = SUCCEEDED(g_wic->CreateBitmapFromMemory(decoded->width, decoded->height,
+                GUID_WICPixelFormat32bppPBGRA, decoded->width * 4, static_cast<UINT>(decoded->pixels.size()),
+                const_cast<BYTE*>(decoded->pixels.data()), &full))
+            && SUCCEEDED(g_wic->CreateBitmapScaler(&scaler))
+            && SUCCEEDED(scaler->Initialize(full, S, S, WICBitmapInterpolationModeLinear))
+            && SUCCEEDED(scaler->CopyPixels(nullptr, S * 4, static_cast<UINT>(scaled.size()), scaled.data()));
+        SafeRelease(scaler); SafeRelease(full);
+        if (!ready) return;
+    }
+    ID2D1Bitmap* src = nullptr;
+    if (FAILED(g_blurCtx->CreateBitmap(D2D1::SizeU(S, S), scaled.data(), S * 4, bp, &src))) return;
+    const D2D1_SIZE_F ss = src->GetSize();
 
     ID2D1Bitmap1* target = nullptr;
     D2D1_BITMAP_PROPERTIES1 tp = D2D1::BitmapProperties1(
@@ -680,6 +702,8 @@ void generateBlurFor(const std::string& bytes, ssc::ImageKey key, std::vector<BY
     if (SUCCEEDED(g_blurCtx->CreateBitmap(D2D1::SizeU(S, S), nullptr, 0, tp, &target))) {
         float dev = (float)g_posterBlur; // configurable via the INI "posterBlur"
         if (dev < 0.0f) dev = 0.0f; else if (dev > 200.0f) dev = 200.0f;
+        // D2D applied the deviation in source pixels under the old scale transform.
+        dev = ssc::workingBlurSigma(dev, decoded->width, decoded->height, S);
         g_blurEffect->SetInput(0, src);
         g_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, (FLOAT)dev);
         g_blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
@@ -1224,6 +1248,7 @@ RendererDiagnostics rendererDiagnostics() {
     return stats;
 }
 void resetRendererDiagnostics() { g_diagnostics = RendererDiagnostics(); }
+std::vector<unsigned char> blurPixelsForTesting() { return g_blurPixels; }
 #endif
 
 bool init() {
