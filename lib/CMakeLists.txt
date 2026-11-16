@@ -200,6 +200,10 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         target_link_libraries(native_engine_tests PRIVATE coverfetch d2d1 dwrite)
         doctest_discover_tests(native_engine_tests)
 
+        add_executable(demo_tests tests/test_demo.cpp ../shared/demo.cpp)
+        target_include_directories(demo_tests PRIVATE . ../shared)
+        doctest_discover_tests(demo_tests TEST_PREFIX "demo: ")
+
         if(SSC_ENABLE_DEBUG_OVERLAY)
             add_executable(debug_tests tests/test_debug.cpp)
             target_link_libraries(debug_tests PRIVATE coverfetch comctl32)

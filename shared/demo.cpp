@@ -78,7 +78,11 @@ std::vector<std::string> imageNames(const std::string& dir) {
 } // namespace
 
 bool Demo::active() {
-    return !imageNames(demoDir()).empty();
+    // Probed once per process: the Winamp gate timer asks twice a second and each
+    // probe enumerates a directory. Entering/leaving demo mode needs a host restart,
+    // as demo.h documents. A magic static is thread-safe on every supported compiler.
+    static const bool present = !imageNames(demoDir()).empty();
+    return present;
 }
 
 bool Demo::load() {
