@@ -29,6 +29,20 @@ struct DemoFrame {
 class Demo {
 public:
     static bool active();              // the sentinel: demo folder exists with >=1 image
+                                       // (probed ONCE per process - see resolveActiveOnce)
+
+    // Pure, testable core of active(): run `probe` once, then serve the cached
+    // answer. The Winamp gate timer polls active() twice a second and the probe
+    // enumerates a %TEMP% directory on disk, so it must not run per tick (this
+    // header has always documented "checked once at start()"). The cache lives
+    // in the caller (a function-local static in active()), so tests use their own.
+    static bool resolveActiveOnce(bool (*probe)(), bool& cached, bool& resolved) {
+        if (!resolved) {
+            cached = probe();
+            resolved = true;
+        }
+        return cached;
+    }
     bool load();                       // read the sequence + demo.txt; false if no images
     int  count() const { return (int)frames_.size(); }
     const DemoFrame& current() const { return frames_[index_]; }

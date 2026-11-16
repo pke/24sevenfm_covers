@@ -140,6 +140,20 @@ struct WinHttpHandle {
     explicit operator bool() const { return h != nullptr; }
 };
 
+// One process-wide WinHTTP session, created on first use (thread-safe magic
+// static). WinHTTP pools keep-alive connections PER SESSION, and a track change
+// makes up to four requests against the same host (poll + cover + queue + next
+// cover) - with a per-request session each one paid a fresh TCP + TLS handshake.
+// Deliberately never closed: handles are freed at process exit, and closing it
+// from a static destructor would run under the loader lock during DLL unload,
+// where WinHTTP calls are not allowed.
+HINTERNET sharedSession() {
+    static HINTERNET s = WinHttpOpen(toWide(userAgent()).c_str(),
+                                     WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    return s;
+}
+
 #else // POSIX socket path
 
 void closeSocket(socket_t s) { close(s); }
@@ -201,22 +215,10 @@ HttpResponse httpRequest(const std::string& host,
     const std::wstring hostW   = toWide(host);
     const std::wstring pathW   = toWide(path.empty() ? "/" : path);
     const std::wstring methodW = toWide(method.empty() ? "GET" : method);
-    const std::wstring uaW     = toWide(userAgent());
 
-    WinHttpHandle session(WinHttpOpen(uaW.c_str(),
-                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+    // The shared session (UA set there) pools keep-alive connections across requests.
+    HINTERNET session = sharedSession();
     if (!session) { resp.error = "WinHttpOpen failed"; return resp; }
-
-    if (timeoutSeconds > 0) {
-        const int ms = timeoutSeconds * 1000;
-        // When cancellable, bound the pre-body phases (resolve/connect/send) to a
-        // few seconds so a stalled connect can't hold up an abort; the receive
-        // timeout stays generous because the read loop below polls `cancel` between
-        // chunks and aborts a live transfer near-instantly regardless.
-        const int connectMs = cancel ? (ms < 8000 ? ms : 8000) : ms;
-        WinHttpSetTimeouts(session, connectMs, connectMs, connectMs, ms);
-    }
 
     WinHttpHandle conn(WinHttpConnect(session, hostW.c_str(), port, 0));
     if (!conn) { resp.error = "WinHttpConnect failed for " + host; return resp; }
@@ -226,6 +228,18 @@ HttpResponse httpRequest(const std::string& host,
                                          WINHTTP_DEFAULT_ACCEPT_TYPES,
                                          secure ? WINHTTP_FLAG_SECURE : 0));
     if (!req) { resp.error = "WinHttpOpenRequest failed"; return resp; }
+
+    if (timeoutSeconds > 0) {
+        const int ms = timeoutSeconds * 1000;
+        // When cancellable, bound the pre-body phases (resolve/connect/send) to a
+        // few seconds so a stalled connect can't hold up an abort; the receive
+        // timeout stays generous because the read loop below polls `cancel` between
+        // chunks and aborts a live transfer near-instantly regardless.
+        // Set on the REQUEST handle: the session is shared process-wide and callers
+        // pass different timeouts, so they must not race on a session-level setting.
+        const int connectMs = cancel ? (ms < 8000 ? ms : 8000) : ms;
+        WinHttpSetTimeouts(req, connectMs, connectMs, connectMs, ms);
+    }
 
     // Do NOT follow redirects. The caller pins the host before the fetch (SSRF
     // guard); WinHTTP's default policy would silently chase a 3xx from the trusted

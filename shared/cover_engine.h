@@ -24,8 +24,9 @@
 #include <mutex>
 #include <string>
 
-#include "d2d_renderer.h" // d2d::Transition + render/setCover/...
-#include "demo.h"         // screenshot/demo cover source (swaps in for the monitor)
+#include "d2d_renderer.h"   // d2d::Transition + render/setCover/...
+#include "demo.h"           // screenshot/demo cover source (swaps in for the monitor)
+#include "repaint_policy.h" // ssc::RenderActivity + needsRepaint/heartbeatIntervalMs
 
 namespace ssc { class CoverMonitor; }
 
@@ -101,8 +102,11 @@ public:
     void onTimer(HWND h, UINT_PTR id);
     void onNewCover(HWND h); // SSC_WM_NEWCOVER: decode the pending cover
 
-    // Engine-owned repaint heartbeat (~30fps); the engine sets it on the window and
-    // the host just forwards WM_TIMER to onTimer. Drives the crossfade + countdown.
+    // Engine-owned repaint heartbeat; the engine sets it on the window and the host
+    // just forwards WM_TIMER to onTimer. Drives the crossfade + countdown. The
+    // interval is adaptive (repaint_policy.h): animation rate only while a fade or
+    // digit roll runs, a watch rate while the countdown/loading can change, and a
+    // slow idle tick for a settled frame.
     static const UINT_PTR kHeartbeat = 4;
 
 private:
@@ -127,6 +131,11 @@ private:
     void setRemaining(int secs);
     int  currentRemaining() const;
 
+    // Adaptive heartbeat (repaint_policy.h): snapshot what is live on screen, and
+    // retune the timer when the needed rate changed. UI thread only.
+    ssc::RenderActivity renderActivity();
+    void updateHeartbeat(HWND h);
+
     std::mutex  mutex_;
     std::string coverBytes_;             // pending cover to decode (guarded)
     bool        dirty_ = false;
@@ -143,6 +152,11 @@ private:
     bool  fading_ = false;
     bool  haveCover_ = false;
     DWORD fadeStart_ = 0;
+    int   lastPaintRem_ = -2;  // countdown value the last paint drew (-2: nothing painted)
+    int   heartbeatMs_ = 0;    // current timer interval (0: not armed)
+    // Written on the UI thread (onPaint), read by onTimer on the same thread; atomic
+    // only so a fullscreen-window switch mid-roll can't tear it.
+    std::atomic<bool> overlayAnim_{false}; // last render's digit roll still animating
 
     ssc::CoverMonitor* monitor_ = nullptr;
     std::mutex  monitorLifecycle_;       // serializes start()/stop()/setStation() monitor_ transitions

@@ -77,7 +77,12 @@ std::vector<std::string> imageNames(const std::string& dir) {
 } // namespace
 
 bool Demo::active() {
-    return !imageNames(demoDir()).empty();
+    // Resolved once per process (resolveActiveOnce, unit-tested): the Winamp gate
+    // timer polls this twice a second, and imageNames() enumerates a directory on
+    // disk every call. Entering/leaving demo mode needs a host restart, which is
+    // what this header has always documented ("checked once at start()").
+    static bool cached = false, resolved = false;
+    return resolveActiveOnce([] { return !imageNames(demoDir()).empty(); }, cached, resolved);
 }
 
 bool Demo::load() {

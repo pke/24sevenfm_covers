@@ -283,8 +283,12 @@ void CoverEngine::notifyNewCover() const {
 void CoverEngine::setWindow(HWND h) {
     if (HWND w = hwnd_.load()) KillTimer(w, kHeartbeat);
     hwnd_.store(h);
+    heartbeatMs_ = 0; // re-armed below; a fresh window starts from a clean rate
     if (!h) return;
-    SetTimer(h, kHeartbeat, 33, nullptr); // ~30fps repaint heartbeat (fade + countdown)
+    // Arm at animation rate; the first ticks settle it to the policy's rate
+    // (updateHeartbeat) once the initial decode/fade has happened.
+    heartbeatMs_ = ssc::kHeartbeatFastMs;
+    SetTimer(h, kHeartbeat, (UINT)heartbeatMs_, nullptr);
     d2d::resetTarget(); // rebuild the render target for the (possibly new) window
     // Show whatever we have: if a cover is pending, decode it now; otherwise ask the
     // monitor to (re)fetch the current one for this freshly-created window.
@@ -430,7 +434,10 @@ void CoverEngine::decodePending(HWND h) {
     haveCover_ = true;
     loading_.store(false);
     logLine("cover decoded + shown (" + std::to_string(bytes.size()) + " bytes)");
-    if (h) InvalidateRect(h, nullptr, FALSE);
+    if (h) {
+        InvalidateRect(h, nullptr, FALSE);
+        updateHeartbeat(h); // a fade just started: get the timer to animation rate NOW
+    }
 }
 
 void CoverEngine::onNewCover(HWND h) { decodePending(h); }
@@ -456,19 +463,49 @@ void CoverEngine::onPaint(HWND h) {
     if (poster) { std::lock_guard<std::mutex> lock(mutex_); title = infoTitle_; artist = infoArtist_; }
     d2d::setPosterBlur(settings.posterBlur);
     d2d::setCoverRadius(settings.borderRadius);
-    d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(), settings.rollDigits, status,
-                settings.layout, title.c_str(), artist.c_str());
+    const bool rolling =
+        d2d::render(h, alpha, transitionEffect(), rem, remainingFrac(), settings.rollDigits, status,
+                    settings.layout, title.c_str(), artist.c_str());
+    // Feed the render back into the repaint policy: what value is on screen now,
+    // and whether the digit roll still animates - so the heartbeat repaints only
+    // while something actually changes (and ticks at the matching rate).
+    overlayAnim_.store(rolling);
+    lastPaintRem_ = rem;
+    updateHeartbeat(h);
 }
 
-// The engine's repaint heartbeat: redraw only while something is actually changing -
-// a crossfade, the "Loading..." badge, or the countdown over a shown cover. This is
-// layout-independent: the poster's countdown is the same showRemaining case, and its
-// transition is the same fading_ case, so a settled poster frame stays idle too.
+ssc::RenderActivity CoverEngine::renderActivity() {
+    ssc::RenderActivity a;
+    a.fading = fading_;
+    a.loading = loading_.load();
+    a.overlayRolling = overlayAnim_.load();
+    a.countdownVisible = settings.showRemaining && haveCover_;
+    a.demoTimed = demoOn_ && demo_.count() > 0 && demo_.current().seconds > 0;
+    a.remaining = a.countdownVisible ? currentRemaining() : -1; // same formula onPaint uses
+    a.lastPaintedRemaining = lastPaintRem_;
+    return a;
+}
+
+void CoverEngine::updateHeartbeat(HWND h) {
+    if (!h) return;
+    const int want = ssc::heartbeatIntervalMs(renderActivity());
+    if (want != heartbeatMs_) {
+        heartbeatMs_ = want;
+        SetTimer(h, kHeartbeat, (UINT)want, nullptr); // same id: replaces the interval
+    }
+}
+
+// The engine's repaint heartbeat: redraw only while something is actually changing.
+// What counts as "changing" and how fast the timer must tick for it is the shared,
+// unit-tested policy in repaint_policy.h - a settled frame (poster or fill, with or
+// without a visible countdown) is NOT repainted, and the timer idles down with it.
 void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     if (id != kHeartbeat) return;
     // Demo auto-advance: when a demo frame's countdown expires, roll to the next cover
     // (which crossfades). Frames with seconds==0 have no countdown, so they stay put.
     if (demoOn_ && demo_.current().seconds > 0 && currentRemaining() == 0) { demoNext(); return; }
-    if (fading_ || loading_.load() || (settings.showRemaining && haveCover_))
+    const ssc::RenderActivity a = renderActivity();
+    if (ssc::needsRepaint(a))
         InvalidateRect(h, nullptr, FALSE);
+    updateHeartbeat(h);
 }
