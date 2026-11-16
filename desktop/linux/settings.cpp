@@ -74,7 +74,7 @@ void Viewer::showSettings() {
     dialog->setStyleSheet("QRadioButton { padding: 10px; border: 1px solid palette(mid); border-radius: 6px; } QRadioButton:checked { background: palette(highlight); color: palette(highlighted-text); } QGroupBox { margin-top: 10px; padding-top: 16px; } ");
     auto* stations=page("Station");auto* group=new QButtonGroup(dialog);
     for(int i=0;i<ssc::kStationCount;++i){const auto& station=ssc::station(i);auto* button=new QRadioButton(QString::fromUtf8(station.displayName));
-        button->setObjectName(QString("station%1").arg(i));button->setIcon(QIcon(QString(":/stations/%1.png").arg(station.id)));button->setIconSize({40,40});
+        button->setObjectName(QString("station%1").arg(i));button->setIcon(QIcon(QString(":/stations/%1.jpg").arg(station.id)));button->setIconSize({40,40});
         button->setToolTip(QString::fromUtf8(station.desc));button->setChecked(stationIndex()==i);group->addButton(button,i);stations->addWidget(button);}
     connect(group,&QButtonGroup::idClicked,this,[change](int i){change("station",ssc::station(i).id);});
     auto* display=page("Display");

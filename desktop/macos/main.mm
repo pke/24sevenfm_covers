@@ -587,7 +587,7 @@
             NSButton* button = [SSCStationButton buttonWithTitle:text(ssc::station(i).displayName) target:self action:@selector(selectStation:)];
             [button setButtonType:NSButtonTypeRadio];
             NSImage* logo = [[NSImage alloc] initWithContentsOfFile:[NSBundle.mainBundle pathForResource:text(ssc::station(i).id)
-                ofType:@"png" inDirectory:@"Stations"]];
+                ofType:@"jpg" inDirectory:@"Stations"]];
             logo.size = NSMakeSize(56, 56); button.image = logo; button.alternateImage = logo;
             button.imagePosition = NSImageLeft; button.imageScaling = NSImageScaleProportionallyDown;
             button.bordered = NO; button.alignment = NSTextAlignmentLeft;

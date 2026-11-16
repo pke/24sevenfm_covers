@@ -18,8 +18,8 @@ add_custom_command(OUTPUT "${app_icon}"
     COMMAND /usr/bin/iconutil --convert icns --output "${app_icon}" "${CMAKE_CURRENT_BINARY_DIR}/AppIcon.iconset"
     DEPENDS "${SSC_APP_ICON_SOURCE}" make-icon.swift VERBATIM)
 set_source_files_properties("${app_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
-set(station_logos ../../shared/resources/stations/sst.png ../../shared/resources/stations/1980s.png
-    ../../shared/resources/stations/adagio.png ../../shared/resources/stations/death.png ../../shared/resources/stations/entranced.png)
+set(station_logos ../../shared/resources/stations/sst.jpg ../../shared/resources/stations/1980s.jpg
+    ../../shared/resources/stations/adagio.jpg ../../shared/resources/stations/death.jpg ../../shared/resources/stations/entranced.jpg)
 set_source_files_properties(${station_logos} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/Stations)
 add_executable(24sevenfm_covers MACOSX_BUNDLE main.mm hover_titlebar.mm player_bridge.mm ../../shared/player_follow.cpp "${app_icon}" ${station_logos})
 if(COVERFETCH_BUILD_TESTS)

@@ -1,7 +1,7 @@
 <RCC><qresource prefix="/stations">
-<file alias="sst.png">../../shared/resources/stations/sst.png</file>
-<file alias="1980s.png">../../shared/resources/stations/1980s.png</file>
-<file alias="adagio.png">../../shared/resources/stations/adagio.png</file>
-<file alias="death.png">../../shared/resources/stations/death.png</file>
-<file alias="entranced.png">../../shared/resources/stations/entranced.png</file>
+<file alias="sst.jpg">../../shared/resources/stations/sst.jpg</file>
+<file alias="1980s.jpg">../../shared/resources/stations/1980s.jpg</file>
+<file alias="adagio.jpg">../../shared/resources/stations/adagio.jpg</file>
+<file alias="death.jpg">../../shared/resources/stations/death.jpg</file>
+<file alias="entranced.jpg">../../shared/resources/stations/entranced.jpg</file>
 </qresource><qresource prefix="/"><file alias="icon.ico">../24sevenfm_covers.ico</file></qresource></RCC>

@@ -206,6 +206,18 @@ TEST_CASE("station buttons decode all bundled logos and keep a padded background
     SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(radio, screen); DestroyWindow(radio);
 }
 
+TEST_CASE("bundled station logos stay compact") {
+    // Five 200 x 200 photographic logos: as truecolor PNGs they were 41% of the
+    // desktop viewer and incompressible for the UPX packer.
+    size_t total = 0;
+    for (int index = 0; index < 5; ++index) {
+        HRSRC resource = FindResourceW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(IDR_STATION_LOGO_FIRST + index), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
+        REQUIRE(resource != nullptr);
+        total += SizeofResource(GetModuleHandleW(nullptr), resource);
+    }
+    CHECK(total <= 128u * 1024u);
+}
+
 TEST_CASE("station logo downscaling preserves fine lines and transparent coverage") {
     bool transparent = false;
     SUBCASE("opaque fine lettering") {}
