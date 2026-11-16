@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../shared/image_limits.h"
+#include "decoded_pixels.h"
 
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "ole32.lib")
@@ -49,9 +50,15 @@ bool decodableImage(const std::string& bytes, const std::string& sourceUrl) {
         const size_t stride = static_cast<size_t>(width) * 4u;
         const size_t total = stride * static_cast<size_t>(height);
         if (stride <= MAXDWORD && total <= MAXDWORD) {
-            std::vector<BYTE> pixels(total);
+            DecodedPixels decoded;
+            decoded.bgra.resize(total);
             valid = SUCCEEDED(converter->CopyPixels(nullptr, (UINT)stride, (UINT)total,
-                                                     pixels.data()));
+                                                     decoded.bgra.data()));
+            if (valid) { // the renderer takes these instead of decoding again in WM_PAINT
+                decoded.key = imageKey(bytes);
+                decoded.width = width; decoded.height = height;
+                depositDecodedPixels(std::move(decoded));
+            }
         }
     }
     release(converter); release(frame); release(decoder); release(stream); release(factory);

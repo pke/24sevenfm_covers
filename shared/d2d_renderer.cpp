@@ -7,6 +7,7 @@
 #include "title_logo_presentation.h"
 #include "presentation_style.h"
 #include "image_key.h"      // content identity hashed once per image
+#include "decoded_pixels.h" // pixels already decoded by worker-thread validation
 
 #include <d2d1.h>
 #include <d2d1_1.h>       // ID2D1Device/DeviceContext + effects (real Gaussian blur)
@@ -217,6 +218,8 @@ D2D1_COLOR_F playerTint(float mediaProgress) {
                         from.b + (to.b - from.b) * mediaProgress, 1.0f);
 }
 
+std::shared_ptr<DecodedImage> cacheDecodedImage(std::shared_ptr<DecodedImage> image);
+
 std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, ssc::ImageKey key, bool trimAlpha) {
     if (key.empty()) key = ssc::imageKey(bytes);
     for (auto it = g_decodedImages.begin(); it != g_decodedImages.end(); ++it) {
@@ -225,6 +228,18 @@ std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, ssc::ImageK
             g_decodedImages.splice(g_decodedImages.begin(), g_decodedImages, it);
             SSC_COUNT(cacheHits);
             return image;
+        }
+    }
+    if (!trimAlpha) {
+        ssc::DecodedPixels prepared;
+        if (ssc::takeDecodedPixels(key, prepared) && ssc::coverDimsOk(prepared.width, prepared.height)
+                && prepared.bgra.size() == static_cast<size_t>(prepared.width) * prepared.height * 4) {
+            SSC_COUNT(preparedHits);
+            auto image = std::make_shared<DecodedImage>();
+            image->key = key;
+            image->width = prepared.width; image->height = prepared.height;
+            image->pixels = std::move(prepared.bgra);
+            return cacheDecodedImage(std::move(image));
         }
     }
     SSC_COUNT(decodes);
@@ -291,6 +306,10 @@ std::shared_ptr<DecodedImage> decodedImage(const std::string& bytes, ssc::ImageK
     if (!image->width || !image->height) return nullptr;
     image->key = key;
     image->trimAlpha = trimAlpha;
+    return cacheDecodedImage(std::move(image));
+}
+
+std::shared_ptr<DecodedImage> cacheDecodedImage(std::shared_ptr<DecodedImage> image) {
     const size_t cost = image->cost();
     if (cost <= kDecodedCacheBudget) {
         while (!g_decodedImages.empty() && (g_decodedImages.size() >= kDecodedCacheEntries

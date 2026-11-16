@@ -4,6 +4,8 @@
 #include "../../shared/presentation_controller.h"
 #include "rating_assets.h"
 #include "rating_fixture.h"
+#include "image_probe.h"
+#include <thread>
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <chrono>
@@ -560,4 +562,28 @@ TEST_CASE("settled frames reuse text formats, layouts and clip geometry") {
         CHECK(stats.textLayouts == 0);
         CHECK(stats.geometries == 0);
     }
+}
+
+TEST_CASE("artwork validated on a worker thread is not decoded again while painting") {
+    RendererFixture fixture;
+    const std::string cover = artwork(640, 640, 5);
+    const std::string hero = artwork(1920, 1080, 6);
+    std::thread worker([&] { // the media worker validates every download by decoding it
+        CHECK(ssc::decodableImage(cover));
+        CHECK(ssc::decodableImage(hero));
+    });
+    worker.join();
+    d2d::resetRendererDiagnostics();
+    d2d::setCover(cover.data(), cover.size(), false);
+    d2d::setBackdrop(hero.data(), hero.size(), false);
+    fixture.paint(fixture.landscape);
+    const auto stats = d2d::rendererDiagnostics();
+    CHECK(stats.decodes == 0);           // pixels handed over from validation
+    CHECK(stats.artworkBitmapCount == 2);
+    CHECK(stats.artworkBitmapBytes == (size_t(640) * 640 + size_t(1920) * 1080) * 4);
+    // An image that was never validated still decodes on demand.
+    const std::string other = artwork(320, 320, 7);
+    d2d::setCover(other.data(), other.size(), false);
+    fixture.paint(fixture.landscape);
+    CHECK(d2d::rendererDiagnostics().decodes == 1);
 }

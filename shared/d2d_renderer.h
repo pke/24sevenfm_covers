@@ -33,6 +33,7 @@ struct RendererDiagnostics {
     size_t cacheHits = 0, cacheEvictions = 0, cacheBytes = 0, cacheEntries = 0, blurBytes = 0;
     size_t artworkBitmapCount = 0, artworkBitmapBytes = 0;
     size_t textFormats = 0, textLayouts = 0, geometries = 0; // DirectWrite/D2D objects created
+    size_t preparedHits = 0; // images whose pixels came from worker-thread validation
     double targetMs = 0, imageMs = 0, blurMs = 0, frameMs = 0;
     float comingNextLeft = 0, comingNextRight = 0;
     float comingNextNaturalTextWidth = 0, comingNextTextWidth = 0;
