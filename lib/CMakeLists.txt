@@ -143,6 +143,9 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
     endif()
     doctest_discover_tests(coverfetch_tests)
 
+    add_executable(repaint_policy_tests tests/test_repaint_policy.cpp)
+    doctest_discover_tests(repaint_policy_tests TEST_PREFIX "renderer: ")
+
     add_executable(image_key_tests tests/test_image_key.cpp)
     doctest_discover_tests(image_key_tests TEST_PREFIX "renderer: ")
 
@@ -216,6 +219,13 @@ if(COVERFETCH_BUILD_TESTS AND NOT ANDROID AND NOT IOS)
         target_include_directories(native_engine_tests PRIVATE . ../shared)
         target_link_libraries(native_engine_tests PRIVATE coverfetch d2d1 dwrite)
         doctest_discover_tests(native_engine_tests)
+
+        # Manual end-to-end benchmark (not registered with CTest): engine_heartbeat_bench [seconds]
+        add_executable(engine_heartbeat_bench tests/bench_engine_heartbeat.cpp
+            ../shared/d2d_renderer.cpp ../shared/d2d_transitions.cpp
+            ../shared/d2d_rolldigits.cpp ../shared/demo.cpp)
+        target_include_directories(engine_heartbeat_bench PRIVATE . ../shared)
+        target_link_libraries(engine_heartbeat_bench PRIVATE coverfetch d2d1 dwrite)
 
         add_executable(demo_tests tests/test_demo.cpp ../shared/demo.cpp)
         target_include_directories(demo_tests PRIVATE . ../shared)

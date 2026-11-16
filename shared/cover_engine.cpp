@@ -709,7 +709,14 @@ int CoverEngine::currentRemaining() const {
 // Snapshot the atomic window once, then act on the local - the monitor thread may
 // null it (setWindow) between the check and the use otherwise.
 void CoverEngine::invalidate() const {
-    if (HWND w = hwnd_.load()) InvalidateRect(w, nullptr, FALSE);
+    if (HWND w = hwnd_.load()) {
+        InvalidateRect(w, nullptr, FALSE);
+        // A UI-thread change may start an animation: tick at animation rate until
+        // the next heartbeat re-evaluates. Other threads reach the window through
+        // WM_PAINT, whose onPaint re-arms the heartbeat as well.
+        if (GetWindowThreadProcessId(w, nullptr) == GetCurrentThreadId())
+            setHeartbeat(w, ssc::kHeartbeatAnimationMs);
+    }
 }
 void CoverEngine::notifyNewCover() const {
     if (HWND w = hwnd_.load()) PostMessageA(w, SSC_WM_NEWCOVER, 0, 0);
@@ -748,7 +755,9 @@ void CoverEngine::setWindow(HWND h) {
     ratingPointerAutoHide_ = false;
     ratingPointerVisibleUntil_ = 0;
     updateRatingVisibility(GetTickCount());
-    SetTimer(h, kHeartbeat, 33, nullptr); // ~30fps repaint heartbeat (fade + countdown)
+    heartbeatMs_ = ssc::kHeartbeatAnimationMs; // first frames animate; onTimer settles the rate
+    SetTimer(h, kHeartbeat, heartbeatMs_, nullptr);
+    presentedWidth_ = presentedHeight_ = -1;
     d2d::resetTarget(); // rebuild the render target for the (possibly new) window
     // Show whatever we have: if a cover is pending, decode it now; otherwise ask the
     // monitor to (re)fetch the current one for this freshly-created window.
@@ -1046,6 +1055,7 @@ void CoverEngine::onPointerMove(HWND h, bool fullscreenAutoHide) {
     ratingPointerVisibleUntil_ = fullscreenAutoHide ? now + ssc::kStageIdleMs : 0;
     { ssc::platform::LockGuard lock(mutex_); presentation_.pointerChanged(true, fullscreenAutoHide, true); }
     updateRatingVisibility(now);
+    setHeartbeat(h, ssc::kHeartbeatAnimationMs); // controls/navigation fade in from the next tick
 }
 
 void CoverEngine::onPointerLeave(HWND h) {
@@ -1054,6 +1064,7 @@ void CoverEngine::onPointerLeave(HWND h) {
     { ssc::platform::LockGuard lock(mutex_); presentation_.pointerChanged(false, false, false); }
     ratingPointerVisibleUntil_ = 0;
     updateRatingVisibility(GetTickCount());
+    setHeartbeat(h, ssc::kHeartbeatAnimationMs);
 }
 
 void CoverEngine::repaint() {
@@ -1181,7 +1192,12 @@ float CoverEngine::backdropNavigationAlpha(DWORD now) {
     const bool visible = available && ratingPointerInside_
         && (!ratingPointerAutoHide_ || (LONG)(ratingPointerVisibleUntil_ - now) > 0);
     const float target = visible ? 1.0f : 0.0f;
-    const float step = navigationTick_ ? (now - navigationTick_) / 200.0f : 0;
+    DWORD elapsed = navigationTick_ ? now - navigationTick_ : 0;
+    // A settled control starts its fade from one animation frame, however long the
+    // slow watch tick slept before noticing the change.
+    if ((navigationAlpha_ == 0.0f || navigationAlpha_ == 1.0f) && elapsed > ssc::kHeartbeatAnimationMs)
+        elapsed = ssc::kHeartbeatAnimationMs;
+    const float step = elapsed / 200.0f;
     navigationTick_ = now;
     if (!clientAnimationsEnabled()) navigationAlpha_ = target;
     else if (navigationAlpha_ < target) navigationAlpha_ = (std::min)(target, navigationAlpha_ + step);
@@ -1312,6 +1328,8 @@ void CoverEngine::onNewMedia(HWND h) { if (h == hwnd_.load()) { decodePendingMed
 void CoverEngine::updatePresentation(HWND h) {
     if (h != hwnd_.load()) return;
     const DWORD now = GetTickCount();
+    RECT client = {};
+    if (GetClientRect(h, &client)) { presentedWidth_ = client.right; presentedHeight_ = client.bottom; }
     updateRatingVisibility(now);
     backdropNavigationAlpha(now); fanartHintOpacity(now);
     ssc::platform::LockGuard lock(mutex_);
@@ -1345,6 +1363,10 @@ void CoverEngine::updatePresentation(HWND h) {
 
 void CoverEngine::onPaint(HWND h) {
     if (h != hwnd_.load()) return;
+    // A resize paints before the next (possibly slow) heartbeat: lay out for it now.
+    RECT client = {};
+    if (GetClientRect(h, &client) && (client.right != presentedWidth_ || client.bottom != presentedHeight_))
+        updatePresentation(h);
     const auto& frame = frame_;
     const int rem = frame.countdown.opacity > 0 ? frame.countdown.seconds : -1;
     const wchar_t* status = loading_.load() ? L"Loading cover..." : nullptr;
@@ -1356,12 +1378,38 @@ void CoverEngine::onPaint(HWND h) {
         settings.layout, frame.title.c_str(), frame.artist.c_str(), 1,
         settings.hideCoverWithBackdrop, frame.ratingContent, frame.ratingOpacity, frame.infoOpacity,
         frame.album.c_str(), frame.track.c_str(), 0, &frame.next, fanartHintAlpha_, &frame);
+    paintedSeconds_ = rem;
+    setHeartbeat(h, ssc::heartbeatIntervalMs(heartbeatState(visualsAnimating())));
 }
 
-// The engine's repaint heartbeat: redraw only while something is actually changing -
-// a crossfade, the "Loading..." badge, or the countdown over a shown cover. This is
-// layout-independent: the poster's countdown is the same showRemaining case, and its
-// transition is the same fading_ case, so a settled poster frame stays idle too.
+bool CoverEngine::visualsAnimating() {
+    bool infoAnimating;
+    { ssc::platform::LockGuard lock(mutex_); infoAnimating = info_.animating(); }
+    return frame_.animating || fading_ || mediaFading_ || infoAnimating || ratingFading_
+        || d2d::titleLogoAnimating() || ratingVisibilityAnimating_
+        || (navigationAlpha_ != 0.0f && navigationAlpha_ != 1.0f);
+}
+
+ssc::HeartbeatState CoverEngine::heartbeatState(bool animating) const {
+    ssc::HeartbeatState state;
+    state.animating = animating;
+    state.shownSeconds = frame_.countdown.opacity > 0 ? frame_.countdown.seconds : -1;
+    state.paintedSeconds = paintedSeconds_;
+    // Demo frames advance when their countdown reaches zero, so watch it there too.
+    if (remAnchor_.load() >= 0 && ((settings.showRemaining && haveCover_) || demoOn_))
+        state.msToNextSecond = ssc::msUntilNextSecond(GetTickCount(), remAnchorAt_.load());
+    return state;
+}
+
+void CoverEngine::setHeartbeat(HWND h, unsigned ms) const {
+    if (!h || ms == heartbeatMs_) return;
+    heartbeatMs_ = ms;
+    SetTimer(h, kHeartbeat, ms, nullptr); // same id: replaces the interval
+}
+
+// The engine's repaint heartbeat: advance the presentation, check deadlines, and
+// redraw only while something is actually changing - an animation, or a countdown
+// value that differs from the one on screen. Settled frames are not redrawn.
 void CoverEngine::onTimer(HWND h, UINT_PTR id) {
     if (id != kHeartbeat || h != hwnd_.load()) return;
     const auto previousNext = frame_.next;
@@ -1392,13 +1440,13 @@ void CoverEngine::onTimer(HWND h, UINT_PTR id) {
         const int resolution = ssc::wants4kArtwork(viewport) ? 1 : 0;
         if (portrait != mediaPortrait_.load() || resolution != mediaResolutionClass_.load()) repaint();
     }
-    bool infoAnimating;
-    { ssc::platform::LockGuard lock(mutex_); infoAnimating = info_.animating(); }
-    if (frame_.animating || fading_ || mediaFading_ || infoAnimating || ratingFading_ || d2d::titleLogoAnimating()
-            || ratingVisibilityAnimating_ || navigationAlpha_ != oldNavigationAlpha
-            || fanartHintAlpha_ != oldFanartHintAlpha || comingNextChanged || loading_.load()
-            || (settings.showRemaining && haveCover_))
-        InvalidateRect(h, nullptr, FALSE);
+    // Repaint only while something on screen changes (repaint_policy.h). The loading
+    // badge is static: its appearance and removal invalidate where they happen.
+    const bool animating = visualsAnimating() || navigationAlpha_ != oldNavigationAlpha
+        || fanartHintAlpha_ != oldFanartHintAlpha || comingNextChanged;
+    const ssc::HeartbeatState beat = heartbeatState(animating);
+    if (ssc::needsRepaint(beat)) InvalidateRect(h, nullptr, FALSE);
+    setHeartbeat(h, ssc::heartbeatIntervalMs(beat));
 }
 
 #endif // _WIN32

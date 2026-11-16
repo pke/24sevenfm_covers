@@ -25,6 +25,7 @@
 #include "engine_settings.h"
 #include "presentation_controller.h"
 #include "presentation_pipeline.h"
+#include "repaint_policy.h"
 
 // HWND/message dispatch, Direct2D, demo loading and the debug overlay belong to
 // the Windows adapter. Do not expose SDK headers or substitute Win32 types in
@@ -132,8 +133,9 @@ public:
     ssc::JsonValue debugSnapshot(); // UI thread, typed snapshot; credentials removed
 #endif
 
-    // Engine-owned repaint heartbeat (~30fps); the engine sets it on the window and
-    // the host just forwards WM_TIMER to onTimer. Drives the crossfade + countdown.
+    // Engine-owned repaint heartbeat; the engine sets it on the window and the host
+    // just forwards WM_TIMER to onTimer. 33 ms while something animates, otherwise a
+    // slow watch tick that repaints only when the frame changes (repaint_policy.h).
     static const UINT_PTR kHeartbeat = 4;
 
 private:
@@ -180,6 +182,9 @@ private:
     void setRatingVisibility(bool visible, DWORD now);
     void updateRatingVisibility(DWORD now);
     void updatePresentation(HWND h);
+    bool visualsAnimating();                         // any transition currently running
+    ssc::HeartbeatState heartbeatState(bool animating) const;
+    void setHeartbeat(HWND h, unsigned ms) const;    // UI thread; re-arms only on change
     // hwnd_ is written on the UI thread (setWindow) and read on the monitor thread
     // (cover/error callbacks), so it is atomic and snapshotted before every use.
     void invalidate() const;      // InvalidateRect(hwnd_) if still attached
@@ -238,6 +243,9 @@ private:
 
     // Render/animation state - UI thread only.
     bool  fading_ = false;
+    mutable unsigned heartbeatMs_ = 33; // current heartbeat interval (repaint_policy.h)
+    int  paintedSeconds_ = -1;           // countdown value the last paint drew
+    LONG presentedWidth_ = -1, presentedHeight_ = -1; // client size frame_ was laid out for
     bool  haveCover_ = false;
     DWORD fadeStart_ = 0;
     bool  mediaFading_ = false;

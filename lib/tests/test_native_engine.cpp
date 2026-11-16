@@ -1,5 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
+#include "../../shared/repaint_policy.h"
 #include <future>
 #include "../../shared/cover_engine.cpp"
 #include "../../shared/rating_assets.h"
@@ -127,6 +128,44 @@ struct CoverEngineTestAccess {
         now += 350; engine.updatePresentation(window);
         CHECK(engine.frame_.countdown.fontSize == doctest::Approx(rect.bottom*.58f*.080f));
         engine.hwnd_.store(nullptr); DestroyWindow(window); d2d::shutdown();
+    }
+    // Invalidations the heartbeat caused since the last check (validates the window).
+    static int pendingPaint(HWND window) {
+        RECT dirty{};
+        const bool pending = GetUpdateRect(window, &dirty, FALSE) != FALSE;
+        ValidateRect(window, nullptr);
+        return pending ? 1 : 0;
+    }
+    void settledHeartbeat() {
+        REQUIRE(d2d::init());
+        HWND window = CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"Heartbeat policy", WS_POPUP,
+            0, 0, 600, 900, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        REQUIRE(window);
+        ShowWindow(window, SW_SHOWNOACTIVATE); // hidden windows accumulate no update region
+        ssc::PresentationTime now = 0;
+        engine.presentation_ = ssc::PresentationController([&] { return now; });
+        engine.hwnd_.store(window); engine.haveCover_ = true;
+        engine.settings.showRemaining = true; engine.settings.rollDigits = true;
+        engine.setRemaining(90);
+        engine.remAnchorAt_.store(GetTickCount() - 100); // mid-second: ~900 ms until the value changes
+        for (int i = 0; i < 60; ++i) { now += 50; engine.onTimer(window, CoverEngine::kHeartbeat); engine.onPaint(window); }
+        pendingPaint(window);
+        int repaints = 0;
+        for (int i = 0; i < 10; ++i) { engine.onTimer(window, CoverEngine::kHeartbeat); repaints += pendingPaint(window); }
+        CHECK(repaints == 0); // the countdown is visible, but nothing on screen changed
+        CHECK(engine.heartbeatMs_ > ssc::kHeartbeatAnimationMs);
+        CHECK(engine.heartbeatMs_ <= ssc::kHeartbeatWatchMs);
+
+        engine.remAnchorAt_.store(engine.remAnchorAt_.load() - 1000); // the next second has begun
+        engine.onTimer(window, CoverEngine::kHeartbeat);
+        CHECK(pendingPaint(window) == 1);
+        CHECK(engine.heartbeatMs_ == ssc::kHeartbeatAnimationMs); // the digit roll animates
+        for (int i = 0; i < 20; ++i) { now += 50; engine.onTimer(window, CoverEngine::kHeartbeat); engine.onPaint(window); }
+        CHECK(engine.heartbeatMs_ > ssc::kHeartbeatAnimationMs); // settled again
+
+        engine.onPointerMove(window, false); // the controls fade in: wake immediately
+        CHECK(engine.heartbeatMs_ == ssc::kHeartbeatAnimationMs);
+        engine.hwnd_.store(nullptr); KillTimer(window, CoverEngine::kHeartbeat); DestroyWindow(window); d2d::shutdown();
     }
     void fanartStageHint() {
         engine.settings.backdrops = true;
@@ -1181,6 +1220,11 @@ TEST_CASE("native fanart hint fades, ignores queued and stale responses, and res
     CoverEngineTestAccess().fanartStageHint();
 }
 TEST_CASE("native backdrop selection survives orientation changes") { CoverEngineTestAccess().backdropOrientationSelection(); }
+
+TEST_CASE("Windows heartbeat repaints only on change and idles between countdown seconds") {
+    CoverEngineTestAccess test;
+    test.settledHeartbeat();
+}
 
 TEST_CASE("Windows host forwards viewport-relative countdown settings to the common controller") {
     CoverEngineTestAccess test;
