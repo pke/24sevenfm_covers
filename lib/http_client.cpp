@@ -282,14 +282,21 @@ static HttpResponse httpRequestImpl(const std::string& host,
 
     // Body (WinHTTP de-chunks transparently), capped at kMaxResponseBytes.
     std::string out;
+    DWORD declared = 0, declaredSize = sizeof(declared);
+    if (WinHttpQueryHeaders(req, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                            WINHTTP_HEADER_NAME_BY_INDEX, &declared, &declaredSize, WINHTTP_NO_HEADER_INDEX)
+            && declared <= kMaxResponseBytes)
+        out.reserve(declared); // one allocation when the server declares the size
     for (;;) {
         if (cancel && cancel->load()) { resp.error = "cancelled"; return resp; }
         DWORD avail = 0;
         if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
-        std::string chunk(avail, '\0');
+        const size_t used = out.size();
+        out.resize(used + avail); // read straight into the body: no per-chunk buffer and copy
         DWORD read = 0;
-        if (!WinHttpReadData(req, &chunk[0], avail, &read) || read == 0) break;
-        out.append(chunk.data(), read);
+        const BOOL ok = WinHttpReadData(req, &out[used], avail, &read);
+        out.resize(used + (ok ? read : 0));
+        if (!ok || read == 0) break;
         if (out.size() > kMaxResponseBytes) break; // DoS guard
     }
     resp.body = std::move(out);

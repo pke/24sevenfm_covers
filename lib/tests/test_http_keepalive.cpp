@@ -6,6 +6,7 @@
 #include "doctest.h"
 #include "http_client.h"
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -33,7 +34,7 @@ namespace {
 // A minimal HTTP/1.1 keep-alive server that counts accepted TCP connections.
 class KeepAliveServer {
 public:
-    KeepAliveServer() {
+    explicit KeepAliveServer(std::string body = "ok") : body_(std::move(body)) {
 #if defined(_WIN32)
         WSADATA data; WSAStartup(MAKEWORD(2, 2), &data);
 #endif
@@ -54,7 +55,7 @@ public:
                 ++connections;
                 std::lock_guard<std::mutex> lock(mutex_);
                 clients_.push_back(client);
-                workers_.emplace_back([client] { serve(client); });
+                workers_.emplace_back([this, client] { serve(client, body_); });
             }
         });
     }
@@ -73,7 +74,7 @@ public:
     std::atomic<int> connections{0};
 
 private:
-    static void serve(socket_t client) {
+    static void serve(socket_t client, const std::string& body) {
         std::string pending;
         char buffer[4096];
         for (;;) {
@@ -83,13 +84,19 @@ private:
             size_t end;
             while ((end = pending.find("\r\n\r\n")) != std::string::npos) {
                 pending.erase(0, end + 4);
-                static const std::string reply =
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n"
-                    "Connection: keep-alive\r\nKeep-Alive: timeout=30\r\n\r\nok";
-                if (send(client, reply.data(), static_cast<int>(reply.size()), 0) <= 0) return;
+                const std::string reply =
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: "
+                    + std::to_string(body.size()) + "\r\nConnection: keep-alive\r\nKeep-Alive: timeout=30\r\n\r\n" + body;
+                for (size_t sent = 0; sent < reply.size();) {
+                    const int n = static_cast<int>(send(client, reply.data() + sent,
+                        static_cast<int>(std::min<size_t>(65536, reply.size() - sent)), 0));
+                    if (n <= 0) return;
+                    sent += static_cast<size_t>(n);
+                }
             }
         }
     }
+    std::string body_;
     socket_t listener_ = kNoSocket;
     std::thread acceptor_;
     std::mutex mutex_;
@@ -119,4 +126,14 @@ TEST_CASE("connection reuse is safe across threads with different timeouts") {
     for (auto& thread : threads) thread.join();
     CHECK(ok.load() == 20);
     CHECK(server.connections.load() <= 4); // pooled: at most one live connection per concurrent caller
+}
+
+TEST_CASE("large bodies arrive intact across many reads") {
+    std::string body(3u * 1024u * 1024u + 17u, '\0');
+    for (size_t i = 0; i < body.size(); ++i) body[i] = static_cast<char>((i * 131u) ^ (i >> 11));
+    KeepAliveServer server(body);
+    const auto response = ssc::httpRequest("127.0.0.1", server.port, "/large", "GET", "", "", 10);
+    REQUIRE(response.ok());
+    CHECK(response.body.size() == body.size());
+    CHECK(response.body == body);
 }
