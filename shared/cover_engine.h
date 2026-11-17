@@ -245,6 +245,7 @@ private:
     bool  fading_ = false;
     mutable unsigned heartbeatMs_ = 33; // current heartbeat interval (repaint_policy.h)
     int  paintedSeconds_ = -1;           // countdown value the last paint drew
+    bool paintedAnimating_ = false;      // the last paint showed an in-between animation frame
     LONG presentedWidth_ = -1, presentedHeight_ = -1; // client size frame_ was laid out for
     bool  haveCover_ = false;
     DWORD fadeStart_ = 0;

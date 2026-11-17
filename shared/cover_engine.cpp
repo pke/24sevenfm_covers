@@ -1390,7 +1390,8 @@ void CoverEngine::onPaint(HWND h) {
         settings.hideCoverWithBackdrop, frame.ratingContent, frame.ratingOpacity, frame.infoOpacity,
         frame.album.c_str(), frame.track.c_str(), 0, &frame.next, fanartHintAlpha_, &frame);
     paintedSeconds_ = rem;
-    setHeartbeat(h, ssc::heartbeatIntervalMs(heartbeatState(visualsAnimating())));
+    paintedAnimating_ = visualsAnimating();
+    setHeartbeat(h, ssc::heartbeatIntervalMs(heartbeatState(paintedAnimating_)));
 }
 
 bool CoverEngine::visualsAnimating() {
@@ -1406,6 +1407,7 @@ ssc::HeartbeatState CoverEngine::heartbeatState(bool animating) const {
     state.animating = animating;
     state.shownSeconds = frame_.countdown.opacity > 0 ? frame_.countdown.seconds : -1;
     state.paintedSeconds = paintedSeconds_;
+    state.paintedAnimating = paintedAnimating_;
     // Demo frames advance when their countdown reaches zero, so watch it there too.
     if (remAnchor_.load() >= 0 && ((settings.showRemaining && haveCover_) || demoOn_))
         state.msToNextSecond = ssc::msUntilNextSecond(GetTickCount(), remAnchorAt_.load());

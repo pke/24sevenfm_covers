@@ -162,8 +162,13 @@ struct CoverEngineTestAccess {
         --seconds; tick(); // the next second has begun
         CHECK(pendingPaint(window) == 1);
         CHECK(engine.heartbeatMs_ == ssc::kHeartbeatAnimationMs); // the digit roll animates
-        for (int i = 0; i < 20; ++i) { now += 50; tick(); engine.onPaint(window); }
+        // Paint only what the heartbeat invalidates, like a real message loop.
+        engine.onPaint(window);
+        for (int i = 0; i < 20; ++i) { now += 50; tick(); if (pendingPaint(window)) engine.onPaint(window); }
         CHECK(engine.heartbeatMs_ > ssc::kHeartbeatAnimationMs); // settled again
+        // The settled end state must reach the screen, not the roll's last in-between frame.
+        CHECK_FALSE(engine.paintedAnimating_);
+        CHECK(engine.paintedSeconds_ == seconds);
 
         engine.onPointerMove(window, false); // the controls fade in: wake immediately
         CHECK(engine.heartbeatMs_ == ssc::kHeartbeatAnimationMs);

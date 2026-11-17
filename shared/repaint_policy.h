@@ -22,13 +22,16 @@ const unsigned kHeartbeatMinimumMs = 10;
 
 struct HeartbeatState {
     bool animating = false;     // any visual transition is in progress
+    bool paintedAnimating = false; // the screen still shows an in-between frame of one
     int shownSeconds = -1;      // countdown value the current frame shows (-1 = hidden)
     int paintedSeconds = -1;    // countdown value the last paint put on screen
     unsigned msToNextSecond = 0; // 0 = no running countdown
 };
 
+// The frame after an animation ends is settled, yet the screen still shows the
+// animation's last in-between frame: paint that end state once more.
 inline bool needsRepaint(const HeartbeatState& s) {
-    return s.animating || s.shownSeconds != s.paintedSeconds;
+    return s.animating || s.paintedAnimating || s.shownSeconds != s.paintedSeconds;
 }
 
 inline unsigned heartbeatIntervalMs(const HeartbeatState& s) {

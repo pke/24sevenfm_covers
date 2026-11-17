@@ -42,3 +42,11 @@ TEST_CASE("second boundaries follow the countdown anchor, across tick wrap-aroun
     CHECK(ssc::msUntilNextSecond(1999, 1000) == 1);
     CHECK(ssc::msUntilNextSecond(100, 0xFFFFFF00u) == 1000 - (100 + 0x100) % 1000);
 }
+
+TEST_CASE("the settled end state of an animation is painted once") {
+    HeartbeatState s; s.shownSeconds = 41; s.paintedSeconds = 41;
+    s.paintedAnimating = true; // last paint was mid-roll; the roll has just finished
+    CHECK(ssc::needsRepaint(s));
+    s.paintedAnimating = false; // the end state is on screen
+    CHECK_FALSE(ssc::needsRepaint(s));
+}
