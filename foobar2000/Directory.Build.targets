@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Imported automatically by MSBuild into every project below foobar2000/ - the
+     component and the vendored SDK libraries it links (pfc, libPPUI, SDK, helpers,
+     component client) - after their own settings, without editing the SDK.
+
+     Release builds optimize for size: the SDK ships pfc and libPPUI with /O2, and
+     their code ends up in the component DLL. /Gw lets the linker drop unreferenced
+     global data. Per-file overrides inside the SDK projects still win. -->
+<Project>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <Optimization>MinSpace</Optimization>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <AdditionalOptions>/Gw %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+</Project>
