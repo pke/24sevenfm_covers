@@ -146,21 +146,23 @@ struct CoverEngineTestAccess {
         engine.presentation_ = ssc::PresentationController([&] { return now; });
         engine.hwnd_.store(window); engine.haveCover_ = true;
         engine.settings.showRemaining = true; engine.settings.rollDigits = true;
-        engine.setRemaining(90);
-        engine.remAnchorAt_.store(GetTickCount() - 100); // mid-second: ~900 ms until the value changes
-        for (int i = 0; i < 60; ++i) { now += 50; engine.onTimer(window, CoverEngine::kHeartbeat); engine.onPaint(window); }
+        // Pin the countdown mid-second before every tick, so a slow (loaded) run never
+        // crosses a real second boundary unless the test moves it on purpose.
+        int seconds = 95;
+        const auto hold = [&] { engine.remAnchor_.store(seconds); engine.remAnchorAt_.store(GetTickCount() - 100); };
+        const auto tick = [&] { hold(); engine.onTimer(window, CoverEngine::kHeartbeat); };
+        for (int i = 0; i < 60; ++i) { now += 50; tick(); engine.onPaint(window); }
         pendingPaint(window);
         int repaints = 0;
-        for (int i = 0; i < 10; ++i) { engine.onTimer(window, CoverEngine::kHeartbeat); repaints += pendingPaint(window); }
+        for (int i = 0; i < 10; ++i) { tick(); repaints += pendingPaint(window); }
         CHECK(repaints == 0); // the countdown is visible, but nothing on screen changed
         CHECK(engine.heartbeatMs_ > ssc::kHeartbeatAnimationMs);
         CHECK(engine.heartbeatMs_ <= ssc::kHeartbeatWatchMs);
 
-        engine.remAnchorAt_.store(engine.remAnchorAt_.load() - 1000); // the next second has begun
-        engine.onTimer(window, CoverEngine::kHeartbeat);
+        --seconds; tick(); // the next second has begun
         CHECK(pendingPaint(window) == 1);
         CHECK(engine.heartbeatMs_ == ssc::kHeartbeatAnimationMs); // the digit roll animates
-        for (int i = 0; i < 20; ++i) { now += 50; engine.onTimer(window, CoverEngine::kHeartbeat); engine.onPaint(window); }
+        for (int i = 0; i < 20; ++i) { now += 50; tick(); engine.onPaint(window); }
         CHECK(engine.heartbeatMs_ > ssc::kHeartbeatAnimationMs); // settled again
 
         engine.onPointerMove(window, false); // the controls fade in: wake immediately
