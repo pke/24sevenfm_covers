@@ -39,6 +39,8 @@ public:
     void present(const ssc::PreparedPresentation& frame, int station, bool queued);
     void refresh();
     void sampleAt(ssc::PresentationTime time); // same production measurement/draw path for deterministic QA
+    void wake();                               // a change arrived: tick at frame rate until settled
+    int heartbeatMs() const { return timer_.interval(); }
     QImage snapshot();
     static QImage decode(const std::string& bytes);
     static QImage decodeLogo(const std::string& bytes);
@@ -54,6 +56,7 @@ protected:
     void paintEvent(QPaintEvent*) override;
 #endif
     void mouseMoveEvent(QMouseEvent*) override;
+    void resizeEvent(QResizeEvent* e) override;
     void leaveEvent(QEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseDoubleClickEvent(QMouseEvent*) override;

@@ -96,7 +96,7 @@ void Viewer::retireSession() {
 void Viewer::startStation() {
     retireSession(); auto state=std::make_shared<Session>(); session_=state; state->station=stationIndex();
     std::weak_ptr<Session> weak=state;
-    stage->controller.comingNext.setQueue("",L"",L""); stage->controller.remainingChanged(-1);
+    stage->controller.comingNext.setQueue("",L"",L""); stage->controller.remainingChanged(-1); stage->wake();
     setWindowTitle(QString::fromUtf8(ssc::station(state->station).displayName)+" — 24seven.fm Covers");
     state->pipeline.reset(new ssc::PresentationPipeline(
         [station=state->station](const ssc::TrackInfo& t,const ssc::MediaRequest& r,const std::atomic<bool>* cancel){
@@ -115,14 +115,14 @@ void Viewer::startStation() {
             auto state=weak.lock(); if(closing_ || !state || session_!=state)return;
             state->identity=ssc::trackIdentity(track,state->station);
             stage->controller.trackChanged(state->identity);
-            stage->controller.remainingChanged(track.remainingSeconds);
+            stage->controller.remainingChanged(track.remainingSeconds); stage->wake();
             state->pipeline->current(track,ssc::requestForTrack(track,mediaOptions()));
         },Qt::QueuedConnection);
     },config));
     state->monitor->setTickCallback([this,weak](const ssc::TrackInfo& track){
         QMetaObject::invokeMethod(this,[this,weak,track]{
             auto state=weak.lock(); if(closing_ || !state || session_!=state || state->identity!=ssc::trackIdentity(track,state->station))return;
-            stage->controller.remainingChanged(track.remainingSeconds);
+            stage->controller.remainingChanged(track.remainingSeconds); stage->wake();
         },Qt::QueuedConnection);
     });
     state->monitor->setErrorCallback([this,weak](const std::string& error){

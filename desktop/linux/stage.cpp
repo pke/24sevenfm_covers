@@ -98,7 +98,7 @@ ssc::TitleLogoSize Stage::logoSize() {
     return ssc::titleLogoSize(pixels.width(),pixels.height(),width(),height(),type.title,1);
 }
 void Stage::present(const ssc::PreparedPresentation& frame, int station, bool queued) {
-    dirty_ = true;
+    dirty_ = true; wake();
     const auto metadata = ssc::presentationText(frame.track, frame.media, station);
     if (queued) {
         const auto id = ssc::queuedTrackIdentity(frame.track);
@@ -130,7 +130,11 @@ void Stage::present(const ssc::PreparedPresentation& frame, int station, bool qu
     }
     p.end(); controller.setRatingContent(x ? ref(png(strip.copy(0, 0, qMin(x,320),64))) : nullptr);
 }
-void Stage::refresh() { dirty_=true; controller.settingsChanged(settings); sampleAt(clock_.elapsed()); }
+// 16 ms while something animates; a settled stage only watches deadlines (pointer
+// auto-hide, rating intro) at 4 Hz. Changes from outside wake it at once.
+static constexpr int kAnimationTickMs = 16, kWatchTickMs = 250;
+void Stage::wake() { if (timer_.interval() != kAnimationTickMs) timer_.setInterval(kAnimationTickMs); }
+void Stage::refresh() { dirty_=true; wake(); controller.settingsChanged(settings); sampleAt(clock_.elapsed()); }
 void Stage::measure() {
     if(profiling)++stats.measures;
     const auto& f = controller.frame(); const auto t = ssc::posterTypography(width(), height());
@@ -174,6 +178,8 @@ void Stage::sampleAt(ssc::PresentationTime time) {
     if(dirty_ || wasAnimating || frame.animating || lastSize_!=size())measure();
     if(dirty_ || wasAnimating || frame.animating || (frame.countdown.opacity>0 && seconds!=frame.countdown.seconds)
         || controls!=frame.controlsOpacity || lastSize_!=size())update();
+    const int tick=frame.animating||wasAnimating?kAnimationTickMs:kWatchTickMs;
+    if(timer_.interval()!=tick)timer_.setInterval(tick);
     dirty_=false;lastSize_=size();
 }
 QImage Stage::snapshot() {
@@ -302,10 +308,11 @@ void Stage::drawScene(QPainter& p) {
     p.save(); p.setOpacity(f.controlsOpacity); p.setPen(Qt::white); p.setBrush(QColor(15,18,24,220));
     p.drawRoundedRect(QRectF(16,height()-50,106,34),8,8); line(p,"Settings",{16.,double(height()-50),106,34},14,QFont::DemiBold); p.restore();
 }
-void Stage::mouseMoveEvent(QMouseEvent*) { controller.pointerChanged(true,window()->isFullScreen(),true); }
-void Stage::leaveEvent(QEvent*) { controller.pointerChanged(false,window()->isFullScreen(),false); }
+void Stage::resizeEvent(QResizeEvent* e) { StageWidget::resizeEvent(e); wake(); } // re-lay out at frame rate
+void Stage::mouseMoveEvent(QMouseEvent*) { controller.pointerChanged(true,window()->isFullScreen(),true); wake(); }
+void Stage::leaveEvent(QEvent*) { controller.pointerChanged(false,window()->isFullScreen(),false); wake(); }
 void Stage::mousePressEvent(QMouseEvent* e) {
-    controller.pointerChanged(true,window()->isFullScreen(),true);
+    controller.pointerChanged(true,window()->isFullScreen(),true); wake();
     if (e->button()==Qt::RightButton || QRect(16,height()-50,106,34).contains(e->position().toPoint())) if(openSettings) openSettings();
 }
 void Stage::mouseDoubleClickEvent(QMouseEvent* e) { if(e->button()==Qt::LeftButton && toggleFullscreen) toggleFullscreen(); }

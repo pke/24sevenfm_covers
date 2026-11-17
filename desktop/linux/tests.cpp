@@ -270,3 +270,27 @@ TEST_CASE("Linux renderer selection persists without changing the running render
     }
     if(dialog)dialog->close();store.clear();store.sync();
 }
+
+TEST_CASE("Linux settled stage idles its heartbeat and wakes for changes") {
+    Stage stage;stage.resize(680,820);stage.show();
+    stage.settings.poster=true;stage.settings.countdown=true;stage.settings.rolling=true;
+    stage.controller.settingsChanged(stage.settings);stage.present(fixture(),0,false);
+    stage.controller.remainingChanged(9);
+    for(int t=0;t<=3000;t+=16)stage.sampleAt(t);
+    CHECK(stage.heartbeatMs()>=200); // nothing animates: deadlines are watched slowly
+    stage.controller.remainingChanged(8);stage.wake();
+    CHECK(stage.heartbeatMs()==16);   // the digit roll starts on the next frame
+    for(int t=3016;t<=4000;t+=16)stage.sampleAt(t);
+    CHECK(stage.heartbeatMs()>=200);
+}
+
+TEST_CASE("Linux idle stage does not tick at frame rate") {
+    qunsetenv("SSC_TEST_MODE"); // real heartbeat timer
+    Stage stage;qputenv("SSC_TEST_MODE","1");
+    stage.resize(680,820);stage.show();stage.present(fixture(),0,false);
+    QTest::qWait(1500); // settle the entrance
+    stage.resetStatistics();stage.profiling=true;
+    QTest::qWait(2000);
+    MESSAGE("idle heartbeat ticks in 2 s: " << stage.stats.ticks);
+    CHECK(stage.stats.ticks<=20); // 16 ms would be ~125
+}
