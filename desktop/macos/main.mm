@@ -472,9 +472,9 @@
                 auto state = weakSession.lock(); if (!state || state->cancelled.load()) return;
                 SSCScene* scene = [SSCScene new];
                 scene->identity = ssc::trackIdentity(frame->track, state->station);
-                scene->coverKey = "cover:" + frame->cover;
-                scene->backdropKey = frame->backdrop.empty() ? "blur:" + frame->cover : "backdrop:" + frame->backdrop;
-                scene->logoKey = frame->logo;
+                scene->coverKey = contentKey("cover:", frame->cover);
+                scene->backdropKey = frame->backdrop.empty() ? contentKey("blur:", frame->cover) : contentKey("backdrop:", frame->backdrop);
+                scene->logoKey = frame->logo.empty() ? std::string() : contentKey("logo:", frame->logo);
                 scene.cover = decode(frame->cover); scene.blurredCover = blurCover(scene.cover);
                 scene.backdrop = decode(frame->backdrop); scene.logo = decodeLogo(frame->logo);
                 scene.tint = frame->media.hasTint && scene.backdrop

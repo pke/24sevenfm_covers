@@ -162,7 +162,7 @@ static void writeStatus() {
             @autoreleasepool {
                 auto state=weakSession.lock();if(!state || state->cancelled.load())return;
                 SSCScene* scene=[SSCScene new];scene->identity=ssc::trackIdentity(frame->track,state->station);
-                scene->coverKey="cover:"+frame->cover;scene->backdropKey=frame->backdrop.empty()?"blur:"+frame->cover:"backdrop:"+frame->backdrop;scene->logoKey=frame->logo;
+                scene->coverKey=contentKey("cover:",frame->cover);scene->backdropKey=frame->backdrop.empty()?contentKey("blur:",frame->cover):contentKey("backdrop:",frame->backdrop);scene->logoKey=frame->logo.empty()?std::string():contentKey("logo:",frame->logo);
                 scene.cover=decode(frame->cover);scene.blurredCover=blurCover(scene.cover);scene.backdrop=decode(frame->backdrop);scene.logo=decodeLogo(frame->logo);
                 scene.tint=frame->media.hasTint && scene.backdrop?[NSColor colorWithSRGBRed:frame->media.tint[0]/255.0 green:frame->media.tint[1]/255.0 blue:frame->media.tint[2]/255.0 alpha:1]:coverTint(scene.cover);
                 NSMutableArray* ratings=[NSMutableArray array];for(const auto& rating:frame->ratings){NSImage* image=decode(rating.bytes);if(image)[ratings addObject:image];}scene.ratings=ratings;

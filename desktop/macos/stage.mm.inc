@@ -112,7 +112,11 @@ static NSString* native(const std::wstring& value) {
     const auto textSize = nextTextSize(nextTextCells(next,nextFont));
     _presentation.measuredNext(textSize.width,textSize.height);
 }
-- (void)updateFrame {
+- (void)updateFrame { [self updateFrameRedrawing:YES]; }
+// The 0.2 s visibility tick only re-samples deadlines (controls auto-hide, rating
+// intro). It redraws when that starts or ends a transition, not on every tick.
+- (void)updateFrameRedrawing:(BOOL)redraw {
+    const bool wasAnimating = _frame.animating;
     ssc::PresentationSettings settings;
     settings.poster = _poster; settings.countdown = _showCountdown; settings.countdownSize = (int)_countdownSize;
     settings.rolling = _rollDigits; settings.next = _comingNext; settings.ratings = _ratingsEnabled;
@@ -143,10 +147,13 @@ static NSString* native(const std::wstring& value) {
     for (auto it=_images.begin(); it!=_images.end();) {
         if (!live.count(it->first)) it=_images.erase(it); else ++it;
     }
-    self.needsDisplay = YES;
+    if (redraw || wasAnimating || _frame.animating) self.needsDisplay = YES;
 }
 - (void)animate {
     [self updateFrame];
+    [self startAnimationTimer];
+}
+- (void)startAnimationTimer {
     if (_animation || !_frame.animating) return;
     __weak SSCStage* weak = self;
     _animation = [NSTimer scheduledTimerWithTimeInterval:1.0/60 repeats:YES block:^(NSTimer* timer) {
@@ -156,7 +163,7 @@ static NSString* native(const std::wstring& value) {
     }];
     [NSRunLoop.mainRunLoop addTimer:_animation forMode:NSRunLoopCommonModes];
 }
-- (void)updateVisibility { [self animate]; }
+- (void)updateVisibility { [self updateFrameRedrawing:NO]; [self startAnimationTimer]; }
 - (void)trackChanged:(const std::string&)identity {
     if (_trackIdentity==identity) return;
     _trackIdentity=identity; _presentation.trackChanged(identity); _remainingSeconds=-1;

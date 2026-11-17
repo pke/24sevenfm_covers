@@ -12,6 +12,7 @@
 #include "../../shared/image_alpha_bounds.h"
 #include "../../shared/stations.h"
 #include "../../shared/settings_schema.h"
+#include "../../shared/image_key.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -19,6 +20,14 @@
 #include <signal.h>
 
 static NSString* text(const std::string& s) { return [NSString stringWithUTF8String:s.c_str()] ?: @""; }
+// Compact content identity for the stage's image caches. Keys used to embed the
+// complete encoded image, so every frame copied and compared megabytes.
+static std::string contentKey(const char* kind, const std::string& bytes) {
+    const ssc::ImageKey key = ssc::imageKey(bytes);
+    char suffix[48];
+    std::snprintf(suffix, sizeof(suffix), "%016llx:%zu", (unsigned long long)key.hash, key.size);
+    return std::string(kind) + suffix;
+}
 #ifdef SSC_IN_FOOBAR
 #include "../../foobar2000/macos/settings.h"
 static id preferences() { return SSCCoversPreferences(); }
@@ -146,29 +155,41 @@ static NSImage* decodeLogo(const std::string& bytes) {
 @implementation SSCScene
 @end
 
+static CIContext* sharedImageContext() {
+    static CIContext* context = [CIContext contextWithOptions:nil]; // thread-safe; costly to create
+    return context;
+}
+static CIImage* coreImage(NSImage* image) {
+    CGImageRef source = [image CGImageForProposedRect:nil context:nil hints:nil];
+    return source ? [CIImage imageWithCGImage:source] : nil; // no TIFF re-encode of the bitmap
+}
 static NSImage* blurCover(NSImage* image) {
     if (!image) return nil;
-    CIImage* input = [CIImage imageWithData:image.TIFFRepresentation];
+    CIImage* input = coreImage(image);
     if (!input) return nil;
-    // Direct2D blurs source pixels first, then caches a 240 px result.
-    CGFloat scale = 240.0 / std::max(input.extent.size.width, input.extent.size.height);
-    CIImage* blurred = [[input imageByClampingToExtent] imageByApplyingFilter:@"CIGaussianBlur"
-        withInputParameters:@{kCIInputRadiusKey:@24}];
-    blurred = [[blurred imageByCroppingToRect:input.extent] imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
-    CGImageRef rendered = [[CIContext contextWithOptions:nil] createCGImage:blurred fromRect:blurred.extent];
+    // Same look as blurring the source with radius 24 and then scaling to 240 px
+    // (as Direct2D does): scale first, blur with the radius scaled alike.
+    const CGFloat scale = 240.0 / std::max(input.extent.size.width, input.extent.size.height);
+    CIImage* small = scale < 1
+        ? [input imageByApplyingFilter:@"CILanczosScaleTransform" withInputParameters:@{kCIInputScaleKey:@(scale), kCIInputAspectRatioKey:@1}]
+        : [input imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
+    CIImage* blurred = [[small imageByClampingToExtent] imageByApplyingFilter:@"CIGaussianBlur"
+        withInputParameters:@{kCIInputRadiusKey:@(24 * scale)}];
+    blurred = [blurred imageByCroppingToRect:small.extent];
+    CGImageRef rendered = [sharedImageContext() createCGImage:blurred fromRect:blurred.extent];
     if (!rendered) return nil;
     NSImage* result = [[NSImage alloc] initWithCGImage:rendered size:image.size];
     CGImageRelease(rendered); return result;
 }
 static NSColor* coverTint(NSImage* image) {
     if (!image) return NSColor.whiteColor;
-    CIImage* input = [CIImage imageWithData:image.TIFFRepresentation];
+    CIImage* input = coreImage(image);
     if (!input) return NSColor.whiteColor;
     CIImage* average = [input imageByApplyingFilter:@"CIAreaAverage"
         withInputParameters:@{kCIInputExtentKey:[CIVector vectorWithCGRect:input.extent]}];
     unsigned char pixel[4] = {};
     CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    [[CIContext contextWithOptions:nil] render:average toBitmap:pixel rowBytes:4 bounds:CGRectMake(0,0,1,1)
+    [sharedImageContext() render:average toBitmap:pixel rowBytes:4 bounds:CGRectMake(0,0,1,1)
         format:kCIFormatRGBA8 colorSpace:colorSpace];
     CGColorSpaceRelease(colorSpace);
     const auto tint = ssc::readableCoverTint(pixel[0] / 255.0f, pixel[1] / 255.0f, pixel[2] / 255.0f);
