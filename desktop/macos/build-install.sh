@@ -41,7 +41,22 @@ if defaults read app.dudesoft.24sevenfm.covers >/dev/null 2>&1; then
     mkdir -p "$(dirname "$preferences_backup")"
     defaults export app.dudesoft.24sevenfm.covers "$preferences_backup"
 fi
-ditto "$app" "$destination"
+# ditto merges existing directories, leaving removed resources behind and
+# invalidating the signed bundle. Prepare a clean sibling before switching it.
+staged="$HOME/Applications/.24seven.fm Covers-update-$$.app"
+[ ! -e "$staged" ] || { echo 'Update staging path already exists' >&2; exit 1; }
+ditto "$app" "$staged"
+codesign --verify --deep --strict "$staged"
+replaced="$HOME/Library/Application Support/24seven.fm Covers/Backups/$(date +%Y%m%d-%H%M%S)-replaced-$$.app"
+if [ -d "$destination" ]; then
+    mkdir -p "$(dirname "$replaced")"
+    mv "$destination" "$replaced"
+fi
+if ! mv "$staged" "$destination"; then
+    if [ -d "$replaced" ]; then mv "$replaced" "$destination"; fi
+    echo 'Application replacement failed; previous bundle restored' >&2
+    exit 1
+fi
 codesign --verify --deep --strict "$destination"
 source_hash=$(shasum -a 256 "$binary" | cut -d ' ' -f 1)
 installed_hash=$(shasum -a 256 "$destination/Contents/MacOS/24sevenfm_covers" | cut -d ' ' -f 1)
