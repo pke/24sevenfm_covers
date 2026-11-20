@@ -633,15 +633,19 @@ function isTrackTitledTvCompilation(title) {
         || /^television['’]s\s+greatest\s+hits\b/i.test(title);
 }
 
-function isExactTrackTitledScreenCompilation(title) {
-    return /^every note paints a picture$/i.test(title)
+function isExactTrackTitledScreenCompilation(title, artist = "") {
+    // Frontiers is Goldsmith's film/TV anthology, but also the name of a game.
+    // Require the credited composer before changing this ambiguous album's type.
+    return (/^frontiers(?:\s*:\s*classic science fiction themes)?$/i.test(title)
+            && normalizedTitle(normalizeArtistDisplay(artist)) === "jerrygoldsmith")
+        || /^every note paints a picture$/i.test(title)
         || /^film music \(isham\)$/i.test(title)
         || /\bfilm music$/i.test(title)
         || /(?:^|:\s*)film music\s+(?:18|19|20|21)\d{2}\s*[-–—]\s*(?:18|19|20|21)\d{2}$/i.test(title)
         || /^sci[\s-]*fi['’]s\s+greatest\s+hits\b/i.test(title);
 }
 
-function isTrackTitledScreenCompilation(title) {
+function isTrackTitledScreenCompilation(title, artist = "") {
     // Compilation titles commonly advertise "Themes From ..." or end in "Music
     // For Film", while each Track carries "Work - Cue". The prefix still has to
     // be an exact TMDB title, so these markers cannot turn an arbitrary cue
@@ -651,11 +655,11 @@ function isTrackTitledScreenCompilation(title) {
     return /\bthemes?\s+from\b/i.test(title)
         || /\bmusic\s+for\s+films?\s*$/i.test(title)
         || /^film music collection(?:\s*,?\s*vol(?:ume)?\.?\s*(?:\d{1,3}|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten))?$/i.test(title)
-        || isExactTrackTitledScreenCompilation(title);
+        || isExactTrackTitledScreenCompilation(title, artist);
 }
 
-function usesExactTrackPrefix(title) {
-    return isTrackTitledTvCompilation(title) || isTrackTitledScreenCompilation(title);
+function usesExactTrackPrefix(title, artist = "") {
+    return isTrackTitledTvCompilation(title) || isTrackTitledScreenCompilation(title, artist);
 }
 
 function quotedFromScreenTitle(track) {
@@ -767,7 +771,7 @@ function trackPrefixCandidates(track) {
     return candidates;
 }
 
-function backdropTitleFor(album, track) {
+function backdropTitleFor(album, track, artist = "") {
     const quotedAlbumTitle = quotedOriginalMusicTitle(album);
     if (quotedAlbumTitle) return quotedAlbumTitle;
     const normalizedAlbum = cleanMovieTitle(album);
@@ -785,11 +789,11 @@ function backdropTitleFor(album, track) {
     if (mainTitleThemeTitles.length) return mainTitleThemeTitles[0];
     const tvThemeTitle = tvSeriesThemeTitle(track);
     if (tvThemeTitle) return tvThemeTitle;
-    if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
+    if (isExactTrackTitledScreenCompilation(normalizedAlbum, artist)) {
         const workTitle = cleanMovieTitle(track);
         if (workTitle) return workTitle;
     }
-    if (usesExactTrackPrefix(normalizedAlbum)) {
+    if (usesExactTrackPrefix(normalizedAlbum, artist)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates[0];
     }
@@ -810,7 +814,7 @@ function backdropTitleFor(album, track) {
     return normalizedAlbum;
 }
 
-function backdropTitleCandidatesFor(album, track) {
+function backdropTitleCandidatesFor(album, track, artist = "") {
     const quotedAlbumTitle = quotedOriginalMusicTitle(album);
     if (quotedAlbumTitle) return [quotedAlbumTitle];
     const normalizedAlbum = cleanMovieTitle(album);
@@ -825,7 +829,7 @@ function backdropTitleCandidatesFor(album, track) {
     if (mainTitleThemeTitles.length) return mainTitleThemeTitles;
     const tvThemeTitle = tvSeriesThemeTitle(track);
     if (tvThemeTitle) return [tvThemeTitle];
-    if (isExactTrackTitledScreenCompilation(normalizedAlbum)) {
+    if (isExactTrackTitledScreenCompilation(normalizedAlbum, artist)) {
         const workTitle = cleanMovieTitle(track);
         if (workTitle) {
             const candidates = [workTitle];
@@ -839,7 +843,7 @@ function backdropTitleCandidatesFor(album, track) {
             return candidates;
         }
     }
-    if (usesExactTrackPrefix(normalizedAlbum)) {
+    if (usesExactTrackPrefix(normalizedAlbum, artist)) {
         const candidates = trackPrefixCandidates(track);
         if (candidates.length) return candidates;
     }
@@ -860,10 +864,10 @@ function backdropTitleCandidatesFor(album, track) {
     if (episodeTitle && normalizedTitle(episodeTitle) !== normalizedTitle(normalizedAlbum)) {
         return [normalizedAlbum, episodeTitle];
     }
-    return [backdropTitleFor(album, track)];
+    return [backdropTitleFor(album, track, artist)];
 }
 
-function mediaHintForAlbum(album) {
+function mediaHintForAlbum(album, artist = "") {
     const title = String(album || "");
     const cleanedTitle = cleanMovieTitle(title);
     if (/\(\s*(?:video[\s-]*)?game\s*\)/i.test(title)) return "game";
@@ -872,7 +876,7 @@ function mediaHintForAlbum(album) {
     if (tvBookSoundtrackIdentity(title)) return "tv";
     if (/\banimated\s+(?:television\s+)?series\b/i.test(title)) return "tv";
     if (isTrackTitledTvCompilation(cleanedTitle)) return "tv";
-    if (isTrackTitledScreenCompilation(cleanedTitle)) return "screen";
+    if (isTrackTitledScreenCompilation(cleanedTitle, artist)) return "screen";
     if (isTrackTitledGameCompilation(cleanedTitle)) return "game";
     if (isTrackPrefixedMovieCompilation(cleanedTitle)) return "movie";
     if (/\b(?:original\s+)?video\s+game\s+(?:soundtrack|score)\b/i.test(title)
@@ -2624,7 +2628,7 @@ function createHandler(options = {}) {
                 decodedTitle, decodedTrack, decodedArtist);
             const titleCandidates = metadataResolution && metadataResolution.title
                 ? [metadataResolution.title]
-                : backdropTitleCandidatesFor(decodedTitle, decodedTrack);
+                : backdropTitleCandidatesFor(decodedTitle, decodedTrack, decodedArtist);
             const title = titleCandidates[0];
             if (!title || title.length > 160) {
                 throw new ResolverError("invalid_title", 400, "cleaned title is empty or too long");
@@ -2658,7 +2662,7 @@ function createHandler(options = {}) {
                 ? quotedFromTitle ? "screen" : metadataMediaHint || (tvThemeTitle ? "tv" : "")
                     || (themeFromTitle ? "screen" : "")
                     || (mainTitleThemeTitles.length ? "screen" : "")
-                    || mediaHintForAlbum(decodedTitle)
+                    || mediaHintForAlbum(decodedTitle, decodedArtist)
                 : requestedHint;
             const rawClientKey = requestQueryValue(req, "client_key");
             const clientKey = typeof rawClientKey === "string" ? rawClientKey.trim() : "";
@@ -2686,7 +2690,7 @@ function createHandler(options = {}) {
                 viewport,
                 suppress: !!(metadataResolution && metadataResolution.suppress),
                 screenQueries: titleCandidates,
-                requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(decodedTitle))
+                requireExactScreenMatch: usesExactTrackPrefix(cleanMovieTitle(decodedTitle), decodedArtist)
                     || !!starTrekSeriesAlias(decodedTitle) || !!quotedFromTitle
                     || !!quotedAlbumTitle
                     || !!themeFromTitle
